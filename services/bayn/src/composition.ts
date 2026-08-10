@@ -237,7 +237,10 @@ export const ExecutionPrepareValidationResourcesLive = (plan: ApplicationPlanFor
 export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
-  const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(Layer.provide(postgres))
+  const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(
+    Layer.provide(writerFence),
+    Layer.provide(postgres),
+  )
   return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
     Layer.provideMerge(ApplicationPlatformLive),
   )
@@ -520,32 +523,28 @@ const readBoundPaperActivationGeneration = (
 ): Effect.Effect<PaperAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
     if (authorityStore.readAuthorityState === undefined) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER recovery requires authority history read capabilities'),
+      return yield* paperActivationOperationalError(
+        'durable PAPER recovery requires authority history read capabilities',
       )
     }
-    const authority = yield* authorityStore
-      .readAuthorityState()
-      .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER authority read failed', cause)))
+    const authority = yield* authorityStore.readAuthorityState.pipe(
+      Effect.mapError((cause) => paperActivationOperationalError('durable PAPER authority read failed', cause)),
+    )
     if (authority.maximum !== Authority.Paper) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER recovery requires PAPER maximum authority'),
-      )
+      return yield* paperActivationOperationalError('durable PAPER recovery requires PAPER maximum authority')
     }
     const closeAuthorityIsBound =
       (authority.effective === Authority.Paper && authority.kill === KillState.Clear) ||
       (authority.effective === Authority.Observe && authority.kill === KillState.Active)
     if (!closeAuthorityIsBound) {
-      return yield* Effect.fail(
-        paperActivationOperationalError(
-          'durable PAPER recovery requires clear PAPER or active OBSERVE close authority',
-        ),
+      return yield* paperActivationOperationalError(
+        'durable PAPER recovery requires clear PAPER or active OBSERVE close authority',
       )
     }
     if (isResearchPaperActivationRequest(request)) {
       if (authorityStore.readResearchAuthorityGeneration === undefined) {
-        return yield* Effect.fail(
-          paperActivationOperationalError('durable research PAPER recovery requires v3 authority history reads'),
+        return yield* paperActivationOperationalError(
+          'durable research PAPER recovery requires v3 authority history reads',
         )
       }
       const generation = yield* authorityStore
@@ -554,7 +553,7 @@ const readBoundPaperActivationGeneration = (
           Effect.mapError((cause) => paperActivationOperationalError('durable PAPER generation read failed', cause)),
         )
       if (generation === undefined) {
-        return yield* Effect.fail(paperActivationOperationalError('durable research PAPER history is missing'))
+        return yield* paperActivationOperationalError('durable research PAPER history is missing')
       }
       yield* Effect.fromResult(
         researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, generation),
@@ -562,15 +561,15 @@ const readBoundPaperActivationGeneration = (
       return generation
     }
     if (authorityStore.readAuthorityGeneration === undefined) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable qualified PAPER recovery requires v2 authority history reads'),
+      return yield* paperActivationOperationalError(
+        'durable qualified PAPER recovery requires v2 authority history reads',
       )
     }
     const generation = yield* authorityStore
       .readAuthorityGeneration(authority.generationHash)
       .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER generation read failed', cause)))
     if (generation === undefined) {
-      return yield* Effect.fail(paperActivationOperationalError('durable qualified PAPER history is missing'))
+      return yield* paperActivationOperationalError('durable qualified PAPER history is missing')
     }
     yield* Effect.fromResult(paperGenerationIsBoundToRequest(request, plan, generation)).pipe(
       Effect.mapError((message) => paperActivationOperationalError(message)),
@@ -594,14 +593,10 @@ const recoverPaperActivationGeneration = (
     const closeExpiresAt = paperEpisodeCloseExpiresAt(request.expiresAt)
     if (observedAt >= closeExpiresAt) {
       yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease'),
-      )
+      return yield* paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease')
     }
     if (observedAt < request.cutoffAt) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease'),
-      )
+      return yield* paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease')
     }
     return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
   })
@@ -620,9 +615,7 @@ const recoverPaperReceiptFinalizationGeneration = (
       Effect.mapError((message) => paperActivationOperationalError(message)),
     )
     if (observedAt < paperEpisodeCloseExpiresAt(request.expiresAt)) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease'),
-      )
+      return yield* paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease')
     }
     yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
     return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
@@ -663,6 +656,7 @@ const preparePaperActivation = (
       discoveryConfig as ApplicationPlanFor<'ExecutionCandidateDiscovery'>,
       riskPolicyHash,
     ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- dynamic discovery subprogram boundary owns this layer
       Effect.provide(
         ExecutionCandidateDiscoveryResourcesLive(discoveryConfig as ApplicationPlanFor<'ExecutionCandidateDiscovery'>),
       ),
@@ -681,10 +675,12 @@ const preparePaperActivation = (
       prepareRequest,
     )
     const validated = yield* validateExecutionPreparePlan(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- dynamic PREPARE validation boundary owns this layer
       Effect.provide(ExecutionPrepareValidationResourcesLive(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>)),
       Effect.mapError((cause) => paperActivationOperationalError('execution PREPARE validation failed', cause)),
     )
     const prepared = yield* prepareExecutionPrepareOutput(validated).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- dynamic PREPARE execution boundary owns this layer
       Effect.provide(ExecutionPrepareExecutionResourcesLive(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>)),
       Effect.mapError((cause) => paperActivationOperationalError('execution PREPARE resource failed', cause)),
     )
@@ -767,7 +763,7 @@ const readCurrentResearchPaperGeneration = (
   authority: AuthorityState,
   authorityStore: AuthorityGenerationStoreShape,
 ): Effect.Effect<ResearchCapitalGrantGeneration | undefined, OperationalError> => {
-  if (authority.maximum !== Authority.Paper) return Effect.succeed(undefined)
+  if (authority.maximum !== Authority.Paper) return Effect.as(Effect.void, undefined)
   if (authorityStore.readResearchAuthorityGeneration === undefined) {
     return Effect.fail(paperActivationOperationalError('research PAPER startup requires v3 authority history reads'))
   }
@@ -787,7 +783,6 @@ const prepareResearchPaperActivation = (
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  writerFence: WriterFenceService,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
@@ -801,10 +796,13 @@ const prepareResearchPaperActivation = (
     yield* validateResearchPaperCloseLease(request, session)
 
     const proof = researchCapitalGrantProof(request)
-    const authority = yield* lifecycle.activateResearchCapitalGrant(proof).pipe(
-      Effect.provideService(WriterFence, writerFence),
-      Effect.mapError((cause) => paperActivationOperationalError('research PAPER generation activation failed', cause)),
-    )
+    const authority = yield* lifecycle
+      .activateResearchCapitalGrant(proof)
+      .pipe(
+        Effect.mapError((cause) =>
+          paperActivationOperationalError('research PAPER generation activation failed', cause),
+        ),
+      )
     yield* Effect.fromResult(validateActivatedResearchAuthority(authority)).pipe(
       Effect.mapError((message) => paperActivationOperationalError(message)),
     )
@@ -839,19 +837,16 @@ const prepareOrRecoverResearchPaperActivation = (
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  writerFence: WriterFenceService,
   reconcile: Effect.Effect<unknown, ReconciliationPassError | OperationalError>,
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
     if (authorityStore.readAuthorityState === undefined) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('research PAPER startup requires durable authority state reads'),
-      )
+      return yield* paperActivationOperationalError('research PAPER startup requires durable authority state reads')
     }
-    const authority = yield* authorityStore
-      .readAuthorityState()
-      .pipe(Effect.mapError((cause) => paperActivationOperationalError('research PAPER authority read failed', cause)))
+    const authority = yield* authorityStore.readAuthorityState.pipe(
+      Effect.mapError((cause) => paperActivationOperationalError('research PAPER authority read failed', cause)),
+    )
     const currentGeneration = yield* readCurrentResearchPaperGeneration(authority, authorityStore)
     const currentGenerationMatchesRequest =
       currentGeneration !== undefined &&
@@ -890,19 +885,16 @@ const prepareOrRecoverResearchPaperActivation = (
         rearmed.effective !== Authority.Observe ||
         rearmed.kill !== KillState.Clear
       ) {
-        return yield* Effect.fail(
-          paperActivationOperationalError('research PAPER source authority rearm did not return clear OBSERVE'),
+        return yield* paperActivationOperationalError(
+          'research PAPER source authority rearm did not return clear OBSERVE',
         )
       }
     }
     if (decision._tag !== 'Resume') {
       yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
-      return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle, writerFence)
+      return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle)
     }
-    return (
-      currentGeneration ??
-      (yield* Effect.fail(paperActivationOperationalError('research PAPER recovery lost durable history')))
-    )
+    return currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
   })
 
 const pendingPaperActivation = (
@@ -1092,16 +1084,15 @@ const makeClosedCycleReceiptEmitter =
       return stored.receiptHash
     }).pipe(
       Effect.catch((cause) =>
-        Effect.logError('Bayn forward-performance receipt emission failed')
-          .pipe(
-            Effect.annotateLogs({
-              service: 'bayn',
-              cycleId,
-              observedAt,
-              reason: cause instanceof Error ? cause.message : String(cause),
-            }),
-          )
-          .pipe(Effect.as(undefined)),
+        Effect.logError('Bayn forward-performance receipt emission failed').pipe(
+          Effect.annotateLogs({
+            service: 'bayn',
+            cycleId,
+            observedAt,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+          Effect.as(undefined),
+        ),
       ),
     )
 
@@ -1284,8 +1275,14 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                         )
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           observeCycle(observePlan)(startup).pipe(
+                            // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                             Effect.provide(cycleResources),
-                            Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                            Effect.map((loop) =>
+                              loop.pipe(
+                                // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                                Effect.provide(cycleResources),
+                              ),
+                            ),
                           )
                         const readRuntime = () => ({
                           _tag: 'AutonomousRead' as const,
@@ -1340,8 +1337,10 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.session,
                                           runtimeServices.authorityGenerationStore,
                                           runtimeServices.capitalGrantLifecycleStore,
-                                          runtimeServices.writerFence,
-                                          runOnce.pipe(Effect.provide(cycleResources)),
+                                          runOnce.pipe(
+                                            // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                                            Effect.provide(cycleResources),
+                                          ),
                                           observePlan.config.operationTimeoutMs,
                                         ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
                                       : evidence === null
@@ -1516,7 +1515,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           isPaperEpisodeCloseIntent: (intentId) =>
                                             runtimeServices.paperCycleClosureStore
                                               .containsIntent(intentId)
-                                              .pipe(Effect.catch(() => Effect.succeed(false))),
+                                              .pipe(Effect.orElseSucceed(() => false)),
                                           intentStore: runtimeServices.intentStore,
                                           mutationStore: runtimeServices.mutationStore,
                                           writerFence: runtimeServices.writerFence,
@@ -1569,8 +1568,14 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.paperCycleClosureStore,
                                           onClosedCycle,
                                         )(startup).pipe(
+                                          // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                                           Effect.provide(cycleResources),
-                                          Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                                          Effect.map((loop) =>
+                                            loop.pipe(
+                                              // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                                              Effect.provide(cycleResources),
+                                            ),
+                                          ),
                                         ),
                                     })),
                                   )
@@ -1783,15 +1788,13 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
       configuredStrategy.name !== application.definition.name ||
       configuredStrategy.parameterSchemaVersion !== application.definition.parameters.schemaVersion
     ) {
-      return yield* Effect.fail(
-        new OperationalError({
-          component: 'strategy',
-          operation: 'execution-prepare',
-          message: 'EXECUTION_PREPARE strategy identity does not match the composed application',
-          retryable: false,
-          cause: { _tag: 'StrategyProtocolVersionMismatch' },
-        }),
-      )
+      return yield* new OperationalError({
+        component: 'strategy',
+        operation: 'execution-prepare',
+        message: 'EXECUTION_PREPARE strategy identity does not match the composed application',
+        retryable: false,
+        cause: { _tag: 'StrategyProtocolVersionMismatch' },
+      })
     }
     const strategy: ExecutionPrepareRuntimeBinding['strategy'] = {
       name: configuredStrategy.name,
@@ -1804,15 +1807,13 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
       plan.config.executionPrepareRequest.qualification.runId,
     )
     if (Option.isNone(qualification)) {
-      return yield* Effect.fail(
-        new OperationalError({
-          component: 'strategy',
-          operation: 'execution-prepare',
-          message: 'EXECUTION_PREPARE qualification evidence is unavailable',
-          retryable: false,
-          cause: { _tag: 'QualificationEvidenceUnavailable' },
-        }),
-      )
+      return yield* new OperationalError({
+        component: 'strategy',
+        operation: 'execution-prepare',
+        message: 'EXECUTION_PREPARE qualification evidence is unavailable',
+        retryable: false,
+        cause: { _tag: 'QualificationEvidenceUnavailable' },
+      })
     }
     const runtime = executionPrepareRuntimeBinding(plan, riskPolicyHash, strategy)
     const proofPlanRequest = yield* Effect.fromResult(
@@ -1848,11 +1849,14 @@ export const prepareExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionP
 
 export const runExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
   validateExecutionPreparePlan(plan).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- ExecutionPrepare plan boundary owns validation resources
     Effect.provide(ExecutionPrepareValidationResourcesLive(plan)),
     Effect.flatMap((prevalidated) =>
       prepareExecutionPrepareOutput(prevalidated).pipe(
+        // @effect-diagnostics-next-line strictEffectProvide:off -- ExecutionPrepare plan boundary owns execution resources
         Effect.provide(ExecutionPrepareExecutionResourcesLive(plan)),
         Effect.flatMap(writeExecutionPrepareOutput),
+        // @effect-diagnostics-next-line strictEffectProvide:off -- ExecutionPrepare plan boundary owns platform resources
         Effect.provide(ApplicationPlatformLive),
       ),
     ),
@@ -1876,12 +1880,15 @@ export const executionPrepareBoundaryError = (cause: unknown): OperationalError 
 export const runApplicationPlan = pipe(
   Match.type<ApplicationPlan>(),
   Match.tag('BrokerlessService', (plan) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
     runBrokerlessService(plan).pipe(Effect.provide(BrokerlessApplicationResourcesLive(plan))),
   ),
   Match.tag('AutonomousService', (plan) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
     runAutonomousService(plan).pipe(Effect.provide(AutonomousApplicationResourcesLive(plan))),
   ),
   Match.tag('ExecutionCandidateDiscovery', (plan) =>
+    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
     runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
   ),
   Match.tag('ExecutionPrepare', runExecutionPreparePlan),

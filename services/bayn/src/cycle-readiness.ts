@@ -101,13 +101,12 @@ const bindFinalizedCyclePublicationWith = (
       case 'RETURN_BLOCKED':
         return { outcome: 'BLOCKED', observedAt, cycle }
       case 'REJECT_IMMUTABLE_BINDING':
-        return yield* Effect.fail(
-          readinessError(
-            'bind-publication',
-            'contract',
-            'finalized Signal publication differs from the immutable cycle binding',
-          ),
+        return yield* readinessError(
+          'bind-publication',
+          'contract',
+          'finalized Signal publication differs from the immutable cycle binding',
         )
+
       case 'RETURN_ALREADY_BOUND': {
         const freshness = yield* measureFreshness(
           cycle,
@@ -118,19 +117,21 @@ const bindFinalizedCyclePublicationWith = (
         return { outcome: 'ALREADY_BOUND', observedAt, cycle, snapshotId, freshness }
       }
       case 'REJECT_UNBOUND_STATE':
-        return yield* Effect.fail(
-          readinessError('bind-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
+        return yield* readinessError(
+          'bind-publication',
+          'contract',
+          `unbound cycle ${cycle.identity.cycleId} is not pending`,
         )
+
       case 'BLOCK_MISSED':
         return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
       case 'REJECT_BEFORE_SIGNAL_CLOSE':
-        return yield* Effect.fail(
-          readinessError(
-            'bind-publication',
-            'contract',
-            'finalized Signal publication cannot bind before the cycle signal close',
-          ),
+        return yield* readinessError(
+          'bind-publication',
+          'contract',
+          'finalized Signal publication cannot bind before the cycle signal close',
         )
+
       case 'BIND':
         break
     }
@@ -200,21 +201,17 @@ const inspectBoundPublication = (
       Effect.flatMap((publication) =>
         Effect.gen(function* () {
           if (publication.outcome === 'MISSING') {
-            return yield* Effect.fail(
-              readinessError(
-                'inspect-publication',
-                'contract',
-                'bound finalized Signal publication is missing from its durable source',
-              ),
+            return yield* readinessError(
+              'inspect-publication',
+              'contract',
+              'bound finalized Signal publication is missing from its durable source',
             )
           }
           if (publication.inspection.manifest.finalizedSnapshot.snapshotId !== boundSnapshotId) {
-            return yield* Effect.fail(
-              readinessError(
-                'inspect-publication',
-                'contract',
-                'finalized Signal publication does not match the immutable cycle binding',
-              ),
+            return yield* readinessError(
+              'inspect-publication',
+              'contract',
+              'finalized Signal publication does not match the immutable cycle binding',
             )
           }
           const observedAt = yield* now
@@ -248,9 +245,12 @@ const runCyclePublicationReadinessWith = (
       case 'INSPECT_BOUND':
         return yield* inspectBoundPublication(cycle, dependencies.marketData, dependencies.now)
       case 'REJECT_UNBOUND_STATE':
-        return yield* Effect.fail(
-          readinessError('inspect-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
+        return yield* readinessError(
+          'inspect-publication',
+          'contract',
+          `unbound cycle ${cycle.identity.cycleId} is not pending`,
         )
+
       case 'BLOCK_MISSED':
         return yield* blockMissedPublication(dependencies.store, cycle.identity.cycleId, initialObservedAt)
       case 'WAIT_SIGNAL':
@@ -271,13 +271,11 @@ const runCyclePublicationReadinessWith = (
             if (observedAt >= cycle.window.publicationDeadlineAt) {
               return yield* blockMissedPublication(dependencies.store, cycle.identity.cycleId, observedAt)
             }
-            return yield* Effect.fail(
-              readinessError(
-                'inspect-publication',
-                'market-data',
-                'finalized Signal publication inspection failed before its deadline',
-                cause,
-              ),
+            return yield* readinessError(
+              'inspect-publication',
+              'market-data',
+              'finalized Signal publication inspection failed before its deadline',
+              cause,
             )
           }),
         onSuccess: (publication) =>
@@ -296,8 +294,10 @@ const runCyclePublicationReadinessWith = (
                 return { outcome: 'WAITING', reason: 'PUBLICATION_MISSING', observedAt, cycle } as const
               case 'BIND_FINALIZED':
                 if (publication.outcome === 'MISSING') {
-                  return yield* Effect.fail(
-                    readinessError('inspect-publication', 'contract', 'publication decision lost finalized evidence'),
+                  return yield* readinessError(
+                    'inspect-publication',
+                    'contract',
+                    'publication decision lost finalized evidence',
                   )
                 }
                 return yield* bindFinalizedCyclePublicationWith(

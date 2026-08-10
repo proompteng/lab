@@ -165,13 +165,17 @@ const makeStore = Effect.gen(function* () {
           `
             const stored = yield* readReplanByHash(sql, closure.cycleId, closure.contentHash)
             if (Option.isNone(stored)) {
-              return yield* Effect.fail(
-                storeError('bind-replan', 'invariant', 'paper close replan disappeared after its immutable bind'),
+              return yield* storeError(
+                'bind-replan',
+                'invariant',
+                'paper close replan disappeared after its immutable bind',
               )
             }
             if (stored.value.contentHash !== closure.contentHash) {
-              return yield* Effect.fail(
-                storeError('bind-replan', 'conflict', 'paper close replan identity was reused with different content'),
+              return yield* storeError(
+                'bind-replan',
+                'conflict',
+                'paper close replan identity was reused with different content',
               )
             }
             return stored.value
@@ -204,13 +208,13 @@ const makeStore = Effect.gen(function* () {
           `
             const stored = yield* readByCycleId(sql, closure.cycleId)
             if (Option.isNone(stored)) {
-              return yield* Effect.fail(
-                storeError('bind', 'invariant', 'paper closure disappeared after its immutable bind'),
-              )
+              return yield* storeError('bind', 'invariant', 'paper closure disappeared after its immutable bind')
             }
             if (stored.value.contentHash !== closure.contentHash) {
-              return yield* Effect.fail(
-                storeError('bind', 'conflict', 'paper closure identity was reused with different immutable content'),
+              return yield* storeError(
+                'bind',
+                'conflict',
+                'paper closure identity was reused with different immutable content',
               )
             }
             return stored.value

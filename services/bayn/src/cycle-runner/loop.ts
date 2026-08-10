@@ -81,7 +81,7 @@ const reconcileNotDuePass = <DecisionR>(
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, reconciliationIntervalMs)
     if (decision._tag === 'WAIT') {
-      if (state.lastFailure !== undefined) return yield* Effect.fail(state.lastFailure)
+      if (state.lastFailure !== undefined) return yield* state.lastFailure
       return result
     }
     yield* attemptIdleReconciliation(reconcileNotDue, cadence)

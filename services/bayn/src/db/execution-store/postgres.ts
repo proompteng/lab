@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
+import { WriterFence } from '../../execution/writer-fence'
 import { Journal } from '../../ledger'
 import { makeReconciliation, restrictAuthority } from '../reconciliation'
 import { makeAccountingInterpreter } from './accounting'
@@ -17,13 +18,14 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const journal = yield* Journal
+    const writerFence = yield* WriterFence
     const events = makeBrokerEventInterpreter(sql)
     const accounting = makeAccountingInterpreter(sql, journal, config, events)
     const valuation = makeValuationInterpreter(sql)
     const reconciliation = makeReconciliation(sql, journal, config)
     const authorityPostgres = makeAuthorityPostgres(sql)
     const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres, config.execution.brokerIdentity)
-    const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config)
+    const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config, writerFence)
 
     return {
       events,

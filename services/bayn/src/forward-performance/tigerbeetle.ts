@@ -202,18 +202,16 @@ export const readForwardPerformanceLedger = (
     ).pipe(Effect.mapError(ledgerError))
 
     if (accounts.length >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
-      return yield* Effect.fail(
-        ledgerError(
-          ledgerValidationError(
-            'verify-account',
-            'batch-limit',
-            'paper account reached the exact TigerBeetle reconciliation limit',
-            {
-              accountCount: accounts.length,
-              transferCount: transfers.length,
-              limit: LEDGER_BATCH_MAX,
-            },
-          ),
+      return yield* ledgerError(
+        ledgerValidationError(
+          'verify-account',
+          'batch-limit',
+          'paper account reached the exact TigerBeetle reconciliation limit',
+          {
+            accountCount: accounts.length,
+            transferCount: transfers.length,
+            limit: LEDGER_BATCH_MAX,
+          },
         ),
       )
     }

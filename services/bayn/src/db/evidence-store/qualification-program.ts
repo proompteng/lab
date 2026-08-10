@@ -121,8 +121,10 @@ export const makeQualificationPrograms = (
               Effect.mapError((failure) => storedQualificationDatabaseError('open-qualification', failure)),
             )
             if (Option.isNone(stored)) {
-              return yield* Effect.fail(
-                databaseError('invariant', 'open-qualification', 'conflicting qualification lock is missing'),
+              return yield* databaseError(
+                'invariant',
+                'open-qualification',
+                'conflicting qualification lock is missing',
               )
             }
             yield* Effect.fromResult(validateQualificationLockMatch(stored.value.lock, lock)).pipe(

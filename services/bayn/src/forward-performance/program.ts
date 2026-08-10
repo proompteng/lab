@@ -411,6 +411,7 @@ export function readForwardPerformanceMarketVolume(
     request_timeout: config.operationTimeoutMs,
   })
   return Effect.scoped(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- scoped ClickHouse query boundary owns the client layer
     readForwardPerformanceMarketVolumeWithClient(config, requests).pipe(Effect.provide(client)),
   ).pipe(
     Effect.mapError((cause) =>

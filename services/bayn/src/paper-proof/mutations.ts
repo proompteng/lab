@@ -54,8 +54,8 @@ export interface PaperProofSubmitDependencies extends PaperProofRestrictionDepen
       beforeBrokerMutation: PaperProofExecutionHook,
     ) => Effect.Effect<MutationEvent, Error>
   }
-  readonly prepareIntent: () => Effect.Effect<PreparedPaperProofIntent, Error>
-  readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
+  readonly prepareIntent: Effect.Effect<PreparedPaperProofIntent, Error>
+  readonly reconcile: Effect.Effect<PaperProofReconciliation, Error>
 }
 
 export interface PaperProofCancelDependencies extends PaperProofRestrictionDependencies {
@@ -72,14 +72,14 @@ export interface PaperProofCancelDependencies extends PaperProofRestrictionDepen
     ) => Effect.Effect<MutationEvent, Error>
   }
   readonly readIntent: (intentId: string) => Effect.Effect<PaperProofIntentSnapshot | undefined, Error>
-  readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
+  readonly reconcile: Effect.Effect<PaperProofReconciliation, Error>
 }
 
 const prepareSubmitIntent = (
   context: PaperProofOperationContext,
   dependencies: PaperProofSubmitDependencies,
 ): Effect.Effect<PreparedPaperProofIntent, PaperProofError> =>
-  lift('SUBMIT', 'paper proof intent preparation failed', dependencies.prepareIntent()).pipe(
+  lift('SUBMIT', 'paper proof intent preparation failed', dependencies.prepareIntent).pipe(
     Effect.flatMap((prepared) =>
       prepared.intentId === context.sourcePlan.intentId
         ? Effect.succeed(prepared)
@@ -263,13 +263,11 @@ export const runPaperProofSubmit = (
       MutationOperation.Cancel,
     )
     if (cancellation !== undefined) {
-      return yield* Effect.fail(
-        paperProofFailure(
-          'SUBMIT',
-          'paper proof submit is superseded by a durable cancellation mutation',
-          cancellation,
-          'mutation-unresolved',
-        ),
+      return yield* paperProofFailure(
+        'SUBMIT',
+        'paper proof submit is superseded by a durable cancellation mutation',
+        cancellation,
+        'mutation-unresolved',
       )
     }
     const existing = yield* readPaperProofMutation(context, 'SUBMIT', dependencies.mutations, MutationOperation.Submit)

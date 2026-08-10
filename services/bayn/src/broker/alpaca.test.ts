@@ -1528,13 +1528,7 @@ describe('Alpaca paper reads', () => {
       Effect.succeed(jsonResponse(request, { ...accountResponse, id: wrongAccount })),
     )
     const testLayer = layer(options).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)))
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        Effect.gen(function* () {
-          yield* BrokerRead
-        }).pipe(Effect.provide(testLayer)),
-      ),
-    )
+    const failure = await Effect.runPromise(Effect.flip(BrokerRead.pipe(Effect.provide(testLayer))))
     expect(failure).toBeInstanceOf(BrokerSessionAcquisitionError)
     expect(failure).toMatchObject({
       stage: BrokerSessionAcquisitionStage.Account,

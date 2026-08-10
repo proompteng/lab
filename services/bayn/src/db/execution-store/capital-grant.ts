@@ -2,7 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
 import { BrokerEnvironment } from '../../broker/identity'
-import { WriterFence } from '../../execution/writer-fence'
+import type { WriterFenceService } from '../../execution/writer-fence'
 import { historicalSandboxAuthority } from '../../execution/legacy-authority'
 import {
   Authority,
@@ -56,13 +56,11 @@ import {
 export interface CapitalGrantInterpreter {
   readonly prepareCapitalGrant: (
     proof: CapitalGrantProofBinding,
-  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError, WriterFence>
-  readonly activateCapitalGrant: (
-    proof: CapitalGrantProofBinding,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
+  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError>
+  readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
 interface ResearchPaperRuntimeBinding {
@@ -75,6 +73,7 @@ export const makeCapitalGrantInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   config: ExecutionStoreRuntimeConfig,
+  writerFence: WriterFenceService,
 ): CapitalGrantInterpreter => {
   const requirePaperGenerationRuntime = (
     expectedMaximum: Authority,
@@ -352,8 +351,7 @@ export const makeCapitalGrantInterpreter = (
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
         const binding = yield* requirePaperGenerationRuntime(Authority.Observe, 'PREPARE')
-        const fence = yield* WriterFence
-        return yield* fence.transaction(prepareCapitalGrantTransaction(proof, binding))
+        return yield* writerFence.transaction(prepareCapitalGrantTransaction(proof, binding))
       }),
     )
 
@@ -484,8 +482,7 @@ export const makeCapitalGrantInterpreter = (
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
         const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
-        const fence = yield* WriterFence
-        return yield* fence.transaction(activatePaperGenerationTransaction(proof, binding))
+        return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding))
       }),
     )
 
@@ -615,8 +612,7 @@ export const makeCapitalGrantInterpreter = (
             build: config.build,
           }),
         )
-        const fence = yield* WriterFence
-        return yield* fence.transaction(activateResearchPaperGenerationTransaction(proof, binding))
+        return yield* writerFence.transaction(activateResearchPaperGenerationTransaction(proof, binding))
       }),
     )
 

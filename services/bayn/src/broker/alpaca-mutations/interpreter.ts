@@ -92,7 +92,7 @@ const readCancelBody = (
   headers: { readonly 'x-request-id': string },
 ): Effect.Effect<string | undefined, BrokerMutationError> =>
   response.status === 204
-    ? Effect.succeed(undefined)
+    ? Effect.as(Effect.void, undefined)
     : response.text.pipe(
         Effect.mapError((cause) =>
           unknownOutcome(

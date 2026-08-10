@@ -433,7 +433,7 @@ const continueRecovery = (
 ) =>
   (operation === MutationOperation.Submit
     ? services.mutations.latest(stored.intent.intentId, MutationOperation.Cancel)
-    : Effect.succeed(undefined)
+    : Effect.as(Effect.void, undefined)
   ).pipe(
     Effect.flatMap((cancellation) => liftDecision(validateRecovery(stored.intent, event, cancellation))),
     Effect.andThen(Clock.currentTimeMillis),

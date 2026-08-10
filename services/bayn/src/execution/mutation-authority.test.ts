@@ -863,7 +863,7 @@ describe('final broker mutation authority', () => {
         liveCapitalGrants: {
           read: () => {
             grantReads += 1
-            return Effect.succeed(undefined)
+            return Effect.as(Effect.void, undefined)
           },
         },
         freshBrokerPrice: () => Effect.die(new Error('sandbox must not read a live broker price')),

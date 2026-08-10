@@ -264,7 +264,7 @@ const makeCycleObservability = Effect.gen(function* () {
         Effect.mapError((cause) => readError('decode', 'invalid qualification run identity', cause)),
       ),
       accountId === undefined
-        ? Effect.succeed(undefined)
+        ? Effect.void
         : decodeAccountId(accountId).pipe(
             Effect.mapError((cause) => readError('decode', 'invalid cycle observability account identity', cause)),
           ),

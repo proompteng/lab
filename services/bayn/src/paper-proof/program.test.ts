@@ -298,7 +298,7 @@ const fixture = (options: FixtureOptions) => {
       calls.activate += 1
       sequence.push('activate')
       if (options.neverActivation === true) return Effect.never
-      return options.failActivation === true ? Effect.fail(new Error('activation failed')) : Effect.succeed(undefined)
+      return options.failActivation === true ? Effect.fail(new Error('activation failed')) : Effect.void
     },
     restrictAuthority: () => {
       calls.restrict += 1
@@ -420,25 +420,24 @@ const fixture = (options: FixtureOptions) => {
         return Effect.succeed(recovered)
       },
     },
-    prepareIntent: () =>
-      Effect.suspend(() => {
-        calls.prepareIntent += 1
-        sequence.push('intent:prepare')
-        if (options.neverPrepareIntent === true) return Effect.never
-        if (options.failPrepareIntent === true) return Effect.fail(new Error('intent preparation failed'))
-        return Effect.succeed({
-          intentId,
-          clientOrderId: `b1_${'A'.repeat(43)}`,
-          deduplicated: false,
-        })
-      }),
+    prepareIntent: Effect.suspend(() => {
+      calls.prepareIntent += 1
+      sequence.push('intent:prepare')
+      if (options.neverPrepareIntent === true) return Effect.never
+      if (options.failPrepareIntent === true) return Effect.fail(new Error('intent preparation failed'))
+      return Effect.succeed({
+        intentId,
+        clientOrderId: `b1_${'A'.repeat(43)}`,
+        deduplicated: false,
+      })
+    }),
     readIntent: () => {
       calls.readIntent += 1
       sequence.push(`intent:read:${calls.readIntent.toString()}`)
       const index = Math.min(calls.readIntent - 1, intentSnapshots.length - 1)
       return Effect.succeed(intentSnapshots[index])
     },
-    reconcile: () => {
+    reconcile: Effect.suspend(() => {
       calls.reconcile += 1
       sequence.push(`reconcile:${calls.reconcile.toString()}`)
       if (options.neverReconcileCalls?.includes(calls.reconcile) === true) return Effect.never
@@ -453,7 +452,7 @@ const fixture = (options: FixtureOptions) => {
         unknownMutationCount: options.reconciliationUnknownCounts?.[calls.reconcile - 1] ?? 0,
         reconciledAt: '2026-07-31T08:00:00.000Z',
       })
-    },
+    }),
     currentUtcInstant: Effect.suspend(() => {
       calls.clock += 1
       if (options.neverClockCalls?.includes(calls.clock) === true) return Effect.never

@@ -1498,29 +1498,25 @@ const makeHarness = (options: HarnessOptions = {}) => {
       lookupClientOrderId = clientOrderId
       if (options.lookupFailureOnceAfterMs !== undefined && lookupCalls === 1) {
         yield* Effect.sleep(Duration.millis(options.lookupFailureOnceAfterMs))
-        return yield* Effect.fail(
-          new BrokerReadError({
-            operation: 'order-by-client-id',
-            kind: BrokerReadErrorKind.Timeout,
-            message: 'injected delayed lookup timeout',
-            retryable: false,
-          }),
-        )
+        return yield* new BrokerReadError({
+          operation: 'order-by-client-id',
+          kind: BrokerReadErrorKind.Timeout,
+          message: 'injected delayed lookup timeout',
+          retryable: false,
+        })
       }
       const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
       if (options.notFoundOnce && lookupCalls === 1) {
-        return yield* Effect.fail(
-          new BrokerReadError({
-            operation: 'order-by-client-id',
-            kind: BrokerReadErrorKind.NotFound,
-            message: 'injected delayed visibility',
-            retryable: false,
-            status: 404,
-            requestId: 'lookup-not-found',
-            contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
-            observedAt,
-          }),
-        )
+        return yield* new BrokerReadError({
+          operation: 'order-by-client-id',
+          kind: BrokerReadErrorKind.NotFound,
+          message: 'injected delayed visibility',
+          retryable: false,
+          status: 404,
+          requestId: 'lookup-not-found',
+          contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
+          observedAt,
+        })
       }
       const selected =
         options.lookupOrders?.[Math.min(lookupCalls - 1, options.lookupOrders.length - 1)] ??

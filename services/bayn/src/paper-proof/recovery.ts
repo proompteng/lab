@@ -47,7 +47,7 @@ export interface PaperProofRecoverDependencies extends PaperProofRestrictionDepe
     readonly recoverCancel: (intentId: string) => Effect.Effect<MutationEvent, Error>
   }
   readonly readIntent: (intentId: string) => Effect.Effect<PaperProofIntentSnapshot | undefined, Error>
-  readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
+  readonly reconcile: Effect.Effect<PaperProofReconciliation, Error>
 }
 
 const cancellationTerminal = (

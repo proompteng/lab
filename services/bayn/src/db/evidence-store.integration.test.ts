@@ -2484,11 +2484,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '1'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     const mutation = makeMutationRuntime()
     const startedAt = new Date(Date.now() + 100).toISOString()
@@ -2727,11 +2723,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '6'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     const mutation = makeMutationRuntime()
     const requestHash = '5'.repeat(64)
@@ -2852,11 +2844,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     const mutation = makeMutationRuntime()
     const requestHash = 'b'.repeat(64)
@@ -2935,11 +2923,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '9'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
 
     const mutation = makeMutationRuntime()
@@ -3073,11 +3057,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '7'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
 
     const mutation = makeMutationRuntime()
@@ -3328,11 +3308,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
     )
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
 
@@ -3368,11 +3344,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '2'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
 
     const mutation = makeMutationRuntime()
@@ -3958,11 +3930,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
-    await execution.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-      }),
-    )
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
 
     const mutation = makeMutationRuntime()

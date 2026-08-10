@@ -63,13 +63,11 @@ const acquire = Effect.gen(function* () {
     Effect.mapError((cause) => decodeFailure('acquire', cause)),
   )
   if (!acquired) {
-    return yield* Effect.fail(
-      new WriterFenceError({
-        failure: 'busy',
-        operation: 'acquire',
-        message: 'another PostgreSQL session owns the paper writer fence',
-      }),
-    )
+    return yield* new WriterFenceError({
+      failure: 'busy',
+      operation: 'acquire',
+      message: 'another PostgreSQL session owns the paper writer fence',
+    })
   }
 
   yield* Effect.addFinalizer(() =>
@@ -100,13 +98,11 @@ const acquire = Effect.gen(function* () {
       Effect.mapError((cause) => decodeFailure('check', cause)),
     )
     if (!held) {
-      return yield* Effect.fail(
-        new WriterFenceError({
-          failure: 'unavailable',
-          operation: 'check',
-          message: 'PostgreSQL paper writer fence is no longer held',
-        }),
-      )
+      return yield* new WriterFenceError({
+        failure: 'unavailable',
+        operation: 'check',
+        message: 'PostgreSQL paper writer fence is no longer held',
+      })
     }
   })
   const check = transactionPermit.withPermit(checkHeld)

@@ -670,7 +670,7 @@ describe('Bayn application composition', () => {
         Effect.gen(function* () {
           const parentScope = yield* Scope.Scope
           const partialLayer = Layer.effectDiscard(
-            Effect.acquireRelease(Effect.succeed(undefined), () => Effect.sync(() => void (finalizations += 1))).pipe(
+            Effect.acquireRelease(Effect.void, () => Effect.sync(() => void (finalizations += 1))).pipe(
               Effect.andThen(Effect.fail(acquisitionFailure)),
             ),
           )

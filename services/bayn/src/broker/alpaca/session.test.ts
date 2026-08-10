@@ -298,7 +298,7 @@ describe('Alpaca broker session acquisition retry', () => {
       currentTimeMillis: Effect.sync(readTime),
       currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
       currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
-      sleep: () => Effect.succeed(undefined),
+      sleep: () => Effect.void,
     }
     const cause = new BrokerReadError({
       operation: 'account',

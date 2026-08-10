@@ -354,7 +354,7 @@ const makeStore = Effect.gen(function* () {
           : storeError('read', 'decode', 'live capital grant row decoding failed', cause),
       ),
       Effect.flatMap((rows) => {
-        if (rows.length === 0) return Effect.succeed(undefined)
+        if (rows.length === 0) return Effect.as(Effect.void, undefined)
         if (rows.length !== 1) {
           return Effect.fail(storeError('read', 'invariant', 'live capital grant query returned duplicate rows'))
         }
@@ -370,7 +370,7 @@ const makeStore = Effect.gen(function* () {
       Effect.mapError((cause) => storeError('lock-submit', 'decode', 'invalid live capital grant hash', cause)),
       Effect.flatMap((grantHash) =>
         lockGrant('lock-submit', grantHash).pipe(
-          Effect.flatMap((exists) => (exists ? read(grantHash) : Effect.succeed(undefined))),
+          Effect.flatMap((exists) => (exists ? read(grantHash) : Effect.as(Effect.void, undefined))),
         ),
       ),
     )

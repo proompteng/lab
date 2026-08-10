@@ -44,9 +44,7 @@ export const makeEvidencePersistenceProgram = (
             )
             if (plan.qualification !== undefined) {
               if (Option.isNone(storedQualification)) {
-                return yield* Effect.fail(
-                  databaseError('invariant', 'persist-qualification', 'qualification lock was not opened'),
-                )
+                return yield* databaseError('invariant', 'persist-qualification', 'qualification lock was not opened')
               }
               yield* ensure(
                 storedQualification.value.state === 'OPENED_INCOMPLETE',
@@ -87,12 +85,10 @@ export const makeEvidencePersistenceProgram = (
             })
             if (inserted.length === 0) {
               if (plan.qualification !== undefined) {
-                return yield* Effect.fail(
-                  databaseError(
-                    'invariant',
-                    'persist-qualification',
-                    'locked qualification candidate was already evaluated without a terminal result',
-                  ),
+                return yield* databaseError(
+                  'invariant',
+                  'persist-qualification',
+                  'locked qualification candidate was already evaluated without a terminal result',
                 )
               }
               return yield* references.readReceipt(plan, true)

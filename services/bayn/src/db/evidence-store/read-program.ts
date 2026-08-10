@@ -68,9 +68,7 @@ export const makeEvidenceReadPrograms = (
             yield* ensure(metadata.length === 1, 'read-artifact-items', 'artifact series metadata is duplicated')
             const [series] = metadata
             if (series === undefined) {
-              return yield* Effect.fail(
-                databaseError('invariant', 'read-artifact-items', 'artifact series metadata disappeared'),
-              )
+              return yield* databaseError('invariant', 'read-artifact-items', 'artifact series metadata disappeared')
             }
             const rows = yield* statements.getArtifactItems({ runId, artifactName, afterOrdinal, limit })
             yield* ensure(

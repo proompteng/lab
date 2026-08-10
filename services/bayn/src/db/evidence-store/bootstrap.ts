@@ -57,9 +57,7 @@ const migrate = Effect.gen(function* () {
     `,
   )
   if (boundary.legacy_exists) {
-    return yield* Effect.fail(
-      databaseError('migration', 'migrate', 'legacy migration tracker is unsupported after the hard cut'),
-    )
+    return yield* databaseError('migration', 'migrate', 'legacy migration tracker is unsupported after the hard cut')
   }
   if (boundary.current_exists) {
     const identities = yield* decodeMigrationIdentities(
@@ -67,9 +65,7 @@ const migrate = Effect.gen(function* () {
     )
     const [initial] = identities
     if (identities.length !== 1 || initial?.name !== 'initial_schema') {
-      return yield* Effect.fail(
-        databaseError('migration', 'migrate', 'legacy migration history is unsupported after the hard cut'),
-      )
+      return yield* databaseError('migration', 'migrate', 'legacy migration history is unsupported after the hard cut')
     }
   }
   yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })

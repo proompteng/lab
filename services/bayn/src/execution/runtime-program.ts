@@ -55,7 +55,7 @@ const finalLiveGrantAuthorization = (
   dependencies: ExecutionProgramDependencies,
 ): Effect.Effect<LiveCapitalAuthority | undefined, FinalSubmitAuthorizationFailure> => {
   const capital = authority.capitalAuthority
-  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.succeed(undefined)
+  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.as(Effect.void, undefined)
   const grantHash = capital.grant.grantHash
   return Effect.gen(function* () {
     const persisted = yield* dependencies.liveCapitalGrants.lockForSubmit(grantHash)
@@ -113,7 +113,9 @@ const validatePaperEpisodeLease = (
     }
     const isCloseIntent =
       closeIntent ??
-      (dependencies.isPaperEpisodeCloseIntent ? yield* dependencies.isPaperEpisodeCloseIntent(intentId) : false)
+      (dependencies.isPaperEpisodeCloseIntent !== undefined
+        ? yield* dependencies.isPaperEpisodeCloseIntent(intentId)
+        : false)
     const expiresAt = isCloseIntent ? dependencies.paperEpisodeCloseExpiresAt : dependencies.paperEpisodeEntryExpiresAt
     if (expiresAt === undefined) return
     const observedAt = yield* dependencies.currentUtcInstant
@@ -131,9 +133,10 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
   return dependencies.writerFence
     .transaction(
       Effect.gen(function* () {
-        const closeOnly = dependencies.isPaperEpisodeCloseIntent
-          ? yield* dependencies.isPaperEpisodeCloseIntent(intent.intentId)
-          : false
+        const closeOnly =
+          dependencies.isPaperEpisodeCloseIntent !== undefined
+            ? yield* dependencies.isPaperEpisodeCloseIntent(intent.intentId)
+            : false
         yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         const persisted = yield* finalLiveGrantAuthorization(authority, dependencies)

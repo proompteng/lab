@@ -13,7 +13,7 @@ import type { PaperProofError, PaperProofReceipt, PaperProofReconciliation } fro
 
 export interface PaperProofPrepareDependencies {
   readonly prepareCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<CapitalGrantGeneration, Error>
-  readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
+  readonly reconcile: Effect.Effect<PaperProofReconciliation, Error>
   readonly currentUtcInstant: Effect.Effect<string, Error>
 }
 
