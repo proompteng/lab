@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { Cause, DateTime, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -79,6 +79,7 @@ import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
+import { utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../../time'
 import {
   DataFeed,
   DataSource,
@@ -295,11 +296,11 @@ const makeAutonomousRuntime = () =>
 
 const weekdaySessions = (start: IsoDate, count: number): readonly IsoDate[] => {
   const sessions: IsoDate[] = []
-  const cursor = new Date(`${start}T00:00:00.000Z`)
+  let cursor = DateTime.makeUnsafe(`${start}T00:00:00.000Z`)
   while (sessions.length < count) {
-    const day = cursor.getUTCDay()
-    if (day !== 0 && day !== 6) sessions.push(cursor.toISOString().slice(0, 10) as IsoDate)
-    cursor.setUTCDate(cursor.getUTCDate() + 1)
+    const day = DateTime.getPartUtc(cursor, 'weekDay')
+    if (day !== 0 && day !== 6) sessions.push(DateTime.formatIsoDate(cursor) as IsoDate)
+    cursor = DateTime.add(cursor, { days: 1 })
   }
   return sessions
 }
@@ -894,17 +895,17 @@ const monthEndExecutionWindow = (
   readonly snapshotBoundAt: string
   readonly signalSessionDate: IsoDate
 } => {
-  const evaluated = new Date(evaluatedAt)
-  const execution = new Date(evaluated.getTime() + 44 * 60_000)
-  const signal = new Date(Date.UTC(execution.getUTCFullYear(), execution.getUTCMonth(), 0))
-  while (signal.getUTCDay() === 0 || signal.getUTCDay() === 6) signal.setUTCDate(signal.getUTCDate() - 1)
-  const executionSessionDate = execution.toISOString().slice(0, 10) as IsoDate
+  const evaluated = DateTime.makeUnsafe(evaluatedAt)
+  const execution = DateTime.add(evaluated, { minutes: 44 })
+  let signal = DateTime.subtract(DateTime.startOf(execution, 'month'), { days: 1 })
+  while ([0, 6].includes(DateTime.getPartUtc(signal, 'weekDay'))) signal = DateTime.subtract(signal, { days: 1 })
+  const executionSessionDate = DateTime.formatIsoDate(execution) as IsoDate
   return {
     evaluationAt: evaluatedAt,
-    executionOpenAt: execution.toISOString(),
+    executionOpenAt: DateTime.formatIso(execution),
     executionSessionDate,
-    snapshotBoundAt: new Date(evaluated.getTime() - 2 * 60_000).toISOString(),
-    signalSessionDate: signal.toISOString().slice(0, 10) as IsoDate,
+    snapshotBoundAt: DateTime.formatIso(DateTime.subtract(evaluated, { minutes: 2 })),
+    signalSessionDate: DateTime.formatIsoDate(signal) as IsoDate,
   }
 }
 
@@ -1254,7 +1255,7 @@ const plannedPaperSnapshot = (
   const sessionOffsetMs =
     Date.parse(`${draft.identity.signalSessionDate}T00:00:00.000Z`) - Date.parse(`${sourceLastSession}T00:00:00.000Z`)
   const shiftSession = (session: IsoDate): IsoDate =>
-    new Date(Date.parse(`${session}T00:00:00.000Z`) + sessionOffsetMs).toISOString().slice(0, 10) as IsoDate
+    utcDateFromEpochMillis(Date.parse(`${session}T00:00:00.000Z`) + sessionOffsetMs) as IsoDate
   const sessions = sourceSessions.map(shiftSession)
   const firstSession = sessions.at(0)
   const lastSession = sessions.at(-1)
@@ -1341,7 +1342,7 @@ const plannedPaperBrokerRead = (draft: CycleDraft, observedAt = decisionAt): Bro
     orderByClientId: () => unused,
     fillActivities: () => unused,
     marketCalendar: (query) => {
-      const signalOpenAt = new Date(Date.parse(draft.window.signalCloseAt) - 6.5 * 60 * 60 * 1_000).toISOString()
+      const signalOpenAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) - 6.5 * 60 * 60 * 1_000)
       const material = {
         schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
         source: 'alpaca-v2-calendar' as const,
@@ -1498,9 +1499,9 @@ const insertQualifiedPaperLineage = (
       cycleId: document.bindings.cycleId,
       decisionHash: document.contentHash,
     })
-    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1_000).toISOString()
-    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
-    const deniedAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
+    const intentCreatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1_000)
+    const submitStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
+    const deniedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 2)
     const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
     const requestHash = canonicalHashV1({ intentId: intent.intentId, request: 'pretransmit-denied' })
 
@@ -1879,7 +1880,7 @@ const insertSupersedingObserveGeneration = (document: PaperDecisionDocument) =>
         accountId: document.bindings.accountId,
       }),
     )
-    const activatedAt = new Date(Date.parse(document.createdAt) + 10_000).toISOString()
+    const activatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 10_000)
     yield* sql`
       INSERT INTO authority_generations (
         generation_hash,
@@ -1940,10 +1941,10 @@ const insertFilledPlannedPaperIntent = (
       },
     )
     const sql = yield* PgClient.PgClient
-    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1).toISOString()
-    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
-    const acceptedAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
-    const filledAt = new Date(Date.parse(document.createdAt) + 3).toISOString()
+    const intentCreatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1)
+    const submitStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
+    const acceptedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 2)
+    const filledAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
     const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
     const requestHash = canonicalHashV1({ intentId: intent.intentId, request: 'filled-completion' })
     const brokerOrderId = `filled-${intent.intentId.slice(0, 24)}`
@@ -2083,11 +2084,11 @@ const insertUnfinishedPlannedPaperMutation = (document: PaperDecisionDocument, f
       },
     )
     const sql = yield* PgClient.PgClient
-    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1).toISOString()
-    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
-    const submitOutcomeAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
-    const cancelStartedAt = new Date(Date.parse(document.createdAt) + 3).toISOString()
-    const cancelOutcomeAt = new Date(Date.parse(document.createdAt) + 4).toISOString()
+    const intentCreatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1)
+    const submitStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
+    const submitOutcomeAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 2)
+    const cancelStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
+    const cancelOutcomeAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 4)
     const submitMutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
     const cancelMutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'CANCEL' })
     const submitRequestHash = canonicalHashV1({ intentId: intent.intentId, fixture, operation: 'SUBMIT' })
@@ -2237,8 +2238,9 @@ const settleSupersededMutation = (
     const mutationId = canonicalHashV1({ intentId, operation })
     const requestHash = canonicalHashV1({ intentId, fixture, operation })
     const brokerOrderId = `superseded-${intentId.slice(0, 24)}`
-    const recoveredAt = new Date(Date.parse(document.createdAt) + 11_000).toISOString()
-    const terminalAt = fixture === 'submit-unknown' ? new Date(Date.parse(recoveredAt) + 1).toISOString() : recoveredAt
+    const recoveredAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 11_000)
+    const terminalAt =
+      fixture === 'submit-unknown' ? utcInstantFromEpochMillis(Date.parse(recoveredAt) + 1) : recoveredAt
     const terminalOutcome = operation === 'CANCEL' ? 'CANCELED' : 'FILLED'
     yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -3257,8 +3259,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
         const riskExpiresAt = planned.document.deltaRisk[0]?.evaluation.decision.expiresAt
         if (riskExpiresAt === undefined) return yield* Effect.die(new Error('PAPER risk expiry is missing'))
-        const beforeRiskExpiry = new Date(Date.parse(riskExpiresAt) - 1).toISOString()
-        const beforeSubmissionCutoff = new Date(Date.parse(draft.window.submissionCutoffAt) - 1).toISOString()
+        const beforeRiskExpiry = utcInstantFromEpochMillis(Date.parse(riskExpiresAt) - 1)
+        const beforeSubmissionCutoff = utcInstantFromEpochMillis(Date.parse(draft.window.submissionCutoffAt) - 1)
         const sql = yield* PgClient.PgClient
         const directEarlyRisk = yield* Effect.exit(sql`
           UPDATE autonomous_cycles
@@ -3474,8 +3476,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             executionSessionDate,
             signalSessionDate,
           })
-          const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-          const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
+          const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+          const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
           const manifest = makeInputManifest(snapshotA, {
             asOfSession: signalSessionDate,
             finalizedAt: snapshotBoundAt,
@@ -3498,9 +3500,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
           const successor = yield* insertSupersedingObserveGeneration(planned.document)
           const rotatedQualificationRunId = 'e'.repeat(64)
-          const earlierSignalDateValue = new Date(`${signalSessionDate}T00:00:00.000Z`)
-          earlierSignalDateValue.setUTCDate(earlierSignalDateValue.getUTCDate() - 1)
-          const earlierSignalSessionDate = earlierSignalDateValue.toISOString().slice(0, 10) as IsoDate
+          const earlierSignalSessionDate = DateTime.makeUnsafe(`${signalSessionDate}T00:00:00.000Z`).pipe(
+            DateTime.subtract({ days: 1 }),
+            DateTime.formatIsoDate,
+          ) as IsoDate
           const currentDraft = makeDraft(draft.identity.accountId, {
             executionCloseAt: `${signalSessionDate}T23:59:59.999Z`,
             executionOpenAt: `${signalSessionDate}T20:00:00.000Z`,
@@ -3511,7 +3514,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           })
           yield* store.acquire(
             currentDraft,
-            new Date(Date.parse(currentDraft.window.signalCloseAt) + 60_000).toISOString(),
+            utcInstantFromEpochMillis(Date.parse(currentDraft.window.signalCloseAt) + 60_000),
           )
           const recoveryScope = {
             qualificationRunId: rotatedQualificationRunId,
@@ -3632,8 +3635,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           executionSessionDate,
           signalSessionDate,
         })
-        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
+        const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+        const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
         const manifest = makeInputManifest(snapshotA, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,
@@ -3665,8 +3668,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           operation: 'CANCEL',
         })
         const brokerOrderId = `superseded-${unfinished.intent.intentId.slice(0, 24)}`
-        const cancelStartedAt = new Date(Date.parse(planned.document.createdAt) + 3).toISOString()
-        const cancelUnknownAt = new Date(Date.parse(planned.document.createdAt) + 4).toISOString()
+        const cancelStartedAt = utcInstantFromEpochMillis(Date.parse(planned.document.createdAt) + 3)
+        const cancelUnknownAt = utcInstantFromEpochMillis(Date.parse(planned.document.createdAt) + 4)
         yield* sql`
           INSERT INTO mutation_events (
             event_id, schema_version, mutation_id, intent_id, sequence,
@@ -3683,7 +3686,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             'CANCEL', 'CANCEL_UNKNOWN', ${cancelRequestHash}, 1000, ${brokerOrderId}, ${cancelUnknownAt}
           )
         `
-        const terminalAt = new Date(Date.parse(planned.document.createdAt) + 5).toISOString()
+        const terminalAt = utcInstantFromEpochMillis(Date.parse(planned.document.createdAt) + 5)
         yield* sql`
           UPDATE intents
           SET
@@ -3697,7 +3700,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           store.block(draft.identity.cycleId, CycleTerminalReason.Risk, terminalAt),
         )
 
-        const recoveryAt = new Date(Date.parse(planned.document.createdAt) + 11_000).toISOString()
+        const recoveryAt = utcInstantFromEpochMillis(Date.parse(planned.document.createdAt) + 11_000)
         yield* sql`
           INSERT INTO mutation_events (
             event_id, schema_version, mutation_id, intent_id, sequence,
@@ -3877,8 +3880,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           executionSessionDate,
           signalSessionDate,
         })
-        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
+        const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+        const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
         const manifest = makeInputManifest(snapshotB, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,
@@ -3902,7 +3905,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* insertReconciliation(planned.reconciliation)
         yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
         const denied = yield* insertQualifiedPaperLineage(planned.document, { deniedIntent: true })
-        const prematureAt = new Date(Date.parse(denied.deniedAt) - 1).toISOString()
+        const prematureAt = utcInstantFromEpochMillis(Date.parse(denied.deniedAt) - 1)
 
         const directPremature = yield* Effect.exit(sql`
           UPDATE autonomous_cycles
@@ -4013,8 +4016,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           executionSessionDate,
           signalSessionDate,
         })
-        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
+        const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+        const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
         const manifest = makeInputManifest(snapshotB, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,
@@ -4053,14 +4056,14 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         )
 
         const filled = yield* insertFilledPlannedPaperIntent(planned.document, 'started')
-        const unresolvedReconciledAt = new Date(Date.parse(filled.filledAt) + 1).toISOString()
+        const unresolvedReconciledAt = utcInstantFromEpochMillis(Date.parse(filled.filledAt) + 1)
         yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, unresolvedReconciledAt))
         const unresolvedStarted = yield* Effect.exit(
           store.finish(draft.identity.cycleId, CycleState.Completed, unresolvedReconciledAt),
         )
-        const settledAt = new Date(Date.parse(unresolvedReconciledAt) + 1).toISOString()
+        const settledAt = utcInstantFromEpochMillis(Date.parse(unresolvedReconciledAt) + 1)
         yield* settleStartedPaperSubmit(filled, settledAt)
-        const reconciledAt = new Date(Date.parse(settledAt) + 1).toISOString()
+        const reconciledAt = utcInstantFromEpochMillis(Date.parse(settledAt) + 1)
         yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, reconciledAt))
         const completed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
         const replayed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
@@ -4129,7 +4132,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('finishes the exact no-trade decision once after cutoff and preserves terminal history across runtimes', async () => {
     const draft = makeDraft()
     const shadowDecision = makeShadowDecision(draft, snapshotA)
-    const afterCutoff = new Date(Date.parse(draft.window.submissionCutoffAt) + 1).toISOString()
+    const afterCutoff = utcInstantFromEpochMillis(Date.parse(draft.window.submissionCutoffAt) + 1)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -4169,7 +4172,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         )
         const directUpdate = yield* Effect.exit(sql`
           UPDATE autonomous_cycles
-          SET updated_at = ${new Date(Date.parse(afterCutoff) + 1).toISOString()}, state_version = state_version + 1
+          SET updated_at = ${utcInstantFromEpochMillis(Date.parse(afterCutoff) + 1)}, state_version = state_version + 1
           WHERE cycle_id = ${draft.identity.cycleId}
         `)
         const directDelete = yield* Effect.exit(sql`
@@ -4369,7 +4372,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.bindSnapshot(afterCutoffDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const activationAfterCutoff = yield* store.activate(
           afterCutoffDraft.identity.cycleId,
-          new Date(Date.parse(afterCutoffDraft.window.submissionCutoffAt) + 1).toISOString(),
+          utcInstantFromEpochMillis(Date.parse(afterCutoffDraft.window.submissionCutoffAt) + 1),
         )
 
         yield* store.acquire(decisionDraft, acquireAt)
