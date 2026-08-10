@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Fiber, Logger, Option, References, Result } from 'effect'
+import { Cause, Deferred, Effect, Fiber, Layer, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -3519,7 +3519,7 @@ describe('autonomous cycle runner', () => {
         expect(control.acquisitions).toHaveLength(1)
         yield* Fiber.interrupt(fiber)
       }),
-    ).pipe(Effect.provide(Logger.layer([logger])), Effect.provide(TestClock.layer()))
+    ).pipe(Effect.provide(Layer.merge(Logger.layer([logger]), TestClock.layer())))
 
     await Effect.runPromise(program)
     expect(

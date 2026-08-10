@@ -558,17 +558,19 @@ describe('Bayn application composition', () => {
         Effect.gen(function* () {
           const cycleUsed = yield* Deferred.make<void>()
           const healthUsed = yield* Deferred.make<void>()
-          type RuntimeResource = {
+          interface RuntimeResourceShape {
             readonly close: () => void
             readonly use: (consumer: 'cycle' | 'health') => Effect.Effect<void>
           }
-          const RuntimeResource = Context.Service<RuntimeResource>('BaynApplicationTest/RuntimeResource')
+          class RuntimeResource extends Context.Service<RuntimeResource, RuntimeResourceShape>()(
+            '@proompteng/bayn/app.test/RuntimeResource',
+          ) {}
           const runtimeResourceLayer = Layer.effect(
             RuntimeResource,
             Effect.acquireRelease(
               Effect.sync(() => {
                 let open = true
-                const resource: RuntimeResource = {
+                const resource: RuntimeResourceShape = {
                   close: () => void (open = false),
                   use: (consumer) =>
                     Effect.sync(() => {

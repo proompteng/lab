@@ -21,6 +21,8 @@ import {
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
+import { baynTestPostgresUrl } from './test-environment.test-support'
+
 import {
   AccountStatus,
   AssetClass,
@@ -1145,7 +1147,7 @@ describe('paper candidate discovery', () => {
   })
 })
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 
 describePostgres('paper candidate discovery PostgreSQL transaction', () => {

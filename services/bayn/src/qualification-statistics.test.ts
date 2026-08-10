@@ -611,7 +611,7 @@ describe('walk-forward and terminal qualification semantics', () => {
     const changedMaterial = { ...originalMaterial, bootstrap: changedBootstrap }
 
     expect(() =>
-      Schema.decodeUnknownSync(QualificationAnalysisSchema, { onExcessProperty: 'error' })({
+      Schema.decodeSync(QualificationAnalysisSchema, { onExcessProperty: 'error' })({
         ...changedMaterial,
         analysisHash: canonicalHashV1(changedMaterial),
       }),

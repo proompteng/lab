@@ -2,7 +2,7 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Result } from 'effect'
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
@@ -124,9 +124,13 @@ interface TestServer {
   readonly state: Ref.Ref<RuntimeState>
 }
 
-const withHttpServer = (
+class TestHttpRequestError extends Data.TaggedError('TestHttpRequestError')<{
+  readonly cause: unknown
+}> {}
+
+const withHttpServer = <E>(
   options: TestServerOptions,
-  use: (server: TestServer) => Effect.Effect<void, unknown>,
+  use: (server: TestServer) => Effect.Effect<void, E>,
 ): Promise<void> => {
   const serverConfig = {
     cycleStallThresholdMs: config.cycleStallThresholdMs,
@@ -164,7 +168,7 @@ const request = (port: number, path: string, method = 'GET') =>
     try: async (signal) => {
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal })
       const contentType = response.headers.get('content-type')
-      const body = contentType?.includes('application/json') ? await response.json() : await response.text()
+      const body = contentType?.includes('application/json') === true ? await response.json() : await response.text()
       return {
         status: response.status,
         allow: response.headers.get('allow'),
@@ -173,7 +177,7 @@ const request = (port: number, path: string, method = 'GET') =>
         body,
       }
     },
-    catch: (cause) => cause,
+    catch: (cause) => new TestHttpRequestError({ cause }),
   })
 
 const connectSocket = (port: number): Effect.Effect<Socket> =>
@@ -1584,7 +1588,7 @@ describe('Bayn HTTP probes', () => {
     await withHttpServer({ state: runtimeState }, ({ port }) =>
       request(port, '/v1/status').pipe(
         Effect.tap((response) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             expect(response.body).toMatchObject({
               broker: {
                 configured: true,
@@ -1599,7 +1603,8 @@ describe('Bayn HTTP probes', () => {
             expect(body.broker).not.toHaveProperty('read')
             expect(body.broker).not.toHaveProperty('expectedAccountId')
             expect(body.broker).not.toHaveProperty('accountId')
-            expect(JSON.stringify(response.body)).not.toContain('paper-account-1')
+            const encodedBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(response.body)
+            expect(encodedBody).not.toContain('paper-account-1')
             expect(Object.values(body.broker).some((value) => typeof value === 'function')).toBe(false)
           }),
         ),

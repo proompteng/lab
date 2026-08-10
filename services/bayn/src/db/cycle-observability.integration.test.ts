@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import {
   CycleState,
@@ -22,8 +22,10 @@ import { CycleStore, CycleStoreLive } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const qualificationRunId = 'a'.repeat(64)
@@ -138,7 +140,7 @@ const seedSafetyState = (reconciledAt = '2026-03-06T21:00:00.000Z') =>
       ${reconciliationHash},
       ${'1'.repeat(64)},
       'EXACT',
-      ${sql.json(JSON.stringify([]))},
+      ${sql.json(encodeSqlJson([]))},
       ${reconciledAt}
     )
   `
@@ -615,7 +617,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             ${reconciliationHash},
             ${'2'.repeat(64)},
             'EXACT',
-            ${sql.json(JSON.stringify([]))},
+            ${sql.json(encodeSqlJson([]))},
             ${'2026-03-06T21:00:00.000Z'}
           )
         `

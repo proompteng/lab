@@ -3,6 +3,7 @@ import { Effect } from 'effect'
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { hashParameters, loadDefaultProtocol } from './protocol'
+import { Pipeable } from './pipeable'
 import {
   DataFeed,
   DataSource,
@@ -20,13 +21,15 @@ import {
 
 export const fixtureProtocol = Effect.runSync(loadDefaultProtocol)
 
-export const makeTestProvenance = (
+type TestProvenanceOverrides = {
+  readonly sourceRevision?: string
+  readonly imageDigest?: string
+  readonly behaviorHash?: string
+}
+
+const makeTestProvenanceDataFirst = (
   protocol: Protocol = fixtureProtocol,
-  overrides: {
-    readonly sourceRevision?: string
-    readonly imageDigest?: string
-    readonly behaviorHash?: string
-  } = {},
+  overrides: TestProvenanceOverrides = {},
 ): RuntimeProvenance =>
   makeRuntimeProvenance({
     sourceRevision: overrides.sourceRevision ?? 'a'.repeat(40),
@@ -42,13 +45,30 @@ export const makeTestProvenance = (
     },
   })
 
-export const makeTestDefinition = (
+export const makeTestProvenance = Pipeable.by<
+  (overrides: TestProvenanceOverrides) => (protocol: Protocol) => RuntimeProvenance,
+  typeof makeTestProvenanceDataFirst
+>(
+  (arguments_) =>
+    arguments_.length === 0 ||
+    (typeof arguments_[0] === 'object' && arguments_[0] !== null && 'schemaVersion' in arguments_[0]),
+  makeTestProvenanceDataFirst,
+)
+
+const makeTestDefinitionDataFirst = (
   protocol: Protocol = fixtureProtocol,
   decide: RiskBalancedTrendStrategyDefinition['decide'] = makeRiskBalancedTrendDefinition(protocol).decide,
 ): RiskBalancedTrendStrategyDefinition => ({
   ...makeRiskBalancedTrendDefinition(protocol),
   decide,
 })
+
+export const makeTestDefinition = Pipeable.by<
+  (
+    decide: RiskBalancedTrendStrategyDefinition['decide'],
+  ) => (protocol: Protocol) => RiskBalancedTrendStrategyDefinition,
+  typeof makeTestDefinitionDataFirst
+>((arguments_) => arguments_.length === 0 || typeof arguments_[0] !== 'function', makeTestDefinitionDataFirst)
 
 export const makeBars = (sessionCount = 1_122): readonly DailyBar[] => {
   const bars: DailyBar[] = []

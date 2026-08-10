@@ -186,7 +186,7 @@ describe('autonomous cycle identity and calendar', () => {
     }
 
     const identity = makeCycleIdentitySuccess(material)
-    const decoded = Schema.decodeUnknownResult(
+    const decoded = Schema.decodeResult(
       CycleIdentitySchema,
       strictParseOptions,
     )({

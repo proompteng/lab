@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Undici } from '@effect/platform-node'
-import { Effect, Fiber, Layer, Redacted, Result } from 'effect'
+import { Effect, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
@@ -200,12 +200,23 @@ describe('Alpaca paper reads', () => {
     let inspected = ''
     let surface: readonly string[] = []
     const client = HttpClient.make((request, target) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         method = request.method
         url = target.toString()
         key = request.headers['apca-api-key-id'] ?? ''
         secret = request.headers['apca-api-secret-key'] ?? ''
-        inspected = JSON.stringify(request)
+        inspected = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(request.toJSON()).pipe(
+          Effect.mapError(
+            (cause) =>
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.EncodeError({
+                  request,
+                  cause,
+                  description: 'failed to encode redacted request inspection',
+                }),
+              }),
+          ),
+        )
         return jsonResponse(request, accountResponse)
       }),
     )
@@ -1502,8 +1513,7 @@ describe('Alpaca paper reads', () => {
 
     const services = await Effect.runPromise(
       Effect.all({ session: BrokerSession, read: BrokerRead }).pipe(
-        Effect.provide(testLayer),
-        Effect.provide(TestClock.layer()),
+        Effect.provide(Layer.merge(testLayer, TestClock.layer())),
       ),
     )
 

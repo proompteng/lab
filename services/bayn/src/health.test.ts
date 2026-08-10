@@ -23,7 +23,7 @@ import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
-import { EvidenceStore } from './db/evidence-store'
+import { DatabaseError, EvidenceStore } from './db/evidence-store'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import {
@@ -1819,7 +1819,17 @@ describe('Bayn continuous health', () => {
     }
     const evidenceStore = {
       ...recoveringStore(initial),
-      check: Effect.suspend(() => (databaseAvailable ? Effect.void : Effect.fail(new Error('database unavailable')))),
+      check: Effect.suspend(() =>
+        databaseAvailable
+          ? Effect.void
+          : Effect.fail(
+              new DatabaseError({
+                failure: 'unavailable',
+                operation: 'check',
+                message: 'database unavailable',
+              }),
+            ),
+      ),
     }
     const dependencies = (
       effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,

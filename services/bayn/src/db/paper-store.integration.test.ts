@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import type { RuntimeConfig } from '../config'
 import { orderRequestBody } from '../broker/alpaca-mutations'
@@ -31,6 +31,7 @@ import {
   type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../execution/contracts'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
@@ -90,7 +91,8 @@ const ExecutionStore = Effect.gen(function* () {
   }
 })
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const accountId = 'paper-account-1'
@@ -490,8 +492,8 @@ const seedQualificationEvidence = (fixture: QualificationFixture) =>
       ) VALUES (
         ${result.runId}, 0, 'paper_activation_fixture',
         ${result.evaluationVerdict.gates[0].passed},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].actual))},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].required))},
+        ${sql.json(encodeSqlJson(result.evaluationVerdict.gates[0].actual))},
+        ${sql.json(encodeSqlJson(result.evaluationVerdict.gates[0].required))},
         ${hash(`${result.runId}-gate`)}
       )
     `
@@ -537,7 +539,7 @@ const seedExactReconciliation = (fixture: ReconciliationFixture, reconciliationA
         content_hash, status, discrepancies, reconciled_at
       ) VALUES (
         ${fixture.reconciliationId}, 'bayn.paper-reconciliation.v1', ${reconciliationAccountId},
-        ${stateHash}, ${stateHash}, ${fixture.contentHash}, 'EXACT', ${sql.json(JSON.stringify([]))},
+        ${stateHash}, ${stateHash}, ${fixture.contentHash}, 'EXACT', ${sql.json(encodeSqlJson([]))},
         clock_timestamp() - (${fixture.databaseAgeMs} * interval '1 millisecond')
       )
     `
@@ -1154,7 +1156,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
-              'EXACT', ${sql.json(JSON.stringify([]))}, ${reconciliationTime.reconciled_at.toISOString()}
+              'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
           const recovered = yield* store.ensureAuthorityGeneration({
@@ -1275,7 +1277,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('legacy-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('legacy-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('legacy-observe-recovery-content')}, 'EXACT', ${sql.json(encodeSqlJson([]))},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -1387,7 +1389,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('untrusted-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('untrusted-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('untrusted-observe-recovery-content')}, 'EXACT', ${sql.json(encodeSqlJson([]))},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -1466,7 +1468,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('observe-recovery-identity-reconciliation')}, 'bayn.paper-reconciliation.v1',
               ${changedIdentity.accountId}, ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('observe-recovery-identity-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('observe-recovery-identity-content')}, 'EXACT', ${sql.json(encodeSqlJson([]))},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -3343,14 +3345,11 @@ describePostgres('paper accounting persistence', () => {
     const rotationRuntime = makeIndependentStoreRuntime({ fail: false, planHashes: [] }, config)
     const client = makeClientRuntime()
     let arrivals = 0
-    let releaseRace: () => void = () => undefined
-    const raceGate = new Promise<void>((resolve) => {
-      releaseRace = resolve
-    })
-    const awaitRace = Effect.promise(() => {
+    const raceGate = Deferred.makeUnsafe<void>()
+    const awaitRace = Effect.gen(function* () {
       arrivals += 1
-      if (arrivals === 2) releaseRace()
-      return raceGate
+      if (arrivals === 2) yield* Deferred.succeed(raceGate, undefined)
+      yield* Deferred.await(raceGate)
     })
     try {
       const [activationExit, rotationExit] = await Promise.all([
@@ -3551,7 +3550,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('later-discrepancy')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${hash('expected-state')}, ${hash('observed-state')}, ${hash('later-discrepancy-content')},
-              'DISCREPANCY', ${sql.json(JSON.stringify([{ discrepancyId: hash('discrepancy') }]))},
+              'DISCREPANCY', ${sql.json(encodeSqlJson([{ discrepancyId: hash('discrepancy') }]))},
               clock_timestamp()
             )
           `

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Fiber } from 'effect'
+import { Data, Effect, Exit, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
@@ -28,6 +28,8 @@ import {
 import { runPaperProofPrepare } from './prepare'
 
 type PaperProofPublicExports = typeof import('./index')
+
+class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account'
@@ -298,7 +300,9 @@ const fixture = (options: FixtureOptions) => {
       calls.activate += 1
       sequence.push('activate')
       if (options.neverActivation === true) return Effect.never
-      return options.failActivation === true ? Effect.fail(new Error('activation failed')) : Effect.void
+      return options.failActivation === true
+        ? Effect.fail(new TestFailure({ message: 'activation failed' }))
+        : Effect.void
     },
     restrictAuthority: () => {
       calls.restrict += 1
@@ -310,20 +314,26 @@ const fixture = (options: FixtureOptions) => {
         calls.recoveryLoad += 1
         sequence.push('recovery:load')
         if (options.neverRecoveryLoad === true) return Effect.never
-        if (options.failRecoveryLoad === true) return Effect.fail(new Error('recovery load failed'))
+        if (options.failRecoveryLoad === true) {
+          return Effect.fail(new TestFailure({ message: 'recovery load failed' }))
+        }
         return Effect.succeed(recoveryState.required)
       },
       loadCompletion: () => {
         calls.completionLoad += 1
         sequence.push('recovery:load-completion')
         if (options.neverCompletionLoad === true) return Effect.never
-        if (options.failCompletionLoad === true) return Effect.fail(new Error('completion load failed'))
+        if (options.failCompletionLoad === true) {
+          return Effect.fail(new TestFailure({ message: 'completion load failed' }))
+        }
         return Effect.succeed(recoveryState.completion)
       },
       markRequired: (required) => {
         calls.recoveryMark += 1
         sequence.push(`recovery:mark:${required.operation}`)
-        if (options.failRecoveryMark === true) return Effect.fail(new Error('recovery mark failed before commit'))
+        if (options.failRecoveryMark === true) {
+          return Effect.fail(new TestFailure({ message: 'recovery mark failed before commit' }))
+        }
         recoveryState.required = required
         delete recoveryState.completion
         return Effect.void
@@ -341,7 +351,9 @@ const fixture = (options: FixtureOptions) => {
           !sameMutationEvent(completion.mutation, guard.expectedLatestMutation) ||
           (guard.rejectAnyCancellation && mutationState.cancel !== undefined)
         ) {
-          return Effect.fail(new Error('recovery completion guard rejected stale authority evidence'))
+          return Effect.fail(
+            new TestFailure({ message: 'recovery completion guard rejected stale authority evidence' }),
+          )
         }
         const commit = Effect.sync(() => {
           recoveryState.completion = completion
@@ -349,7 +361,9 @@ const fixture = (options: FixtureOptions) => {
         })
         if (options.neverCompleteAfterCommit === true) return commit.pipe(Effect.andThen(Effect.never))
         if (options.failCompleteAfterCommit === true) {
-          return commit.pipe(Effect.andThen(Effect.fail(new Error('completion response failed after commit'))))
+          return commit.pipe(
+            Effect.andThen(Effect.fail(new TestFailure({ message: 'completion response failed after commit' }))),
+          )
         }
         return commit
       },
@@ -377,7 +391,7 @@ const fixture = (options: FixtureOptions) => {
         Effect.gen(function* () {
           sequence.push('submit:preflight')
           if (options.failSubmitPrerequisite === true) {
-            return yield* Effect.fail(new Error('submit prerequisite failed before mutation start'))
+            return yield* new TestFailure({ message: 'submit prerequisite failed before mutation start' })
           }
           sequence.push('submit:mutation-started')
           yield* beforeBrokerMutation()
@@ -385,7 +399,7 @@ const fixture = (options: FixtureOptions) => {
           sequence.push('submit')
           if (options.neverSubmitAfterMarker === true) return yield* Effect.never
           if (options.failSubmit === true) {
-            return yield* Effect.fail(new Error('submit failed after durable marker'))
+            return yield* new TestFailure({ message: 'submit failed after durable marker' })
           }
           const submitted = options.submitEvent ?? event(MutationEventType.SubmitAccepted)
           mutationState.submit = submitted
@@ -396,7 +410,7 @@ const fixture = (options: FixtureOptions) => {
         Effect.gen(function* () {
           sequence.push('cancel:preflight')
           if (options.failCancelPrerequisite === true) {
-            return yield* Effect.fail(new Error('cancel prerequisite failed before mutation start'))
+            return yield* new TestFailure({ message: 'cancel prerequisite failed before mutation start' })
           }
           sequence.push('cancel:mutation-started')
           if (options.cancelStartedEvent !== undefined) mutationState.cancel = options.cancelStartedEvent
@@ -405,7 +419,7 @@ const fixture = (options: FixtureOptions) => {
           sequence.push('cancel')
           if (options.neverCancelAfterMarker === true) return yield* Effect.never
           if (options.failCancel === true) {
-            return yield* Effect.fail(new Error('cancel failed after durable marker'))
+            return yield* new TestFailure({ message: 'cancel failed after durable marker' })
           }
           const canceled = options.cancelEvent ?? event(MutationEventType.CancelAccepted, MutationOperation.Cancel)
           mutationState.cancel = canceled
@@ -424,7 +438,9 @@ const fixture = (options: FixtureOptions) => {
       calls.prepareIntent += 1
       sequence.push('intent:prepare')
       if (options.neverPrepareIntent === true) return Effect.never
-      if (options.failPrepareIntent === true) return Effect.fail(new Error('intent preparation failed'))
+      if (options.failPrepareIntent === true) {
+        return Effect.fail(new TestFailure({ message: 'intent preparation failed' }))
+      }
       return Effect.succeed({
         intentId,
         clientOrderId: `b1_${'A'.repeat(43)}`,
@@ -442,7 +458,7 @@ const fixture = (options: FixtureOptions) => {
       sequence.push(`reconcile:${calls.reconcile.toString()}`)
       if (options.neverReconcileCalls?.includes(calls.reconcile) === true) return Effect.never
       if (options.failReconcileCalls?.includes(calls.reconcile) === true) {
-        return Effect.fail(new Error('reconciliation failed'))
+        return Effect.fail(new TestFailure({ message: 'reconciliation failed' }))
       }
       return Effect.succeed({
         reconciliationId: hash(String(Math.min(calls.reconcile, 9))),
@@ -457,7 +473,7 @@ const fixture = (options: FixtureOptions) => {
       calls.clock += 1
       if (options.neverClockCalls?.includes(calls.clock) === true) return Effect.never
       return options.failClockCalls?.includes(calls.clock) === true
-        ? Effect.fail(new Error('clock failed'))
+        ? Effect.fail(new TestFailure({ message: 'clock failed' }))
         : Effect.succeed('2026-07-31T08:00:01.000Z')
     }),
   }

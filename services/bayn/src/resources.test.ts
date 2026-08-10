@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -27,6 +27,8 @@ import {
   validateResolvedReplicaEndpoint,
   type ReplicaAddressValidationError,
 } from './tigerbeetle-client'
+
+class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
 
 const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: StrategyRuntime) =>
   Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore }).pipe(
@@ -496,7 +498,7 @@ describe('Bayn resource lifecycle', () => {
           yield* journal.checkRun({ runId: 'a'.repeat(64), accountCount: 0, transferCount: 0, exact: true }).pipe(
             Effect.timeoutOrElse({
               duration: 250,
-              orElse: () => Effect.fail(new Error('paired TigerBeetle queries were serialized')),
+              orElse: () => Effect.fail(new TestFailure({ message: 'paired TigerBeetle queries were serialized' })),
             }),
           )
         }).pipe(
@@ -515,15 +517,12 @@ describe('Bayn resource lifecycle', () => {
 
   test('invalidates an interrupted TigerBeetle client and defers replacement to the next request', async () => {
     const closeCounts = [0, 0]
-    let rejectLookup: ((cause: Error) => void) | undefined
+    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
     const interruptedClient = makeTigerBeetleClient({
-      lookupAccounts: () =>
-        new Promise<never>((_, reject) => {
-          rejectLookup = reject
-        }),
+      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
       destroy: () => {
         closeCounts[0] += 1
-        rejectLookup?.(new Error('client closed'))
+        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
       },
     })
     const recoveredClient = makeTigerBeetleClient({
@@ -622,8 +621,8 @@ describe('Bayn resource lifecycle', () => {
   })
 
   test('keeps ClickHouse authorization failures observable as terminal startup failures', async () => {
-    const authorization = new SqlError({
-      reason: new AuthorizationError({ cause: new Error('SELECT denied'), operation: 'query' }),
+    const authorization = SqlError.make({
+      reason: AuthorizationError.make({ cause: new Error('SELECT denied'), operation: 'query' }),
     })
     const marketData = marketDataService(
       Effect.fail(marketDataOperationError('load', 'failed to load finalized Signal snapshot', authorization)),
@@ -648,16 +647,13 @@ describe('Bayn resource lifecycle', () => {
 
   test('destroys TigerBeetle to cancel its indefinite retry when the startup deadline expires', async () => {
     let destroyed = false
-    let rejectLookup: ((cause: Error) => void) | undefined
+    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
     const tigerBeetleClient = makeTigerBeetleClient({
-      lookupAccounts: () =>
-        new Promise<never>((_, reject) => {
-          rejectLookup = reject
-        }),
+      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
       destroy: () => {
         if (destroyed) return
         destroyed = true
-        rejectLookup?.(new Error('client closed'))
+        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
       },
     })
     const marketData = marketDataService(Effect.succeed(makeSnapshot()))
