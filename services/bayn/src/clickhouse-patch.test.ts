@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 
 import { NodeHttpClient } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer } from 'effect'
+import { Effect, Fiber, Layer } from 'effect'
 
 const listen = (server: ReturnType<typeof createServer>): Effect.Effect<number> =>
   Effect.callback<number>((resume) => {
@@ -24,19 +24,22 @@ const listen = (server: ReturnType<typeof createServer>): Effect.Effect<number> 
 test('Effect ClickHouse drains its connection check before exposing the client', async () => {
   let responseFinished = false
   let requests = 0
+  const responseFibers: Array<Fiber.Fiber<void>> = []
   const server = createServer((_, response) => {
     requests += 1
     response.writeHead(200, { 'content-type': 'text/plain; charset=UTF-8', 'x-clickhouse-summary': '{}' })
     response.flushHeaders()
     response.write('1\n')
-    Effect.sleep(250).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          responseFinished = true
-          response.end()
-        }),
+    responseFibers.push(
+      Effect.sleep(250).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            responseFinished = true
+            response.end()
+          }),
+        ),
+        Effect.runFork,
       ),
-      Effect.runFork,
     )
   })
   const port = await Effect.runPromise(listen(server))
@@ -63,6 +66,7 @@ test('Effect ClickHouse drains its connection check before exposing the client',
     )
     expect(requests).toBe(1)
   } finally {
+    await Effect.runPromise(Effect.forEach(responseFibers, Fiber.interrupt, { discard: true }))
     server.close()
     server.closeAllConnections()
   }
