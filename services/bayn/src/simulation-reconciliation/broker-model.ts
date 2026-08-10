@@ -221,17 +221,19 @@ export type ReconciliationDecisionError =
 export type ReconciliationDecision<A> = Result.Result<A, ReconciliationDecisionError>
 export const fail = <A>(error: ReconciliationDecisionError): ReconciliationDecision<A> => Result.fail(error)
 
-export const canonicalHash = (
-  operation: ReconciliationHashOperation,
-  value: unknown,
-  identity?: string,
-): ReconciliationDecision<string> =>
+export interface ReconciliationCanonicalHashInput {
+  readonly operation: ReconciliationHashOperation
+  readonly value: unknown
+  readonly identity?: string
+}
+
+export const canonicalHash = (input: ReconciliationCanonicalHashInput): ReconciliationDecision<string> =>
   Result.mapError(
-    canonicalHashV1Result(value),
+    canonicalHashV1Result(input.value),
     (cause): ReconciliationDecisionError => ({
       _tag: 'CanonicalizationFailed',
-      operation,
-      ...(identity === undefined ? {} : { identity }),
+      operation: input.operation,
+      ...(input.identity === undefined ? {} : { identity: input.identity }),
       cause,
     }),
   )
@@ -280,19 +282,25 @@ export const roundMicrosProduct = Pipeable.dual(3, roundMicrosProductDataFirst)
 
 export const reconciledStateHash = (state: ReconciledStateMaterial): ReconciliationDecision<string> =>
   pipe(
-    canonicalHash('broker-state-hash', {
-      schemaVersion: 'bayn.paper-risk-broker-state.v1',
-      account: state.account,
-      positions: state.positions,
-      positionsObservedAt: state.positionsObservedAt,
-      orders: state.orders,
-      ordersObservedAt: state.ordersObservedAt,
+    canonicalHash({
+      operation: 'broker-state-hash',
+      value: {
+        schemaVersion: 'bayn.paper-risk-broker-state.v1',
+        account: state.account,
+        positions: state.positions,
+        positionsObservedAt: state.positionsObservedAt,
+        orders: state.orders,
+        ordersObservedAt: state.ordersObservedAt,
+      },
     }),
     Result.flatMap((brokerStateHash) =>
-      canonicalHash('reconciled-state-hash', {
-        schemaVersion: 'bayn.paper-risk-reconciled-state.v1',
-        brokerStateHash,
-        accountingHash: state.accountingHash,
+      canonicalHash({
+        operation: 'reconciled-state-hash',
+        value: {
+          schemaVersion: 'bayn.paper-risk-reconciled-state.v1',
+          brokerStateHash,
+          accountingHash: state.accountingHash,
+        },
       }),
     ),
   )
@@ -347,18 +355,18 @@ const discrepancy = (
   expected === observed
     ? fail({ _tag: 'DiscrepancyWithoutDifference', kind, identity, value: expected })
     : pipe(
-        canonicalHash(
-          'discrepancy-id',
-          { schemaVersion: 'bayn.paper-discrepancy-id.v1', accountId, kind, identity },
+        canonicalHash({
+          operation: 'discrepancy-id',
+          value: { schemaVersion: 'bayn.paper-discrepancy-id.v1', accountId, kind, identity },
           identity,
-        ),
+        }),
         Result.flatMap((discrepancyId) =>
           pipe(
-            canonicalHash(
-              'discrepancy-evidence',
-              { schemaVersion: 'bayn.paper-discrepancy-evidence.v1', discrepancyId, expected, observed },
+            canonicalHash({
+              operation: 'discrepancy-evidence',
+              value: { schemaVersion: 'bayn.paper-discrepancy-evidence.v1', discrepancyId, expected, observed },
               identity,
-            ),
+            }),
             Result.map((evidenceHash) => ({ discrepancyId, kind, identity, expected, observed, evidenceHash })),
           ),
         ),

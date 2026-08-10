@@ -110,13 +110,15 @@ const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => (
 export const decodeStoredEvents = (rows: unknown): Result.Result<readonly MutationEvent[], MutationStoreError> =>
   Result.map(
     Result.mapError(decodeStoredEventRows(rows), (cause) =>
-      storeError('read', 'decode', 'stored mutation event failed decoding', cause),
+      storeError({ operation: 'read', failure: 'decode', message: 'stored mutation event failed decoding', cause }),
     ),
     (decoded) => decoded.map(toEvent),
   )
 
 export const decodeIntentId = (intentId: string): Result.Result<string, MutationStoreError> =>
-  Result.mapError(decodeIntentIdResult(intentId), (cause) => storeError('read', 'decode', 'invalid intent ID', cause))
+  Result.mapError(decodeIntentIdResult(intentId), (cause) =>
+    storeError({ operation: 'read', failure: 'decode', message: 'invalid intent ID', cause }),
+  )
 
 const decodeAuthoritySnapshotDataFirst = (
   operation: MutationOperation,
@@ -124,7 +126,12 @@ const decodeAuthoritySnapshotDataFirst = (
 ): Result.Result<MutationAuthoritySnapshot | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeAuthorityRows(rows), (cause) =>
-      storeError(startStoreOperationFor(operation), 'decode', 'stored mutation authority failed decoding', cause),
+      storeError({
+        operation: startStoreOperationFor(operation),
+        failure: 'decode',
+        message: 'stored mutation authority failed decoding',
+        cause,
+      }),
     ),
     (decoded) => {
       const authority = decoded[0]
@@ -149,7 +156,12 @@ const decodeIntentSnapshotDataFirst = (
 ): Result.Result<MutationIntentSnapshot | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeIntentRows(rows), (cause) =>
-      storeError(startStoreOperationFor(operation), 'decode', 'stored mutation intent failed decoding', cause),
+      storeError({
+        operation: startStoreOperationFor(operation),
+        failure: 'decode',
+        message: 'stored mutation intent failed decoding',
+        cause,
+      }),
     ),
     (decoded) => {
       const intent = decoded[0]
@@ -176,7 +188,12 @@ export const decodeIntentSnapshot = Pipeable.dual(2, decodeIntentSnapshotDataFir
 export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeUnresolvedRows(rows), (cause) =>
-      storeError('begin-submit', 'decode', 'unresolved mutation result failed decoding', cause),
+      storeError({
+        operation: 'begin-submit',
+        failure: 'decode',
+        message: 'unresolved mutation result failed decoding',
+        cause,
+      }),
     ),
     (decoded) => decoded[0]?.unresolved,
   )
@@ -187,7 +204,7 @@ const decodeEventIdsDataFirst = (
 ): Result.Result<readonly string[], MutationStoreError> =>
   Result.map(
     Result.mapError(decodeEventIdRows(rows), (cause) =>
-      storeError(operation, 'decode', 'mutation event append result failed decoding', cause),
+      storeError({ operation, failure: 'decode', message: 'mutation event append result failed decoding', cause }),
     ),
     (decoded) => decoded.map((row) => row.event_id),
   )
@@ -200,7 +217,7 @@ const decodeIntentIdsDataFirst = (
   rows: unknown,
 ): Result.Result<readonly string[], MutationStoreError> =>
   Result.map(
-    Result.mapError(decodeIntentIdRows(rows), (cause) => storeError(operation, 'decode', message, cause)),
+    Result.mapError(decodeIntentIdRows(rows), (cause) => storeError({ operation, failure: 'decode', message, cause })),
     (decoded) => decoded.map((row) => row.intent_id),
   )
 
@@ -212,7 +229,7 @@ const decodeOutcomeIntentSnapshotDataFirst = (
 ): Result.Result<MutationReplayIntentSnapshot | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeOutcomeIntentRows(rows), (cause) =>
-      storeError(operation, 'decode', 'stored mutation intent state failed decoding', cause),
+      storeError({ operation, failure: 'decode', message: 'stored mutation intent state failed decoding', cause }),
     ),
     (decoded) => {
       const intent = decoded[0]
@@ -233,7 +250,12 @@ const decodeAcknowledgedDataFirst = (
 ): Result.Result<boolean | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeAcknowledgedRows(rows), (cause) =>
-      storeError(operation, 'decode', 'acknowledged submit recovery result failed decoding', cause),
+      storeError({
+        operation,
+        failure: 'decode',
+        message: 'acknowledged submit recovery result failed decoding',
+        cause,
+      }),
     ),
     (decoded) => decoded[0]?.acknowledged,
   )

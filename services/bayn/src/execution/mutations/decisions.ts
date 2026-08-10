@@ -136,12 +136,14 @@ const intentStateForIdentifiedSubmit = (
   }
 }
 
-export const storeError = (
-  operation: MutationStoreError['operation'],
-  failure: MutationStoreError['failure'],
-  message: string,
-  cause?: unknown,
-) => new MutationStoreErrorValue({ operation, failure, message, cause })
+export interface MutationStoreErrorInput {
+  readonly operation: MutationStoreError['operation']
+  readonly failure: MutationStoreError['failure']
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const storeError = (input: MutationStoreErrorInput): MutationStoreError => new MutationStoreErrorValue(input)
 
 export const startStoreOperationFor = (operation: MutationOperation): StartStoreOperation =>
   operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
@@ -198,7 +200,11 @@ const decideMutationStartReplayDataFirst = (
     existing.mutationId !== expectedMutationId.success
   ) {
     return Result.fail(
-      storeError(storeOperation, 'conflict', 'mutation identity was reused with different request content'),
+      storeError({
+        operation: storeOperation,
+        failure: 'conflict',
+        message: 'mutation identity was reused with different request content',
+      }),
     )
   }
   return Result.succeed({
@@ -216,10 +222,14 @@ const decideMutationAuthorityDataFirst = (
 ): Result.Result<MutationAuthorityBinding, MutationStoreError> => {
   const storeOperation = startStoreOperationFor(operation)
   if (authority === undefined) {
-    return Result.fail(storeError(storeOperation, 'authority', 'paper authority is not initialized'))
+    return Result.fail(
+      storeError({ operation: storeOperation, failure: 'authority', message: 'paper authority is not initialized' }),
+    )
   }
   if (authority.maximum !== Authority.Paper) {
-    return Result.fail(storeError(storeOperation, 'authority', 'GitOps maximum authority is not PAPER'))
+    return Result.fail(
+      storeError({ operation: storeOperation, failure: 'authority', message: 'GitOps maximum authority is not PAPER' }),
+    )
   }
   const ordinarySubmit = authority.effective === Authority.Paper && authority.killState === KillState.Clear
   const boundedCloseSubmit =
@@ -227,7 +237,13 @@ const decideMutationAuthorityDataFirst = (
     (authority.effective === Authority.Paper || authority.effective === Authority.Observe) &&
     (authority.killState === KillState.Clear || authority.killState === KillState.Active)
   if (operation === MutationOperation.Submit && !ordinarySubmit && !boundedCloseSubmit) {
-    return Result.fail(storeError('begin-submit', 'authority', 'effective authority is not PAPER and clear'))
+    return Result.fail(
+      storeError({
+        operation: 'begin-submit',
+        failure: 'authority',
+        message: 'effective authority is not PAPER and clear',
+      }),
+    )
   }
   if (
     operation === MutationOperation.Cancel &&
@@ -235,12 +251,20 @@ const decideMutationAuthorityDataFirst = (
     authority.effective !== Authority.Paper
   ) {
     return Result.fail(
-      storeError('begin-cancel', 'authority', 'cancellation requires PAPER authority or an active kill'),
+      storeError({
+        operation: 'begin-cancel',
+        failure: 'authority',
+        message: 'cancellation requires PAPER authority or an active kill',
+      }),
     )
   }
   if (authority.generationMaximum !== Authority.Paper || authority.generationAccountId === null) {
     return Result.fail(
-      storeError(storeOperation, 'authority', 'active PAPER authority lacks its immutable account binding'),
+      storeError({
+        operation: storeOperation,
+        failure: 'authority',
+        message: 'active PAPER authority lacks its immutable account binding',
+      }),
     )
   }
   return Result.succeed({
@@ -263,10 +287,18 @@ export const decideFinalSubmitAuthorization = (
   closeOnly = false,
 ): Result.Result<void, MutationStoreError> => {
   if (intent === undefined) {
-    return Result.fail(storeError('begin-submit', 'invariant', 'final submit intent does not exist'))
+    return Result.fail(
+      storeError({ operation: 'begin-submit', failure: 'invariant', message: 'final submit intent does not exist' }),
+    )
   }
   if (closeOnly && intent.side !== OrderSide.Sell) {
-    return Result.fail(storeError('begin-submit', 'authority', 'close-only submit requires a sell intent'))
+    return Result.fail(
+      storeError({
+        operation: 'begin-submit',
+        failure: 'authority',
+        message: 'close-only submit requires a sell intent',
+      }),
+    )
   }
   if (
     intent.state !== IntentState.IoStarted ||
@@ -279,11 +311,11 @@ export const decideFinalSubmitAuthorization = (
     intent.authorityGenerationHash !== authority.generationHash
   ) {
     return Result.fail(
-      storeError(
-        'begin-submit',
-        'authority',
-        'final submit no longer matches active PAPER authority and immutable intent bindings',
-      ),
+      storeError({
+        operation: 'begin-submit',
+        failure: 'authority',
+        message: 'final submit no longer matches active PAPER authority and immutable intent bindings',
+      }),
     )
   }
   return Result.succeed(undefined)
@@ -292,7 +324,13 @@ export const decideFinalSubmitAuthorization = (
 export const decideMutationContainment = (unresolved: boolean | undefined): Result.Result<void, MutationStoreError> =>
   unresolved === false
     ? Result.succeed(undefined)
-    : Result.fail(storeError('begin-submit', 'invariant', 'another broker mutation has an unresolved outcome'))
+    : Result.fail(
+        storeError({
+          operation: 'begin-submit',
+          failure: 'invariant',
+          message: 'another broker mutation has an unresolved outcome',
+        }),
+      )
 
 const decideMutationStartDataFirst = (
   operation: MutationOperation,
@@ -303,7 +341,9 @@ const decideMutationStartDataFirst = (
 ): Result.Result<MutationStartDecision, MutationStoreError> => {
   const storeOperation = startStoreOperationFor(operation)
   if (intent === undefined) {
-    return Result.fail(storeError(storeOperation, 'invariant', 'intent does not exist'))
+    return Result.fail(
+      storeError({ operation: storeOperation, failure: 'invariant', message: 'intent does not exist' }),
+    )
   }
   if (
     intent.generationMaximum !== Authority.Paper ||
@@ -313,24 +353,38 @@ const decideMutationStartDataFirst = (
     intent.generationStrategyName !== intent.strategyName
   ) {
     return Result.fail(
-      storeError(
-        storeOperation,
-        'authority',
-        'intent does not match its immutable PAPER authority-generation bindings',
-      ),
+      storeError({
+        operation: storeOperation,
+        failure: 'authority',
+        message: 'intent does not match its immutable PAPER authority-generation bindings',
+      }),
     )
   }
   if (intent.accountId !== authority.accountId) {
     return Result.fail(
-      storeError(storeOperation, 'authority', 'intent account does not match the active PAPER authority generation'),
+      storeError({
+        operation: storeOperation,
+        failure: 'authority',
+        message: 'intent account does not match the active PAPER authority generation',
+      }),
     )
   }
   if (input.closeOnly === true && intent.side !== OrderSide.Sell) {
-    return Result.fail(storeError('begin-submit', 'authority', 'close-only submit requires a sell intent'))
+    return Result.fail(
+      storeError({
+        operation: 'begin-submit',
+        failure: 'authority',
+        message: 'close-only submit requires a sell intent',
+      }),
+    )
   }
   if (operation === MutationOperation.Submit && intent.authorityGenerationHash !== authority.generationHash) {
     return Result.fail(
-      storeError('begin-submit', 'authority', 'intent authority generation is not the active PAPER generation'),
+      storeError({
+        operation: 'begin-submit',
+        failure: 'authority',
+        message: 'intent authority generation is not the active PAPER generation',
+      }),
     )
   }
 
@@ -356,16 +410,30 @@ const decideMutationStartDataFirst = (
           )
   if (requiredState === undefined) {
     return Result.fail(
-      storeError('begin-cancel', 'invariant', 'cancel requires the exact durable submitted order identity'),
+      storeError({
+        operation: 'begin-cancel',
+        failure: 'invariant',
+        message: 'cancel requires the exact durable submitted order identity',
+      }),
     )
   }
   if (intent.state !== requiredState) {
     return Result.fail(
-      storeError(storeOperation, 'invariant', `${operation.toLowerCase()} requires an ${requiredState} intent`),
+      storeError({
+        operation: storeOperation,
+        failure: 'invariant',
+        message: `${operation.toLowerCase()} requires an ${requiredState} intent`,
+      }),
     )
   }
   if (input.occurredAt <= intent.updatedAt) {
-    return Result.fail(storeError(storeOperation, 'invariant', 'mutation time must follow the intent state'))
+    return Result.fail(
+      storeError({
+        operation: storeOperation,
+        failure: 'invariant',
+        message: 'mutation time must follow the intent state',
+      }),
+    )
   }
 
   return Result.map(
@@ -659,7 +727,11 @@ const decideMutationEventContract = (
   return valid
     ? Result.succeed(undefined)
     : Result.fail(
-        storeError(storeOperation, 'invariant', 'mutation event does not match its operation and evidence contract'),
+        storeError({
+          operation: storeOperation,
+          failure: 'invariant',
+          message: 'mutation event does not match its operation and evidence contract',
+        }),
       )
 }
 
@@ -672,7 +744,9 @@ const decideMutationOutcomeDataFirst = (
   const storeOperation = outcomeStoreOperation(definition)
   const facts = decideMutationOutcomeDefinition(definition)
   if (previous === undefined) {
-    return Result.fail(storeError(storeOperation, 'invariant', 'mutation STARTED event does not exist'))
+    return Result.fail(
+      storeError({ operation: storeOperation, failure: 'invariant', message: 'mutation STARTED event does not exist' }),
+    )
   }
   const expectedMutationId = canonicalMutationId(storeOperation, input.intentId, facts.operation)
   if (Result.isFailure(expectedMutationId)) return Result.fail(expectedMutationId.failure)
@@ -681,17 +755,31 @@ const decideMutationOutcomeDataFirst = (
     previous.operation !== facts.operation ||
     previous.mutationId !== expectedMutationId.success
   ) {
-    return Result.fail(storeError(storeOperation, 'conflict', 'mutation identity and sequence must remain exact'))
+    return Result.fail(
+      storeError({
+        operation: storeOperation,
+        failure: 'conflict',
+        message: 'mutation identity and sequence must remain exact',
+      }),
+    )
   }
   if (previous.requestHash !== input.requestHash) {
-    return Result.fail(storeError(storeOperation, 'conflict', 'mutation request hash changed'))
+    return Result.fail(
+      storeError({ operation: storeOperation, failure: 'conflict', message: 'mutation request hash changed' }),
+    )
   }
   if (
     previous.brokerOrderId !== undefined &&
     input.brokerOrderId !== undefined &&
     previous.brokerOrderId !== input.brokerOrderId
   ) {
-    return Result.fail(storeError(storeOperation, 'conflict', 'mutation broker order identity cannot change'))
+    return Result.fail(
+      storeError({
+        operation: storeOperation,
+        failure: 'conflict',
+        message: 'mutation broker order identity cannot change',
+      }),
+    )
   }
 
   const brokerOrderId = previous.brokerOrderId ?? input.brokerOrderId
@@ -714,21 +802,31 @@ const decideMutationOutcomeDataFirst = (
   if (sameOutcome(previous, event)) {
     if (facts.replayIntent !== undefined && !matchesReplayIntent(facts.replayIntent, currentIntent)) {
       return Result.fail(
-        storeError(storeOperation, 'conflict', 'mutation outcome replay conflicts with durable intent state'),
+        storeError({
+          operation: storeOperation,
+          failure: 'conflict',
+          message: 'mutation outcome replay conflicts with durable intent state',
+        }),
       )
     }
     return Result.succeed({ _tag: 'ReplayMutation', event: previous })
   }
   if (input.occurredAt < previous.occurredAt) {
-    return Result.fail(storeError(storeOperation, 'conflict', 'mutation identity and sequence must remain exact'))
+    return Result.fail(
+      storeError({
+        operation: storeOperation,
+        failure: 'conflict',
+        message: 'mutation identity and sequence must remain exact',
+      }),
+    )
   }
   if (!allowsOutcomeEvent(previous.eventType, facts.eventType)) {
     return Result.fail(
-      storeError(
-        storeOperation,
-        'conflict',
-        `invalid mutation transition from ${previous.eventType} to ${facts.eventType}`,
-      ),
+      storeError({
+        operation: storeOperation,
+        failure: 'conflict',
+        message: `invalid mutation transition from ${previous.eventType} to ${facts.eventType}`,
+      }),
     )
   }
   const eventContract = decideMutationEventContract(storeOperation, event)
@@ -749,7 +847,11 @@ const decideCancelFirstDataFirst = (
 ): Result.Result<void, MutationStoreError> =>
   decision._tag === 'RequireNoDurableCancellation' && cancellation !== undefined
     ? Result.fail(
-        storeError('record-recovery', 'conflict', 'terminal submit recovery cannot overtake a durable cancellation'),
+        storeError({
+          operation: 'record-recovery',
+          failure: 'conflict',
+          message: 'terminal submit recovery cannot overtake a durable cancellation',
+        }),
       )
     : Result.succeed(undefined)
 
@@ -764,13 +866,13 @@ const decideMutationAppendDataFirst = (
   appendedEventIds.length === 1
     ? Result.succeed(event)
     : Result.fail(
-        storeError(
-          storeOperation,
-          requireCurrentRisk ? 'invariant' : 'conflict',
-          requireCurrentRisk
+        storeError({
+          operation: storeOperation,
+          failure: requireCurrentRisk ? 'invariant' : 'conflict',
+          message: requireCurrentRisk
             ? 'mutation start requires a current approved risk decision'
             : 'mutation event append lost its race',
-        ),
+        }),
       )
 
 export const decideMutationAppend = Pipeable.dual(4, decideMutationAppendDataFirst)
@@ -780,7 +882,13 @@ export const decideSubmitStartWrite = (
 ): Result.Result<void, MutationStoreError> =>
   transitionedIntentIds.length === 1
     ? Result.succeed(undefined)
-    : Result.fail(storeError('begin-submit', 'conflict', 'approved intent transition lost its race'))
+    : Result.fail(
+        storeError({
+          operation: 'begin-submit',
+          failure: 'conflict',
+          message: 'approved intent transition lost its race',
+        }),
+      )
 
 const decideMutationOutcomeWriteDataFirst = (
   storeOperation: OutcomeStoreOperation,
@@ -788,7 +896,13 @@ const decideMutationOutcomeWriteDataFirst = (
 ): Result.Result<void, MutationStoreError> =>
   transitionedIntentIds.length === 1
     ? Result.succeed(undefined)
-    : Result.fail(storeError(storeOperation, 'conflict', 'intent mutation outcome lost its race'))
+    : Result.fail(
+        storeError({
+          operation: storeOperation,
+          failure: 'conflict',
+          message: 'intent mutation outcome lost its race',
+        }),
+      )
 
 export const decideMutationOutcomeWrite = Pipeable.dual(2, decideMutationOutcomeWriteDataFirst)
 
@@ -804,7 +918,9 @@ const decideSubmitRecoveryWriteDataFirst = (
   if (recoveredIntentIds.length === 0 && transition.nextState === IntentState.Acknowledged) {
     return Result.succeed({ _tag: 'VerifyAcknowledgedIntent' })
   }
-  return Result.fail(storeError(storeOperation, 'conflict', 'unknown intent recovery lost its race'))
+  return Result.fail(
+    storeError({ operation: storeOperation, failure: 'conflict', message: 'unknown intent recovery lost its race' }),
+  )
 }
 
 export const decideSubmitRecoveryWrite = Pipeable.dual(3, decideSubmitRecoveryWriteDataFirst)
@@ -815,7 +931,13 @@ const decideAcknowledgedRecoveryDataFirst = (
 ): Result.Result<void, MutationStoreError> =>
   acknowledged === true
     ? Result.succeed(undefined)
-    : Result.fail(storeError(storeOperation, 'conflict', 'submit recovery requires an unresolved durable intent'))
+    : Result.fail(
+        storeError({
+          operation: storeOperation,
+          failure: 'conflict',
+          message: 'submit recovery requires an unresolved durable intent',
+        }),
+      )
 
 export const decideAcknowledgedRecovery = Pipeable.dual(2, decideAcknowledgedRecoveryDataFirst)
 
@@ -827,13 +949,13 @@ const decideRecoveredOutcomeWriteDataFirst = (
   transitionedIntentIds.length === 1
     ? Result.succeed(undefined)
     : Result.fail(
-        storeError(
-          storeOperation,
-          'conflict',
-          acknowledgedTerminal
+        storeError({
+          operation: storeOperation,
+          failure: 'conflict',
+          message: acknowledgedTerminal
             ? 'acknowledged intent terminal recovery lost its race'
             : 'recovered intent outcome lost its race',
-        ),
+        }),
       )
 
 export const decideRecoveredOutcomeWrite = Pipeable.dual(3, decideRecoveredOutcomeWriteDataFirst)
@@ -844,7 +966,9 @@ const decideCancelRecoveryStateDataFirst = (
 ): Result.Result<IntentState.Acknowledged | IntentState.Recovered, MutationStoreError> => {
   if (recoveredIntentIds.length === 0) return Result.succeed(IntentState.Acknowledged)
   if (recoveredIntentIds.length === 1) return Result.succeed(IntentState.Recovered)
-  return Result.fail(storeError(storeOperation, 'conflict', 'intent mutation outcome lost its race'))
+  return Result.fail(
+    storeError({ operation: storeOperation, failure: 'conflict', message: 'intent mutation outcome lost its race' }),
+  )
 }
 
 export const decideCancelRecoveryState = Pipeable.dual(2, decideCancelRecoveryStateDataFirst)
@@ -854,7 +978,12 @@ const decodeStartInputDataFirst = (
   input: unknown,
 ): Result.Result<MutationStartInput, MutationStoreError> =>
   Result.mapError(decodeStartInputResult(input), (cause) =>
-    storeError(startStoreOperationFor(operation), 'decode', 'invalid mutation start', cause),
+    storeError({
+      operation: startStoreOperationFor(operation),
+      failure: 'decode',
+      message: 'invalid mutation start',
+      cause,
+    }),
   )
 
 export const decodeStartInput = Pipeable.dual(2, decodeStartInputDataFirst)
@@ -878,7 +1007,7 @@ const decodeOutcomeInputDataFirst = (
       ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
       ...(evidence._tag === 'RetainCompleteEvidence' ? { evidence: evidence.evidence } : {}),
     }),
-    (cause) => storeError(storeOperation, 'decode', 'invalid mutation outcome', cause),
+    (cause) => storeError({ operation: storeOperation, failure: 'decode', message: 'invalid mutation outcome', cause }),
   )
 }
 

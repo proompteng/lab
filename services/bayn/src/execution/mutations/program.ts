@@ -24,7 +24,7 @@ export const makePostgresMutationStore = Effect.gen(function* () {
       Effect.mapError((cause) =>
         cause instanceof MutationStoreError || cause instanceof WriterFenceError
           ? cause
-          : storeError(operation, 'query', `mutation ${operation} failed`, cause),
+          : storeError({ operation, failure: 'query', message: `mutation ${operation} failed`, cause }),
       ),
     )
 

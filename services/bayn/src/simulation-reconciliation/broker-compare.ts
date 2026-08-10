@@ -50,10 +50,13 @@ export const compareReconciliation = (
         Result.flatMap(() =>
           ordered.length === 0
             ? Result.succeed(snapshot.stateHash)
-            : canonicalHash('observed-hash', {
-                schemaVersion: 'bayn.paper-reconciliation-observed.v1',
-                stateHash: snapshot.stateHash,
-                discrepancies: ordered.map((value) => value.evidenceHash),
+            : canonicalHash({
+                operation: 'observed-hash',
+                value: {
+                  schemaVersion: 'bayn.paper-reconciliation-observed.v1',
+                  stateHash: snapshot.stateHash,
+                  discrepancies: ordered.map((value) => value.evidenceHash),
+                },
               }),
         ),
         Result.map((observedHash) => ({
