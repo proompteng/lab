@@ -250,7 +250,7 @@ export const decidePreparedMutationIntentAdmission = Pipeable.by<
   decidePreparedMutationIntentAdmissionDataFirst,
 )
 
-export const decidePreparedCloseIntentAdmission = (
+const decidePreparedCloseIntentAdmissionDataFirst = (
   intent: Pick<Intent, 'side'>,
   prepared: PreparedMutationIntentDecision,
   observedAt: string,
@@ -305,6 +305,22 @@ export const decidePreparedCloseIntentAdmission = (
   }
   return Result.succeed(undefined)
 }
+
+export const decidePreparedCloseIntentAdmission = Pipeable.by<
+  (
+    prepared: PreparedMutationIntentDecision,
+    observedAt: string,
+    expiresAt: string,
+    unknownMutationCount: number,
+    reconciliationStatus?: ReconciliationStatus,
+    accountingExact?: boolean,
+    unknownOrderCount?: number,
+  ) => (intent: Pick<Intent, 'side'>) => ReturnType<typeof decidePreparedCloseIntentAdmissionDataFirst>,
+  typeof decidePreparedCloseIntentAdmissionDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'side' in arguments_[0],
+  decidePreparedCloseIntentAdmissionDataFirst,
+)
 
 const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: Order): readonly Order[] =>
   orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)

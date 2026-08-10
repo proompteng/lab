@@ -298,7 +298,7 @@ const collectHealthProbeResults = (
   )
 }
 
-export const checkHealth = (
+const checkHealthDataFirst = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
@@ -341,7 +341,22 @@ export const checkHealth = (
     yield* interpretHealthLogs(deriveHealthLogDecisions(transition))
   }).pipe(Effect.withLogSpan('health'))
 
-export const runHealthMonitor = (
+export const checkHealth = Pipeable.by<
+  (
+    state: Ref.Ref<RuntimeState>,
+    dependencies: HealthDependencies,
+    broker?: BrokerProbe,
+    autonomousCycleFiber?: Fiber.Fiber<void, never>,
+    cycleObservationId?: string,
+    qualificationEvidenceRequired?: boolean,
+  ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
+  typeof checkHealthDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
+  checkHealthDataFirst,
+)
+
+const runHealthMonitorDataFirst = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
@@ -359,3 +374,18 @@ export const runHealthMonitor = (
     cycleObservationId,
     qualificationEvidenceRequired,
   ).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)
+
+export const runHealthMonitor = Pipeable.by<
+  (
+    state: Ref.Ref<RuntimeState>,
+    dependencies: HealthDependencies,
+    broker?: BrokerProbe,
+    autonomousCycleFiber?: Fiber.Fiber<void, never>,
+    cycleObservationId?: string,
+    qualificationEvidenceRequired?: boolean,
+  ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
+  typeof runHealthMonitorDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'healthIntervalMs' in arguments_[0],
+  runHealthMonitorDataFirst,
+)

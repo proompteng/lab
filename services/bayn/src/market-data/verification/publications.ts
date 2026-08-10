@@ -52,7 +52,7 @@ export const selectPublicationManifest = Pipeable.by<
   typeof selectPublicationManifestDataFirst
 >((arguments_) => Array.isArray(arguments_[0]), selectPublicationManifestDataFirst)
 
-export const verifyBoundFinalizedPublication = (
+const verifyBoundFinalizedPublicationDataFirst = (
   rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
   input: FinalizedPublicationRequest,
   contract: MarketDataContract,
@@ -79,6 +79,21 @@ export const verifyBoundFinalizedPublication = (
           : Result.succeed(inspection),
     ),
   )
+
+export const verifyBoundFinalizedPublication = Pipeable.by<
+  (
+    input: FinalizedPublicationRequest,
+    contract: MarketDataContract,
+    observedAt: string,
+    expectedSnapshotId?: string,
+  ) => (
+    rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
+  ) => ReturnType<typeof verifyBoundFinalizedPublicationDataFirst>,
+  typeof verifyBoundFinalizedPublicationDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'sessions' in arguments_[0],
+  verifyBoundFinalizedPublicationDataFirst,
+)
 
 const selectCyclePublicationManifestsDataFirst = (
   manifests: readonly SignalManifestRow[],

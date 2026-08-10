@@ -304,7 +304,7 @@ const selectEvaluationWindowDataFirst = (
 
 export const selectEvaluationWindow = Pipeable.dual(4, selectEvaluationWindowDataFirst)
 
-export const makeEvaluationIdentity = (
+const makeEvaluationIdentityDataFirst = (
   inputManifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
@@ -388,3 +388,18 @@ export const makeEvaluationIdentity = (
     }),
   )
 }
+
+export const makeEvaluationIdentity = Pipeable.by<
+  (
+    protocol: Protocol,
+    provenance: RuntimeProvenance,
+    expectedStrategyName?: string,
+  ) => (inputManifest: InputManifest) => ReturnType<typeof makeEvaluationIdentityDataFirst>,
+  typeof makeEvaluationIdentityDataFirst
+>(
+  (arguments_) =>
+    typeof arguments_[0] === 'object' &&
+    arguments_[0] !== null &&
+    arguments_[0].schemaVersion === 'bayn.input-manifest.v3',
+  makeEvaluationIdentityDataFirst,
+)

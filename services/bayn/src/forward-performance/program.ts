@@ -516,7 +516,7 @@ const requireBrokerIdentity = (
     : Effect.succeed(config as BoundForwardPerformanceConfig)
 }
 
-export const runForwardPerformance = (
+const runForwardPerformanceDataFirst = (
   loadedConfig: LoadedRuntimeConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string } = {},
@@ -603,3 +603,14 @@ export const runForwardPerformance = (
     )
     return receipt
   })
+
+export const runForwardPerformance = Pipeable.by<
+  (
+    readers?: ForwardPerformanceReaders,
+    options?: { readonly authorityGenerationHash?: string },
+  ) => (loadedConfig: LoadedRuntimeConfig) => ReturnType<typeof runForwardPerformanceDataFirst>,
+  typeof runForwardPerformanceDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'runtimeMode' in arguments_[0],
+  runForwardPerformanceDataFirst,
+)

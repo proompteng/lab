@@ -12,6 +12,7 @@ import {
   riskBalancedTrendContextAtSignal,
   type RiskBalancedTrendStrategyDefinition,
 } from './decision'
+import { Pipeable } from '../../pipeable'
 
 export type RiskBalancedTrendStrategyApplication = StrategyApplication<
   import('./decision').RiskBalancedTrendMarketContext,
@@ -24,7 +25,7 @@ const applicationFailure = (
   cause: unknown,
 ): StrategyApplicationFailure => ({ _tag: 'StrategyApplicationFailure', operation, cause })
 
-export const makeRiskBalancedTrendApplication = (
+const makeRiskBalancedTrendApplicationDataFirst = (
   protocol: import('../../types').Protocol,
   suppliedDefinition?: RiskBalancedTrendStrategyDefinition,
 ): RiskBalancedTrendStrategyApplication => {
@@ -79,3 +80,13 @@ export const makeRiskBalancedTrendApplication = (
       ),
   }
 }
+
+export const makeRiskBalancedTrendApplication = Pipeable.by<
+  (
+    suppliedDefinition?: RiskBalancedTrendStrategyDefinition,
+  ) => (protocol: import('../../types').Protocol) => ReturnType<typeof makeRiskBalancedTrendApplicationDataFirst>,
+  typeof makeRiskBalancedTrendApplicationDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'schemaVersion' in arguments_[0],
+  makeRiskBalancedTrendApplicationDataFirst,
+)
