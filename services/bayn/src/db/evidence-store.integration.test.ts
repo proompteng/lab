@@ -6,7 +6,9 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
+  Clock,
   Data,
+  DateTime,
   Deferred,
   Duration,
   Effect,
@@ -99,6 +101,7 @@ import {
 } from '../strategy/risk-balanced-trend/qualification'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
 import type { CausalProtocol, Protocol } from '../types'
+import { utcInstantFromEpochMillis } from '../time'
 import {
   DatabaseError,
   EvidenceStore,
@@ -308,7 +311,7 @@ const intentPlan = (overrides: Partial<IntentPlan> = {}): IntentPlan => ({
   timeInForce: TimeInForce.Day,
   quantityMicros: '1000000',
   notionalLimitMicros: '200000000',
-  createdAt: new Date(Date.now() - 1_000).toISOString(),
+  createdAt: utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 1_000),
   ...overrides,
 })
 
@@ -317,8 +320,8 @@ const riskDecision = (
   outcome: RiskOutcome,
   times: { readonly decidedAt?: string; readonly expiresAt?: string } = {},
 ) => {
-  const now = Date.now()
-  const decidedAt = times.decidedAt ?? new Date(now).toISOString()
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
+  const decidedAt = times.decidedAt ?? utcInstantFromEpochMillis(now)
   const material = {
     schemaVersion: 'bayn.paper-risk-decision.v1',
     inputHash: 'd'.repeat(64),
@@ -327,7 +330,7 @@ const riskDecision = (
     outcome,
     reasonCodes: outcome === RiskOutcome.Approved ? [] : ['KILL_ACTIVE'],
     decidedAt,
-    expiresAt: times.expiresAt ?? new Date(now + 60_000).toISOString(),
+    expiresAt: times.expiresAt ?? utcInstantFromEpochMillis(now + 60_000),
   } as const
   return decodeRiskDecision({ ...material, decisionId: canonicalHashV1(material) })
 }
@@ -531,8 +534,8 @@ const seedAcceptedSubmit = (intent: Intent, decision: RiskDecision, fixture: str
     const sql = yield* PgClient.PgClient
     const requestHash = fixtureHash(`${fixture}-request`)
     const submitMutationId = yield* Effect.fromResult(mutationIdResult(intent.intentId, MutationOperation.Submit))
-    const startedAt = new Date(Date.parse(decision.decidedAt) + 1).toISOString()
-    const acceptedAt = new Date(Date.parse(decision.decidedAt) + 2).toISOString()
+    const startedAt = utcInstantFromEpochMillis(Date.parse(decision.decidedAt) + 1)
+    const acceptedAt = utcInstantFromEpochMillis(Date.parse(decision.decidedAt) + 2)
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`
@@ -639,11 +642,11 @@ const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readon
 const fixtureHash = (value: string): string => canonicalHashV1({ value })
 
 const passingQualificationSeries = (runId: string): QualificationSeries => {
-  const sessionDate = (index: number): `${number}-${number}-${number}` => {
-    const date = new Date('2000-01-01T00:00:00.000Z')
-    date.setUTCDate(date.getUTCDate() + index)
-    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
-  }
+  const sessionDate = (index: number): `${number}-${number}-${number}` =>
+    DateTime.makeUnsafe('2000-01-01T00:00:00.000Z').pipe(
+      DateTime.add({ days: index }),
+      DateTime.formatIsoDate,
+    ) as `${number}-${number}-${number}`
   const blockCount = 90
   return {
     schemaVersion: 'bayn.qualification-series.v1',
@@ -1764,7 +1767,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   test('commits an approved intent when planning and risk evaluation share one timestamp', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
-    const decidedAt = new Date(Date.now() - 1_000).toISOString()
+    const decidedAt = utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 1_000)
     const intent = await Effect.runPromise(
       plan(
         intentPlan({
@@ -1776,7 +1779,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, {
         decidedAt,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        expiresAt: utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60_000),
       }),
     )
 
@@ -1811,7 +1814,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   test('rejects a risk decision that predates its intent even when the decision remains current', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
-    const createdAt = new Date(Date.now() - 1_000).toISOString()
+    const createdAt = utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 1_000)
     const intent = await Effect.runPromise(
       plan(
         intentPlan({
@@ -1822,8 +1825,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, {
-        decidedAt: new Date(Date.parse(createdAt) - 1).toISOString(),
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        decidedAt: utcInstantFromEpochMillis(Date.parse(createdAt) - 1),
+        expiresAt: utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60_000),
       }),
     )
 
@@ -2245,19 +2248,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   test('rolls back both records when an approval is stale at commit', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
-    const now = Date.now()
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
     const intent = await Effect.runPromise(
       plan(
         intentPlan({
           cycleId: 'f'.repeat(64),
-          createdAt: new Date(now - 180_000).toISOString(),
+          createdAt: utcInstantFromEpochMillis(now - 180_000),
         }),
       ),
     )
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, {
-        decidedAt: new Date(now - 120_000).toISOString(),
-        expiresAt: new Date(now - 60_000).toISOString(),
+        decidedAt: utcInstantFromEpochMillis(now - 120_000),
+        expiresAt: utcInstantFromEpochMillis(now - 60_000),
       }),
     )
 
@@ -2418,7 +2421,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const typedExit = await typedRuntime.runPromise(
       Effect.exit(
         Effect.flatMap(MutationStore, (store) =>
-          store.beginSubmit('invalid-intent-id', '1'.repeat(64), 1_000, new Date().toISOString()),
+          store.beginSubmit(
+            'invalid-intent-id',
+            '1'.repeat(64),
+            1_000,
+            utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe())),
+          ),
         ),
       ),
     )
@@ -2449,7 +2457,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     const before = await runtime.runPromise(paperIntentEvidence)
-    const startedAt = new Date(Date.now() + 100).toISOString()
+    const startedAt = utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100)
 
     const defect = new Error('injected WriterFence transaction defect')
     let defectTransactions = 0
@@ -2509,13 +2517,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
     const mutation = makeMutationRuntime()
-    const startedAt = new Date(Date.now() + 100).toISOString()
+    const startedAt = utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100)
     const requestHash = '8'.repeat(64)
     const evidence = {
       requestId: 'submit-request-1',
       status: 200,
       contentHash: '7'.repeat(64),
-      observedAt: new Date(Date.now() + 200).toISOString(),
+      observedAt: utcInstantFromEpochMillis(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 200),
     }
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
@@ -2574,12 +2582,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     const mutation = makeMutationRuntime()
     const requestHash = fixtureHash('mutation-explicit-undefined-evidence-request')
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
-        const event = yield* store.submitUnknown(intent.intentId, requestHash, new Date(base + 1).toISOString(), {
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base))
+        const event = yield* store.submitUnknown(intent.intentId, requestHash, utcInstantFromEpochMillis(base + 1), {
           requestId: undefined,
           status: undefined,
           contentHash: undefined,
@@ -2624,9 +2632,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const submitEntered = await Effect.runPromise(Deferred.make<void>())
     const releaseSubmit = await Effect.runPromise(Deferred.make<void>())
     const brokerCalls = { cancel: 0, submit: 0 }
-    const base = Date.now() + 1_000
-    const submitObservedAt = new Date(base).toISOString()
-    const cancelObservedAt = new Date(base + 1_000).toISOString()
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 1_000
+    const submitObservedAt = utcInstantFromEpochMillis(base)
+    const cancelObservedAt = utcInstantFromEpochMillis(base + 1_000)
     const broker: BrokerMutationShape = {
       submit: (submitted) =>
         Effect.gen(function* () {
@@ -2749,23 +2757,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.dispose()
     const mutation = makeMutationRuntime()
     const requestHash = '5'.repeat(64)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const acceptedEvidence = {
       requestId: 'accepted-submit',
       status: 200,
       contentHash: '4'.repeat(64),
-      observedAt: new Date(base + 1).toISOString(),
+      observedAt: utcInstantFromEpochMillis(base + 1),
     }
     const terminalEvidence = {
       requestId: 'terminal-submit-recovery',
       status: 200,
       contentHash: '3'.repeat(64),
-      observedAt: new Date(base + 2).toISOString(),
+      observedAt: utcInstantFromEpochMillis(base + 2),
     }
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base))
         yield* store.submitAccepted(intent.intentId, requestHash, orderId, acceptedEvidence)
         const recovered = yield* Effect.all(
           [
@@ -2870,22 +2878,22 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.dispose()
     const mutation = makeMutationRuntime()
     const requestHash = 'b'.repeat(64)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base))
         yield* store.submitAccepted(intent.intentId, requestHash, orderId, {
           requestId: 'accepted-submit-before-404',
           status: 200,
           contentHash: 'a'.repeat(64),
-          observedAt: new Date(base + 1).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 1),
         })
         const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Submit, requestHash, {
           requestId: 'accepted-submit-not-found',
           status: 404,
           contentHash: '9'.repeat(64),
-          observedAt: new Date(base + 2).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 2),
         })
         const afterNotFound = yield* sqlIntentState(intent.intentId)
         const terminal = yield* store.recoveryFound(
@@ -2897,7 +2905,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'accepted-submit-later-terminal',
             status: 200,
             contentHash: '8'.repeat(64),
-            observedAt: new Date(base + 3).toISOString(),
+            observedAt: utcInstantFromEpochMillis(base + 3),
           },
           TerminalOutcome.Filled,
         )
@@ -2951,29 +2959,29 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const submitHash = '7'.repeat(64)
     const cancelHash = cancelRequestHash(orderId)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const cancelTerminalEvidence = {
       requestId: 'terminal-cancel-recovery',
       status: 200,
       contentHash: '3'.repeat(64),
-      observedAt: new Date(base + 5).toISOString(),
+      observedAt: utcInstantFromEpochMillis(base + 5),
     }
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, utcInstantFromEpochMillis(base))
         yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
           requestId: 'accepted-before-cancel',
           status: 200,
           contentHash: '6'.repeat(64),
-          observedAt: new Date(base + 1).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 1),
         })
-        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(base + 2).toISOString())
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, utcInstantFromEpochMillis(base + 2))
         yield* store.cancelAccepted(intent.intentId, cancelHash, orderId, {
           requestId: 'accepted-cancel',
           status: 204,
           contentHash: '5'.repeat(64),
-          observedAt: new Date(base + 3).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 3),
         })
         const submitRecovery = yield* Effect.exit(
           store.recoveryFound(
@@ -2985,7 +2993,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               requestId: 'terminal-submit-during-cancel',
               status: 200,
               contentHash: '4'.repeat(64),
-              observedAt: new Date(base + 4).toISOString(),
+              observedAt: utcInstantFromEpochMillis(base + 4),
             },
             TerminalOutcome.Filled,
           ),
@@ -3085,16 +3093,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const requestHash = '2'.repeat(64)
     const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base))
         yield* store.submitAccepted(intent.intentId, requestHash, orderId, {
           requestId: 'accepted-submit',
           status: 200,
           contentHash: '1'.repeat(64),
-          observedAt: new Date(base + 1).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 1),
         })
         const wrongIdentity = yield* Effect.exit(
           store.recoveryFound(
@@ -3106,7 +3114,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               requestId: 'wrong-order',
               status: 200,
               contentHash: '0'.repeat(64),
-              observedAt: new Date(base + 2).toISOString(),
+              observedAt: utcInstantFromEpochMillis(base + 2),
             },
             TerminalOutcome.Filled,
           ),
@@ -3116,7 +3124,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           requestId: 'still-open',
           status: 200,
           contentHash: 'f'.repeat(64),
-          observedAt: new Date(base + 3).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 3),
         })
         const afterOpen = yield* sqlIntentState(intent.intentId)
         const terminal = yield* store.recoveryFound(
@@ -3128,7 +3136,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'later-terminal',
             status: 200,
             contentHash: 'e'.repeat(64),
-            observedAt: new Date(base + 4).toISOString(),
+            observedAt: utcInstantFromEpochMillis(base + 4),
           },
           TerminalOutcome.Expired,
         )
@@ -3181,19 +3189,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     const authority = makeAuthorityMutationRuntime(makePaperActivationConfig(paperActivation))
     const blocker = makeClientRuntime()
-    const base = Date.now()
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe())
     const intent = await Effect.runPromise(
       plan(
         intentPlan({
           cycleId: '9'.repeat(64),
-          createdAt: new Date(base - 5_000).toISOString(),
+          createdAt: utcInstantFromEpochMillis(base - 5_000),
         }),
       ),
     )
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, {
-        decidedAt: new Date(base - 4_000).toISOString(),
-        expiresAt: new Date(base + 60_000).toISOString(),
+        decidedAt: utcInstantFromEpochMillis(base - 4_000),
+        expiresAt: utcInstantFromEpochMillis(base + 60_000),
       }),
     )
     try {
@@ -3205,7 +3213,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           const sql = yield* PgClient.PgClient
           const requestHash = fixtureHash('writer-fenced-late-submit-outcome')
           yield* intentStore.commit(intent, decision)
-          yield* mutationStore.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base - 3_000).toISOString())
+          yield* mutationStore.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base - 3_000))
 
           yield* executionStore.ensureAuthorityGeneration({
             generationHash: observeGenerationHash,
@@ -3257,7 +3265,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           yield* Deferred.await(lockHeld)
 
           return yield* Effect.gen(function* () {
-            const acceptedAt = new Date(reconciliation.reconciled_at.getTime() + 1).toISOString()
+            const acceptedAt = utcInstantFromEpochMillis(reconciliation.reconciled_at.getTime() + 1)
             const outcome = yield* Effect.forkChild(
               Effect.exit(
                 mutationStore.submitAccepted(intent.intentId, requestHash, orderId, {
@@ -3326,20 +3334,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
-    const expiresAtMillis = Date.now() + 1_000
+    const expiresAtMillis = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 1_000
     const decision = await Effect.runPromise(
-      riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
+      riskDecision(intent, RiskOutcome.Approved, { expiresAt: utcInstantFromEpochMillis(expiresAtMillis) }),
     )
     await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
-    await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
+    await Bun.sleep(Math.max(0, expiresAtMillis - DateTime.toEpochMillis(DateTime.nowUnsafe()) + 50))
 
     const mutation = makeMutationRuntime()
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
         const start = yield* Effect.exit(
-          store.beginSubmit(intent.intentId, '8'.repeat(64), 1_000, new Date().toISOString()),
+          store.beginSubmit(
+            intent.intentId,
+            '8'.repeat(64),
+            1_000,
+            utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+          ),
         )
         const sql = yield* PgClient.PgClient
         const rows = yield* sql<{ events: number; state: string }>`
@@ -3371,24 +3384,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     const mutation = makeMutationRuntime()
     const requestHash = '6'.repeat(64)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
-        yield* store.submitUnknown(intent.intentId, requestHash, new Date(base + 1).toISOString())
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(base))
+        yield* store.submitUnknown(intent.intentId, requestHash, utcInstantFromEpochMillis(base + 1))
         const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Submit, requestHash, {
           requestId: 'lookup-request-1',
           status: 404,
           contentHash: '5'.repeat(64),
-          observedAt: new Date(base + 2).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 2),
         })
         const before = yield* sqlIntentState(intent.intentId)
         const found = yield* store.recoveryFound(intent.intentId, MutationOperation.Submit, requestHash, orderId, {
           requestId: 'lookup-request-2',
           status: 200,
           contentHash: '4'.repeat(64),
-          observedAt: new Date(base + 3).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 3),
         })
         const after = yield* sqlIntentState(intent.intentId)
         return { after, before, found, notFound }
@@ -3423,20 +3436,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const submitHash = '6'.repeat(64)
     const cancelHash = cancelRequestHash(orderId)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, utcInstantFromEpochMillis(base))
         const unknown = yield* store.submitUnknown(
           intent.intentId,
           submitHash,
-          new Date(base + 1).toISOString(),
+          utcInstantFromEpochMillis(base + 1),
           {
             requestId: 'mismatched-submit',
             status: 200,
             contentHash: '5'.repeat(64),
-            observedAt: new Date(base + 1).toISOString(),
+            observedAt: utcInstantFromEpochMillis(base + 1),
           },
           orderId,
         )
@@ -3444,20 +3457,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           requestId: 'submit-lookup-not-found',
           status: 404,
           contentHash: '4'.repeat(64),
-          observedAt: new Date(base + 2).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 2),
         })
         const cancelStarted = yield* store.beginCancel(
           intent.intentId,
           cancelHash,
           orderId,
           1_000,
-          new Date(base + 3).toISOString(),
+          utcInstantFromEpochMillis(base + 3),
         )
         yield* store.cancelAccepted(intent.intentId, cancelHash, orderId, {
           requestId: 'cancel-request',
           status: 204,
           contentHash: '3'.repeat(64),
-          observedAt: new Date(base + 4).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 4),
         })
         const canceled = yield* store.recoveryFound(
           intent.intentId,
@@ -3468,7 +3481,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'cancel-lookup',
             status: 200,
             contentHash: '2'.repeat(64),
-            observedAt: new Date(base + 5).toISOString(),
+            observedAt: utcInstantFromEpochMillis(base + 5),
           },
           TerminalOutcome.Canceled,
         )
@@ -3476,7 +3489,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           laterIntent.intentId,
           '1'.repeat(64),
           1_000,
-          new Date(base + 6).toISOString(),
+          utcInstantFromEpochMillis(base + 6),
         )
         const sql = yield* PgClient.PgClient
         const [history] = yield* sql<{ event_count: number }>`
@@ -3524,9 +3537,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
     const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
     const startedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'c'.repeat(64) })))
-    const expiresAtMillis = Date.now() + 10_000
+    const expiresAtMillis = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 10_000
     const decision = await Effect.runPromise(
-      riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
+      riskDecision(intent, RiskOutcome.Approved, { expiresAt: utcInstantFromEpochMillis(expiresAtMillis) }),
     )
     const blockedDecision = await Effect.runPromise(riskDecision(blockedIntent, RiskOutcome.Approved))
     const startedDecision = await Effect.runPromise(riskDecision(startedIntent, RiskOutcome.Approved))
@@ -3543,18 +3556,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const submitHash = '3'.repeat(64)
     const cancelHash = '2'.repeat(64)
-    const base = Date.now()
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe())
     await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, utcInstantFromEpochMillis(base))
         yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
           requestId: 'submit-request',
           status: 200,
           contentHash: '1'.repeat(64),
-          observedAt: new Date(base + 1).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 1),
         })
-        yield* store.beginSubmit(startedIntent.intentId, '5'.repeat(64), 1_000, new Date(base + 2).toISOString())
+        yield* store.beginSubmit(startedIntent.intentId, '5'.repeat(64), 1_000, utcInstantFromEpochMillis(base + 2))
       }),
     )
     await mutation.dispose()
@@ -3588,7 +3601,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await containment.dispose()
-    await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 10))
+    await Bun.sleep(Math.max(0, expiresAtMillis - DateTime.toEpochMillis(DateTime.nowUnsafe()) + 10))
 
     const cancellation = makeMutationRuntime()
     const observed = await cancellation.runPromise(
@@ -3600,17 +3613,17 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             blockedIntent.intentId,
             '4'.repeat(64),
             1_000,
-            new Date(Math.max(Date.now(), base + 3)).toISOString(),
+            utcInstantFromEpochMillis(Math.max(yield* Clock.currentTimeMillis, base + 3)),
           ),
         )
-        const cancelBase = Math.max(Date.now(), base + 4)
-        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(cancelBase).toISOString())
-        yield* store.cancelUnknown(intent.intentId, cancelHash, orderId, new Date(cancelBase + 1).toISOString())
+        const cancelBase = Math.max(yield* Clock.currentTimeMillis, base + 4)
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, utcInstantFromEpochMillis(cancelBase))
+        yield* store.cancelUnknown(intent.intentId, cancelHash, orderId, utcInstantFromEpochMillis(cancelBase + 1))
         const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Cancel, cancelHash, {
           requestId: 'cancel-lookup-not-found',
           status: 404,
           contentHash: 'f'.repeat(64),
-          observedAt: new Date(cancelBase + 2).toISOString(),
+          observedAt: utcInstantFromEpochMillis(cancelBase + 2),
         })
         yield* store.recoveryFound(
           intent.intentId,
@@ -3621,7 +3634,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'cancel-lookup',
             status: 200,
             contentHash: '0'.repeat(64),
-            observedAt: new Date(cancelBase + 3).toISOString(),
+            observedAt: utcInstantFromEpochMillis(cancelBase + 3),
           },
           TerminalOutcome.Canceled,
         )
@@ -3655,10 +3668,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
   test('rejects intent policy or strategy drift before submit, identified cancel, or broker writes', async () => {
     const generation = await activateAuditedCapitalGrant()
-    const now = Date.now()
-    const createdAt = new Date(now - 2_000).toISOString()
-    const decidedAt = new Date(now - 1_000).toISOString()
-    const expiresAt = new Date(now + 60_000).toISOString()
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
+    const createdAt = utcInstantFromEpochMillis(now - 2_000)
+    const decidedAt = utcInstantFromEpochMillis(now - 1_000)
+    const expiresAt = utcInstantFromEpochMillis(now + 60_000)
     const variants = await Effect.runPromise(
       Effect.forEach(
         [
@@ -3845,18 +3858,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     await execution.dispose()
 
-    const acceptedAt = Date.now() + 100
+    const acceptedAt = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const mutation = makeMutationRuntime()
     await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
         const requestHash = fixtureHash('cross-account-identified-submit')
-        yield* store.beginSubmit(cancelIntent.intentId, requestHash, 1_000, new Date(acceptedAt).toISOString())
+        yield* store.beginSubmit(cancelIntent.intentId, requestHash, 1_000, utcInstantFromEpochMillis(acceptedAt))
         yield* store.submitAccepted(cancelIntent.intentId, requestHash, orderId, {
           requestId: 'cross-account-submit',
           status: 200,
           contentHash: fixtureHash('cross-account-submit-response'),
-          observedAt: new Date(acceptedAt + 1).toISOString(),
+          observedAt: utcInstantFromEpochMillis(acceptedAt + 1),
         })
       }),
     )
@@ -3958,19 +3971,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const submitHash = 'a'.repeat(64)
     const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
         const nonSubmitted = yield* Effect.exit(
-          store.beginCancel(intent.intentId, cancelRequestHash(orderId), orderId, 1_000, new Date(base).toISOString()),
+          store.beginCancel(
+            intent.intentId,
+            cancelRequestHash(orderId),
+            orderId,
+            1_000,
+            utcInstantFromEpochMillis(base),
+          ),
         )
-        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base + 1).toISOString())
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, utcInstantFromEpochMillis(base + 1))
         yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
           requestId: 'submit-request',
           status: 200,
           contentHash: '1'.repeat(64),
-          observedAt: new Date(base + 2).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 2),
         })
         const mismatched = yield* Effect.exit(
           store.beginCancel(
@@ -3978,7 +3997,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             cancelRequestHash(otherOrderId),
             otherOrderId,
             1_000,
-            new Date(base + 3).toISOString(),
+            utcInstantFromEpochMillis(base + 3),
           ),
         )
         return {
@@ -4021,25 +4040,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const firstSubmitHash = 'a'.repeat(64)
     const firstCancelHash = 'b'.repeat(64)
     const secondSubmitHash = 'c'.repeat(64)
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(first.intentId, firstSubmitHash, 1_000, new Date(base).toISOString())
-        yield* store.submitUnknown(first.intentId, firstSubmitHash, new Date(base + 1).toISOString())
+        yield* store.beginSubmit(first.intentId, firstSubmitHash, 1_000, utcInstantFromEpochMillis(base))
+        yield* store.submitUnknown(first.intentId, firstSubmitHash, utcInstantFromEpochMillis(base + 1))
         const blockedBySubmit = yield* Effect.exit(
-          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, new Date(base + 2).toISOString()),
+          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, utcInstantFromEpochMillis(base + 2)),
         )
         yield* store.recoveryFound(first.intentId, MutationOperation.Submit, firstSubmitHash, orderId, {
           requestId: 'submit-recovery',
           status: 200,
           contentHash: 'd'.repeat(64),
-          observedAt: new Date(base + 3).toISOString(),
+          observedAt: utcInstantFromEpochMillis(base + 3),
         })
-        yield* store.beginCancel(first.intentId, firstCancelHash, orderId, 1_000, new Date(base + 4).toISOString())
-        yield* store.cancelUnknown(first.intentId, firstCancelHash, orderId, new Date(base + 5).toISOString())
+        yield* store.beginCancel(first.intentId, firstCancelHash, orderId, 1_000, utcInstantFromEpochMillis(base + 4))
+        yield* store.cancelUnknown(first.intentId, firstCancelHash, orderId, utcInstantFromEpochMillis(base + 5))
         const blockedByCancel = yield* Effect.exit(
-          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, new Date(base + 6).toISOString()),
+          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, utcInstantFromEpochMillis(base + 6)),
         )
         yield* store.recoveryFound(
           first.intentId,
@@ -4050,7 +4069,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'cancel-recovery',
             status: 200,
             contentHash: 'e'.repeat(64),
-            observedAt: new Date(base + 7).toISOString(),
+            observedAt: utcInstantFromEpochMillis(base + 7),
           },
           TerminalOutcome.Canceled,
         )
@@ -4058,7 +4077,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           second.intentId,
           secondSubmitHash,
           1_000,
-          new Date(base + 8).toISOString(),
+          utcInstantFromEpochMillis(base + 8),
         )
         return { blockedByCancel, blockedBySubmit, secondStart }
       }),
@@ -4089,13 +4108,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const mutation = makeMutationRuntime()
     const deniedHash = fixtureHash('pretransmit-denied-request')
     const laterHash = fixtureHash('post-denial-request')
-    const base = Date.now() + 100
+    const base = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 100
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
-        yield* store.beginSubmit(deniedIntent.intentId, deniedHash, 1_000, new Date(base).toISOString())
-        const denied = yield* store.submitDenied(deniedIntent.intentId, deniedHash, new Date(base + 1).toISOString())
-        const later = yield* store.beginSubmit(laterIntent.intentId, laterHash, 1_000, new Date(base + 2).toISOString())
+        yield* store.beginSubmit(deniedIntent.intentId, deniedHash, 1_000, utcInstantFromEpochMillis(base))
+        const denied = yield* store.submitDenied(deniedIntent.intentId, deniedHash, utcInstantFromEpochMillis(base + 1))
+        const later = yield* store.beginSubmit(
+          laterIntent.intentId,
+          laterHash,
+          1_000,
+          utcInstantFromEpochMillis(base + 2),
+        )
         return {
           denied,
           later,
