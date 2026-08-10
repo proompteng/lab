@@ -373,6 +373,53 @@ describe('same-code execution program composition', () => {
     }
   })
 
+  test('revalidates a live grant after broker refresh and before transmission', async () => {
+    const fixture = finalLiveFixture()
+    let instantReads = 0
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('live-grant-expiry-during-refresh'),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(fixture.stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      liveCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(liveCapitalAuthority(fixture.grant)),
+      },
+      freshBrokerPrice: (symbol) =>
+        Effect.succeed({
+          symbol,
+          bidPriceMicros: '100000000',
+          askPriceMicros: '100000000',
+          quotedAt: fixture.grant.validUntil,
+          observedAt: fixture.grant.validUntil,
+        }),
+      currentUtcInstant: Effect.sync(() => {
+        instantReads += 1
+        return instantReads === 1 ? observedAt : fixture.grant.validUntil
+      }),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('LiveGrantExpired')
+    expect(instantReads).toBe(2)
+    expect(posts).toBe(0)
+  })
+
   test('rejects a risk-policy binding mismatch before broker or grant I/O', async () => {
     const fixture = finalLiveFixture()
     const authority = Result.getOrThrow(

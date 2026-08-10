@@ -16,6 +16,7 @@ import {
   CapitalAuthorityKind,
   type ExecutionCapitalLimits,
   type ExecutionAuthority,
+  type LiveCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
 import { IntentStore, type IntentStoreService } from './intents'
@@ -58,6 +59,7 @@ export interface ExecutionProgramConstructionFailure {
 interface FinalExecutionCapitalAuthorization {
   readonly limits: ExecutionCapitalLimits
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
+  readonly liveGrant?: LiveCapitalAuthority
 }
 
 const executionPolicyLimits = (
@@ -108,6 +110,7 @@ const finalExecutionGrantAuthorization = (
     return {
       limits: constrainExecutionCapitalLimits(policyLimits.success, grantLimits),
       hardCloseLimits: grantLimits,
+      liveGrant: persisted,
     }
   })
 }
@@ -122,10 +125,22 @@ const finalBrokerAuthorization = (
   return Effect.gen(function* () {
     const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
-    const validation = validateExecutionBrokerSubmitSnapshot(authority, capital.limits, intent, snapshot, observedAt, {
-      closeOnly,
-      ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
-    })
+    const refreshedAuthority =
+      capital.liveGrant === undefined
+        ? Result.succeed(authority)
+        : validateLiveGrantForSubmit(authority, capital.liveGrant, observedAt)
+    if (Result.isFailure(refreshedAuthority)) return yield* Effect.fail(refreshedAuthority.failure)
+    const validation = validateExecutionBrokerSubmitSnapshot(
+      refreshedAuthority.success,
+      capital.limits,
+      intent,
+      snapshot,
+      observedAt,
+      {
+        closeOnly,
+        ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
+      },
+    )
     if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
   })
 }
