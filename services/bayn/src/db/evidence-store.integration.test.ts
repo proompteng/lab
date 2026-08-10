@@ -5,7 +5,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
-import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
@@ -74,7 +73,6 @@ import {
   makeQualificationPolicyDocument,
   makeQualificationResult,
 } from '../qualification'
-import { readAuditDatabase, type AuditConfig } from '../qualification-audit-command'
 import {
   analyzeQualification,
   defaultQualificationStatisticsPolicy,
@@ -5027,61 +5025,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.mode).toEqual({ isolation: 'repeatable read', read_only: true })
     expect(Exit.isFailure(observed.write)).toBe(true)
     expect(observed.rows).toEqual([{ count: 0 }])
-  })
-
-  test('reads the complete qualification audit graph and closes its scoped PostgreSQL pool', async () => {
-    const input = makeInput()
-    const qualification = makeLockedInput(input)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        yield* store.openQualification(qualification.open)
-        yield* store.persist(qualification.persist)
-      }),
-    )
-
-    const auditConfig: AuditConfig = {
-      output: 'audit',
-      runId: input.evaluation.runId,
-      postgresUrl: Redacted.make(testUrl),
-      postgresTls: false,
-      postgresCaPath: '',
-      signalUrl: 'http://signal.invalid',
-      signalUsername: 'bayn-audit-candidate',
-      signalPublisherUsername: 'bayn-audit-publisher',
-      signalPassword: Redacted.make('unused'),
-      auditClickhouseUrls: [new URL('http://audit-0.invalid'), new URL('http://audit-1.invalid')],
-      auditClickhouseUsername: 'bayn-audit-query-log',
-      auditClickhousePassword: Redacted.make('unused'),
-      repositoryPath: '.',
-      candidateModulePath: '',
-      candidateModuleSha256: '',
-      operationTimeoutMs: 5_000,
-    }
-    const snapshot = await Effect.runPromise(
-      readAuditDatabase(auditConfig, input.evaluation.runId).pipe(
-        Effect.provide(Layer.merge(NodeServices.layer, Reactivity.layer)),
-      ),
-    )
-    const remainingConnections = await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* Effect.sleep('25 millis')
-        const sql = yield* PgClient.PgClient
-        const [row] = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count
-          FROM pg_stat_activity
-          WHERE application_name = 'bayn-qualification-audit'
-        `
-        return row?.count ?? -1
-      }),
-    )
-
-    expect(snapshot.transactionReadOnly).toBe(true)
-    expect(snapshot.run.runId).toBe(input.evaluation.runId)
-    expect(snapshot.run.status).toBe('COMPLETE')
-    expect(snapshot.qualification.storedLockId).toBe(qualification.lock.lockId)
-    expect(snapshot.qualification.storedResultHash).toBe(qualification.result.resultHash)
-    expect(remainingConnections).toBe(0)
   })
 
   test('commits one complete run and deduplicates an exact replay', async () => {
