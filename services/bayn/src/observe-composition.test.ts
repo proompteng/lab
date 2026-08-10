@@ -765,6 +765,8 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: accepted.brokerOrderId,
       clientOrderId: intent.clientOrderId,
       intentId: intent.intentId,
+      orderType: OrderType.Limit,
+      limitPriceMicros: '100000000',
       status: OrderStatus.New,
       filledQuantityMicros: '0',
     })
@@ -774,8 +776,6 @@ describe('OBSERVE runtime composition', () => {
 
     const reconciledOrder: Order = {
       ...decision.order,
-      orderType: OrderType.Limit,
-      limitPriceMicros: '1000000',
       observedAt: utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 1_000),
     }
     expect(Result.getOrThrow(decidePendingMutationObservation(decision.order, [reconciledOrder]))).toEqual({
@@ -793,6 +793,18 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Recover',
       reason: 'missing',
     })
+    expect(
+      Result.isFailure(
+        decidePendingMutationObservation(decision.order, [{ ...reconciledOrder, orderType: OrderType.Market }]),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decidePendingMutationObservation(decision.order, [
+          { ...reconciledOrder, limitPriceMicros: (BigInt(reconciledOrder.limitPriceMicros ?? '0') + 1n).toString() },
+        ]),
+      ),
+    ).toBe(true)
     expect(
       Result.isFailure(
         decidePendingMutationObservation(decision.order, [
@@ -829,8 +841,6 @@ describe('OBSERVE runtime composition', () => {
     const observedAt = utcInstantFromEpochMillis(Date.parse(accepted.occurredAt) + accepted.consistencyDelayMs)
     const reconciledOrder: Order = {
       ...pending.order,
-      orderType: OrderType.Limit,
-      limitPriceMicros: '1000000',
       observedAt,
     }
     const firstRecord = storedIntent(first, IntentState.Acknowledged, accepted.occurredAt)

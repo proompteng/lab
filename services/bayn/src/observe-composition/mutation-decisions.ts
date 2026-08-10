@@ -1,11 +1,12 @@
 import { Result } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
 import {
   Authority,
   IntentState,
   OrderStatus,
+  OrderType,
   ReconciliationStatus,
   TerminalOutcome,
   type Intent,
@@ -124,32 +125,44 @@ const decidePreparedMutationIntentDataFirst = (
   if (latest === undefined) return Result.succeed({ _tag: 'Submit' })
   switch (latest.eventType) {
     case MutationEventType.SubmitAccepted:
-    case MutationEventType.RecoveryFound:
-      return latest.brokerOrderId === undefined
-        ? Result.fail({
-            _tag: 'PreparedMutationIntentDecisionFailure',
-            intentId: intent.intentId,
-            eventType: latest.eventType,
-            message: 'accepted nonterminal submit lacks a durable broker order identity',
-          })
-        : Result.succeed({
-            _tag: 'Pending',
-            order: {
-              schemaVersion: 'bayn.paper-order.v1',
-              accountId: intent.accountId,
-              brokerOrderId: latest.brokerOrderId,
-              clientOrderId: intent.clientOrderId,
-              intentId: intent.intentId,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              timeInForce: intent.timeInForce,
-              quantityMicros: intent.quantityMicros,
-              filledQuantityMicros: '0',
-              status: OrderStatus.New,
-              observedAt: latest.occurredAt,
-            },
-          })
+    case MutationEventType.RecoveryFound: {
+      if (latest.brokerOrderId === undefined) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: 'accepted nonterminal submit lacks a durable broker order identity',
+        })
+      }
+      const priceBoundary = orderPriceBoundaryMicros(intent)
+      if (Result.isFailure(priceBoundary)) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: `accepted submit has no valid immutable broker price boundary: ${priceBoundary.failure.message}`,
+        })
+      }
+      return Result.succeed({
+        _tag: 'Pending',
+        order: {
+          schemaVersion: 'bayn.paper-order.v1',
+          accountId: intent.accountId,
+          brokerOrderId: latest.brokerOrderId,
+          clientOrderId: intent.clientOrderId,
+          intentId: intent.intentId,
+          symbol: intent.symbol,
+          side: intent.side,
+          orderType: OrderType.Limit,
+          timeInForce: intent.timeInForce,
+          quantityMicros: intent.quantityMicros,
+          filledQuantityMicros: '0',
+          limitPriceMicros: priceBoundary.success.toString(),
+          status: OrderStatus.New,
+          observedAt: latest.occurredAt,
+        },
+      })
+    }
     case MutationEventType.SubmitRejected:
     case MutationEventType.SubmitDenied:
       return Result.fail({
@@ -189,8 +202,10 @@ const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean 
   (observed.intentId === undefined || observed.intentId === expected.intentId) &&
   observed.symbol === expected.symbol &&
   observed.side === expected.side &&
+  observed.orderType === expected.orderType &&
   observed.timeInForce === expected.timeInForce &&
-  observed.quantityMicros === expected.quantityMicros
+  observed.quantityMicros === expected.quantityMicros &&
+  observed.limitPriceMicros === expected.limitPriceMicros
 
 const decidePendingMutationObservationDataFirst = (
   expected: Order,
