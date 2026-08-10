@@ -21,10 +21,13 @@ const quantityScale = 1_000_000n
 export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
   positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
 
-export const paperCycleHasFilledIntent = (
-  intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[],
-  orders: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[] = [],
-): boolean => {
+export interface PaperCycleFillInput {
+  readonly intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[]
+  readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[]
+}
+
+export const paperCycleHasFilledIntent = (input: PaperCycleFillInput): boolean => {
+  const { intents, orders = [] } = input
   const intentIds = new Set(intents.map((intent) => intent.intentId))
   return (
     intents.some(
@@ -37,12 +40,14 @@ export const paperCycleHasFilledIntent = (
   )
 }
 
-/** A settled close plan must be replaced when authoritative positions remain open. */
-export const paperClosePlanNeedsResidualReplan = (
+const paperClosePlanNeedsResidualReplanDataFirst = (
   intents: readonly Pick<Intent, 'state'>[],
   openPositionCount: number,
 ): boolean =>
   intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
+
+/** A settled close plan must be replaced when authoritative positions remain open. */
+export const paperClosePlanNeedsResidualReplan = Pipeable.dual(2, paperClosePlanNeedsResidualReplanDataFirst)
 
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0

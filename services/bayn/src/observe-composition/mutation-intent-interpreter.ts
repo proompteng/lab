@@ -476,10 +476,10 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
     let unsuccessfulIntentFound = false
-    const hasFilledIntent = paperCycleHasFilledIntent(
-      preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
-      facts.reconciliation.brokerState.orders,
-    )
+    const hasFilledIntent = paperCycleHasFilledIntent({
+      intents: preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
+      orders: facts.reconciliation.brokerState.orders,
+    })
     const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
     for (const prepared of preparedIntents) {
       const stored = yield* intentStore

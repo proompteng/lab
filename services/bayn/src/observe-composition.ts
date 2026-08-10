@@ -1646,12 +1646,12 @@ const executeBoundPaperCycle = (
           step.action,
           step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
         )
-      : executeMutationIntentWithExecutor(
-          { recover: recoverMutation },
-          step.intentId,
-          step.action,
-          step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        )
+      : executeMutationIntentWithExecutor({
+          executor: { recover: recoverMutation },
+          intentId: step.intentId,
+          action: step.action,
+          submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+        })
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
         `bound PAPER cycle ${cycle.identity.cycleId}`,

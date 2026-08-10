@@ -154,7 +154,7 @@ const paperIntentIdResult = (
     paperIdentityMaterial(input, authorityGenerationHash),
   )
 
-export const paperIntentIdForDecodedPlan = paperIntentIdResult
+export const paperIntentIdForDecodedPlan = Pipeable.dual(2, paperIntentIdResult)
 
 export const intentIdForPlan = referenceIntentIdResult
 

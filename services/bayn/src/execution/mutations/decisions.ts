@@ -281,11 +281,16 @@ export const decideMutationAuthority = Pipeable.by<
   typeof decideMutationAuthorityDataFirst
 >((arguments_) => typeof arguments_[0] === 'string', decideMutationAuthorityDataFirst)
 
+export interface FinalSubmitAuthorizationInput {
+  readonly authority: MutationAuthorityBinding
+  readonly intent: MutationIntentSnapshot | undefined
+  readonly closeOnly?: boolean
+}
+
 export const decideFinalSubmitAuthorization = (
-  authority: MutationAuthorityBinding,
-  intent: MutationIntentSnapshot | undefined,
-  closeOnly = false,
+  input: FinalSubmitAuthorizationInput,
 ): Result.Result<void, MutationStoreError> => {
+  const { authority, intent, closeOnly = false } = input
   if (intent === undefined) {
     return Result.fail(
       storeError({ operation: 'begin-submit', failure: 'invariant', message: 'final submit intent does not exist' }),

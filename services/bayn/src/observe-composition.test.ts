@@ -2595,7 +2595,7 @@ describe('OBSERVE runtime composition', () => {
     expect(step).toEqual({ _tag: 'Wait', observedAt })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
-    expect(paperCycleHasFilledIntent([record.intent], [partialOrder])).toBe(true)
+    expect(paperCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
     const closeExpiresAt = new Date(Date.parse(cutoffAt) + 60_000).toISOString()
     const closeRestrictions: string[] = []
