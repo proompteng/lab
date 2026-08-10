@@ -85,12 +85,12 @@ const prepareSubmitIntent = (
       prepared.intentId === context.sourcePlan.intentId
         ? Effect.succeed(prepared)
         : Effect.fail(
-            paperProofFailure(
-              'SUBMIT',
-              'prepared PAPER intent identity does not match the source-controlled proof plan',
-              prepared,
-              'invariant',
-            ),
+            paperProofFailure({
+              operation: 'SUBMIT',
+              message: 'prepared PAPER intent identity does not match the source-controlled proof plan',
+              cause: prepared,
+              failure: 'invariant',
+            }),
           ),
     ),
   )
@@ -264,12 +264,12 @@ const runPaperProofSubmitDataFirst = (
       MutationOperation.Cancel,
     )
     if (cancellation !== undefined) {
-      return yield* paperProofFailure(
-        'SUBMIT',
-        'paper proof submit is superseded by a durable cancellation mutation',
-        cancellation,
-        'mutation-unresolved',
-      )
+      return yield* paperProofFailure({
+        operation: 'SUBMIT',
+        message: 'paper proof submit is superseded by a durable cancellation mutation',
+        cause: cancellation,
+        failure: 'mutation-unresolved',
+      })
     }
     const existing = yield* readPaperProofMutation(context, 'SUBMIT', dependencies.mutations, MutationOperation.Submit)
     const admission = yield* Effect.fromResult(decideSubmitAdmission(cancellation, existing))

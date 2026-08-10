@@ -636,6 +636,7 @@ describe('ledger plan Result algebra', () => {
       reason: 'record-mismatch',
       material: { id: plan.transfers[0].id },
     })
+    expect('detail' in mismatch).toBeFalse()
   })
 
   test('reconciles exact sets and posted balances without throwing assertions', () => {
