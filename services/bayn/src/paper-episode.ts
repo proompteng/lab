@@ -10,12 +10,10 @@ export const QualificationBindingSchema = Schema.Struct({
 })
 export type QualificationBinding = typeof QualificationBindingSchema.Type
 
-export const QualifiedPaperGrantSchema = Schema.Struct({
-  _tag: Schema.Literal('Qualified'),
+export const QualifiedPaperGrantSchema = Schema.TaggedStruct('Qualified', {
   qualification: QualificationBindingSchema,
 })
-export const ResearchPaperGrantSchema = Schema.Struct({
-  _tag: Schema.Literal('Research'),
+export const ResearchPaperGrantSchema = Schema.TaggedStruct('Research', {
   planHash: Sha256Schema,
 })
 export const PaperGrantSchema = Schema.Union([QualifiedPaperGrantSchema, ResearchPaperGrantSchema])

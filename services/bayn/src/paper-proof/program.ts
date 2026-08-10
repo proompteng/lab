@@ -125,7 +125,7 @@ const containFailure = (
       liftBounded(
         'RECONCILE',
         'paper proof containment reconciliation failed',
-        dependencies.reconcile(),
+        dependencies.reconcile,
         context.containmentIoTimeoutMs,
       ).pipe(Effect.flatMap((result) => Effect.fromResult(validateReconciliationAccount(accountId, result)))),
     )

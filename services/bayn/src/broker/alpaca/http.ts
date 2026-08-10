@@ -265,12 +265,10 @@ export const makeFreshBrokerPriceReader = (
           ),
         )
       if (response.status < 200 || response.status >= 300) {
-        return yield* Effect.fail(
-          operationalError(
-            'http',
-            'alpaca-latest-quote',
-            `Alpaca latest quote returned HTTP ${response.status.toString()}`,
-          ),
+        return yield* operationalError(
+          'http',
+          'alpaca-latest-quote',
+          `Alpaca latest quote returned HTTP ${response.status.toString()}`,
         )
       }
       const raw = yield* response.json.pipe(
@@ -385,16 +383,14 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               invalidResponse(operation, `Alpaca ${operation} error response is invalid`, evidence, cause),
             ),
           )
-          return yield* Effect.fail(
-            statusError(
-              operation,
-              response.status,
-              evidence.requestId,
-              contentHash,
-              evidence.observedAt,
-              failure.code,
-              failure.message,
-            ),
+          return yield* statusError(
+            operation,
+            response.status,
+            evidence.requestId,
+            contentHash,
+            evidence.observedAt,
+            failure.code,
+            failure.message,
           )
         }
 

@@ -1299,12 +1299,10 @@ const ensurePaperCycleClosure = (
     const existing = yield* readPaperCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
-      return yield* Effect.fail(
-        mutationRunnerError(
-          'active PAPER cycle has no immutable entry decision hash for its close plan',
-          undefined,
-          'contract',
-        ),
+      return yield* mutationRunnerError(
+        'active PAPER cycle has no immutable entry decision hash for its close plan',
+        undefined,
+        'contract',
       )
     }
     if (existing === undefined) {
@@ -1785,7 +1783,7 @@ const reconcileMutationNotDuePass = (
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
     if (decision._tag === 'WAIT') {
-      if (state.lastFailure !== undefined) return yield* Effect.fail(state.lastFailure)
+      if (state.lastFailure !== undefined) return yield* state.lastFailure
       return result
     }
     yield* attemptMutationIdleReconciliation(cadence, reconcile)

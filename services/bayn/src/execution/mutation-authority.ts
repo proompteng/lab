@@ -801,11 +801,9 @@ export const refreshLiveBrokerSubmitSnapshot = (
     )
     const stablePositions = validateStableLivePositionSnapshot(positionsBefore.value, positionsAfter.value)
     if (Result.isFailure(stablePositions)) {
-      return yield* Effect.fail(
-        mutationAuthorizationError(
-          'live broker position snapshot changed during exposure refresh',
-          stablePositions.failure,
-        ),
+      return yield* mutationAuthorizationError(
+        'live broker position snapshot changed during exposure refresh',
+        stablePositions.failure,
       )
     }
     const quoteSymbols = quoteSymbolsForLiveExposure(intent, openOrders.value)
@@ -955,8 +953,9 @@ export const makeAuthorityGuardedBrokerMutation = (
         const observedAt = yield* dependencies.currentUtcInstant
         const validation = validateLiveBrokerSubmitSnapshot(liveAuthority, persisted, intent, snapshot, observedAt)
         if (Result.isFailure(validation)) {
-          return yield* Effect.fail(
-            mutationAuthorizationError('live broker submit preflight rejected the broker submit', validation.failure),
+          return yield* mutationAuthorizationError(
+            'live broker submit preflight rejected the broker submit',
+            validation.failure,
           )
         }
         return yield* transmit(intent)

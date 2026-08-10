@@ -51,16 +51,14 @@ export const BrokerEventInputSchema = Schema.TaggedUnion({
 })
 export type BrokerEventInput = typeof BrokerEventInputSchema.Type
 
-export const FillEventInputSchema = Schema.Struct({
-  _tag: Schema.Literal('Fill'),
+export const FillEventInputSchema = Schema.TaggedStruct('Fill', {
   ...CommonEventInput,
   sourceTimestamp: UtcOrderTimestamp,
   fill: FillSchema,
 })
 export type FillEventInput = typeof FillEventInputSchema.Type
 
-export const PositionEventInputSchema = Schema.Struct({
-  _tag: Schema.Literal('Position'),
+export const PositionEventInputSchema = Schema.TaggedStruct('Position', {
   ...CommonEventInput,
   position: PositionSchema,
 })

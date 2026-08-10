@@ -406,9 +406,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        Effect.gen(function* () {
-          yield* Journal
-        }).pipe(
+        Journal.pipe(
           Effect.provide(
             JournalLive(config, {
               createClient: () => tigerBeetleClient,

@@ -21,7 +21,8 @@
       {
         "name": "@effect/language-service",
         "diagnostics": true,
-        "includeSuggestionsInTsc": false,
+        "includeSuggestionsInTsc": true,
+        "ignoreEffectSuggestionsInTscExitCode": false,
         "ignoreEffectErrorsInTscExitCode": false,
         "ignoreEffectWarningsInTscExitCode": false,
         "diagnosticSeverity": {
@@ -32,6 +33,9 @@
           "multipleEffectProvide": "error",
           "schemaNumber": "error",
           "scopeInLayerEffect": "error",
+          "strictBooleanExpressions": "error",
+          "strictEffectProvide": "error",
+          "unsafeEffectTypeAssertion": "error",
           "unknownInEffectCatch": "error"
         },
         "overrides": [
@@ -46,6 +50,9 @@
                 "multipleEffectProvide": "off",
                 "schemaNumber": "off",
                 "scopeInLayerEffect": "off",
+                "strictBooleanExpressions": "off",
+                "strictEffectProvide": "off",
+                "unsafeEffectTypeAssertion": "off",
                 "unknownInEffectCatch": "off"
               }
             }

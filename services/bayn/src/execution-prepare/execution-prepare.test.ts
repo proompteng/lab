@@ -12,7 +12,6 @@ import {
 import { validateDerivedPaperGeneration } from '../db/capital-grant-algebra'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority, makeCapitalGrantGenerationResult, type CapitalGrantGeneration } from '../execution/contracts'
-import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1OrThrow, sha256 } from '../hash'
 import { renderExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareGenerationField } from './failure'
@@ -707,12 +706,6 @@ describe('EXECUTION_PREPARE pure validation', () => {
   })
 })
 
-const writerFence: WriterFenceService = {
-  backendPid: 1,
-  check: Effect.void,
-  transaction: (effect) => effect,
-}
-
 const unusedResearchCapitalGrantLifecycle = {
   activateResearchCapitalGrant: () => Effect.die(new Error('research activation must remain unreachable')),
 } satisfies Pick<CapitalGrantLifecycleStoreShape, 'activateResearchCapitalGrant'>
@@ -724,7 +717,6 @@ const runProgram = (
 ) =>
   prepareExecution(candidateRequest, runtime, trustedReceipt).pipe(
     Effect.provideService(CapitalGrantLifecycleStore, lifecycle),
-    Effect.provideService(WriterFence, writerFence),
   )
 
 describe('EXECUTION_PREPARE program boundary', () => {
@@ -761,7 +753,6 @@ describe('EXECUTION_PREPARE program boundary', () => {
     const output = await Effect.runPromise(
       prepareValidatedExecutionWithGeneration(validated()).pipe(
         Effect.provideService(CapitalGrantLifecycleStore, lifecycle),
-        Effect.provideService(WriterFence, writerFence),
       ),
     )
 

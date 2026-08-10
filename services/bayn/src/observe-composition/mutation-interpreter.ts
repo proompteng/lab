@@ -77,36 +77,32 @@ export const executeMutationIntentWithExecutor = <E, R>(
     let event: MutationEvent
     if (existing === undefined) {
       if (action !== 'SUBMIT') {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            `lookup-only PAPER recovery lost its durable ${operation.toLowerCase()} evidence`,
-            { intentId, action, operation },
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          `lookup-only PAPER recovery lost its durable ${operation.toLowerCase()} evidence`,
+          { intentId, action, operation },
+          'contract',
         )
       }
       if (submitExpiresAt === undefined) {
-        return yield* Effect.fail(
-          mutationRunnerError('fresh PAPER submit is missing its immutable submission cutoff', undefined, 'contract'),
+        return yield* mutationRunnerError(
+          'fresh PAPER submit is missing its immutable submission cutoff',
+          undefined,
+          'contract',
         )
       }
       const submitObservedAt = yield* now
       if (submitObservedAt >= submitExpiresAt) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'fresh PAPER submit crossed its immutable submission cutoff before broker I/O',
-            { intentId, submitObservedAt, submitExpiresAt },
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'fresh PAPER submit crossed its immutable submission cutoff before broker I/O',
+          { intentId, submitObservedAt, submitExpiresAt },
+          'contract',
         )
       }
       if (executor.submit === undefined) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'fresh PAPER submit is unavailable under OBSERVE recovery-only authority',
-            undefined,
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'fresh PAPER submit is unavailable under OBSERVE recovery-only authority',
+          undefined,
+          'contract',
         )
       }
       event = yield* executor
@@ -125,8 +121,10 @@ export const executeMutationIntentWithExecutor = <E, R>(
     }
     const settlement = decideMutationIntentSettlement(event.eventType)
     if (settlement._tag === 'Unresolved') {
-      return yield* Effect.fail(
-        mutationRunnerError(`guarded PAPER submit remains unresolved at ${settlement.eventType}`, event, 'operational'),
+      return yield* mutationRunnerError(
+        `guarded PAPER submit remains unresolved at ${settlement.eventType}`,
+        event,
+        'operational',
       )
     }
     return { settlement, consistencyDelayMs: event.consistencyDelayMs, operation }

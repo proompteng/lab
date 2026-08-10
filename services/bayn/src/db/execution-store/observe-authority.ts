@@ -117,7 +117,7 @@ export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityState: () => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
@@ -422,23 +422,22 @@ export const makeObserveAuthorityInterpreter = (
       ),
     )
 
-  const readAuthorityState = () =>
-    runExecutionOperation(
-      'authority',
-      sql<Record<string, unknown>>`
+  const readAuthorityState = runExecutionOperation(
+    'authority',
+    sql<Record<string, unknown>>`
         SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
           version::text AS version, updated_at
         FROM authority_state
         WHERE singleton
       `.pipe(
-        Effect.flatMap(decodeAuthorityStateRows),
-        Effect.flatMap((rows) =>
-          rows[0] === undefined
-            ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
-            : authorityStateFromRow(rows[0]),
-        ),
+      Effect.flatMap(decodeAuthorityStateRows),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
+          : authorityStateFromRow(rows[0]),
       ),
-    )
+    ),
+  )
 
   const readAuthorityGeneration = (generationHash: string) =>
     runExecutionOperation(
@@ -451,7 +450,7 @@ export const makeObserveAuthorityInterpreter = (
             row.maximum !== Authority.Paper ||
             row.activation_schema_version !== 'bayn.paper-authority-generation.v2'
           ) {
-            return Effect.succeed(undefined)
+            return Effect.as(Effect.void, undefined)
           }
           return paperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
         }),
@@ -469,7 +468,7 @@ export const makeObserveAuthorityInterpreter = (
             row.maximum !== Authority.Paper ||
             row.activation_schema_version !== 'bayn.paper-authority-generation.v3'
           ) {
-            return Effect.succeed(undefined)
+            return Effect.as(Effect.void, undefined)
           }
           return researchPaperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
         }),

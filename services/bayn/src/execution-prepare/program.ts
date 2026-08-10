@@ -5,7 +5,6 @@ import { CapitalGrantLifecycleStore } from '../db/execution-store'
 import type { ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery'
 import { canonicalHashV1Result } from '../hash'
 import type { CapitalGrantGeneration } from '../execution/contracts'
-import type { WriterFence } from '../execution/writer-fence'
 import type { ExecutionPrepareFailure } from './failure'
 import type {
   ExecutionPrepareProofPlanRequest,
@@ -159,7 +158,7 @@ export const prepareValidatedExecutionWithGeneration = (
     readonly receipt: ExecutionPrepareReceipt
   },
   ExecutionPrepareFailure,
-  CapitalGrantLifecycleStore | WriterFence
+  CapitalGrantLifecycleStore
 > =>
   Effect.gen(function* () {
     const lifecycle = yield* CapitalGrantLifecycleStore
@@ -180,14 +179,14 @@ export const prepareValidatedExecutionWithGeneration = (
 
 export const prepareValidatedExecution = (
   validated: ValidatedExecutionPrepareInput,
-): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore | WriterFence> =>
+): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore> =>
   prepareValidatedExecutionWithGeneration(validated).pipe(Effect.map(({ receipt }) => receipt))
 
 export const prepareExecution = (
   request: unknown,
   runtime: unknown,
   trustedDiscoveryReceipt: ExecutionCandidateDiscoveryReceipt,
-): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore | WriterFence> =>
+): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore> =>
   Effect.gen(function* () {
     const prevalidated = yield* Effect.fromResult(validateExecutionPrepareInput(request, runtime))
     const validated = yield* Effect.fromResult(

@@ -267,12 +267,10 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       const target = targets.get(targetIntent.symbol)
       const intentId = document.orderedIntentIds[index]
       if (riskBinding === undefined || target === undefined || intentId === undefined) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'durable mutation target is missing its intent, risk, or final-position binding',
-            undefined,
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'durable mutation target is missing its intent, risk, or final-position binding',
+          undefined,
+          'contract',
         )
       }
       const stored = yield* intentStore
@@ -288,21 +286,17 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
         .latest(intentId, MutationOperation.Cancel)
         .pipe(Effect.mapError((cause) => mutationRunnerError('durable cancel state read failed', cause, 'store')))
       if (existing === undefined && (latestSubmit !== undefined || latestCancel !== undefined)) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'durable mutation exists without its authority-bound intent',
-            { latestSubmit, latestCancel },
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'durable mutation exists without its authority-bound intent',
+          { latestSubmit, latestCancel },
+          'contract',
         )
       }
       if (existing !== undefined && existing.intent.intentId !== intentId) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'durable PAPER intent recovery returned a different intent identity',
-            undefined,
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'durable PAPER intent recovery returned a different intent identity',
+          undefined,
+          'contract',
         )
       }
       recoveryLookups.push({
@@ -335,17 +329,17 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
         ),
       )
       if (lookup.intentId !== intent.intentId) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'durable PAPER intent identity or order changed after decision binding',
-            undefined,
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'durable PAPER intent identity or order changed after decision binding',
+          undefined,
+          'contract',
         )
       }
       if (lookup.stored !== undefined && !immutableIntentBindingMatches(lookup.stored.intent, intent)) {
-        return yield* Effect.fail(
-          mutationRunnerError('stored PAPER intent changed from its durable decision binding', undefined, 'contract'),
+        return yield* mutationRunnerError(
+          'stored PAPER intent changed from its durable decision binding',
+          undefined,
+          'contract',
         )
       }
       preparedIntents.push({ ...lookup, intent })
@@ -420,23 +414,19 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       if (
         preparedIntents.some((prepared) => prepared.latestSubmit !== undefined || prepared.latestCancel !== undefined)
       ) {
-        return yield* Effect.fail(
-          mutationRunnerError(
-            'broker mutation evidence exists before the complete immutable intent set was committed',
-            undefined,
-            'contract',
-          ),
+        return yield* mutationRunnerError(
+          'broker mutation evidence exists before the complete immutable intent set was committed',
+          undefined,
+          'contract',
         )
       }
     }
 
     if (input.mutationPhase === 'CLOSE' && intentStore.commitClosing === undefined) {
-      return yield* Effect.fail(
-        mutationRunnerError(
-          'PAPER close intent store does not expose the close-only authority port',
-          undefined,
-          'store',
-        ),
+      return yield* mutationRunnerError(
+        'PAPER close intent store does not expose the close-only authority port',
+        undefined,
+        'store',
       )
     }
     yield* Effect.forEach(
@@ -456,8 +446,10 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       document.bindings.snapshotContentHash !== facts.snapshot.contentHash ||
       document.bindings.snapshotFinalizedAt !== facts.snapshot.finalizedAt
     ) {
-      return yield* Effect.fail(
-        mutationRunnerError('bound mutation cycle snapshot publication changed after planning', undefined, 'contract'),
+      return yield* mutationRunnerError(
+        'bound mutation cycle snapshot publication changed after planning',
+        undefined,
+        'contract',
       )
     }
 
@@ -474,8 +466,10 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
         .pipe(Effect.mapError((cause) => mutationRunnerError('committed PAPER intent readback failed', cause, 'store')))
       const record = Option.getOrUndefined(stored)
       if (record === undefined) {
-        return yield* Effect.fail(
-          mutationRunnerError('committed PAPER intent disappeared before execution selection', undefined, 'contract'),
+        return yield* mutationRunnerError(
+          'committed PAPER intent disappeared before execution selection',
+          undefined,
+          'contract',
         )
       }
       const latest = yield* mutationStore

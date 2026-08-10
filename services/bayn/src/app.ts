@@ -227,7 +227,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
   state: Ref.Ref<RuntimeState>,
 ): Effect.Effect<Fiber.Fiber<void, never> | undefined, OperationalError, StartupR | LoopR | Scope.Scope> =>
   runtime._tag === 'Brokerless'
-    ? Effect.succeed(undefined)
+    ? Effect.as(Effect.void, undefined)
     : Ref.get(state).pipe(
         Effect.flatMap((initialized) => {
           const cycleBindingId =
@@ -235,7 +235,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
               ? undefined
               : (runtime.cycleBindingId ?? initialized.evidence?.evaluation.runId)
           return cycleBindingId === undefined
-            ? Effect.succeed(undefined)
+            ? Effect.as(Effect.void, undefined)
             : forkAutonomousCycle(runtime, state, cycleBindingId)
         }),
       )

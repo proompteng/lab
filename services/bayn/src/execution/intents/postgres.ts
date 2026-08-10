@@ -453,13 +453,13 @@ const persistDecision = (
     )
     const stored = yield* readById(sql, 'commit', prepared.intent.intentId)
     if (Option.isNone(stored)) {
-      return yield* Effect.fail(storeError('invariant', 'commit', 'committed intent cannot be read back'))
+      return yield* storeError('invariant', 'commit', 'committed intent cannot be read back')
     }
     const verified = yield* Effect.fromResult(classifyExistingCommit([stored.value], prepared)).pipe(
       Effect.mapError(existingCommitError),
     )
     if (verified._tag !== 'ExactReplay') {
-      return yield* Effect.fail(storeError('invariant', 'commit', 'committed intent readback is incomplete'))
+      return yield* storeError('invariant', 'commit', 'committed intent readback is incomplete')
     }
     return { record: verified.receipt.record, deduplicated: false }
   })

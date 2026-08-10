@@ -986,7 +986,7 @@ describe('OBSERVE runtime composition', () => {
       read: () => Effect.succeed(Option.none()),
     }
     const mutationStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const waiting = await Effect.runPromise(
       Effect.gen(function* () {
@@ -1298,7 +1298,7 @@ describe('OBSERVE runtime composition', () => {
     ])
 
     const missingStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const failure = await Effect.runPromise(
       Effect.flip(
@@ -1393,7 +1393,7 @@ describe('OBSERVE runtime composition', () => {
         }),
     }
     const store = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const failure = await Effect.runPromise(
       Effect.flip(
@@ -1584,7 +1584,7 @@ describe('OBSERVE runtime composition', () => {
         }),
     }
     const mutationStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
       restrictAuthority: () =>
@@ -1910,7 +1910,7 @@ describe('OBSERVE runtime composition', () => {
       read: () => Effect.succeed(Option.some(plannedRecord)),
     }
     const mutationStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const freshFailure = await Effect.runPromise(
       Effect.gen(function* () {
@@ -2023,7 +2023,7 @@ describe('OBSERVE runtime composition', () => {
       read: () => Effect.succeed(Option.some(plannedRecord)),
     }
     const mutationStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const freshFailure = await Effect.runPromise(
       Effect.gen(function* () {
@@ -2228,7 +2228,7 @@ describe('OBSERVE runtime composition', () => {
       },
     }
     const closeMutationStore = {
-      latest: () => Effect.succeed(undefined),
+      latest: () => Effect.void,
     } as unknown as MutationStoreShape
     const admission = await Effect.runPromise(
       Effect.gen(function* () {

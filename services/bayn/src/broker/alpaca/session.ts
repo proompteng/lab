@@ -106,16 +106,14 @@ export const acquireBrokerSession = (
   connection: BrokerConnection,
 ): Effect.Effect<BrokerSessionShape, BrokerSessionAcquisitionError, HttpClient.HttpClient> =>
   pipe(
-    pipe(
-      make(connection),
-      Effect.flatMap((read) =>
-        pipe(
-          verifyReadAccess(connection, read),
-          Effect.map((preflight) => Object.freeze({ connection, read, preflight })),
-        ),
+    make(connection),
+    Effect.flatMap((read) =>
+      pipe(
+        verifyReadAccess(connection, read),
+        Effect.map((preflight) => Object.freeze({ connection, read, preflight })),
       ),
-      Effect.mapError((cause) => acquisitionError(connection, cause)),
     ),
+    Effect.mapError((cause) => acquisitionError(connection, cause)),
     (acquisition) => retryRecoverableBrokerSessionAcquisition(connection, acquisition),
     Effect.withLogSpan('broker.session.acquire'),
   )

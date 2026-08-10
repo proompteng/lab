@@ -2,7 +2,6 @@ import { Context, Data, Effect } from 'effect'
 
 import type { BrokerEventInput, FillEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
 import type { RuntimeConfig } from '../../config'
-import type { WriterFence } from '../../execution/writer-fence'
 import type {
   AccountingReceipt,
   Authority,
@@ -50,13 +49,6 @@ export class ExecutionStoreError extends Data.TaggedError('ExecutionStoreError')
   readonly cause?: unknown
 }> {}
 
-/**
- * The capital-grant lifecycle is the execution store's writer-fenced interpreter boundary. Its operations acquire the
- * process-wide WriterFence at invocation time; all other execution-store capabilities remain fence-free because they
- * do not own the authority-generation transaction.
- */
-export type WriterFencedExecutionStoreOperation<A> = Effect.Effect<A, ExecutionStoreError, WriterFence>
-
 export interface BrokerEventStoreShape {
   readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, ExecutionStoreError>
   readonly ingestPositions: (
@@ -83,7 +75,7 @@ export interface AuthorityGenerationStoreShape {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Read-only recovery view used to resume a durable PAPER close lease after process restart. */
-  readonly readAuthorityState?: () => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityGeneration?: (
     generationHash: string,
   ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
@@ -92,6 +84,7 @@ export interface AuthorityGenerationStoreShape {
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
+/** Domain operations; the live Layer captures the process-wide writer fence. */
 export interface CapitalGrantLifecycleStoreShape {
   /**
    * PREPARE operation: transactionally derives the stable canonical capital-grant generation identity plus current
@@ -100,7 +93,7 @@ export interface CapitalGrantLifecycleStoreShape {
    */
   readonly prepareCapitalGrant: (
     proof: CapitalGrantProofBinding,
-  ) => WriterFencedExecutionStoreOperation<CapitalGrantGeneration>
+  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError>
   /**
    * SUBMIT activation operation: transactionally re-derives the stable generation identity
    * from the same proof binding, requires its hash to equal the configured generationHash, and records the latest
@@ -108,9 +101,7 @@ export interface CapitalGrantLifecycleStoreShape {
    * writer; application code and operators must not issue direct DML against authority_state or
    * authority_generations.
    */
-  readonly activateCapitalGrant: (
-    proof: CapitalGrantProofBinding,
-  ) => WriterFencedExecutionStoreOperation<AuthorityState>
+  readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /**
    * Atomically derives a reconciliation-bound research generation, records it, and activates PAPER authority. The
    * static request intentionally cannot predict this generation hash because reconciliation continues until the
@@ -118,7 +109,7 @@ export interface CapitalGrantLifecycleStoreShape {
    */
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
-  ) => WriterFencedExecutionStoreOperation<AuthorityState>
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
 export interface AuthorityRestrictionStoreShape {

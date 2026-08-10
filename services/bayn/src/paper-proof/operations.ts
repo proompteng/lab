@@ -31,7 +31,7 @@ export interface PaperProofOperationContext<Operation extends PaperProofOperatio
 
 export interface PaperProofContainmentDependencies {
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, Error>
-  readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
+  readonly reconcile: Effect.Effect<PaperProofReconciliation, Error>
   readonly currentUtcInstant: Effect.Effect<string, Error>
 }
 
@@ -124,15 +124,15 @@ export const validateExactReconciliation = (
 
 export const observeReconciliation = (
   accountId: string,
-  reconcile: () => Effect.Effect<PaperProofReconciliation, Error>,
+  reconcile: Effect.Effect<PaperProofReconciliation, Error>,
 ): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
-  lift('RECONCILE', 'paper proof reconciliation failed', reconcile()).pipe(
+  lift('RECONCILE', 'paper proof reconciliation failed', reconcile).pipe(
     Effect.flatMap((result) => Effect.fromResult(validateReconciliationAccount(accountId, result))),
   )
 
 export const reconcileExact = (
   accountId: string,
-  reconcile: () => Effect.Effect<PaperProofReconciliation, Error>,
+  reconcile: Effect.Effect<PaperProofReconciliation, Error>,
 ): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
   observeReconciliation(accountId, reconcile).pipe(
     Effect.flatMap((result) => Effect.fromResult(validateExactReconciliation(result))),
@@ -381,7 +381,7 @@ export const ensureRecoveryMarkerCompatible = (
     context.command.containmentIoTimeoutMs,
   ).pipe(
     Effect.flatMap((existing) => {
-      if (existing === undefined) return Effect.succeed(undefined)
+      if (existing === undefined) return Effect.as(Effect.void, undefined)
       if (!recoveryIdentityMatches(context, existing)) {
         return Effect.fail(
           paperProofFailure(
@@ -581,13 +581,11 @@ export const completeRecovery = (
   Effect.gen(function* () {
     if (completion.operation === 'SUBMIT') {
       if (latestCancellation === undefined) {
-        return yield* Effect.fail(
-          paperProofFailure(
-            'RECOVERY_STATE',
-            'paper proof submit completion is missing its cancellation-state reader',
-            completion,
-            'invariant',
-          ),
+        return yield* paperProofFailure(
+          'RECOVERY_STATE',
+          'paper proof submit completion is missing its cancellation-state reader',
+          completion,
+          'invariant',
         )
       }
       const cancellation = yield* lift(
@@ -596,13 +594,11 @@ export const completeRecovery = (
         latestCancellation(),
       )
       if (cancellation !== undefined) {
-        return yield* Effect.fail(
-          paperProofFailure(
-            'RECOVERY_STATE',
-            'paper proof submit completion is superseded by a durable cancellation mutation',
-            cancellation,
-            'mutation-unresolved',
-          ),
+        return yield* paperProofFailure(
+          'RECOVERY_STATE',
+          'paper proof submit completion is superseded by a durable cancellation mutation',
+          cancellation,
+          'mutation-unresolved',
         )
       }
     }

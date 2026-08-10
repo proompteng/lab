@@ -18,6 +18,7 @@ const printUsage = Effect.gen(function* () {
 const runProof = Effect.scoped(
   Effect.gen(function* () {
     const config = yield* loadConfig()
+    // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
     const receipt = yield* runForwardPerformance(config).pipe(Effect.provide(PostgresClientLive(config)))
     const output = yield* Effect.fromResult(canonicalJsonV1Result(receipt)).pipe(
       Effect.mapError(
@@ -36,6 +37,7 @@ const runProof = Effect.scoped(
 
 const runtime = Layer.mergeAll(Logger.layer([Logger.consoleJson]), NodeServices.layer)
 const main = process.argv.slice(2).includes('--help') ? printUsage : runProof
+// @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the runtime layer
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn-forward-performance' }), Effect.provide(runtime))
 
 if (import.meta.main) NodeRuntime.runMain(program)

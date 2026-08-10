@@ -80,17 +80,17 @@ const makeStore = Effect.gen(function* () {
           `
             const stored = yield* readByGeneration(sql, envelope.authorityGenerationHash)
             if (Option.isNone(stored)) {
-              return yield* Effect.fail(
-                storeError('bind', 'invariant', 'forward-performance receipt disappeared after its immutable bind'),
+              return yield* storeError(
+                'bind',
+                'invariant',
+                'forward-performance receipt disappeared after its immutable bind',
               )
             }
             if (stored.value.contentHash !== envelope.contentHash) {
-              return yield* Effect.fail(
-                storeError(
-                  'bind',
-                  'conflict',
-                  'forward-performance receipt generation was reused with different immutable content',
-                ),
+              return yield* storeError(
+                'bind',
+                'conflict',
+                'forward-performance receipt generation was reused with different immutable content',
               )
             }
             return stored.value
