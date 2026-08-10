@@ -108,6 +108,7 @@ import { Reason, type Policy } from './risk'
 import { decodePaperDecisionDocument, makePaperDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
+import { utcInstantFromEpochMillis } from './time'
 import type { DecisionPlan, IsoDate } from './types'
 
 const signalDate = '2020-04-30'
@@ -935,7 +936,7 @@ describe('OBSERVE runtime composition', () => {
   test('keeps OBSERVE recovery-only execution lookup-capable while fresh submit remains structurally unavailable', async () => {
     const fixture = await paperLifecycleFixture()
     const occurredAt = fixture.document.createdAt
-    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const submitUnknown: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
       eventId: '1'.repeat(64),
@@ -1236,8 +1237,8 @@ describe('OBSERVE runtime composition', () => {
       eventId: '6'.repeat(64),
       eventType: MutationEventType.CancelUnknown,
     }
-    const dueAt = new Date(Date.parse(evaluatedAt) + accepted.consistencyDelayMs).toISOString()
-    expect(mutationRecoveryIsDue(accepted, new Date(Date.parse(dueAt) - 1).toISOString())).toBe(false)
+    const dueAt = utcInstantFromEpochMillis(Date.parse(evaluatedAt) + accepted.consistencyDelayMs)
+    expect(mutationRecoveryIsDue(accepted, utcInstantFromEpochMillis(Date.parse(dueAt) - 1))).toBe(false)
     expect(mutationRecoveryIsDue(accepted, dueAt)).toBe(true)
     expect(paperSubmitExpiresAt(cycle.window.submissionCutoffAt, evaluatedAt)).toBe(evaluatedAt)
     expect(paperSubmitExpiresAt(evaluatedAt, cycle.window.submissionCutoffAt)).toBe(evaluatedAt)
@@ -1330,7 +1331,7 @@ describe('OBSERVE runtime composition', () => {
 
   test('keeps an accepted pending intent lookup-recoverable after its immutable submission cutoff', async () => {
     const fixture = await paperLifecycleFixture()
-    const afterCutoff = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const afterCutoff = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Acknowledged, fixture.document.createdAt)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -1358,7 +1359,7 @@ describe('OBSERVE runtime composition', () => {
 
   test('keeps an unknown submit lookup-recoverable after its immutable submission cutoff', async () => {
     const fixture = await paperLifecycleFixture()
-    const afterCutoff = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const afterCutoff = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Unknown, fixture.document.createdAt)
     const unknown: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -1423,7 +1424,7 @@ describe('OBSERVE runtime composition', () => {
       ...policy,
       maxOrderNotionalMicros: '1',
     }))
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1)
 
     expect(fixture.document).toMatchObject({
       mode: 'PAPER',
@@ -1472,7 +1473,7 @@ describe('OBSERVE runtime composition', () => {
       ...policy,
       maxOrderNotionalMicros: '1',
     }))
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1)
     const blockedCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...fixture.boundCycle,
@@ -1636,7 +1637,7 @@ describe('OBSERVE runtime composition', () => {
 
   test('terminalizes a superseded PAPER generation after proving no mutation exists', async () => {
     const fixture = await paperLifecycleFixture()
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1)
     let intentReads = 0
     let mutationReads = 0
     let commits = 0
@@ -1700,7 +1701,7 @@ describe('OBSERVE runtime composition', () => {
   test('recovers superseded accepted and unknown submits and cancellations before provenance blocking', async () => {
     const fixture = await paperLifecycleFixture()
     const occurredAt = fixture.document.createdAt
-    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
     const driftedPolicy: Policy = {
       ...fixture.policy,
@@ -1869,7 +1870,7 @@ describe('OBSERVE runtime composition', () => {
   test('recovers old-policy mutation work before rejecting fresh work under the current policy', async () => {
     const fixture = await paperLifecycleFixture()
     const occurredAt = fixture.document.createdAt
-    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const driftedPolicy: Policy = {
       ...fixture.policy,
       maxOrderNotionalMicros: (BigInt(fixture.policy.maxOrderNotionalMicros) - 1n).toString(),
@@ -1962,7 +1963,7 @@ describe('OBSERVE runtime composition', () => {
   test('recovers old execution-model mutations before gating fresh submission on the current model', async () => {
     const fixture = await paperLifecycleFixture()
     const occurredAt = fixture.document.createdAt
-    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
     const driftedPreparation = {
       ...fixture.preparation,
@@ -2083,7 +2084,7 @@ describe('OBSERVE runtime composition', () => {
 
   test('terminalizes a known rejected PAPER intent without waiting for cutoff', async () => {
     const fixture = await paperLifecycleFixture()
-    const rejectedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
+    const rejectedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     expect(rejectedAt < fixture.risk.evaluation.decision.expiresAt).toBe(true)
     const record = storedIntent(fixture.intent, IntentState.Terminal, rejectedAt, TerminalOutcome.Rejected)
     const rejected: MutationEvent = {
@@ -2125,8 +2126,8 @@ describe('OBSERVE runtime composition', () => {
       maxBrokerStateAgeMs: 3_600_000,
       maxMarketDataAgeMs: 3_600_000,
     }))
-    const observedAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
-    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const position: Position = {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
@@ -2275,8 +2276,8 @@ describe('OBSERVE runtime composition', () => {
 
   test('keeps a rejected PAPER close intent recoverable while reconciliation still shows an open position', async () => {
     const fixture = await paperLifecycleFixture()
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
-    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const rejected: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
       eventId: '5'.repeat(64),
@@ -2342,8 +2343,8 @@ describe('OBSERVE runtime composition', () => {
       }),
       partialFillDecision,
     )
-    const observedAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
-    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const positions = fixture.intents.map((intent) => ({
       schemaVersion: 'bayn.paper-position.v1' as const,
       accountId,
@@ -2480,8 +2481,8 @@ describe('OBSERVE runtime composition', () => {
     if (filledIntent === undefined || rejectedIntent === undefined) {
       return expect.unreachable('partial-fill fixture requires two planned intents')
     }
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
-    const cutoffAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const cutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const filledRecord = storedIntent(filledIntent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
     const rejectedRecord = storedIntent(rejectedIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)
     const accepted: MutationEvent = {
@@ -2542,8 +2543,8 @@ describe('OBSERVE runtime composition', () => {
 
   test('keeps a single canceled partial-fill PAPER intent recoverable before cutoff', async () => {
     const fixture = await paperLifecycleFixture()
-    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
-    const cutoffAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const cutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -2597,7 +2598,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
     expect(paperCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
-    const closeExpiresAt = new Date(Date.parse(cutoffAt) + 60_000).toISOString()
+    const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(cutoffAt) + 60_000)
     const closeRestrictions: string[] = []
     const closeStep = await prepareStoredPaperStep(
       fixture,
@@ -2628,8 +2629,8 @@ describe('OBSERVE runtime composition', () => {
 
   test('completes a filled PAPER cycle after a later exact post-cutoff reconciliation', async () => {
     const fixture = await paperLifecycleFixture()
-    const terminalAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
-    const reconciledLaterAt = new Date(Date.parse(terminalAt) + 1_000).toISOString()
+    const terminalAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const reconciledLaterAt = utcInstantFromEpochMillis(Date.parse(terminalAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, terminalAt, TerminalOutcome.Filled)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -2835,7 +2836,7 @@ describe('OBSERVE runtime composition', () => {
     })
     const alteredExpiry = makePaperDecisionDocument({
       ...material,
-      expiresAt: new Date(Date.parse(material.expiresAt) - 1).toISOString(),
+      expiresAt: utcInstantFromEpochMillis(Date.parse(material.expiresAt) - 1),
     })
 
     for (const altered of [alteredGeneration, alteredTarget, alteredOrder, alteredCumulativeRisk, alteredExpiry]) {
@@ -4438,7 +4439,7 @@ describe('OBSERVE runtime composition', () => {
         updatedAt: document.createdAt,
       }),
     )
-    const recoveredAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+    const recoveredAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
     const completedCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...boundCycle,
