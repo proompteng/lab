@@ -44,11 +44,11 @@ export interface ExecutionProgramDependencies {
   readonly riskPolicy: Policy
   readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
-  /** The reviewed PAPER entry lease, checked at the final writer fence. */
-  readonly paperEpisodeEntryExpiresAt?: string
+  /** The reviewed entry lease, checked at the final writer fence. */
+  readonly entrySubmitExpiresAt?: string
   /** Close-only intents may finish recovery until this separate close lease expires. */
-  readonly paperEpisodeCloseExpiresAt?: string
-  readonly isPaperEpisodeCloseIntent?: (intentId: string) => Effect.Effect<boolean>
+  readonly closeSubmitExpiresAt?: string
+  readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean>
 }
 
 export interface ExecutionProgramConstructionFailure {
@@ -158,28 +158,23 @@ const validateFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgra
     Effect.asVoid,
   )
 
-const validatePaperEpisodeLease = (
+const validateExecutionWindow = (
   intentId: string,
   dependencies: ExecutionProgramDependencies,
   closeIntent?: boolean,
 ): Effect.Effect<void, FinalSubmitAuthorizationFailure> =>
   Effect.gen(function* () {
-    if (
-      dependencies.paperEpisodeEntryExpiresAt === undefined &&
-      dependencies.paperEpisodeCloseExpiresAt === undefined
-    ) {
+    if (dependencies.entrySubmitExpiresAt === undefined && dependencies.closeSubmitExpiresAt === undefined) {
       return
     }
     const isCloseIntent =
       closeIntent ??
-      (dependencies.isPaperEpisodeCloseIntent !== undefined
-        ? yield* dependencies.isPaperEpisodeCloseIntent(intentId)
-        : false)
-    const expiresAt = isCloseIntent ? dependencies.paperEpisodeCloseExpiresAt : dependencies.paperEpisodeEntryExpiresAt
+      (dependencies.isCloseOnlyIntent !== undefined ? yield* dependencies.isCloseOnlyIntent(intentId) : false)
+    const expiresAt = isCloseIntent ? dependencies.closeSubmitExpiresAt : dependencies.entrySubmitExpiresAt
     if (expiresAt === undefined) return
     const observedAt = yield* dependencies.currentUtcInstant
     if (observedAt < expiresAt) return
-    return yield* Effect.fail({ _tag: 'PaperEpisodeExpired' as const, expiresAt, observedAt })
+    return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
   })
 
 const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
@@ -193,14 +188,12 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
     .transaction(
       Effect.gen(function* () {
         const closeOnly =
-          dependencies.isPaperEpisodeCloseIntent !== undefined
-            ? yield* dependencies.isPaperEpisodeCloseIntent(intent.intentId)
-            : false
+          dependencies.isCloseOnlyIntent !== undefined ? yield* dependencies.isCloseOnlyIntent(intent.intentId) : false
         yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
+        yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
         yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
@@ -253,22 +246,20 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
   const coordinatorDependencies: ExecutionProgramDependencies = {
     ...dependencies,
     brokerMutation: makeAuthorityGuardedBrokerMutation(authority, {
-      ...dependencies,
+      brokerMutation: dependencies.brokerMutation,
       finalSubmitAuthorization: (intent, transmit) =>
         authorizeFinalBrokerSubmit(mutationAuthority, intent, transmit, dependencies),
     }),
   }
-  const isPaperEpisodeCloseIntent = (intentId: string) =>
-    dependencies.isPaperEpisodeCloseIntent === undefined
-      ? Effect.succeed(false)
-      : dependencies.isPaperEpisodeCloseIntent(intentId)
+  const isCloseOnlyIntent = (intentId: string) =>
+    dependencies.isCloseOnlyIntent === undefined ? Effect.succeed(false) : dependencies.isCloseOnlyIntent(intentId)
   return Result.succeed({
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
     dryRunSubmit: (intentId: string) => provideCoordinatorDependencies(dryRunSubmit(intentId), coordinatorDependencies),
     submit: (intentId: string, consistencyDelayMs: number) =>
-      isPaperEpisodeCloseIntent(intentId).pipe(
+      isCloseOnlyIntent(intentId).pipe(
         Effect.flatMap((closeOnly) =>
           provideCoordinatorDependencies(submit(intentId, consistencyDelayMs, closeOnly), coordinatorDependencies),
         ),

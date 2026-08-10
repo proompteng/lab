@@ -37,8 +37,9 @@ import {
 import {
   isLiveMutationExecutionAuthority,
   makeAuthorityGuardedBrokerMutation,
-  refreshLiveBrokerSubmitSnapshot,
-  validateLiveBrokerSubmitSnapshot,
+  refreshExecutionBrokerSubmitSnapshot,
+  validateExecutionBrokerSubmitSnapshot,
+  validateLiveGrantForSubmit,
   type FinalSubmitAuthorization,
 } from './mutation-authority'
 
@@ -307,24 +308,29 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     input.finalSubmitAuthorization ??
     ((proposedIntent, transmit) =>
       Effect.gen(function* () {
-        const snapshot = yield* refreshLiveBrokerSubmitSnapshot(authority, proposedIntent, {
+        const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(grant.limits, proposedIntent, {
           brokerRead,
           freshBrokerPrice,
         })
         const persisted = yield* liveCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
         const observedAt = yield* currentUtcInstant
-        const validation = validateLiveBrokerSubmitSnapshot(authority, persisted, proposedIntent, snapshot, observedAt)
+        const freshAuthority = validateLiveGrantForSubmit(authority, persisted, observedAt)
+        if (Result.isFailure(freshAuthority)) return yield* Effect.fail(freshAuthority.failure)
+        const validation = validateExecutionBrokerSubmitSnapshot(
+          freshAuthority.success,
+          freshAuthority.success.capitalAuthority.grant.limits,
+          proposedIntent,
+          snapshot,
+          observedAt,
+          { closeOnly: false },
+        )
         if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
         trace.push('authorize')
         return yield* transmit
       }))
   const guarded = makeAuthorityGuardedBrokerMutation(authority, {
-    brokerRead,
     brokerMutation,
-    liveCapitalGrants,
-    freshBrokerPrice,
-    currentUtcInstant,
     finalSubmitAuthorization,
   })
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
@@ -361,7 +367,7 @@ describe('final broker mutation authority', () => {
       openOrders: [],
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveBrokerPositionSnapshotChanged')
+    expect(failureTag(observed.exit)).toBe('BrokerPositionSnapshotChanged')
     expect(observed.positionReads).toBe(2)
     expect(observed.priceReads).toBe(0)
     expect(observed.grantReads).toBe(0)
@@ -434,26 +440,26 @@ describe('final broker mutation authority', () => {
   })
 
   test.each([
-    ['order notional', { maxOrderNotionalMicros: '99999999' }, {}, 'LiveOrderNotionalLimitExceeded'],
+    ['order notional', { maxOrderNotionalMicros: '99999999' }, {}, 'OrderNotionalLimitExceeded'],
     [
       'position notional',
       { maxPositionNotionalMicros: '150000000' },
       { positions: [position()] },
-      'LivePositionNotionalLimitExceeded',
+      'PositionNotionalLimitExceeded',
     ],
     [
       'gross notional',
       { maxGrossNotionalMicros: '150000000' },
       { positions: [position()] },
-      'LiveGrossNotionalLimitExceeded',
+      'GrossNotionalLimitExceeded',
     ],
     [
       'daily loss',
       { maxDailyLossMicros: '99999999' },
       { brokerAccount: account({ lastEquityMicros: '1100000000', equityMicros: '1000000000' }) },
-      'LiveDailyLossLimitExceeded',
+      'DailyLossLimitExceeded',
     ],
-    ['open orders', { maxOpenOrders: 1 }, { openOrders: [order()] }, 'LiveOpenOrderLimitExceeded'],
+    ['open orders', { maxOpenOrders: 1 }, { openOrders: [order()] }, 'OpenOrderLimitExceeded'],
   ] as const)(
     'enforces the live %s limit at the final boundary',
     async (_name, limitOverride, snapshotOverride, tag) => {
@@ -553,7 +559,7 @@ describe('final broker mutation authority', () => {
       }),
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveIncreasingSellUnsupported')
+    expect(failureTag(observed.exit)).toBe('IncreasingSellUnsupported')
     expect(observed.submits).toBe(0)
   })
 
@@ -576,7 +582,7 @@ describe('final broker mutation authority', () => {
       }),
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveIncreasingSellUnsupported')
+    expect(failureTag(observed.exit)).toBe('IncreasingSellUnsupported')
     expect(observed.submits).toBe(0)
   })
 
@@ -595,7 +601,7 @@ describe('final broker mutation authority', () => {
       openOrders: [queuedSell],
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveGrossNotionalLimitExceeded')
+    expect(failureTag(observed.exit)).toBe('GrossNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
   })
 
@@ -618,7 +624,7 @@ describe('final broker mutation authority', () => {
       },
     })
 
-    expect(failureTag(observed.exit)).toBe('LivePendingSellUncovered')
+    expect(failureTag(observed.exit)).toBe('PendingSellUncovered')
     expect(observed.submits).toBe(0)
   })
 
@@ -708,7 +714,7 @@ describe('final broker mutation authority', () => {
       proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
   })
 
@@ -722,7 +728,7 @@ describe('final broker mutation authority', () => {
       freshAskPriceMicros: '121000000',
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
   })
 
@@ -783,21 +789,7 @@ describe('final broker mutation authority', () => {
     const guarded = makeAuthorityGuardedBrokerMutation(
       mutationAuthority(BrokerEnvironment.Sandbox, sandboxCapitalAuthority(authorityGenerationHash)),
       {
-        brokerRead: new Proxy({} as BrokerReadShape, {
-          get: () => {
-            reads += 1
-            return Effect.die(new Error('sandbox must not read live exposure'))
-          },
-        }),
         brokerMutation: mutation,
-        liveCapitalGrants: {
-          read: () => {
-            grantReads += 1
-            return Effect.as(Effect.void, undefined)
-          },
-        },
-        freshBrokerPrice: () => Effect.die(new Error('sandbox must not read a live broker price')),
-        currentUtcInstant: Effect.die(new Error('sandbox must not read the live grant clock')),
         finalSubmitAuthorization: (_intent, transmit) => transmit,
       },
     )
@@ -826,23 +818,7 @@ describe('final broker mutation authority', () => {
     const guarded = makeAuthorityGuardedBrokerMutation(
       mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant)),
       {
-        brokerRead: {} as BrokerReadShape,
         brokerMutation: mutation,
-        liveCapitalGrants: {
-          read: () => {
-            grantReads += 1
-            return Effect.succeed(
-              liveCapitalAuthority(grant, {
-                schemaVersion: 'bayn.live-capital-grant-revocation.v1',
-                revokedAt: activeAt,
-                revokedBy: 'operator:test',
-                reason: 'containment',
-              }),
-            )
-          },
-        },
-        freshBrokerPrice: () => Effect.die(new Error('cancellation must not read a broker price')),
-        currentUtcInstant: Effect.succeed(activeAt),
         finalSubmitAuthorization: () => Effect.die(new Error('cancellation must not authorize submit')),
       },
     )

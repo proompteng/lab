@@ -571,8 +571,8 @@ describe('same-code execution program composition', () => {
           quotedAt: afterEntryBeforeClose,
           observedAt: afterEntryBeforeClose,
         }),
-      paperEpisodeEntryExpiresAt: episodeExpiresAt,
-      paperEpisodeCloseExpiresAt: closeExpiresAt,
+      entrySubmitExpiresAt: episodeExpiresAt,
+      closeSubmitExpiresAt: closeExpiresAt,
     }
 
     const denied = await Effect.runPromise(
@@ -582,10 +582,10 @@ describe('same-code execution program composition', () => {
         Effect.sync(() => {
           posts += 1
         }),
-        { ...shared, isPaperEpisodeCloseIntent: () => Effect.succeed(false) },
+        { ...shared, isCloseOnlyIntent: () => Effect.succeed(false) },
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
-    expect(finalAuthorizationFailureTag(denied)).toBe('PaperEpisodeExpired')
+    expect(finalAuthorizationFailureTag(denied)).toBe('ExecutionWindowExpired')
     expect(authorizedCloseOnly).toBe(false)
     expect(posts).toBe(0)
 
@@ -598,7 +598,7 @@ describe('same-code execution program composition', () => {
           Effect.sync(() => {
             posts += 1
           }),
-          { ...shared, isPaperEpisodeCloseIntent: () => Effect.succeed(true) },
+          { ...shared, isCloseOnlyIntent: () => Effect.succeed(true) },
         )
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -616,11 +616,11 @@ describe('same-code execution program composition', () => {
         {
           ...shared,
           currentUtcInstant: Effect.succeed(afterClose),
-          isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+          isCloseOnlyIntent: () => Effect.succeed(true),
         },
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
-    expect(finalAuthorizationFailureTag(closeExpired)).toBe('PaperEpisodeExpired')
+    expect(finalAuthorizationFailureTag(closeExpired)).toBe('ExecutionWindowExpired')
     expect(posts).toBe(1)
   })
 
@@ -664,7 +664,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+      isCloseOnlyIntent: () => Effect.succeed(true),
     }
 
     const exit = await Effect.runPromise(
@@ -704,7 +704,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(shortElsewhere)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(finalAuthorizationFailureTag(shortElsewhere)).toBe('OrderNotionalLimitExceeded')
     expect(posts).toBe(1)
   })
 
@@ -757,7 +757,7 @@ describe('same-code execution program composition', () => {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(liveCapitalAuthority(grant)),
       },
-      isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+      isCloseOnlyIntent: () => Effect.succeed(true),
     }
 
     const exit = await Effect.runPromise(
@@ -771,7 +771,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(finalAuthorizationFailureTag(exit)).toBe('OrderNotionalLimitExceeded')
     expect(posts).toBe(0)
   })
 
@@ -957,7 +957,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(exit)).toBe('LiveBrokerPositionSnapshotChanged')
+    expect(finalAuthorizationFailureTag(exit)).toBe('BrokerPositionSnapshotChanged')
     expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions'])
     expect(posts).toBe(0)
   })
