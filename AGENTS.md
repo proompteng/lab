@@ -105,6 +105,10 @@ Prefer the Sol-specific guidance when the sources differ.
 - Run focused local validation before pushing. Fix all required CI failures before reporting the PR ready or merging.
 - Ensure CI provides language-appropriate linting for every touched path: Oxlint/Oxfmt for TypeScript, Ruff for Python, and the service-specific Go linter where applicable.
 - Use squash merges: `gh pr merge <number> --squash -R proompteng/lab`. Do not pass `--delete-branch`, which conflicts with worktrees.
+- For dependent changes, use GitHub native stacks: initialize the bottom branch with `gh stack init --base main <branch>`, then create each dependent branch with `gh stack add <branch>`.
+- Stage only explicit owned paths; never use `git add -A` in a dirty worktree. Keep each stack layer independently reviewable and green.
+- Publish or refresh with `gh stack submit --auto --open`, then verify every PR and parent relationship with `gh stack view`.
+- Land a green stack with `gh stack merge --yes --squash`; never delete its branches from a shared worktree.
 - Normal deployments flow through committed CI/CD and GitOps; do not deploy services directly from a worktree.
 
 ## Codex Review
