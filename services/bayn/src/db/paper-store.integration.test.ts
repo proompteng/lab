@@ -4,7 +4,20 @@ import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import {
+  Cause,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect'
 
 import type { RuntimeConfig } from '../config'
 import { orderRequestBody } from '../broker/alpaca-mutations'
@@ -157,11 +170,11 @@ const qualificationPolicy = (name: string) =>
   )
 
 const qualificationSeries = (runId: string): QualificationSeries => {
-  const sessionDate = (index: number): `${number}-${number}-${number}` => {
-    const date = new Date('2000-01-01T00:00:00.000Z')
-    date.setUTCDate(date.getUTCDate() + index)
-    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
-  }
+  const sessionDate = (index: number): `${number}-${number}-${number}` =>
+    DateTime.makeUnsafe('2000-01-01T00:00:00.000Z').pipe(
+      DateTime.add({ days: index }),
+      DateTime.formatIsoDate,
+    ) as `${number}-${number}-${number}`
   const blockCount = 90
   return {
     schemaVersion: 'bayn.qualification-series.v1',
@@ -4413,9 +4426,9 @@ describePostgres('paper accounting persistence', () => {
             )
           `
           const activationTime = Date.parse(activated.updatedAt)
-          const mismatchObservedAt = new Date(activationTime + 1).toISOString()
-          const ongoingObservedAt = new Date(activationTime + 2).toISOString()
-          const resolvedObservedAt = new Date(activationTime + 3).toISOString()
+          const mismatchObservedAt = DateTime.formatIso(DateTime.makeUnsafe(activationTime + 1))
+          const ongoingObservedAt = DateTime.formatIso(DateTime.makeUnsafe(activationTime + 2))
+          const resolvedObservedAt = DateTime.formatIso(DateTime.makeUnsafe(activationTime + 3))
 
           const mismatchInput = {
             ...setup.baseline,

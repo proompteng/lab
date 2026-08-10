@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Result } from 'effect'
+import { DateTime, Result } from 'effect'
 
 import { CycleState, CycleTerminalReason } from '../cycle'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
@@ -9,6 +9,8 @@ import {
   projectCycleObservabilityRow,
   type CycleObservabilityProjectionRow,
 } from './cycle-observability'
+
+const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 
 const emptyRow = (): CycleObservabilityProjectionRow => ({
   current_cycle_id: null,
@@ -72,12 +74,12 @@ const currentCycleRow = (): CycleObservabilityProjectionRow => ({
   current_snapshot_id: '2'.repeat(64),
   current_decision_hash: null,
   current_terminal_reason: null,
-  current_submission_open_at: new Date('2026-07-27T13:00:00.000Z'),
-  current_submission_cutoff_at: new Date('2026-07-27T13:28:00.000Z'),
-  current_execution_open_at: new Date('2026-07-27T13:30:00.000Z'),
-  current_execution_close_at: new Date('2026-07-27T20:00:00.000Z'),
-  current_created_at: new Date('2026-07-24T21:00:00.000Z'),
-  current_updated_at: new Date('2026-07-24T21:01:00.000Z'),
+  current_submission_open_at: sqlTimestamp('2026-07-27T13:00:00.000Z'),
+  current_submission_cutoff_at: sqlTimestamp('2026-07-27T13:28:00.000Z'),
+  current_execution_open_at: sqlTimestamp('2026-07-27T13:30:00.000Z'),
+  current_execution_close_at: sqlTimestamp('2026-07-27T20:00:00.000Z'),
+  current_created_at: sqlTimestamp('2026-07-24T21:00:00.000Z'),
+  current_updated_at: sqlTimestamp('2026-07-24T21:01:00.000Z'),
 })
 
 describe('cycle observability projection', () => {
@@ -115,17 +117,17 @@ describe('cycle observability projection', () => {
       authority_effective: Authority.Observe,
       authority_kill: KillState.Clear,
       authority_reason: null,
-      authority_updated_at: new Date('2026-07-24T21:02:00.000Z'),
+      authority_updated_at: sqlTimestamp('2026-07-24T21:02:00.000Z'),
       reconciliation_id: '4'.repeat(64),
       reconciliation_account_id: 'paper-account-1',
       reconciliation_status: ReconciliationStatus.Exact,
       reconciliation_discrepancy_count: 0,
-      reconciled_at: new Date('2026-07-24T21:03:00.000Z'),
+      reconciled_at: sqlTimestamp('2026-07-24T21:03:00.000Z'),
       reconciliation_covers_latest_mutation: true,
       mutation_event_count: 2,
       unresolved_mutation_count: 1,
-      oldest_unresolved_mutation_at: new Date('2026-07-24T21:04:00.000Z'),
-      latest_mutation_at: new Date('2026-07-24T21:05:00.000Z'),
+      oldest_unresolved_mutation_at: sqlTimestamp('2026-07-24T21:04:00.000Z'),
+      latest_mutation_at: sqlTimestamp('2026-07-24T21:05:00.000Z'),
     }
 
     const projected = projectCycleObservabilityRow(row)
@@ -234,13 +236,13 @@ describe('cycle observability projection', () => {
       last_snapshot_id: '6'.repeat(64),
       last_decision_hash: null,
       last_terminal_reason: CycleTerminalReason.MissedPublication,
-      last_submission_open_at: new Date('2026-07-27T13:00:00.000Z'),
-      last_submission_cutoff_at: new Date('2026-07-27T13:28:00.000Z'),
-      last_execution_open_at: new Date('2026-07-27T13:30:00.000Z'),
-      last_execution_close_at: new Date('2026-07-27T20:00:00.000Z'),
-      last_created_at: new Date('2026-07-24T21:00:00.000Z'),
-      last_updated_at: new Date('2026-07-24T21:10:00.000Z'),
-      last_terminal_at: new Date('2026-07-24T21:10:00.000Z'),
+      last_submission_open_at: sqlTimestamp('2026-07-27T13:00:00.000Z'),
+      last_submission_cutoff_at: sqlTimestamp('2026-07-27T13:28:00.000Z'),
+      last_execution_open_at: sqlTimestamp('2026-07-27T13:30:00.000Z'),
+      last_execution_close_at: sqlTimestamp('2026-07-27T20:00:00.000Z'),
+      last_created_at: sqlTimestamp('2026-07-24T21:00:00.000Z'),
+      last_updated_at: sqlTimestamp('2026-07-24T21:10:00.000Z'),
+      last_terminal_at: sqlTimestamp('2026-07-24T21:10:00.000Z'),
     }
 
     const projected = projectCycleObservabilityRow(row)

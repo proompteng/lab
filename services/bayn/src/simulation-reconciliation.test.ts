@@ -15,6 +15,7 @@ import {
   type SimulationReconciliationResult,
 } from './simulation-reconciliation'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { utcDateFromEpochMillis } from './time'
 import type { EvaluationEvent, Protocol, SimulationTrace } from './types'
 
 const snapshot = makeSnapshot(800)
@@ -114,7 +115,7 @@ const makeEmptyInput = (): MarkedEquityReconciliationInput => {
 const makeRoundTripInput = (dayCount: number): MarkedEquityReconciliationInput => {
   const sessionDates = Array.from(
     { length: dayCount },
-    (_, index) => new Date(Date.UTC(2026, 1, index + 1)).toISOString().slice(0, 10) as `${number}-${number}-${number}`,
+    (_, index) => utcDateFromEpochMillis(Date.UTC(2026, 1, index + 1)) as `${number}-${number}-${number}`,
   )
   const input = makeEmptyInput()
   const markTemplate = input.simulation.dailyMarks[0]

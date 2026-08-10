@@ -16,6 +16,7 @@ import {
 import { canonicalHashV1 } from '../../hash'
 import { makeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus, type BlockedTargetPlanReason } from '../../target-planner'
+import { utcInstantFromEpochMillis } from '../../time'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../../types'
 import {
   decideAcquire,
@@ -345,7 +346,7 @@ describe('cycle store decisions', () => {
 
   test('uses an authority block for an unbound cycle before its submission deadline', () => {
     const unbound = activeCycle()
-    const beforeSubmissionCutoff = new Date(Date.parse(unbound.window.submissionCutoffAt) - 1).toISOString()
+    const beforeSubmissionCutoff = utcInstantFromEpochMillis(Date.parse(unbound.window.submissionCutoffAt) - 1)
 
     expect(value(decideBlock(unbound, CycleTerminalReason.Authority, beforeSubmissionCutoff))).toMatchObject({
       _tag: 'Persist',

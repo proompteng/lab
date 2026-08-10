@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result } from 'effect'
 import { TestClock } from 'effect/testing'
+import { utcInstantFromEpochMillis } from './time'
 
 import {
   AccountStatus as BrokerAccountStatus,
@@ -76,7 +77,7 @@ const order = (index: number): BrokerOrder => ({
   clientOrderId: `client-order-${index}`,
   createdAt: observedAt,
   updatedAt: observedAt,
-  submittedAt: new Date(index).toISOString(),
+  submittedAt: utcInstantFromEpochMillis(index),
   assetId: `asset-${index}`,
   symbol: 'NVDA',
   assetClass: AssetClass.UsEquity,

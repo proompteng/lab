@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { DateTime, Result } from 'effect'
 
 import {
   canonicalHashV1,
@@ -196,7 +196,9 @@ describe('canonical hashing', () => {
       actualType: 'object',
     })
 
-    expect(failureOf(canonicalJsonV1Result(new Date('2026-01-01T00:00:00.000Z')))).toEqual({
+    expect(
+      failureOf(canonicalJsonV1Result(DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')))),
+    ).toEqual({
       _tag: 'CanonicalJsonFailure',
       path: '$',
       reason: 'non-plain-object',

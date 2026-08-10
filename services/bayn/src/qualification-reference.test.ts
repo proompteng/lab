@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { NodeFileSystem } from '@effect/platform-node'
+import { Data, Effect, FileSystem, Layer, Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
 import { makeRuntimeProvenance } from './contracts'
@@ -28,6 +26,10 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   assert(Result.isFailure(result), 'reference evaluation fixture must fail')
   return result.failure
 }
+
+class ReferenceBuildError extends Data.TaggedError('ReferenceBuildError')<{
+  readonly cause: unknown
+}> {}
 
 describe('independent qualification reference', () => {
   test('reproduces every persisted strategy and benchmark artifact', () => {
@@ -216,31 +218,47 @@ describe('independent qualification reference', () => {
     expect(canonicalHashV1(changed.strategy.decisions)).not.toBe(canonicalHashV1(original.strategy.decisions))
   })
 
-  test('keeps the reference dependency graph outside the production strategy evaluator', async () => {
-    const outputDirectory = await mkdtemp(join(tmpdir(), 'bayn-reference-dependency-'))
-    try {
-      const buildInputs = async (entrypoint: URL): Promise<readonly string[]> => {
-        const build = await Bun.build({
-          entrypoints: [entrypoint.pathname],
-          outdir: outputDirectory,
-          target: 'bun',
-          metafile: true,
-          packages: 'external',
-        })
-        assert(build.success, build.logs.map(String).join('\n'))
-        assert(build.metafile !== undefined, 'dependency-boundary build omitted its metafile')
-        return Object.keys(build.metafile.inputs).map((path) => path.replaceAll('\\', '/'))
-      }
-      const productionEvaluator = /(?:^|\/)risk-balanced-trend(?:\.ts|\/)/
-      const productionInputs = await buildInputs(new URL('./risk-balanced-trend/index.ts', import.meta.url))
-      const referenceInputs = await buildInputs(new URL('./audit/reference.ts', import.meta.url))
+  test('keeps the reference dependency graph outside the production strategy evaluator', () =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const services = yield* Layer.build(NodeFileSystem.layer)
+          return yield* Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem
+            const outputDirectory = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: 'bayn-reference-dependency-',
+            })
+            const buildInputs = (entrypoint: URL): Effect.Effect<readonly string[], ReferenceBuildError> =>
+              Effect.gen(function* () {
+                const build = yield* Effect.tryPromise({
+                  try: () =>
+                    Bun.build({
+                      entrypoints: [entrypoint.pathname],
+                      outdir: outputDirectory,
+                      target: 'bun',
+                      metafile: true,
+                      packages: 'external',
+                    }),
+                  catch: (cause) => new ReferenceBuildError({ cause }),
+                })
+                if (!build.success) return yield* new ReferenceBuildError({ cause: build.logs })
+                if (build.metafile === undefined) {
+                  return yield* new ReferenceBuildError({
+                    cause: 'dependency-boundary build omitted its metafile',
+                  })
+                }
+                return Object.keys(build.metafile.inputs).map((path) => path.replaceAll('\\', '/'))
+              })
+            const productionEvaluator = /(?:^|\/)risk-balanced-trend(?:\.ts|\/)/
+            const productionInputs = yield* buildInputs(new URL('./risk-balanced-trend/index.ts', import.meta.url))
+            const referenceInputs = yield* buildInputs(new URL('./audit/reference.ts', import.meta.url))
 
-      expect(productionInputs.some((path) => productionEvaluator.test(path))).toBe(true)
-      expect(referenceInputs.filter((path) => productionEvaluator.test(path))).toEqual([])
-    } finally {
-      await rm(outputDirectory, { recursive: true, force: true })
-    }
-  })
+            expect(productionInputs.some((path) => productionEvaluator.test(path))).toBe(true)
+            expect(referenceInputs.filter((path) => productionEvaluator.test(path))).toEqual([])
+          }).pipe(Effect.provide(services))
+        }),
+      ),
+    ))
 
   test('independently keeps planned quantities invariant to future execution OHLC', () => {
     const snapshot = makeSnapshot(900)

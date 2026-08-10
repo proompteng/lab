@@ -2,9 +2,10 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Schema } from 'effect'
+import { NodeHttpClient } from '@effect/platform-node'
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpServer } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpMethod, HttpServer } from 'effect/unstable/http'
 
 import {
   config,
@@ -124,13 +125,21 @@ interface TestServer {
   readonly state: Ref.Ref<RuntimeState>
 }
 
+interface TestHttpResponse {
+  readonly status: number
+  readonly allow: string | null
+  readonly cacheControl: string | null
+  readonly contentType: string | null
+  readonly body: unknown
+}
+
 class TestHttpRequestError extends Data.TaggedError('TestHttpRequestError')<{
   readonly cause: unknown
 }> {}
 
 const withHttpServer = <E>(
   options: TestServerOptions,
-  use: (server: TestServer) => Effect.Effect<void, E>,
+  use: (server: TestServer) => Effect.Effect<void, E, HttpClient.HttpClient>,
 ): Promise<void> => {
   const serverConfig = {
     cycleStallThresholdMs: config.cycleStallThresholdMs,
@@ -144,41 +153,48 @@ const withHttpServer = <E>(
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const state = yield* Ref.make(options.state ?? initialState({}))
-        yield* serveHttp(
-          serverConfig,
-          state,
-          provenance,
-          'embedded',
-          options.readEvidence ?? successfulEvidenceStore.read,
-        )
-        const server = yield* HttpServer.HttpServer
-        const address = server.address
-        expect(address._tag).toBe('TcpAddress')
-        return address._tag === 'TcpAddress'
-          ? yield* use({ port: address.port, state })
-          : yield* Effect.die('expected TCP')
-      }).pipe(Effect.provide(HttpServerLive(serverConfig))),
+        const services = yield* Layer.build(Layer.merge(HttpServerLive(serverConfig), NodeHttpClient.layerNodeHttp))
+        return yield* Effect.gen(function* () {
+          const state = yield* Ref.make(options.state ?? initialState({}))
+          yield* serveHttp(
+            serverConfig,
+            state,
+            provenance,
+            'embedded',
+            options.readEvidence ?? successfulEvidenceStore.read,
+          )
+          const server = yield* HttpServer.HttpServer
+          const address = server.address
+          expect(address._tag).toBe('TcpAddress')
+          return address._tag === 'TcpAddress'
+            ? yield* use({ port: address.port, state })
+            : yield* Effect.die('expected TCP')
+        }).pipe(Effect.provide(services))
+      }),
     ),
   )
 }
 
-const request = (port: number, path: string, method = 'GET') =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal })
-      const contentType = response.headers.get('content-type')
-      const body = contentType?.includes('application/json') === true ? await response.json() : await response.text()
-      return {
-        status: response.status,
-        allow: response.headers.get('allow'),
-        cacheControl: response.headers.get('cache-control'),
-        contentType,
-        body,
-      }
-    },
-    catch: (cause) => new TestHttpRequestError({ cause }),
-  })
+const request = (port: number, path: string, method: HttpMethod.HttpMethod = 'GET') =>
+  HttpClient.execute(HttpClientRequest.make(method)(`http://127.0.0.1:${port}${path}`)).pipe(
+    Effect.flatMap((response) => {
+      const header = (name: string): string | null => (name in response.headers ? response.headers[name] : null)
+      const contentType = header('content-type')
+      const body = contentType?.includes('application/json') === true ? response.json : response.text
+      return body.pipe(
+        Effect.map(
+          (body): TestHttpResponse => ({
+            status: response.status,
+            allow: header('allow'),
+            cacheControl: header('cache-control'),
+            contentType,
+            body,
+          }),
+        ),
+      )
+    }),
+    Effect.mapError((cause) => new TestHttpRequestError({ cause })),
+  )
 
 const connectSocket = (port: number): Effect.Effect<Socket> =>
   Effect.callback<Socket>((resume) => {
@@ -1158,7 +1174,14 @@ describe('Bayn HTTP probes', () => {
       return assertRoutes.pipe(Effect.andThen(assertCurrentState))
     })
 
-    await Effect.runPromise(Effect.flip(request(port, '/livez')))
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const services = yield* Layer.build(NodeHttpClient.layerNodeHttp)
+          return yield* Effect.flip(request(port, '/livez')).pipe(Effect.provide(services))
+        }),
+      ),
+    )
   })
 
   test('does not convert a historical read defect into an operational 503 response', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Fiber, Option, Result, Schema, Semaphore } from 'effect'
+import { DateTime, Effect, Fiber, Option, Result, Schema, Semaphore } from 'effect'
 
 describe('Effect beta.102 runtime compatibility', () => {
   test('keeps deeply nested JSON validation stack safe', () => {
@@ -11,12 +11,14 @@ describe('Effect beta.102 runtime compatibility', () => {
   })
 
   test('decodes and encodes valid dates while rejecting invalid dates', () => {
-    const date = new Date('2026-07-27T12:34:56.789Z')
+    const date = DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-27T12:34:56.789Z'))
+    const invalidDate = Object.create(Date.prototype) as Date
+    Object.defineProperty(invalidDate, 'getTime', { value: () => Number.NaN })
 
     expect(Schema.decodeResult(Schema.Date)(date)).toEqual(Result.succeed(date))
     expect(Schema.encodeUnknownResult(Schema.Date)(date)).toEqual(Result.succeed(date))
-    expect(Result.isFailure(Schema.decodeResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
-    expect(Result.isFailure(Schema.encodeResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
+    expect(Result.isFailure(Schema.decodeResult(Schema.Date)(invalidDate))).toBe(true)
+    expect(Result.isFailure(Schema.encodeResult(Schema.Date)(invalidDate))).toBe(true)
     expect(Result.isFailure(Schema.decodeResult(Schema.DateFromString)('not-a-date'))).toBe(true)
     expect(Result.isFailure(Schema.decodeResult(Schema.DateFromMillis)(8_640_000_000_000_001))).toBe(true)
   })

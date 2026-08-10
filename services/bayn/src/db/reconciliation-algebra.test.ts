@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Result } from 'effect'
+import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { MutationOperation, historicalMarketOrderRequestBody, orderRequestBody } from '../broker/alpaca-mutations'
@@ -35,6 +35,13 @@ import {
   type ReconciliationAlgebraFailure,
   type RiskContextRow,
 } from './reconciliation-algebra'
+
+const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
+const invalidSqlTimestamp = (): Date => {
+  const value = Object.create(Date.prototype) as Date
+  Object.defineProperty(value, 'getTime', { value: () => Number.NaN })
+  return value
+}
 
 const successOf = <A>(result: Result.Result<A, ReconciliationAlgebraFailure>): A => {
   expect(Result.isSuccess(result)).toBe(true)
@@ -600,8 +607,8 @@ describe('PostgreSQL reconciliation algebra', () => {
       peakEquityMicros: '1000000000',
     })
 
-    const updatedAt = new Date('2026-07-22T15:30:01.000Z')
-    const observedAuthorityAt = new Date('2026-07-22T15:30:02.000Z')
+    const updatedAt = sqlTimestamp('2026-07-22T15:30:01.000Z')
+    const observedAuthorityAt = sqlTimestamp('2026-07-22T15:30:02.000Z')
     const authority = successOf(
       riskContextFromRow(
         {
@@ -674,8 +681,8 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Paper,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: new Date('2026-07-22T15:30:01.000Z'),
-          authority_observed_at: new Date('2026-07-22T15:30:02.000Z'),
+          authority_updated_at: sqlTimestamp('2026-07-22T15:30:01.000Z'),
+          authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
         },
         0,
       ),
@@ -701,8 +708,8 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Observe,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: new Date(Number.NaN),
-          authority_observed_at: new Date('2026-07-22T15:30:02.000Z'),
+          authority_updated_at: invalidSqlTimestamp(),
+          authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
         },
         0,
       ),

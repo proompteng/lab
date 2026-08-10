@@ -16,6 +16,7 @@ import { BrokerEnvironment } from './broker/identity'
 import type { AuthorityRestrictionStoreShape } from './db/execution-store'
 import { makeResearchPaperActivationRequest, makeResearchPaperPlanHash } from './execution/configuration'
 import type { WriterFenceService } from './execution/writer-fence'
+import { utcInstantFromEpochMillis } from './time'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState } from './runtime-state'
 
@@ -74,7 +75,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
 
   test('keeps retrying through the close lease instead of a fixed attempt count', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = new Date(startAt + 1_000).toISOString()
+    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
     const observedAt: string[] = []
 
     await Effect.runPromise(
@@ -88,7 +89,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
               return observedAt.length >= 17
             }),
           cutoffAt,
-          new Date(startAt + 17_000).toISOString(),
+          utcInstantFromEpochMillis(startAt + 17_000),
           1_000,
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
@@ -98,12 +99,12 @@ describe('Bayn PAPER receipt retry boundary', () => {
     )
 
     expect(observedAt).toHaveLength(17)
-    expect(observedAt.at(-1)).toBe(new Date(startAt + 17_000).toISOString())
+    expect(observedAt.at(-1)).toBe(utcInstantFromEpochMillis(startAt + 17_000))
   })
 
   test('keeps retrying until close settlement and reconciliation produce a receipt', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = new Date(startAt + 1_000).toISOString()
+    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
     const observedAt: string[] = []
 
     await Effect.runPromise(
@@ -116,7 +117,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
               return observedAt.length >= 8
             }),
           cutoffAt,
-          new Date(startAt + 8_000).toISOString(),
+          utcInstantFromEpochMillis(startAt + 8_000),
           1_000,
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
@@ -126,13 +127,13 @@ describe('Bayn PAPER receipt retry boundary', () => {
     )
 
     expect(observedAt).toHaveLength(8)
-    expect(observedAt.at(-1)).toBe(new Date(startAt + 8_000).toISOString())
+    expect(observedAt.at(-1)).toBe(utcInstantFromEpochMillis(startAt + 8_000))
   })
 
   test('stops receipt retries at the bounded finalization lease when evidence never becomes eligible', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = new Date(startAt + 1_000).toISOString()
-    const retryUntilAt = new Date(startAt + 4_000).toISOString()
+    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
+    const retryUntilAt = utcInstantFromEpochMillis(startAt + 4_000)
     const observedAt: string[] = []
 
     await Effect.runPromise(

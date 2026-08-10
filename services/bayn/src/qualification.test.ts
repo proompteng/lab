@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Result, Schema } from 'effect'
+import { DateTime, Result, Schema } from 'effect'
 
 import {
   defaultQualificationStatisticsPolicyDocument,
@@ -146,7 +146,7 @@ describe('qualification lock', () => {
 
 const qualificationSeries = (): QualificationSeries => {
   const sessionDate = (index: number): `${number}-${number}-${number}` => {
-    const date = new Date('2000-01-01T00:00:00.000Z')
+    const date = DateTime.toDateUtc(DateTime.makeUnsafe('2000-01-01T00:00:00.000Z'))
     date.setUTCDate(date.getUTCDate() + index)
     return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
   }

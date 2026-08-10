@@ -22,6 +22,7 @@ import {
 import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import { currentUtcInstant } from './time'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { DatabaseError, EvidenceStore } from './db/evidence-store'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
@@ -336,7 +337,7 @@ const brokerProbe = (read: BrokerReadShape): BrokerProbe => ({
   executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
 })
 
-const brokerRuntimeState = (broker: BrokerProbe, startedAt = new Date().toISOString()): RuntimeState => ({
+const brokerRuntimeState = (broker: BrokerProbe, startedAt: string): RuntimeState => ({
   ...readyState(),
   autonomousCycleLoop: {
     configured: true,
@@ -1435,7 +1436,7 @@ describe('Bayn continuous health', () => {
       },
     }
     const broker: BrokerProbe = brokerWithMutations
-    const initial = brokerRuntimeState(broker)
+    const initial = brokerRuntimeState(broker, await Effect.runPromise(currentUtcInstant))
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
 
@@ -1471,7 +1472,7 @@ describe('Bayn continuous health', () => {
   test('degrades for every unavailable broker read and recovers on the next complete pass', async () => {
     const control = brokerReadControl()
     const broker = brokerProbe(brokerRead(control))
-    const initial = brokerRuntimeState(broker)
+    const initial = brokerRuntimeState(broker, await Effect.runPromise(currentUtcInstant))
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
     try {
@@ -1511,7 +1512,7 @@ describe('Bayn continuous health', () => {
   test('degrades on malformed broker data and recovers on the next complete pass', async () => {
     const control = brokerReadControl()
     const broker = brokerProbe(brokerRead(control))
-    const initial = brokerRuntimeState(broker)
+    const initial = brokerRuntimeState(broker, await Effect.runPromise(currentUtcInstant))
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
 
@@ -1540,7 +1541,7 @@ describe('Bayn continuous health', () => {
   test('preserves identity mismatch precedence and recovers from every permission drift', async () => {
     const control = brokerReadControl()
     const broker = brokerProbe(brokerRead(control))
-    const initial = brokerRuntimeState(broker)
+    const initial = brokerRuntimeState(broker, await Effect.runPromise(currentUtcInstant))
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
 
@@ -1737,7 +1738,7 @@ describe('Bayn continuous health', () => {
   test('interrupts every in-flight broker read without publishing a partial health pass', async () => {
     const pending = await Effect.runPromise(makePendingBrokerRead())
     const broker = brokerProbe(pending.read)
-    const initial = brokerRuntimeState(broker)
+    const initial = brokerRuntimeState(broker, await Effect.runPromise(currentUtcInstant))
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
     const healthFiber = Effect.runFork(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
