@@ -99,9 +99,13 @@ const permissionFailure = (
 
 const proofHashResult = (value: unknown, field: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.mapError(canonicalHashV1Result(value), (failure) =>
-    contractFailure('CANONICAL_HASH', `${field} is not canonical JSON: ${renderCanonicalJsonFailure(failure)}`, {
-      field,
-      actual: failure.path,
+    contractFailure({
+      reason: 'CANONICAL_HASH',
+      message: `${field} is not canonical JSON: ${renderCanonicalJsonFailure(failure)}`,
+      facts: {
+        field,
+        actual: failure.path,
+      },
     }),
   )
 
@@ -115,12 +119,12 @@ const expectNotFound = (
         error.kind === BrokerReadErrorKind.NotFound ? Effect.succeed('NOT_FOUND' as const) : Effect.fail(error),
       onSuccess: (result) =>
         Effect.fail(
-          invalidResponse(
+          invalidResponse({
             operation,
-            `Alpaca ${operation} unexpectedly resolved the observe-only proof identity`,
-            result.evidence,
-            result.value,
-          ),
+            message: `Alpaca ${operation} unexpectedly resolved the observe-only proof identity`,
+            evidence: result.evidence,
+            cause: result.value,
+          }),
         ),
     }),
   )
@@ -135,12 +139,12 @@ const verifyOrderLookup = (
       result.value.brokerOrderId === expected.brokerOrderId && result.value.clientOrderId === expected.clientOrderId
         ? Effect.succeed('MATCHED' as const)
         : Effect.fail(
-            invalidResponse(
+            invalidResponse({
               operation,
-              `Alpaca ${operation} returned a different order during observe-only preflight`,
-              result.evidence,
-              result.value,
-            ),
+              message: `Alpaca ${operation} returned a different order during observe-only preflight`,
+              evidence: result.evidence,
+              cause: result.value,
+            }),
           ),
     ),
   )
@@ -223,7 +227,7 @@ const verifyReadAccessDataFirst = (
             kind: BrokerReadErrorKind.InvalidResponse,
             message: 'Alpaca observe-only preflight data is not canonical JSON',
             retryable: false,
-            cause: safeCause(cause),
+            cause: safeCause({ cause }),
           }),
       ),
     )

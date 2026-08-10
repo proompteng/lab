@@ -70,15 +70,20 @@ export class BrokerReadContractFailure extends Data.TaggedError('BrokerReadContr
   readonly actual?: string
 }> {}
 
-export const contractFailure = (
-  reason: BrokerReadContractFailureReason,
-  message: string,
-  facts: {
+export interface BrokerReadContractFailureInput {
+  readonly reason: BrokerReadContractFailureReason
+  readonly message: string
+  readonly facts?: {
     readonly field?: string
     readonly expected?: string
     readonly actual?: string
-  } = {},
-): BrokerReadContractFailure => new BrokerReadContractFailure({ reason, message, ...facts })
+  }
+}
+
+export const contractFailure = (input: BrokerReadContractFailureInput): BrokerReadContractFailure => {
+  const { facts = {}, ...failure } = input
+  return new BrokerReadContractFailure({ ...failure, ...facts })
+}
 
 interface ReadEvidenceLike {
   readonly status?: number
@@ -93,10 +98,13 @@ const redactDiagnostic = (value: string, sensitiveValues: readonly string[]): st
     value,
   )
 
-export const safeCause = (
-  cause: unknown,
-  sensitiveValues: readonly string[] = [],
-): Readonly<Record<string, string>> => {
+export interface SafeCauseInput {
+  readonly cause: unknown
+  readonly sensitiveValues?: readonly string[]
+}
+
+export const safeCause = (input: SafeCauseInput): Readonly<Record<string, string>> => {
+  const { cause, sensitiveValues = [] } = input
   if (cause instanceof BrokerReadContractFailure) {
     return {
       tag: cause._tag,
@@ -142,35 +150,39 @@ export const safeCause = (
   return { tag: typeof cause }
 }
 
-export const configurationError = (
-  operation: 'configuration' | 'proxy',
-  message: string,
-  cause?: unknown,
-): BrokerReadError =>
+export interface BrokerReadConfigurationErrorInput {
+  readonly operation: 'configuration' | 'proxy'
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const configurationError = (input: BrokerReadConfigurationErrorInput): BrokerReadError =>
   new BrokerReadError({
-    operation,
+    operation: input.operation,
     kind: BrokerReadErrorKind.Configuration,
-    message,
+    message: input.message,
     retryable: false,
-    cause: cause === undefined ? undefined : safeCause(cause),
+    cause: input.cause === undefined ? undefined : safeCause({ cause: input.cause }),
   })
 
-export const invalidResponse = (
-  operation: BrokerReadOperation,
-  message: string,
-  evidence?: ReadEvidenceLike,
-  cause?: unknown,
-): BrokerReadError =>
+export interface InvalidResponseInput {
+  readonly operation: BrokerReadOperation
+  readonly message: string
+  readonly evidence?: ReadEvidenceLike
+  readonly cause?: unknown
+}
+
+export const invalidResponse = (input: InvalidResponseInput): BrokerReadError =>
   new BrokerReadError({
-    operation,
+    operation: input.operation,
     kind: BrokerReadErrorKind.InvalidResponse,
-    message,
+    message: input.message,
     retryable: false,
-    ...(evidence?.status === undefined ? {} : { status: evidence.status }),
-    ...(evidence?.requestId === undefined ? {} : { requestId: evidence.requestId }),
-    ...(evidence?.contentHash === undefined ? {} : { contentHash: evidence.contentHash }),
-    ...(evidence?.observedAt === undefined ? {} : { observedAt: evidence.observedAt }),
-    ...(cause === undefined ? {} : { cause: safeCause(cause) }),
+    ...(input.evidence?.status === undefined ? {} : { status: input.evidence.status }),
+    ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
+    ...(input.evidence?.contentHash === undefined ? {} : { contentHash: input.evidence.contentHash }),
+    ...(input.evidence?.observedAt === undefined ? {} : { observedAt: input.evidence.observedAt }),
+    ...(input.cause === undefined ? {} : { cause: safeCause({ cause: input.cause }) }),
   })
 
 const invalidRequestDataFirst = (operation: BrokerReadOperation, message: string, cause: unknown): BrokerReadError =>
@@ -179,7 +191,7 @@ const invalidRequestDataFirst = (operation: BrokerReadOperation, message: string
     kind: BrokerReadErrorKind.InvalidRequest,
     message,
     retryable: false,
-    cause: safeCause(cause),
+    cause: safeCause({ cause }),
   })
 
 export const invalidRequest = Pipeable.dual(3, invalidRequestDataFirst)
@@ -194,7 +206,7 @@ const transportErrorDataFirst = (
     kind: BrokerReadErrorKind.Transport,
     message: `Alpaca ${operation} request failed before a response was available`,
     retryable: true,
-    cause: safeCause(cause, sensitiveValues),
+    cause: safeCause({ cause, sensitiveValues }),
   })
 
 export const transportError = Pipeable.dual(3, transportErrorDataFirst)
@@ -245,7 +257,7 @@ const timeoutErrorDataFirst = (
     kind: BrokerReadErrorKind.Timeout,
     message: `Alpaca ${operation} exceeded its ${timeoutMs}ms deadline`,
     retryable: true,
-    cause: safeCause(cause, sensitiveValues),
+    cause: safeCause({ cause, sensitiveValues }),
   })
 
 export const timeoutError = Pipeable.dual(4, timeoutErrorDataFirst)

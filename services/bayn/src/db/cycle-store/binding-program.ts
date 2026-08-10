@@ -114,12 +114,12 @@ const makeCycleBindingProgramsDataFirst = (
     ensureSnapshotReference(sql, inputManifest).pipe(
       Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
         Effect.fail(
-          cycleStoreError(
-            'bind-snapshot',
-            'conflict',
-            `stored snapshot reference diverged from the finalized Signal publication: ${renderSnapshotReferenceIssue(cause)}`,
+          cycleStoreError({
+            operation: 'bind-snapshot',
+            failure: 'conflict',
+            message: `stored snapshot reference diverged from the finalized Signal publication: ${renderSnapshotReferenceIssue(cause)}`,
             cause,
-          ),
+          }),
         ),
       ),
     )

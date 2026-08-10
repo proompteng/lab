@@ -91,39 +91,52 @@ export const causeSummary = (cause: unknown): Readonly<Record<string, string>> =
   return { tag: typeof cause }
 }
 
-export const configurationError = (message: string, cause?: unknown) =>
+export interface BrokerMutationConfigurationErrorInput {
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const configurationError = (input: BrokerMutationConfigurationErrorInput) =>
   new BrokerMutationError({
     operation: MutationOperation.Submit,
     failure: MutationFailure.Configuration,
     outcome: MutationOutcome.Known,
-    message,
-    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
+    message: input.message,
+    ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })
 
-export const invalidRequest = (operation: MutationOperation, message: string, cause?: unknown) =>
+export interface BrokerMutationInvalidRequestInput {
+  readonly operation: MutationOperation
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const invalidRequest = (input: BrokerMutationInvalidRequestInput) =>
   new BrokerMutationError({
-    operation,
+    operation: input.operation,
     failure: MutationFailure.InvalidRequest,
     outcome: MutationOutcome.Known,
-    message,
-    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
+    message: input.message,
+    ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })
 
-export const unknownOutcome = (
-  operation: MutationOperation,
-  message: string,
-  requestHash?: string,
-  evidence?: PartialMutationEvidence,
-  cause?: unknown,
-) =>
+export interface BrokerMutationUnknownOutcomeInput {
+  readonly operation: MutationOperation
+  readonly message: string
+  readonly requestHash?: string
+  readonly evidence?: PartialMutationEvidence
+  readonly cause?: unknown
+}
+
+export const unknownOutcome = (input: BrokerMutationUnknownOutcomeInput) =>
   new BrokerMutationError({
-    operation,
+    operation: input.operation,
     failure: MutationFailure.Unknown,
     outcome: MutationOutcome.Unknown,
-    message,
-    ...(requestHash === undefined ? {} : { requestHash }),
-    ...(evidence === undefined ? {} : { evidence }),
-    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
+    message: input.message,
+    ...(input.requestHash === undefined ? {} : { requestHash: input.requestHash }),
+    ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
+    ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })
 
 const knownRejectionDataFirst = (

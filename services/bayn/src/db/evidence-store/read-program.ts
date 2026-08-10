@@ -21,12 +21,12 @@ import type { EvidenceReferencePrograms } from './reference-programs'
 import { Pipeable } from '../../pipeable'
 
 const readInputDatabaseError = (operation: string, cause: EvidenceReadInputFailure) =>
-  databaseError(
-    cause._tag === 'InvalidRunId' ? 'decode' : 'invariant',
+  databaseError({
+    failure: cause._tag === 'InvalidRunId' ? 'decode' : 'invariant',
     operation,
-    renderEvidenceReadInputFailure(cause),
+    message: renderEvidenceReadInputFailure(cause),
     cause,
-  )
+  })
 
 export interface EvidenceReadPrograms {
   readonly read: EvidenceStoreService['read']
@@ -69,7 +69,11 @@ const makeEvidenceReadProgramsDataFirst = (
             yield* ensure(metadata.length === 1, 'read-artifact-items', 'artifact series metadata is duplicated')
             const [series] = metadata
             if (series === undefined) {
-              return yield* databaseError('invariant', 'read-artifact-items', 'artifact series metadata disappeared')
+              return yield* databaseError({
+                failure: 'invariant',
+                operation: 'read-artifact-items',
+                message: 'artifact series metadata disappeared',
+              })
             }
             const rows = yield* statements.getArtifactItems({ runId, artifactName, afterOrdinal, limit })
             yield* ensure(

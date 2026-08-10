@@ -186,12 +186,12 @@ const makeAccountingInterpreterDataFirst = (
           ).pipe(
             Effect.fromResult,
             Effect.mapError((cause) =>
-              executionStoreError(
-                'account',
-                'invariant',
-                `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
+              executionStoreError({
+                operation: 'account',
+                failure: 'invariant',
+                message: `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
                 cause,
-              ),
+              }),
             ),
           )
           const replay = yield* liftStoreDecision('account', decidePreparedAccountingReplay(stored, expected))
@@ -264,13 +264,16 @@ const makeAccountingInterpreterDataFirst = (
       decodeFillInput(input).pipe(
         Effect.flatMap(prepare),
         Effect.tap((prepared) =>
-          journal
-            .post(prepared.ledger)
-            .pipe(
-              Effect.mapError((cause) =>
-                executionStoreError('account', 'ledger', 'TigerBeetle accounting post failed', cause),
-              ),
+          journal.post(prepared.ledger).pipe(
+            Effect.mapError((cause) =>
+              executionStoreError({
+                operation: 'account',
+                failure: 'ledger',
+                message: 'TigerBeetle accounting post failed',
+                cause,
+              }),
             ),
+          ),
         ),
         Effect.flatMap(recordReceipt),
       ),

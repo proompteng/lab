@@ -59,35 +59,40 @@ const defaultPersistenceFailure = (failure: DatabaseFailure): PersistenceFailure
   }
 }
 
-export const databaseError = (
-  failure: DatabaseFailure,
-  operation: string,
-  message: string,
-  cause?: unknown,
-  persistenceFailure = defaultPersistenceFailure(failure),
-): DatabaseError =>
-  new DatabaseError({
+export interface DatabaseErrorInput {
+  readonly failure: DatabaseFailure
+  readonly operation: string
+  readonly message: string
+  readonly cause?: unknown
+  readonly persistenceFailure?: PersistenceFailure
+}
+
+export const databaseError = (input: DatabaseErrorInput): DatabaseError => {
+  const { failure, operation, message, cause, persistenceFailure = defaultPersistenceFailure(failure) } = input
+  return new DatabaseError({
     failure,
     persistenceFailure,
     operation,
     message: cause === undefined ? message : `${message}: ${messageOf(cause)}`,
     cause,
   })
+}
 
 const classifyDatabaseErrorDataFirst = (operation: string, cause: unknown): DatabaseError => {
   if (cause instanceof DatabaseError) return cause
-  if (Schema.isSchemaError(cause)) return databaseError('decode', operation, 'database row decoding failed', cause)
+  if (Schema.isSchemaError(cause))
+    return databaseError({ failure: 'decode', operation, message: 'database row decoding failed', cause })
   if (isSqlError(cause)) {
     const classified = classifySqlReason(cause.reason)
-    return databaseError(
-      classified.failure,
+    return databaseError({
+      failure: classified.failure,
       operation,
-      'PostgreSQL operation failed',
+      message: 'PostgreSQL operation failed',
       cause,
-      classified.persistenceFailure,
-    )
+      persistenceFailure: classified.persistenceFailure,
+    })
   }
-  return databaseError('invariant', operation, 'unexpected database result', cause)
+  return databaseError({ failure: 'invariant', operation, message: 'unexpected database result', cause })
 }
 
 export const classifyDatabaseError = Pipeable.dual(2, classifyDatabaseErrorDataFirst)
@@ -104,40 +109,47 @@ export const runDatabase = Pipeable.generic<
 >(2, runDatabaseDataFirst)
 
 const ensureDataFirst = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
-  condition ? Effect.void : Effect.fail(databaseError('invariant', operation, message))
+  condition ? Effect.void : Effect.fail(databaseError({ failure: 'invariant', operation, message }))
 
 export const ensure = Pipeable.dual(3, ensureDataFirst)
 
 const persistencePlanDatabaseErrorDataFirst = (operation: string, failure: PersistencePlanFailure): DatabaseError =>
-  databaseError(
-    'invariant',
+  databaseError({
+    failure: 'invariant',
     operation,
-    renderPersistencePlanFailure(failure),
-    failure._tag === 'SimulationReconciliationFailed' ? failure.issues : failure,
-  )
+    message: renderPersistencePlanFailure(failure),
+    cause: failure._tag === 'SimulationReconciliationFailed' ? failure.issues : failure,
+  })
 
 export const persistencePlanDatabaseError = Pipeable.dual(2, persistencePlanDatabaseErrorDataFirst)
 
 const qualificationDecisionDatabaseErrorDataFirst = (
   operation: string,
   failure: QualificationDecisionFailure,
-): DatabaseError => databaseError('invariant', operation, renderQualificationDecisionFailure(failure), failure)
+): DatabaseError =>
+  databaseError({
+    failure: 'invariant',
+    operation,
+    message: renderQualificationDecisionFailure(failure),
+    cause: failure,
+  })
 
 export const qualificationDecisionDatabaseError = Pipeable.dual(2, qualificationDecisionDatabaseErrorDataFirst)
 
 const storedQualificationDatabaseErrorDataFirst = (
   operation: string,
   failure: StoredQualificationFailure,
-): DatabaseError => databaseError('invariant', operation, renderStoredQualificationFailure(failure), failure)
+): DatabaseError =>
+  databaseError({ failure: 'invariant', operation, message: renderStoredQualificationFailure(failure), cause: failure })
 
 export const storedQualificationDatabaseError = Pipeable.dual(2, storedQualificationDatabaseErrorDataFirst)
 
 const evidenceRecoveryDatabaseErrorDataFirst = (operation: string, issue: EvidenceRecoveryIssue): DatabaseError =>
-  databaseError(
-    issue._tag === 'DecodeFailure' ? 'decode' : 'invariant',
+  databaseError({
+    failure: issue._tag === 'DecodeFailure' ? 'decode' : 'invariant',
     operation,
-    renderEvidenceRecoveryIssue(issue),
-    issue._tag === 'SimulationFailure' ? issue.issues : issue,
-  )
+    message: renderEvidenceRecoveryIssue(issue),
+    cause: issue._tag === 'SimulationFailure' ? issue.issues : issue,
+  })
 
 export const evidenceRecoveryDatabaseError = Pipeable.dual(2, evidenceRecoveryDatabaseErrorDataFirst)
