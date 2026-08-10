@@ -1,12 +1,13 @@
 # Bayn
 
-Bayn is a single-writer, paper-only quantitative research and execution runtime. Its active strategy is
+Bayn is a single-writer quantitative research and execution runtime. Its active strategy is
 `bayn.risk-balanced-trend.protocol.v4`: normalized horizon trends are clipped before a median aggregate, at least three
 of four horizons must be positive, and eligible sleeves are risk-budgeted by conviction per unit annualized volatility.
 The universe, monthly rebalance, 35% sleeve cap, 10% portfolio-volatility ceiling, execution costs, benchmarks,
 uncertainty policy, and economic gates are source-controlled. A terminal qualification result never grants broker or
-capital authority by itself. GitOps may separately grant one bounded sandbox PAPER generation from either a qualified
-binding or an explicit research binding; Bayn never composes live-capital authority.
+capital authority by itself. GitOps currently grants only bounded sandbox PAPER generations from qualified or explicit
+research bindings. The final authorization and broker-mutation core is account-environment agnostic; live-capital grants
+remain a dormant adapter boundary until separately reviewed and configured.
 
 ## Runtime contract
 
