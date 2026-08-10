@@ -4248,6 +4248,197 @@ describe('OBSERVE runtime composition', () => {
     expect(postReconcileEvents.indexOf('store-read-interrupted')).toBeLessThan(
       postReconcileEvents.indexOf('reconcile:1'),
     )
+
+    const boundaryTarget = postReconcileDocument.targetPlan.intentTargets[0]
+    const boundaryRisk = postReconcileDocument.deltaRisk[0]
+    if (boundaryTarget === undefined || boundaryRisk === undefined) {
+      return expect.unreachable('post-mutation timeout fixture requires one approved intent')
+    }
+    const boundaryIntent = await Effect.runPromise(
+      planPaperIntent(
+        {
+          schemaVersion: 'bayn.paper-intent-plan.v1',
+          ...boundaryTarget,
+          notionalLimitMicros: boundaryRisk.notionalLimitMicros,
+          createdAt: postReconcileDocument.createdAt,
+        },
+        { authority: paperAuthority },
+      ),
+    )
+    const boundaryRecord = storedIntent(boundaryIntent, IntentState.Approved, postReconcileDocument.createdAt)
+    const boundaryAccepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '5'.repeat(64),
+      mutationId: '6'.repeat(64),
+      intentId: boundaryIntent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '7'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'post-mutation-timeout-boundary',
+      occurredAt: postReconcileDocument.createdAt,
+    }
+    let boundaryReconciliations = 0
+    let boundaryIntentReadDelayed = false
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(postReconcileDocument.createdAt))
+          const intentReadStarted = yield* Deferred.make<void>()
+          const mutationSettled = yield* Deferred.make<void>()
+          const preMutationReconciled = yield* Deferred.make<void>()
+          const postMutationReconciled = yield* Deferred.make<void>()
+          const pass =
+            yield* Deferred.make<
+              Parameters<Parameters<ReturnType<typeof makeMutationAutonomousCycleStartup>>[0]['recordPass']>[0]
+            >()
+          const boundaryExecutionStore = {
+            ...executionStore,
+            reconcile: () =>
+              Effect.sync(() => {
+                boundaryReconciliations += 1
+                return boundaryReconciliations
+              }).pipe(
+                Effect.tap((count) =>
+                  count === 1
+                    ? Deferred.succeed(preMutationReconciled, undefined).pipe(Effect.asVoid)
+                    : count === 2
+                      ? Deferred.succeed(postMutationReconciled, undefined).pipe(Effect.asVoid)
+                      : Effect.void,
+                ),
+                Effect.as(paperPersisted),
+              ),
+            ensureAuthorityGeneration: () => Effect.succeed(paperAuthority),
+          } satisfies BrokerEventStoreShape &
+            FillAccountingStoreShape &
+            ValuationStoreShape &
+            ReconciliationStoreShape &
+            AuthorityGenerationStoreShape &
+            AuthorityRestrictionStoreShape
+          const unusedBoundaryCycle = Effect.die(
+            new Error('post-mutation timeout fixture used an unrelated cycle-store operation'),
+          )
+          const boundaryCycleStore: CycleStoreShape = {
+            acquire: () => unusedBoundaryCycle,
+            read: () => unusedBoundaryCycle,
+            readAuthoritySlot: () => unusedBoundaryCycle,
+            readDecisionDocument: () => Effect.succeed(Option.some(postReconcileDocument)),
+            readOldestUnfinished: () => Effect.succeed(Option.some(postReconcileCycle)),
+            bindSnapshot: () => unusedBoundaryCycle,
+            activate: () => unusedBoundaryCycle,
+            bindDecision: () => unusedBoundaryCycle,
+            finish: () => unusedBoundaryCycle,
+            block: () => unusedBoundaryCycle,
+          }
+          const boundaryIntentStore: IntentStoreService = {
+            commit: () => Effect.succeed({ record: boundaryRecord, deduplicated: true }),
+            commitClosing: () => Effect.succeed({ record: boundaryRecord, deduplicated: true }),
+            read: (intentId) => {
+              expect(intentId).toBe(boundaryIntent.intentId)
+              if (boundaryIntentReadDelayed) return Effect.succeed(Option.some(boundaryRecord))
+              boundaryIntentReadDelayed = true
+              return Deferred.succeed(intentReadStarted, undefined).pipe(
+                Effect.andThen(Effect.sleep(49)),
+                Effect.as(Option.some(boundaryRecord)),
+              )
+            },
+          }
+          const boundaryMutationStore = {
+            latest: () => Effect.void,
+          } as unknown as MutationStoreShape
+          const boundaryExecutionProgram: ExecutionProgram = {
+            ...sandboxExecutionProgram(),
+            submit: (intentId, consistencyDelayMs) => {
+              expect(intentId).toBe(boundaryIntent.intentId)
+              expect(consistencyDelayMs).toBe(boundaryAccepted.consistencyDelayMs)
+              return Deferred.succeed(mutationSettled, undefined).pipe(Effect.as(boundaryAccepted))
+            },
+          }
+          const boundaryStartup = makeMutationAutonomousCycleStartup({
+            accountId,
+            authorityGenerationHash: generationHash,
+            pollIntervalMs: 10_000,
+            reconciliationIntervalMs: 100,
+            reconciliationPassTimeoutMs: 50,
+            strategy: fixtureRuntime,
+            executionProgram: boundaryExecutionProgram,
+          })
+          const loop = yield* boundaryStartup({
+            qualificationRunId: postReconcileCycle.identity.qualificationRunId,
+            recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, { ...brokerRead, marketCalendar: calendarRead([]) }),
+            Effect.provideService(CycleStore, boundaryCycleStore),
+            Effect.provideService(MarketData, marketData([])),
+            Effect.provideService(BrokerEventStore, boundaryExecutionStore),
+            Effect.provideService(FillAccountingStore, boundaryExecutionStore),
+            Effect.provideService(ValuationStore, boundaryExecutionStore),
+            Effect.provideService(ReconciliationStore, boundaryExecutionStore),
+            Effect.provideService(AuthorityGenerationStore, boundaryExecutionStore),
+            Effect.provideService(AuthorityRestrictionStore, boundaryExecutionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, boundaryIntentStore),
+            Effect.provideService(MutationStore, boundaryMutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const initial = yield* TestClock.withLive(
+            Effect.race(
+              Deferred.await(intentReadStarted).pipe(Effect.as('INTENT_READ' as const)),
+              Fiber.await(fiber).pipe(Effect.map((exit) => ({ _tag: 'FIBER_EXIT' as const, exit }))),
+            ).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for delayed intent read')),
+            ),
+          )
+          if (initial !== 'INTENT_READ')
+            throw new Error(`mutation loop exited before intent read: ${String(initial.exit)}`)
+          yield* TestClock.adjust(49)
+          yield* TestClock.withLive(
+            Deferred.await(preMutationReconciled).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for pre-mutation reconciliation')),
+            ),
+          )
+          expect(Option.isNone(yield* Deferred.poll(pass))).toBe(true)
+          yield* TestClock.withLive(
+            Deferred.await(mutationSettled).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for durable mutation settlement')),
+            ),
+          )
+          yield* Effect.yieldNow
+          expect(boundaryReconciliations).toBe(1)
+          yield* TestClock.adjust(1)
+          yield* Effect.yieldNow
+          expect(Option.isNone(yield* Deferred.poll(pass))).toBe(true)
+          expect(authorityRestrictions).toBe(3)
+          yield* TestClock.adjust(1_000)
+          yield* TestClock.withLive(
+            Deferred.await(postMutationReconciled).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for post-mutation reconciliation')),
+            ),
+          )
+          const observation = yield* TestClock.withLive(
+            Deferred.await(pass).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for post-mutation cycle observation')),
+            ),
+          )
+          expect(observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'RECOVERED',
+          })
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(boundaryReconciliations).toBe(2)
+    expect(authorityRestrictions).toBe(3)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {
