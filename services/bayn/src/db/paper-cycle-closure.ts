@@ -3,6 +3,7 @@ import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { PaperDecisionDocumentSchema } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 const PaperCycleClosureMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-cycle-closure.v1'),
@@ -66,9 +67,17 @@ export class PaperCycleClosureStore extends Context.Service<PaperCycleClosureSto
   'bayn/PaperCycleClosureStore',
 ) {}
 
-export const decodePaperCycleClosureResult = Schema.decodeUnknownResult(PaperCycleClosureSchema, strictParseOptions)
+const decodePaperCycleClosureResultDataFirst = Schema.decodeUnknownResult(PaperCycleClosureSchema, strictParseOptions)
 
-export const decodePaperCycleClosureMaterialResult = Schema.decodeUnknownResult(
+export const decodePaperCycleClosureResult = Pipeable.dual(1, (input: unknown) =>
+  decodePaperCycleClosureResultDataFirst(input),
+)
+
+const decodePaperCycleClosureMaterialResultDataFirst = Schema.decodeUnknownResult(
   PaperCycleClosureMaterialSchema,
   strictParseOptions,
+)
+
+export const decodePaperCycleClosureMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodePaperCycleClosureMaterialResultDataFirst(input),
 )

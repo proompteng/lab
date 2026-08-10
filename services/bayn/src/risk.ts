@@ -38,6 +38,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
+import { Pipeable } from './pipeable'
 
 const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
 const MAX_AGE_MS = 86_400_000
@@ -1291,5 +1292,9 @@ export const evaluate = (
   return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success)
 }
 
-export const decodePolicy = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
-export const decodeState = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)
+const decodePolicyDataFirst = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
+
+export const decodePolicy = Pipeable.dual(1, (input: unknown) => decodePolicyDataFirst(input))
+const decodeStateDataFirst = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)
+
+export const decodeState = Pipeable.dual(1, (input: unknown) => decodeStateDataFirst(input))

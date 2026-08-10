@@ -262,9 +262,13 @@ export const makeResearchPaperActivationRequest = (
   )
 }
 
-export const decodePaperActivationRequestResult = Schema.decodeUnknownResult(
+const decodePaperActivationRequestResultDataFirst = Schema.decodeUnknownResult(
   PaperActivationRequestSchema,
   strictParseOptions,
+)
+
+export const decodePaperActivationRequestResult = Pipeable.dual(1, (input: unknown) =>
+  decodePaperActivationRequestResultDataFirst(input),
 )
 
 export type CapitalAuthorityRequest = NoCapitalRequest | SandboxCapitalRequest | LiveCapitalGrantRequest

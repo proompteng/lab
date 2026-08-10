@@ -13,6 +13,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions,
 } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export const AccountingTransactionSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-accounting-transaction.v1'),
@@ -38,4 +39,8 @@ export const AccountingTransactionSchema = Schema.Struct({
 
 export type AccountingTransaction = typeof AccountingTransactionSchema.Type
 
-export const decodeAccountingTransaction = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)
+const decodeAccountingTransactionDataFirst = Schema.decodeUnknownResult(AccountingTransactionSchema, strictParseOptions)
+
+export const decodeAccountingTransaction = Pipeable.dual(1, (input: unknown) =>
+  decodeAccountingTransactionDataFirst(input),
+)

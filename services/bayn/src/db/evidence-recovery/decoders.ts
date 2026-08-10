@@ -15,34 +15,77 @@ import {
   SimulatedOrdersArtifactSchema,
 } from '../../evidence-contracts'
 import { strictParseOptions } from '../../schemas'
+import { Pipeable } from '../../pipeable'
 
-export const decodeEvaluationSummary = Schema.decodeUnknownResult(EvaluationSummarySchema, strictParseOptions)
-export const decodeReconciliationResult = Schema.decodeUnknownResult(ReconciliationResultSchema, strictParseOptions)
-export const decodeMarkedEquityReconciliation = Schema.decodeUnknownResult(
+const decodeEvaluationSummaryDataFirst = Schema.decodeUnknownResult(EvaluationSummarySchema, strictParseOptions)
+
+export const decodeEvaluationSummary = Pipeable.dual(1, (input: unknown) => decodeEvaluationSummaryDataFirst(input))
+const decodeReconciliationResultDataFirst = Schema.decodeUnknownResult(ReconciliationResultSchema, strictParseOptions)
+
+export const decodeReconciliationResult = Pipeable.dual(1, (input: unknown) =>
+  decodeReconciliationResultDataFirst(input),
+)
+const decodeMarkedEquityReconciliationDataFirst = Schema.decodeUnknownResult(
   MarkedEquityReconciliationSchema,
   strictParseOptions,
 )
-export const decodeEquitySeriesArtifact = Schema.decodeUnknownResult(EquitySeriesArtifactSchema, strictParseOptions)
-export const decodeEvaluationEvents = Schema.decodeUnknownResult(EvaluationEventsSchema, strictParseOptions)
-export const decodeSimulatedOrdersArtifact = Schema.decodeUnknownResult(
+
+export const decodeMarkedEquityReconciliation = Pipeable.dual(1, (input: unknown) =>
+  decodeMarkedEquityReconciliationDataFirst(input),
+)
+const decodeEquitySeriesArtifactDataFirst = Schema.decodeUnknownResult(EquitySeriesArtifactSchema, strictParseOptions)
+
+export const decodeEquitySeriesArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeEquitySeriesArtifactDataFirst(input),
+)
+const decodeEvaluationEventsDataFirst = Schema.decodeUnknownResult(EvaluationEventsSchema, strictParseOptions)
+
+export const decodeEvaluationEvents = Pipeable.dual(1, (input: unknown) => decodeEvaluationEventsDataFirst(input))
+const decodeSimulatedOrdersArtifactDataFirst = Schema.decodeUnknownResult(
   SimulatedOrdersArtifactSchema,
   strictParseOptions,
 )
-export const decodeSignalDecisionsArtifact = Schema.decodeUnknownResult(
+
+export const decodeSimulatedOrdersArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeSimulatedOrdersArtifactDataFirst(input),
+)
+const decodeSignalDecisionsArtifactDataFirst = Schema.decodeUnknownResult(
   RiskBalancedTrendSignalDecisionsArtifactSchema,
   strictParseOptions,
 )
-export const decodeDailyPerformanceSeriesArtifact = Schema.decodeUnknownResult(
+
+export const decodeSignalDecisionsArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeSignalDecisionsArtifactDataFirst(input),
+)
+const decodeDailyPerformanceSeriesArtifactDataFirst = Schema.decodeUnknownResult(
   DailyPerformanceSeriesArtifactSchema,
   strictParseOptions,
 )
-export const decodeQualificationArtifactManifest = Schema.decodeUnknownResult(
+
+export const decodeDailyPerformanceSeriesArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeDailyPerformanceSeriesArtifactDataFirst(input),
+)
+const decodeQualificationArtifactManifestDataFirst = Schema.decodeUnknownResult(
   QualificationArtifactManifestSchema,
   strictParseOptions,
 )
-export const decodeCashChangesArtifact = Schema.decodeUnknownResult(CashChangesArtifactSchema, strictParseOptions)
-export const decodeDailyPositionMarksArtifact = Schema.decodeUnknownResult(
+
+export const decodeQualificationArtifactManifest = Pipeable.dual(1, (input: unknown) =>
+  decodeQualificationArtifactManifestDataFirst(input),
+)
+const decodeCashChangesArtifactDataFirst = Schema.decodeUnknownResult(CashChangesArtifactSchema, strictParseOptions)
+
+export const decodeCashChangesArtifact = Pipeable.dual(1, (input: unknown) => decodeCashChangesArtifactDataFirst(input))
+const decodeDailyPositionMarksArtifactDataFirst = Schema.decodeUnknownResult(
   DailyPositionMarksArtifactSchema,
   strictParseOptions,
 )
-export const decodeInputManifestArtifact = Schema.decodeUnknownResult(InputManifestArtifactSchema, strictParseOptions)
+
+export const decodeDailyPositionMarksArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeDailyPositionMarksArtifactDataFirst(input),
+)
+const decodeInputManifestArtifactDataFirst = Schema.decodeUnknownResult(InputManifestArtifactSchema, strictParseOptions)
+
+export const decodeInputManifestArtifact = Pipeable.dual(1, (input: unknown) =>
+  decodeInputManifestArtifactDataFirst(input),
+)
