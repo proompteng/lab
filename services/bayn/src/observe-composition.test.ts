@@ -4693,16 +4693,21 @@ describe('OBSERVE runtime composition', () => {
         executionProgram,
       })
 
-      const failure = await Effect.runPromise(
-        Effect.flip(
+      const exit = await Effect.runPromise(
+        Effect.exit(
           startup({
             qualificationRunId: 'c'.repeat(64),
             recordPass: () => Effect.void,
           }),
         ),
       )
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isSuccess(exit)) throw new Error('mismatched mutation startup unexpectedly succeeded')
+      const failure = Cause.findErrorOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isNone(failure)) throw new Error('mismatched mutation startup failed without a typed cause')
 
-      expect(failure).toMatchObject({
+      expect(failure.value).toMatchObject({
         _tag: 'OperationalError',
         component: 'config',
         operation: 'cycle-loop',

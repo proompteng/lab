@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
+import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
+  ApplicationPlatformLive,
   closedCycleReceiptEmissionAllowed,
   finalizePaperEpisode,
   paperReceiptFinalizationWindowOpen,
@@ -54,6 +55,14 @@ const researchRequest = Result.getOrThrow(
     ...researchPlanFields,
   }),
 )
+
+describe('Bayn application platform', () => {
+  test('provides filesystem access for TLS-backed PostgreSQL acquisition', async () => {
+    const context = await Effect.runPromise(Effect.scoped(Layer.build(ApplicationPlatformLive)))
+
+    expect(Context.get(context, FileSystem.FileSystem)).toBeDefined()
+  })
+})
 
 describe('Bayn PAPER receipt retry boundary', () => {
   test('does not bind a generation receipt before its PAPER entry cutoff', () => {

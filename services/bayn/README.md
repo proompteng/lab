@@ -161,6 +161,9 @@ credentials and writes no dossier. Later PREPARE/SUBMIT/CANCEL/RECOVER work rema
 
 ## Validation
 
+`tsc` invokes the pinned Effect TSGo compiler directly, so TypeScript and configured Effect diagnostics run once and
+share one failing exit boundary.
+
 ```sh
 bun run --filter @proompteng/bayn test
 bun run --filter @proompteng/bayn tsc
