@@ -24,7 +24,9 @@ export type WriterFenceTransaction = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E | WriterFenceError, R>
 
-export class WriterFence extends Context.Service<WriterFence, WriterFenceService>()('bayn/WriterFence') {}
+export class WriterFence extends Context.Service<WriterFence, WriterFenceService>()(
+  '@proompteng/bayn/execution/writer-fence/WriterFence',
+) {}
 
 /**
  * Explicitly crosses the WriterFence interpreter boundary for callers that do not already hold the service value.

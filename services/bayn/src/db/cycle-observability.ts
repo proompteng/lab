@@ -33,7 +33,7 @@ export interface CycleObservabilityShape {
 }
 
 export class CycleObservability extends Context.Service<CycleObservability, CycleObservabilityShape>()(
-  'bayn/CycleObservability',
+  '@proompteng/bayn/db/cycle-observability/CycleObservability',
 ) {}
 
 const NullableDate = Schema.NullOr(Schema.Date)

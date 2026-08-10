@@ -337,7 +337,9 @@ export interface IntentStoreService {
   readonly read: (intentId: string) => Effect.Effect<Option.Option<StoredIntent>, IntentStoreError>
 }
 
-export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()('bayn/IntentStore') {}
+export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()(
+  '@proompteng/bayn/execution/intents/domain/IntentStore',
+) {}
 
 const intentRowFields = {
   schema_version: Schema.Literal('bayn.paper-intent.v3'),

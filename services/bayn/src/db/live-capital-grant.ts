@@ -40,7 +40,7 @@ export interface LiveCapitalGrantStoreShape {
 }
 
 export class LiveCapitalGrantStore extends Context.Service<LiveCapitalGrantStore, LiveCapitalGrantStoreShape>()(
-  'bayn/LiveCapitalGrantStore',
+  '@proompteng/bayn/db/live-capital-grant/LiveCapitalGrantStore',
 ) {}
 
 const RowSchema = Schema.Struct({

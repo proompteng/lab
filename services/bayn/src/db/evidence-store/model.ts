@@ -61,4 +61,6 @@ export interface EvidenceStoreService {
   ) => Effect.Effect<Option.Option<QualificationRecord>, DatabaseError>
 }
 
-export class EvidenceStore extends Context.Service<EvidenceStore, EvidenceStoreService>()('bayn/EvidenceStore') {}
+export class EvidenceStore extends Context.Service<EvidenceStore, EvidenceStoreService>()(
+  '@proompteng/bayn/db/evidence-store/model/EvidenceStore',
+) {}

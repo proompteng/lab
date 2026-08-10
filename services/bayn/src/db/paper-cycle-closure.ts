@@ -64,7 +64,7 @@ export interface PaperCycleClosureStoreShape {
 }
 
 export class PaperCycleClosureStore extends Context.Service<PaperCycleClosureStore, PaperCycleClosureStoreShape>()(
-  'bayn/PaperCycleClosureStore',
+  '@proompteng/bayn/db/paper-cycle-closure/PaperCycleClosureStore',
 ) {}
 
 const decodePaperCycleClosureResultDataFirst = Schema.decodeUnknownResult(PaperCycleClosureSchema, strictParseOptions)

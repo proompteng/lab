@@ -189,7 +189,9 @@ export interface MutationStoreShape {
   ) => Effect.Effect<MutationEvent | undefined, MutationStoreError>
 }
 
-export class MutationStore extends Context.Service<MutationStore, MutationStoreShape>()('bayn/MutationStore') {}
+export class MutationStore extends Context.Service<MutationStore, MutationStoreShape>()(
+  '@proompteng/bayn/execution/mutations/model/MutationStore',
+) {}
 
 export type MutationStartInput = typeof StartInputSchema.Type
 export type MutationOutcomeInput = typeof OutcomeInputSchema.Type

@@ -401,7 +401,9 @@ export interface BrokerReadShape {
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
 }
 
-export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()('bayn/BrokerRead') {}
+export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()(
+  '@proompteng/bayn/broker/alpaca/model/BrokerRead',
+) {}
 
 export interface ReadPreflight {
   readonly provider: BrokerProvider
