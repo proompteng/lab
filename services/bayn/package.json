@@ -4,10 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "audit:qualification": "bun src/qualification-audit-command.ts",
-    "candidate:development:local": "bun ../../packages/scripts/src/bayn/candidate-development-local/command.ts",
-    "collect:qualification": "bun src/qualification-collector-command.ts",
-    "build": "bun build src/index.ts src/qualification-audit-command.ts src/qualification-collector-command.ts src/forward-performance-command.ts --target=node --external tigerbeetle-node --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",

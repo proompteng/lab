@@ -123,30 +123,6 @@ binding or an explicit research binding; Bayn never composes live-capital author
   the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
   `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
 
-## Local candidate development
-
-Candidate development is a local, offline, one-shot operation. From a clean checkout, invoke the typed wrapper with the
-reviewed module, its source manifest, and the typed runtime market-data witness:
-
-```sh
-bun run --filter @proompteng/bayn candidate:development:local -- \
-  services/bayn/src/strategy/<candidate>.ts \
-  services/bayn/candidates/<candidate>-source-manifest.json \
-  <typed-runtime-market-data.json>
-```
-
-The command binds both source files to their exact `HEAD` blobs, checks the manifest's module, protocol, trial-lineage,
-and snapshot bindings, decodes the frozen witness, and evaluates the statically composed reviewed `StrategyDefinition`
-through the same pure runner used by qualification and live decisions. It never dynamically imports candidate source,
-scans or compiles JavaScript, or creates an executable artifact. It atomically reserves one compact receipt in Git
-metadata before evaluation and finalizes it with the exact source/protocol/snapshot/trial binding and terminal status; a
-reserved or failed receipt is terminal and must not be retried.
-
-This path is development-only. It does not release, promote, deploy, invoke Argo, access qualification holdout data, or
-open broker capabilities. Qualification remains a separate single scheduled CI attempt against the exact reviewed
-source and sealed holdout. A successful qualification may support a qualified PAPER grant; a separately reviewed
-research grant may authorize sandbox evidence collection without claiming qualification or economic success.
-
 ## Runtime operations
 
 `BAYN_OPERATION` has no default. When it is absent, Bayn selects the credential-free service or autonomous GET-only
@@ -192,48 +168,8 @@ bun run --filter @proompteng/bayn build
 bun run --filter @proompteng/bayn lint:oxlint
 ```
 
-For a terminal locked candidate, `audit:qualification` performs an operator-side, read-only reproduction. It reads the
-evidence graph in one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, reloads the finalized Signal snapshot,
-replays the candidate and all benchmarks without importing the production strategy, checks ClickHouse query-start
-chronology on every physical ClickHouse replica with a separately supplied audit principal, and checks authoritative
-`origin/main` history. Query-log classification uses ClickHouse's recorded table metadata rather than spoofable SQL
-text. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run it twice and
-require identical `auditHash` values.
-
-The current auditor independently replays causal protocol v3 and v4 evidence with version-matched semantics. Protocol
-v2 remains recoverable by run ID, but its rejected qualification must be replayed with the source revision and
-immutable image recorded on that run; a current-source audit fails explicitly instead of applying newer semantics to
-historical evidence.
-
-```sh
-BAYN_AUDIT_RUN_ID=<run-id> \
-BAYN_AUDIT_POSTGRES_URL=<authenticated-postgres-uri> \
-BAYN_AUDIT_SIGNAL_URL=<signal-clickhouse-url> \
-BAYN_AUDIT_SIGNAL_USERNAME=<readonly-bayn-user> \
-BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME=<signal-publisher-user> \
-BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
-BAYN_AUDIT_CLICKHOUSE_URLS=<replica-0-audit-url>,<replica-1-audit-url> \
-BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \
-BAYN_AUDIT_CLICKHOUSE_PASSWORD=<query-log-audit-password> \
-BAYN_AUDIT_REPOSITORY_PATH=<clean-lab-checkout-at-the-run-source-revision> \
-  bun run --filter @proompteng/bayn audit:qualification
-```
-
-The audit checkout must be clean and its `HEAD` must equal the persisted run source revision. This binds the reviewed
-candidate module and every local dependency it imports to the same source tree; the command fails closed for a newer,
-dirty, or otherwise different checkout.
-
-The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
-ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
-read-only identity. Any recorded bars-table access takes fail-closed precedence over sessions or manifests; SQL aliases
-cannot relabel a read. The log cannot retroactively prove that an operator query returned only bounded count/hash
-evidence, so any Signal-table read by a principal other than the candidate or declared publisher makes the audit fail.
-
-Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
-binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
-verdict, and observe-only authority. It is ephemeral operator/CI evidence, not runtime configuration. Runtime recovery
-uses only `BAYN_QUALIFICATION_RUN_ID` to load the immutable EvidenceStore graph; Bayn never mounts or reads a dossier
-file.
+Historical development candidates are terminal and are not executable repository inputs. Their compact immutable
+status and receipt hashes are retained in [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).
 
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 

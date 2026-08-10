@@ -18,16 +18,6 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  qualificationAuditCommand = pkgs.writeShellScriptBin "bayn-qualification-audit" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/qualification-audit-command.js" "$@"
-  '';
-  qualificationCollectorCommand = pkgs.writeShellScriptBin "bayn-qualification-collector" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/bun" "$root/app/services/bayn/dist/qualification-collector-command.js" "$@"
-  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
@@ -37,7 +27,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/qualification-audit-command.ts src/qualification-collector-command.ts src/forward-performance-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -49,7 +39,6 @@ let
     )
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/qualification-collector-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
@@ -57,8 +46,6 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/qualification-audit-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/qualification-collector-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     cp -R -L "$TMPDIR/work/services/bayn/node_modules/tigerbeetle-node/." \
@@ -95,14 +82,11 @@ import ./bun-workspace-service.nix {
     "dist/index.js"
   ];
   workingDir = "/app/services/bayn";
-  includeBunRuntime = true;
+  includeBunRuntime = false;
   extraContents = [
     nodejs
     pkgs.cacert
-    pkgs.git
     forwardPerformanceCommand
-    qualificationAuditCommand
-    qualificationCollectorCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };
