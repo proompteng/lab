@@ -43,11 +43,11 @@ const validateStoredProtocol = (
         receipt.strategy_name,
       )
     }
-    const parameterHash = yield* canonicalHash(
-      'stored-protocol-parameters',
-      rows.protocol.parameters,
-      rows.protocol.protocol_hash,
-    )
+    const parameterHash = yield* canonicalHash({
+      operation: 'stored-protocol-parameters',
+      value: rows.protocol.parameters,
+      subject: rows.protocol.protocol_hash,
+    })
     if (rows.protocol.parameter_hash !== parameterHash) {
       return yield* mismatch('stored-graph', ['protocol', 'parameterHash'], rows.protocol.parameter_hash, parameterHash)
     }
@@ -78,7 +78,11 @@ const validateStoredCounts = (
 const validateStoredArtifacts = (rows: StoredEvidenceRows): Result.Result<void, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
     for (const artifact of rows.artifacts) {
-      const expectedHash = yield* canonicalHash('stored-artifact-payload', artifact.payload, artifact.artifact_name)
+      const expectedHash = yield* canonicalHash({
+        operation: 'stored-artifact-payload',
+        value: artifact.payload,
+        subject: artifact.artifact_name,
+      })
       if (artifact.content_hash !== expectedHash) {
         return yield* mismatch(
           'stored-graph',
@@ -96,7 +100,11 @@ const validateStoredEvents = (rows: StoredEvidenceRows): Result.Result<void, Evi
       if (event.ordinal !== index) {
         return yield* mismatch('stored-graph', ['events', event.event_id, 'ordinal'], event.ordinal, index)
       }
-      const expectedHash = yield* canonicalHash('stored-event-payload', event.payload, event.event_id)
+      const expectedHash = yield* canonicalHash({
+        operation: 'stored-event-payload',
+        value: event.payload,
+        subject: event.event_id,
+      })
       if (event.content_hash !== expectedHash) {
         return yield* mismatch(
           'stored-graph',
@@ -114,11 +122,11 @@ const validateStoredGates = (rows: StoredEvidenceRows): Result.Result<void, Evid
       if (gate.ordinal !== index) {
         return yield* mismatch('stored-graph', ['gates', gate.gate_name, 'ordinal'], gate.ordinal, index)
       }
-      const expectedHash = yield* canonicalHash(
-        'stored-gate-payload',
-        { name: gate.gate_name, passed: gate.passed, actual: gate.actual, required: gate.required },
-        gate.gate_name,
-      )
+      const expectedHash = yield* canonicalHash({
+        operation: 'stored-gate-payload',
+        value: { name: gate.gate_name, passed: gate.passed, actual: gate.actual, required: gate.required },
+        subject: gate.gate_name,
+      })
       if (gate.content_hash !== expectedHash) {
         return yield* mismatch(
           'stored-graph',
@@ -149,8 +157,16 @@ const validateStoredStatuses = (
       eventCount: receipt.event_count,
       gateCount: receipt.gate_count,
     }
-    const writingHash = yield* canonicalHash('stored-writing-status', writing.detail, runId)
-    const expectedHash = yield* canonicalHash('stored-writing-status', expectedDetail, runId)
+    const writingHash = yield* canonicalHash({
+      operation: 'stored-writing-status',
+      value: writing.detail,
+      subject: runId,
+    })
+    const expectedHash = yield* canonicalHash({
+      operation: 'stored-writing-status',
+      value: expectedDetail,
+      subject: runId,
+    })
     if (writingHash !== expectedHash) {
       return yield* mismatch('stored-graph', ['statuses', 0, 'detail'], writing.detail, expectedDetail)
     }

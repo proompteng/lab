@@ -22,17 +22,19 @@ const mismatchDataFirst = (
 
 export const mismatch = Pipeable.dual(4, mismatchDataFirst)
 
-export const canonicalHash = (
-  operation: RecoveryCanonicalizationOperation,
-  value: unknown,
-  subject?: string,
-): Result.Result<string, EvidenceRecoveryIssue> =>
+export interface RecoveryCanonicalHashInput {
+  readonly operation: RecoveryCanonicalizationOperation
+  readonly value: unknown
+  readonly subject?: string
+}
+
+export const canonicalHash = (input: RecoveryCanonicalHashInput): Result.Result<string, EvidenceRecoveryIssue> =>
   Result.mapError(
-    canonicalHashV1Result(value),
+    canonicalHashV1Result(input.value),
     (cause): EvidenceRecoveryIssue => ({
       _tag: 'CanonicalizationFailure',
-      operation,
-      ...(subject === undefined ? {} : { subject }),
+      operation: input.operation,
+      ...(input.subject === undefined ? {} : { subject: input.subject }),
       cause,
     }),
   )

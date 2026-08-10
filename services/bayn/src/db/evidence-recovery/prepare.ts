@@ -241,20 +241,24 @@ const validateProtocolExecutionLock = (
     for (const [path, observed, expected] of facts) {
       if (observed !== expected) return yield* mismatch('protocol', [path], observed, expected)
     }
-    const parameterHash = yield* canonicalHash('protocol-parameters', stored.protocol.parameters, stored.run.runId)
+    const parameterHash = yield* canonicalHash({
+      operation: 'protocol-parameters',
+      value: stored.protocol.parameters,
+      subject: stored.run.runId,
+    })
     if (parameterHash !== provenance.strategy.parameterHash) {
       return yield* mismatch('protocol', ['parameterHash'], parameterHash, provenance.strategy.parameterHash)
     }
-    const protocolExecutionHash = yield* canonicalHash(
-      'protocol-execution-model',
-      stored.protocol.parameters.executionModel,
-      stored.run.runId,
-    )
-    const ordersExecutionHash = yield* canonicalHash(
-      'protocol-execution-model',
-      orders.executionModel,
-      'simulated-orders',
-    )
+    const protocolExecutionHash = yield* canonicalHash({
+      operation: 'protocol-execution-model',
+      value: stored.protocol.parameters.executionModel,
+      subject: stored.run.runId,
+    })
+    const ordersExecutionHash = yield* canonicalHash({
+      operation: 'protocol-execution-model',
+      value: orders.executionModel,
+      subject: 'simulated-orders',
+    })
     if (protocolExecutionHash !== ordersExecutionHash) {
       return yield* mismatch('protocol', ['executionModelHash'], ordersExecutionHash, protocolExecutionHash)
     }
@@ -331,16 +335,16 @@ const validateArtifactManifest = (
 ): Result.Result<void, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
     const manifestArtifacts = yield* collectManifestArtifacts(artifacts, decoded)
-    const eventReferencesHash = yield* canonicalHash(
-      'artifact-manifest-expected',
-      stored.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
-      'events',
-    )
-    const gateReferencesHash = yield* canonicalHash(
-      'artifact-manifest-expected',
-      stored.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
-      'gates',
-    )
+    const eventReferencesHash = yield* canonicalHash({
+      operation: 'artifact-manifest-expected',
+      value: stored.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+      subject: 'events',
+    })
+    const gateReferencesHash = yield* canonicalHash({
+      operation: 'artifact-manifest-expected',
+      value: stored.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+      subject: 'gates',
+    })
     const expected = {
       schemaVersion: 'bayn.qualification-artifact-manifest.v1',
       identity: {
@@ -366,12 +370,16 @@ const validateArtifactManifest = (
       events: { count: stored.events.length, contentHash: eventReferencesHash },
       gates: { count: stored.gates.length, contentHash: gateReferencesHash },
     }
-    const observedHash = yield* canonicalHash(
-      'artifact-manifest-observed',
-      decoded.artifactManifest,
-      'qualification-artifact-manifest',
-    )
-    const expectedHash = yield* canonicalHash('artifact-manifest-expected', expected, 'qualification-artifact-manifest')
+    const observedHash = yield* canonicalHash({
+      operation: 'artifact-manifest-observed',
+      value: decoded.artifactManifest,
+      subject: 'qualification-artifact-manifest',
+    })
+    const expectedHash = yield* canonicalHash({
+      operation: 'artifact-manifest-expected',
+      value: expected,
+      subject: 'qualification-artifact-manifest',
+    })
     if (observedHash !== expectedHash) {
       return yield* mismatch('manifest', ['qualificationArtifactManifest'], observedHash, expectedHash)
     }

@@ -72,7 +72,7 @@ const validatePersistenceEvaluationDataFirst = (
       )
     }
 
-    const parameterHash = yield* persistenceCanonicalHash('parameters', parameters)
+    const parameterHash = yield* persistenceCanonicalHash({ operation: 'parameters', value: parameters })
     if (parameterHash !== provenance.strategy.parameterHash) {
       return yield* persistenceMismatch(
         'parameter-hash',
@@ -81,16 +81,16 @@ const validatePersistenceEvaluationDataFirst = (
         parameterHash,
       )
     }
-    const executionHash = yield* persistenceCanonicalHash(
-      'execution-model',
-      evaluation.simulation.executionModel,
-      'simulation',
-    )
-    const expectedExecutionHash = yield* persistenceCanonicalHash(
-      'execution-model',
-      parameters.executionModel,
-      'parameters',
-    )
+    const executionHash = yield* persistenceCanonicalHash({
+      operation: 'execution-model',
+      value: evaluation.simulation.executionModel,
+      subject: 'simulation',
+    })
+    const expectedExecutionHash = yield* persistenceCanonicalHash({
+      operation: 'execution-model',
+      value: parameters.executionModel,
+      subject: 'parameters',
+    })
     if (executionHash !== expectedExecutionHash) {
       return yield* persistenceMismatch(
         'execution-model',
@@ -135,7 +135,10 @@ const validatePersistenceEvaluationDataFirst = (
     }
 
     const { hash: inputManifestHash, ...manifestMaterial } = evaluation.inputManifest
-    const expectedManifestHash = yield* persistenceCanonicalHash('input-manifest', manifestMaterial)
+    const expectedManifestHash = yield* persistenceCanonicalHash({
+      operation: 'input-manifest',
+      value: manifestMaterial,
+    })
     if (inputManifestHash !== expectedManifestHash) {
       return yield* persistenceMismatch(
         'input-manifest-hash',
@@ -165,16 +168,16 @@ const validatePersistenceEvaluationDataFirst = (
       } satisfies PersistencePlanFailure)
     }
     const equityProof = equityProofResult.success
-    const proofReconciliationHash = yield* persistenceCanonicalHash(
-      'marked-equity-reconciliation',
-      equityProof.reconciliation,
-      'reconstructed',
-    )
-    const evaluationReconciliationHash = yield* persistenceCanonicalHash(
-      'marked-equity-reconciliation',
-      evaluation.markedEquityReconciliation,
-      'evaluation',
-    )
+    const proofReconciliationHash = yield* persistenceCanonicalHash({
+      operation: 'marked-equity-reconciliation',
+      value: equityProof.reconciliation,
+      subject: 'reconstructed',
+    })
+    const evaluationReconciliationHash = yield* persistenceCanonicalHash({
+      operation: 'marked-equity-reconciliation',
+      value: evaluation.markedEquityReconciliation,
+      subject: 'evaluation',
+    })
     if (proofReconciliationHash !== evaluationReconciliationHash) {
       return yield* persistenceMismatch(
         'marked-equity-proof',
@@ -183,8 +186,16 @@ const validatePersistenceEvaluationDataFirst = (
         proofReconciliationHash,
       )
     }
-    const proofEquityHash = yield* persistenceCanonicalHash('equity-series', equityProof.equitySeries, 'reconstructed')
-    const evaluationEquityHash = yield* persistenceCanonicalHash('equity-series', evaluation.equitySeries, 'evaluation')
+    const proofEquityHash = yield* persistenceCanonicalHash({
+      operation: 'equity-series',
+      value: equityProof.equitySeries,
+      subject: 'reconstructed',
+    })
+    const evaluationEquityHash = yield* persistenceCanonicalHash({
+      operation: 'equity-series',
+      value: evaluation.equitySeries,
+      subject: 'evaluation',
+    })
     if (proofEquityHash !== evaluationEquityHash) {
       return yield* persistenceMismatch(
         'marked-equity-proof',
@@ -230,16 +241,16 @@ const validatePersistenceEvaluationDataFirst = (
           )
         }
       }
-      const decisionWeightsHash = yield* persistenceCanonicalHash(
-        'signal-target-weights',
-        decision.targetWeights,
-        `decision:${decision.decisionId}`,
-      )
-      const eventWeightsHash = yield* persistenceCanonicalHash(
-        'signal-target-weights',
-        event.targetWeights,
-        `event:${event.id}`,
-      )
+      const decisionWeightsHash = yield* persistenceCanonicalHash({
+        operation: 'signal-target-weights',
+        value: decision.targetWeights,
+        subject: `decision:${decision.decisionId}`,
+      })
+      const eventWeightsHash = yield* persistenceCanonicalHash({
+        operation: 'signal-target-weights',
+        value: event.targetWeights,
+        subject: `event:${event.id}`,
+      })
       if (decisionWeightsHash !== eventWeightsHash) {
         return yield* persistenceMismatch(
           'signal-decisions',

@@ -23,17 +23,21 @@ const persistenceMismatchDataFirst = (
 
 export const persistenceMismatch = Pipeable.dual(4, persistenceMismatchDataFirst)
 
+export interface PersistenceCanonicalHashInput {
+  readonly operation: PersistenceCanonicalizationOperation
+  readonly value: unknown
+  readonly subject?: string
+}
+
 export const persistenceCanonicalHash = (
-  operation: PersistenceCanonicalizationOperation,
-  value: unknown,
-  subject?: string,
+  input: PersistenceCanonicalHashInput,
 ): Result.Result<string, PersistencePlanFailure> =>
   Result.mapError(
-    canonicalHashV1Result(value),
+    canonicalHashV1Result(input.value),
     (cause): PersistencePlanFailure => ({
       _tag: 'PersistenceCanonicalizationFailed',
-      operation,
-      ...(subject === undefined ? {} : { subject }),
+      operation: input.operation,
+      ...(input.subject === undefined ? {} : { subject: input.subject }),
       cause,
     }),
   )

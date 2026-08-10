@@ -25,13 +25,16 @@ const makeArtifact = (
   payload: unknown,
   itemCount = 0,
 ): Result.Result<PersistenceArtifact, PersistencePlanFailure> =>
-  Result.map(persistenceCanonicalHash('artifact-payload', payload, name), (contentHash) => ({
-    name,
-    schemaVersion,
-    contentHash,
-    payload,
-    itemCount,
-  }))
+  Result.map(
+    persistenceCanonicalHash({ operation: 'artifact-payload', value: payload, subject: name }),
+    (contentHash) => ({
+      name,
+      schemaVersion,
+      contentHash,
+      payload,
+      itemCount,
+    }),
+  )
 
 const makePersistenceEvidence = (
   input: PersistEvaluationInput,
@@ -124,7 +127,7 @@ const makePersistenceEvidence = (
         ordinal,
         id: event.id,
         kind: event.kind,
-        contentHash: yield* persistenceCanonicalHash('event-payload', event, event.id),
+        contentHash: yield* persistenceCanonicalHash({ operation: 'event-payload', value: event, subject: event.id }),
         payload: event,
       })
     }
@@ -136,7 +139,7 @@ const makePersistenceEvidence = (
         passed: gate.passed,
         actual: gate.actual,
         required: gate.required,
-        contentHash: yield* persistenceCanonicalHash('gate-payload', gate, gate.name),
+        contentHash: yield* persistenceCanonicalHash({ operation: 'gate-payload', value: gate, subject: gate.name }),
       })
     }
     if (events.length === 0) return yield* persistenceMismatch('events-empty', ['events', 'length'], 0, 'at least 1')
@@ -180,16 +183,16 @@ const validatePersistenceQualification = (
     for (const [path, observed, expected] of scalarFacts) {
       if (observed !== expected) return yield* persistenceMismatch('qualification-result', path, observed, expected)
     }
-    const resultVerdictHash = yield* persistenceCanonicalHash(
-      'qualification-verdict',
-      result.evaluationVerdict,
-      'result',
-    )
-    const evaluationVerdictHash = yield* persistenceCanonicalHash(
-      'qualification-verdict',
-      evaluation.verdict,
-      'evaluation',
-    )
+    const resultVerdictHash = yield* persistenceCanonicalHash({
+      operation: 'qualification-verdict',
+      value: result.evaluationVerdict,
+      subject: 'result',
+    })
+    const evaluationVerdictHash = yield* persistenceCanonicalHash({
+      operation: 'qualification-verdict',
+      value: evaluation.verdict,
+      subject: 'evaluation',
+    })
     if (resultVerdictHash !== evaluationVerdictHash) {
       return yield* persistenceMismatch(
         'qualification-result',
@@ -198,12 +201,16 @@ const validatePersistenceQualification = (
         evaluationVerdictHash,
       )
     }
-    const resultTrialsHash = yield* persistenceCanonicalHash(
-      'qualification-prior-trials',
-      result.analysis.priorTrialRunIds,
-      'result',
-    )
-    const lockTrialsHash = yield* persistenceCanonicalHash('qualification-prior-trials', lock.priorTrialRunIds, 'lock')
+    const resultTrialsHash = yield* persistenceCanonicalHash({
+      operation: 'qualification-prior-trials',
+      value: result.analysis.priorTrialRunIds,
+      subject: 'result',
+    })
+    const lockTrialsHash = yield* persistenceCanonicalHash({
+      operation: 'qualification-prior-trials',
+      value: lock.priorTrialRunIds,
+      subject: 'lock',
+    })
     if (resultTrialsHash !== lockTrialsHash) {
       return yield* persistenceMismatch(
         'qualification-result',
@@ -232,14 +239,14 @@ const makePersistenceArtifactManifest = (
 > =>
   Result.gen(function* () {
     const { evaluation, provenance } = input
-    const eventsHash = yield* persistenceCanonicalHash(
-      'artifact-manifest-events',
-      evidence.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
-    )
-    const gatesHash = yield* persistenceCanonicalHash(
-      'artifact-manifest-gates',
-      evidence.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
-    )
+    const eventsHash = yield* persistenceCanonicalHash({
+      operation: 'artifact-manifest-events',
+      value: evidence.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+    })
+    const gatesHash = yield* persistenceCanonicalHash({
+      operation: 'artifact-manifest-gates',
+      value: evidence.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+    })
     return {
       schemaVersion: 'bayn.qualification-artifact-manifest.v1',
       identity: {

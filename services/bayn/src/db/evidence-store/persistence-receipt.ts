@@ -21,8 +21,16 @@ const validateProtocolReferenceDataFirst = (
   reference: StoredProtocolReference,
 ): Result.Result<void, PersistencePlanFailure> =>
   Result.gen(function* () {
-    const storedParameterHash = yield* persistenceCanonicalHash('protocol-parameters', reference.parameters, 'stored')
-    const expectedParameterHash = yield* persistenceCanonicalHash('protocol-parameters', input.parameters, 'input')
+    const storedParameterHash = yield* persistenceCanonicalHash({
+      operation: 'protocol-parameters',
+      value: reference.parameters,
+      subject: 'stored',
+    })
+    const expectedParameterHash = yield* persistenceCanonicalHash({
+      operation: 'protocol-parameters',
+      value: input.parameters,
+      subject: 'input',
+    })
     const facts = [
       [['schemaVersion'], reference.schema_version, input.provenance.strategy.parameterSchemaVersion],
       [['strategyName'], reference.strategy_name, input.provenance.strategy.name],
@@ -124,7 +132,11 @@ const validatePersistenceReceiptDataFirst = (
           'absent',
         )
       }
-      const payloadHash = yield* persistenceCanonicalHash('stored-artifact', artifact.payload, artifact.artifact_name)
+      const payloadHash = yield* persistenceCanonicalHash({
+        operation: 'stored-artifact',
+        value: artifact.payload,
+        subject: artifact.artifact_name,
+      })
       const observed = {
         name: artifact.artifact_name,
         schemaVersion: artifact.schema_version,
@@ -152,7 +164,11 @@ const validatePersistenceReceiptDataFirst = (
       if (expected === undefined) {
         return yield* persistenceMismatch('receipt-event-content', ['events', index], event.event_id, 'absent')
       }
-      const payloadHash = yield* persistenceCanonicalHash('stored-event', event.payload, event.event_id)
+      const payloadHash = yield* persistenceCanonicalHash({
+        operation: 'stored-event',
+        value: event.payload,
+        subject: event.event_id,
+      })
       const observed = {
         ordinal: event.ordinal,
         id: event.event_id,
@@ -183,11 +199,11 @@ const validatePersistenceReceiptDataFirst = (
       if (expected === undefined) {
         return yield* persistenceMismatch('receipt-gate-content', ['gates', index], gate.gate_name, 'absent')
       }
-      const payloadHash = yield* persistenceCanonicalHash(
-        'stored-gate',
-        { name: gate.gate_name, passed: gate.passed, actual: gate.actual, required: gate.required },
-        gate.gate_name,
-      )
+      const payloadHash = yield* persistenceCanonicalHash({
+        operation: 'stored-gate',
+        value: { name: gate.gate_name, passed: gate.passed, actual: gate.actual, required: gate.required },
+        subject: gate.gate_name,
+      })
       const observed = {
         ordinal: gate.ordinal,
         name: gate.gate_name,
@@ -226,18 +242,26 @@ const validatePersistenceReceiptDataFirst = (
         ['WRITING', 'COMPLETE'],
       )
     }
-    const writingHash = yield* persistenceCanonicalHash('stored-status', writing.detail, 'WRITING')
-    const expectedWritingHash = yield* persistenceCanonicalHash(
-      'stored-status',
-      { artifactCount: plan.artifacts.length, eventCount: plan.events.length, gateCount: plan.gates.length },
-      'expected-WRITING',
-    )
-    const completeHash = yield* persistenceCanonicalHash('stored-status', complete.detail, 'COMPLETE')
-    const expectedCompleteHash = yield* persistenceCanonicalHash(
-      'stored-status',
-      { reconciliationExact: true, verdict: plan.evaluation.verdict.status },
-      'expected-COMPLETE',
-    )
+    const writingHash = yield* persistenceCanonicalHash({
+      operation: 'stored-status',
+      value: writing.detail,
+      subject: 'WRITING',
+    })
+    const expectedWritingHash = yield* persistenceCanonicalHash({
+      operation: 'stored-status',
+      value: { artifactCount: plan.artifacts.length, eventCount: plan.events.length, gateCount: plan.gates.length },
+      subject: 'expected-WRITING',
+    })
+    const completeHash = yield* persistenceCanonicalHash({
+      operation: 'stored-status',
+      value: complete.detail,
+      subject: 'COMPLETE',
+    })
+    const expectedCompleteHash = yield* persistenceCanonicalHash({
+      operation: 'stored-status',
+      value: { reconciliationExact: true, verdict: plan.evaluation.verdict.status },
+      subject: 'expected-COMPLETE',
+    })
     if (writingHash !== expectedWritingHash || completeHash !== expectedCompleteHash) {
       return yield* persistenceMismatch(
         'receipt-status-history',
