@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Result } from 'effect'
+import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../../accounting/domain'
 import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
@@ -29,6 +29,12 @@ const accountId = 'paper-account-1'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const observedAt = '2026-07-22T15:30:01.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
+const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
+const invalidSqlTimestamp = (): Date => {
+  const value = Object.create(Date.prototype) as Date
+  Object.defineProperty(value, 'getTime', { value: () => Number.NaN })
+  return value
+}
 
 const value = <A, E>(result: Result.Result<A, E>): A => {
   expect(Result.isSuccess(result)).toBe(true)
@@ -279,7 +285,7 @@ describe('ExecutionStore decisions', () => {
       schema_version: 'bayn.paper-position-snapshot.v1',
       account_id: input.accountId,
       source_hash: input.sourceHash,
-      observed_at: new Date(input.observedAt),
+      observed_at: sqlTimestamp(input.observedAt),
       position_count: plan.eventIds.length,
       content_hash: plan.contentHash,
     }
@@ -301,7 +307,7 @@ describe('ExecutionStore decisions', () => {
     })
     expect(failure(finishPositionSnapshot(plan, [], true))).toMatchObject({ failure: 'conflict' })
     expect(
-      failure(validateStoredPositionSnapshot(input, plan, [{ ...stored, observed_at: new Date(Number.NaN) }])),
+      failure(validateStoredPositionSnapshot(input, plan, [{ ...stored, observed_at: invalidSqlTimestamp() }])),
     ).toEqual({
       failure: 'invariant',
       message: 'valuation timestamp evidence is invalid',
@@ -323,7 +329,7 @@ describe('ExecutionStore decisions', () => {
           schema_version: 'bayn.paper-position-snapshot.v1',
           account_id: accountId,
           source_hash: input.sourceHash,
-          observed_at: new Date(observedAt),
+          observed_at: sqlTimestamp(observedAt),
           position_count: 2,
           content_hash: plan.contentHash,
         },
@@ -335,7 +341,7 @@ describe('ExecutionStore decisions', () => {
       source_event_id: position.sourceEventId,
       symbol: position.position.symbol,
       market_value_micros: position.position.marketValueMicros,
-      observed_at: new Date(observedAt),
+      observed_at: sqlTimestamp(observedAt),
     }))
     const valuation = value(
       planValuation(
@@ -344,7 +350,7 @@ describe('ExecutionStore decisions', () => {
           event_id: hash('account-event'),
           account_id: accountId,
           cash_micros: '1000000000',
-          observed_at: new Date(observedAt),
+          observed_at: sqlTimestamp(observedAt),
         },
         snapshot,
         rows,
@@ -370,7 +376,7 @@ describe('ExecutionStore decisions', () => {
             event_id: hash('account-event'),
             account_id: accountId,
             cash_micros: 'not-an-integer',
-            observed_at: new Date(observedAt),
+            observed_at: sqlTimestamp(observedAt),
           },
           snapshot,
           rows,
@@ -394,7 +400,7 @@ describe('ExecutionStore decisions', () => {
             event_id: hash('account-event'),
             account_id: accountId,
             cash_micros: '1000000000',
-            observed_at: new Date(observedAt),
+            observed_at: sqlTimestamp(observedAt),
           },
           snapshot,
           [{ ...rows[0]!, market_value_micros: 'invalid-market-value' }, rows[1]!],
@@ -420,7 +426,7 @@ describe('ExecutionStore decisions', () => {
             event_id: hash('account-event'),
             account_id: accountId,
             cash_micros: '1000000000',
-            observed_at: new Date(Number.NaN),
+            observed_at: invalidSqlTimestamp(),
           },
           snapshot,
           rows,

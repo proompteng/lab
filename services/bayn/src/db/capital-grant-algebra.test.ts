@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Result } from 'effect'
+import { DateTime, Result } from 'effect'
 
 import { config, fixtureLock, fixtureQualification } from '../app-test-support'
 import { canonicalHashV1 } from '../hash'
@@ -64,8 +64,14 @@ const failureOf = <A>(result: Result.Result<A, CapitalGrantAlgebraFailure>): Cap
 const hash = (value: string): string => canonicalHashV1({ value })
 const accountId = 'paper-authority-account'
 const observeGenerationHash = hash('observe-generation')
-const updatedAt = new Date('2026-07-25T20:00:00.000Z')
-const observedAt = new Date('2026-07-25T20:00:01.000Z')
+const sqlTimestamp = (value: string | number): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
+const invalidSqlTimestamp = (): Date => {
+  const value = Object.create(Date.prototype) as Date
+  Object.defineProperty(value, 'getTime', { value: () => Number.NaN })
+  return value
+}
+const updatedAt = sqlTimestamp('2026-07-25T20:00:00.000Z')
+const observedAt = sqlTimestamp('2026-07-25T20:00:01.000Z')
 
 const observeAuthority: AuthorityState = {
   schemaVersion: 'bayn.paper-authority.v1',
@@ -101,7 +107,7 @@ const reconciliation: ExactReconciliationFacts = {
   accountId,
   contentHash: hash('reconciliation-content'),
   status: ReconciliationStatus.Exact,
-  reconciledAt: new Date('2026-07-25T20:00:00.500Z'),
+  reconciledAt: sqlTimestamp('2026-07-25T20:00:00.500Z'),
 }
 
 const researchProof = (): ResearchCapitalGrantProofBinding => {
@@ -144,11 +150,11 @@ const researchProof = (): ResearchCapitalGrantProofBinding => {
 }
 
 const qualificationSeries = (runId: string): QualificationSeries => {
-  const sessionDate = (index: number): `${number}-${number}-${number}` => {
-    const date = new Date('2000-01-01T00:00:00.000Z')
-    date.setUTCDate(date.getUTCDate() + index)
-    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
-  }
+  const sessionDate = (index: number): `${number}-${number}-${number}` =>
+    DateTime.makeUnsafe('2000-01-01T00:00:00.000Z').pipe(
+      DateTime.add({ days: index }),
+      DateTime.formatIsoDate,
+    ) as `${number}-${number}-${number}`
   const blockCount = 90
   return {
     schemaVersion: 'bayn.qualification-series.v1',
@@ -283,7 +289,7 @@ describe('PAPER authority algebra', () => {
     expect(successOf(validateCurrentGenerationHistory(observeAuthority, observeHistory))).toEqual(observeHistory)
 
     expect(
-      failureOf(validateAuthorityObservation(observeAuthority, new Date('2026-07-25T19:59:59.999Z'))),
+      failureOf(validateAuthorityObservation(observeAuthority, sqlTimestamp('2026-07-25T19:59:59.999Z'))),
     ).toMatchObject({
       _tag: 'AuthorityUpdateAfterObservation',
       generationHash: observeGenerationHash,
@@ -299,7 +305,7 @@ describe('PAPER authority algebra', () => {
       generationHash: observeGenerationHash,
       authorityVersion: 'NaN',
     })
-    const invalidActivatedAt = new Date(Number.NaN)
+    const invalidActivatedAt = invalidSqlTimestamp()
     const invalidTimestamp = failureOf(
       validateCurrentGenerationHistory(observeAuthority, {
         ...observeHistory,
@@ -550,7 +556,7 @@ describe('PAPER authority algebra', () => {
       failureOf(
         validatePaperGenerationFreshness(
           reconciliation,
-          new Date(reconciliation.reconciledAt.getTime() + config.reconciliationStaleThresholdMs),
+          sqlTimestamp(reconciliation.reconciledAt.getTime() + config.reconciliationStaleThresholdMs),
           config.reconciliationStaleThresholdMs,
         ),
       ),
