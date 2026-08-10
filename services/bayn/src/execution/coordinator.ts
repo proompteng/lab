@@ -16,6 +16,7 @@ import {
   ensureRecoveryDelay,
   makeDryRunSubmit,
   nextInstant,
+  recoveryObservationRequiresPersistence,
   selectRecovery,
   selectStoredIntent,
   validateActiveSubmitRiskDecision,
@@ -388,22 +389,32 @@ const persistRecoveryDecision = (
   intentId: string,
   operation: MutationOperation,
   requestHash: string,
+  current: MutationEvent,
   decision: RecoveryPersistenceDecision,
 ) =>
-  Match.value(decision).pipe(
-    Match.tagsExhaustive({
-      RecoveryFound: ({ brokerOrderId, evidence, terminalOutcome }) =>
-        services.mutations.recoveryFound(intentId, operation, requestHash, brokerOrderId, evidence, terminalOutcome),
-      RecoveryNotFound: ({ evidence }) =>
-        services.mutations.recoveryNotFound(intentId, operation, requestHash, evidence),
-      RecoveryUnknown: ({ evidence }) =>
-        (evidence === undefined ? currentInstant : Effect.succeed(evidence.observedAt)).pipe(
-          Effect.flatMap((occurredAt) =>
-            services.mutations.recoveryUnknown(intentId, operation, requestHash, occurredAt, evidence),
-          ),
-        ),
-    }),
-  )
+  recoveryObservationRequiresPersistence(current, decision)
+    ? Match.value(decision).pipe(
+        Match.tagsExhaustive({
+          RecoveryFound: ({ brokerOrderId, evidence, terminalOutcome }) =>
+            services.mutations.recoveryFound(
+              intentId,
+              operation,
+              requestHash,
+              brokerOrderId,
+              evidence,
+              terminalOutcome,
+            ),
+          RecoveryNotFound: ({ evidence }) =>
+            services.mutations.recoveryNotFound(intentId, operation, requestHash, evidence),
+          RecoveryUnknown: ({ evidence }) =>
+            (evidence === undefined ? currentInstant : Effect.succeed(evidence.observedAt)).pipe(
+              Effect.flatMap((occurredAt) =>
+                services.mutations.recoveryUnknown(intentId, operation, requestHash, occurredAt, evidence),
+              ),
+            ),
+        }),
+      )
+    : Effect.succeed(current)
 
 const recoverAtBroker = (
   services: RecoveryServices,
@@ -419,6 +430,7 @@ const recoverAtBroker = (
           stored.intent.intentId,
           operation,
           interrupted.requestHash,
+          interrupted,
           decideRecoveryFailure(error),
         ),
       onSuccess: (result) =>
@@ -427,6 +439,7 @@ const recoverAtBroker = (
           stored.intent.intentId,
           operation,
           interrupted.requestHash,
+          interrupted,
           decideRecoverySuccess(stored.intent, operation, interrupted, result),
         ),
     }),

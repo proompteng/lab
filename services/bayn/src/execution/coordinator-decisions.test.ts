@@ -35,6 +35,7 @@ import {
   ensureRecoveryDelay,
   makeDryRunSubmit,
   nextInstant,
+  recoveryObservationRequiresPersistence,
   selectRecovery,
   validateActiveSubmitRiskDecision,
   validateStartedSubmitRiskDecision,
@@ -226,6 +227,43 @@ describe('execution coordinator decisions', () => {
     expect(
       Result.getOrThrow(ensureRecoveryDelay(MutationOperation.Submit, submit, Date.parse(submit.occurredAt) + 1_000)),
     ).toEqual(submit)
+  })
+
+  test('does not append another mutation event for the same known open recovery', () => {
+    const current = {
+      ...mutation(MutationOperation.Submit, MutationEventType.RecoveryFound),
+      sequence: 3,
+      responseStatus: evidence.status,
+      responseContentHash: evidence.contentHash,
+    }
+    expect(
+      recoveryObservationRequiresPersistence(current, {
+        _tag: 'RecoveryFound',
+        brokerOrderId,
+        evidence,
+      }),
+    ).toBe(false)
+    expect(
+      recoveryObservationRequiresPersistence(current, {
+        _tag: 'RecoveryFound',
+        brokerOrderId,
+        evidence: { ...evidence, contentHash: '4'.repeat(64) },
+      }),
+    ).toBe(true)
+    expect(
+      recoveryObservationRequiresPersistence(current, {
+        _tag: 'RecoveryFound',
+        brokerOrderId,
+        evidence,
+        terminalOutcome: TerminalOutcome.Filled,
+      }),
+    ).toBe(true)
+    expect(
+      recoveryObservationRequiresPersistence(current, {
+        _tag: 'RecoveryUnknown',
+        evidence,
+      }),
+    ).toBe(true)
   })
 
   test('returns malformed and overflowing coordinator instants through the closed failure algebra', () => {

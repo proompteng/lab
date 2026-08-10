@@ -96,6 +96,7 @@ import type { DecisionPlan } from './types'
 import {
   appendPendingMutationOrder,
   countOpenPositions,
+  decidePendingMutationObservation,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
@@ -110,6 +111,7 @@ import {
   projectWorstCasePendingMutationPosition,
   type BoundMutationCycleOutcome,
   type MutationIntentExecutionResult,
+  type PendingMutationObservationDecision,
   type PaperCycleIntentTerminalEvidence,
   type PaperCycleReconciliationEvidence,
   type PaperCycleCompletionDecision,
@@ -137,6 +139,7 @@ import { Pipeable } from './pipeable'
 export {
   appendPendingMutationOrder,
   countOpenPositions,
+  decidePendingMutationObservation,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
@@ -154,6 +157,7 @@ export {
 export type {
   MutationIntentExecutionResult,
   MutationIntentSettlementDecision,
+  PendingMutationObservationDecision,
   PaperCycleCompletionDecision,
   PaperCycleIntentTerminalEvidence,
   PaperCycleReconciliationEvidence,
@@ -1639,19 +1643,40 @@ const executeBoundPaperCycle = (
           return step
       }
     }
-    const executed = yield* capability._tag === 'Mutation'
-      ? executeMutationIntent(
-          capability.executionProgram,
-          step.intentId,
-          step.action,
-          step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        )
-      : executeMutationIntentWithExecutor({
-          executor: { recover: recoverMutation },
-          intentId: step.intentId,
-          action: step.action,
-          submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        })
+    const logContext = {
+      cycleId: cycle.identity.cycleId,
+      intentId: step.intentId,
+      mutationAction: step.action,
+      mutationPhase: closeOnly ? 'CLOSE' : 'ENTRY',
+    }
+    yield* Effect.logInfo('PAPER mutation selected').pipe(Effect.annotateLogs(logContext))
+    const execute =
+      capability._tag === 'Mutation'
+        ? executeMutationIntent(
+            capability.executionProgram,
+            step.intentId,
+            step.action,
+            step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+          )
+        : executeMutationIntentWithExecutor({
+            executor: { recover: recoverMutation },
+            intentId: step.intentId,
+            action: step.action,
+            submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+          })
+    const executed = yield* execute.pipe(
+      Effect.tapError((error) =>
+        Effect.logError('PAPER mutation failed').pipe(Effect.annotateLogs({ ...logContext, failure: error.failure })),
+      ),
+    )
+    yield* Effect.logInfo('PAPER mutation settled').pipe(
+      Effect.annotateLogs({
+        ...logContext,
+        mutationOperation: executed.operation,
+        mutationAdvanced: executed.mutationAdvanced,
+        settlement: executed.settlement.outcome,
+      }),
+    )
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
         `bound PAPER cycle ${cycle.identity.cycleId}`,
@@ -1660,6 +1685,21 @@ const executeBoundPaperCycle = (
     }
     const delayMs = mutationIntentReconciliationDelayMs(executed)
     if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs))
+    if (executed.mutationAdvanced) {
+      const reconciled = yield* reconcile.pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'post-mutation reconciliation failed', cause, failure: 'operational' }),
+        ),
+      )
+      yield* Effect.logInfo('PAPER mutation reconciled').pipe(
+        Effect.annotateLogs({
+          ...logContext,
+          accountingExact: reconciled.report.metrics.accountingExact,
+          discrepancyCount: reconciled.report.reconciliation.discrepancies.length,
+          reconciliationStatus: reconciled.report.reconciliation.status,
+        }),
+      )
+    }
     return { _tag: 'Wait' as const, observedAt: step.observedAt }
   })
 

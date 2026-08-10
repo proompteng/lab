@@ -63,6 +63,7 @@ import {
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
+  decidePendingMutationObservation,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
@@ -770,6 +771,103 @@ describe('OBSERVE runtime composition', () => {
     const projected = appendPendingMutationOrder([], decision.order)
     expect(projected).toEqual([decision.order])
     expect(appendPendingMutationOrder(projected, decision.order)).toBe(projected)
+
+    const reconciledOrder: Order = {
+      ...decision.order,
+      orderType: OrderType.Limit,
+      limitPriceMicros: '1000000',
+      observedAt: utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 1_000),
+    }
+    expect(Result.getOrThrow(decidePendingMutationObservation(decision.order, [reconciledOrder]))).toEqual({
+      _tag: 'StableOpen',
+      order: reconciledOrder,
+    })
+    expect(
+      Result.getOrThrow(
+        decidePendingMutationObservation(decision.order, [
+          { ...reconciledOrder, status: OrderStatus.Filled, filledQuantityMicros: reconciledOrder.quantityMicros },
+        ]),
+      ),
+    ).toMatchObject({ _tag: 'Recover', reason: 'terminal' })
+    expect(Result.getOrThrow(decidePendingMutationObservation(decision.order, []))).toEqual({
+      _tag: 'Recover',
+      reason: 'missing',
+    })
+    expect(
+      Result.isFailure(
+        decidePendingMutationObservation(decision.order, [
+          reconciledOrder,
+          { ...reconciledOrder, brokerOrderId: 'conflicting-order' },
+        ]),
+      ),
+    ).toBe(true)
+  })
+
+  test('continues to the next approved intent while an earlier acknowledged order is stably open', async () => {
+    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const first = fixture.intents[0]
+    const second = fixture.intents[1]
+    const secondRisk = fixture.document.deltaRisk[1]
+    if (first === undefined || second === undefined || secondRisk === undefined) {
+      return expect.unreachable('fixture requires two intents and risk bindings')
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: first.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'stable-open-order',
+      occurredAt: fixture.document.createdAt,
+    }
+    const pending = Result.getOrThrow(decidePreparedMutationIntent(first, accepted))
+    if (pending._tag !== 'Pending') return expect.unreachable('accepted intent must be pending')
+    const observedAt = utcInstantFromEpochMillis(Date.parse(accepted.occurredAt) + accepted.consistencyDelayMs)
+    const reconciledOrder: Order = {
+      ...pending.order,
+      orderType: OrderType.Limit,
+      limitPriceMicros: '1000000',
+      observedAt,
+    }
+    const firstRecord = storedIntent(first, IntentState.Acknowledged, accepted.occurredAt)
+    const secondRecord = storedIntent(second, IntentState.Approved, accepted.occurredAt)
+    const records = new Map([
+      [first.intentId, firstRecord],
+      [second.intentId, secondRecord],
+    ])
+    const latestSubmits = new Map<string, MutationEvent | undefined>([
+      [first.intentId, accepted],
+      [second.intentId, undefined],
+    ])
+
+    const step = await prepareStoredPaperStep(
+      fixture,
+      firstRecord,
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      fixture.input,
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      records,
+      latestSubmits,
+      [reconciledOrder],
+    )
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: 'SUBMIT',
+      intentId: second.intentId,
+      observedAt,
+      submitExpiresAt: secondRisk.evaluation.decision.expiresAt,
+    })
   })
 
   test('executes unsubmitted intents and skips terminal intents in fresh mutation passes', () => {
@@ -1141,6 +1239,7 @@ describe('OBSERVE runtime composition', () => {
         settlement: { _tag: 'Settled', outcome: 'accepted' },
         consistencyDelayMs: 1_250,
         operation: MutationOperation.Submit,
+        mutationAdvanced: true,
       }),
     ).toBe(1_250)
     expect(
@@ -1148,6 +1247,15 @@ describe('OBSERVE runtime composition', () => {
         settlement: { _tag: 'Settled', outcome: 'rejected' },
         consistencyDelayMs: 1_250,
         operation: MutationOperation.Submit,
+        mutationAdvanced: true,
+      }),
+    ).toBe(0)
+    expect(
+      mutationIntentReconciliationDelayMs({
+        settlement: { _tag: 'Settled', outcome: 'accepted' },
+        consistencyDelayMs: 1_250,
+        operation: MutationOperation.Submit,
+        mutationAdvanced: false,
       }),
     ).toBe(0)
   })
@@ -1327,6 +1435,45 @@ describe('OBSERVE runtime composition', () => {
     })
     expect(submits).toBe(0)
     expect(cancels).toBe(0)
+  })
+
+  test('classifies an identical stable recovery observation as read-only', async () => {
+    const intentId = '7'.repeat(64)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '8'.repeat(64),
+      mutationId: '9'.repeat(64),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.RecoveryFound,
+      requestHash: 'a'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'stable-open-order',
+      occurredAt: evaluatedAt,
+    }
+    const result = await Effect.runPromise(
+      executeMutationIntent(
+        {
+          ...sandboxExecutionProgram(),
+          recover: () => Effect.succeed(accepted),
+        },
+        intentId,
+        'RECOVER_SUBMIT',
+      ).pipe(
+        Effect.provideService(MutationStore, {
+          latest: () => Effect.succeed(accepted),
+        } as unknown as MutationStoreShape),
+      ),
+    )
+
+    expect(result).toEqual({
+      settlement: { _tag: 'Settled', outcome: 'accepted' },
+      consistencyDelayMs: 1_000,
+      operation: MutationOperation.Submit,
+      mutationAdvanced: false,
+    })
+    expect(mutationIntentReconciliationDelayMs(result)).toBe(0)
   })
 
   test('keeps an accepted pending intent lookup-recoverable after its immutable submission cutoff', async () => {

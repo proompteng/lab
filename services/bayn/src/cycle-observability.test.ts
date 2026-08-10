@@ -54,7 +54,15 @@ const projection = (overrides: Partial<CycleOperationsProjection> = {}): CycleOp
   unfinishedCycleCount: 0,
   authority: null,
   reconciliation: null,
-  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+  mutations: {
+    eventCount: 0,
+    recoveryFoundCount: 0,
+    approvedIntentCount: 0,
+    acknowledgedIntentCount: 0,
+    unresolvedCount: 0,
+    oldestUnresolvedAt: null,
+    latestOccurredAt: null,
+  },
   ...overrides,
 })
 
@@ -465,6 +473,9 @@ describe('autonomous cycle operations classification', () => {
         ...recoveringProjection,
         mutations: {
           eventCount: 1,
+          recoveryFoundCount: 0,
+          approvedIntentCount: 0,
+          acknowledgedIntentCount: 0,
           unresolvedCount: 1,
           oldestUnresolvedAt: '2026-07-21T13:59:00.000Z',
           latestOccurredAt: '2026-07-21T13:59:00.000Z',
@@ -560,6 +571,9 @@ describe('autonomous cycle operations classification', () => {
     const unresolved = projection({
       mutations: {
         eventCount: 1,
+        recoveryFoundCount: 0,
+        approvedIntentCount: 0,
+        acknowledgedIntentCount: 0,
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-07-20T11:55:00.000Z',
         latestOccurredAt: '2026-07-20T11:55:00.000Z',
@@ -698,6 +712,9 @@ describe('autonomous cycle operations classification', () => {
         },
         mutations: {
           eventCount: 2,
+          recoveryFoundCount: 0,
+          approvedIntentCount: 0,
+          acknowledgedIntentCount: 0,
           unresolvedCount: 0,
           oldestUnresolvedAt: null,
           latestOccurredAt,

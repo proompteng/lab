@@ -560,3 +560,16 @@ const decideRecoverySuccessDataFirst = (
 }
 
 export const decideRecoverySuccess = Pipeable.dual(4, decideRecoverySuccessDataFirst)
+
+export const recoveryObservationRequiresPersistence = (
+  current: MutationEvent,
+  decision: RecoveryPersistenceDecision,
+): boolean =>
+  !(
+    current.eventType === MutationEventType.RecoveryFound &&
+    decision._tag === 'RecoveryFound' &&
+    decision.terminalOutcome === undefined &&
+    current.brokerOrderId === decision.brokerOrderId &&
+    current.responseStatus === decision.evidence.status &&
+    current.responseContentHash === decision.evidence.contentHash
+  )

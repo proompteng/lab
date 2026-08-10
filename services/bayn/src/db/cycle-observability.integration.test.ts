@@ -231,6 +231,152 @@ const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
   `
   })
 
+const seedOpenRecoveryAndApprovedIntent = Effect.gen(function* () {
+  yield* seedUnresolvedMutation()
+  const sql = yield* PgClient.PgClient
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+    INSERT INTO risk_decisions (
+      decision_id, schema_version, input_hash, intent_id, policy_hash,
+      outcome, reason_codes, decided_at, expires_at
+    ) VALUES (
+      ${'1'.repeat(64)},
+      'bayn.paper-risk-decision.v1',
+      ${'0'.repeat(64)},
+      ${'2'.repeat(64)},
+      ${'a'.repeat(64)},
+      'APPROVED',
+      ARRAY[]::text[],
+      '2026-03-06T21:02:00.001Z',
+      '2099-01-01T00:00:00.000Z'
+    )
+  `
+      yield* sql`
+    UPDATE intents
+    SET
+      risk_decision_id = ${'1'.repeat(64)},
+      state = 'APPROVED',
+      state_version = 2,
+      updated_at = '2026-03-06T21:02:00.002Z'
+    WHERE intent_id = ${'2'.repeat(64)}
+  `
+      yield* sql`
+    UPDATE intents
+    SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-06T21:02:00.003Z'
+    WHERE intent_id = ${'2'.repeat(64)}
+  `
+      yield* sql`
+    INSERT INTO mutation_events (
+      event_id, schema_version, mutation_id, intent_id, sequence, operation,
+      event_type, request_hash, consistency_delay_ms, broker_order_id,
+      request_id, response_status, response_content_hash, occurred_at
+    ) VALUES (
+      ${'b'.repeat(64)},
+      'bayn.paper-mutation-event.v1',
+      ${'4'.repeat(64)},
+      ${'2'.repeat(64)},
+      2,
+      'SUBMIT',
+      'SUBMIT_ACCEPTED',
+      ${'5'.repeat(64)},
+      1000,
+      'broker-order-observability',
+      'broker-request-observability',
+      200,
+      ${'7'.repeat(64)},
+      '2026-03-06T21:03:00.000Z'
+    )
+  `
+      yield* sql`
+    UPDATE intents
+    SET
+      state = 'ACKNOWLEDGED',
+      state_version = 4,
+      updated_at = '2026-03-06T21:03:00.000Z'
+    WHERE intent_id = ${'2'.repeat(64)}
+  `
+      yield* sql`
+    INSERT INTO mutation_events (
+      event_id, schema_version, mutation_id, intent_id, sequence, operation,
+      event_type, request_hash, consistency_delay_ms, broker_order_id,
+      request_id, response_status, response_content_hash, occurred_at
+    ) VALUES (
+      ${'6'.repeat(64)},
+      'bayn.paper-mutation-event.v1',
+      ${'4'.repeat(64)},
+      ${'2'.repeat(64)},
+      3,
+      'SUBMIT',
+      'RECOVERY_FOUND',
+      ${'5'.repeat(64)},
+      1000,
+      'broker-order-observability',
+      'broker-request-observability',
+      200,
+      ${'7'.repeat(64)},
+      '2026-03-06T21:03:00.001Z'
+    )
+  `
+      yield* sql`
+    INSERT INTO intents (
+      intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+      decision_hash, policy_hash, account_id, client_order_id,
+      symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+      state, terminal_outcome, state_version, created_at, updated_at
+    ) VALUES (
+      ${'c'.repeat(64)},
+      'bayn.paper-intent.v3',
+      ${'f'.repeat(64)},
+      NULL,
+      'risk-balanced-trend',
+      ${'8'.repeat(64)},
+      ${'9'.repeat(64)},
+      ${'a'.repeat(64)},
+      ${accountId},
+      'bayn-observability-approved-order',
+      'EFA',
+      'BUY',
+      'MARKET',
+      'DAY',
+      1000000,
+      1000000,
+      'PLANNED',
+      NULL,
+      1,
+      '2026-03-06T21:03:00.000Z',
+      '2026-03-06T21:03:00.000Z'
+    )
+  `
+      yield* sql`
+    INSERT INTO risk_decisions (
+      decision_id, schema_version, input_hash, intent_id, policy_hash,
+      outcome, reason_codes, decided_at, expires_at
+    ) VALUES (
+      ${'d'.repeat(64)},
+      'bayn.paper-risk-decision.v1',
+      ${'e'.repeat(64)},
+      ${'c'.repeat(64)},
+      ${'a'.repeat(64)},
+      'APPROVED',
+      ARRAY[]::text[],
+      '2026-03-06T21:03:00.001Z',
+      '2099-01-01T00:00:00.000Z'
+    )
+  `
+      yield* sql`
+    UPDATE intents
+    SET
+      risk_decision_id = ${'d'.repeat(64)},
+      state = 'APPROVED',
+      state_version = 2,
+      updated_at = '2026-03-06T21:03:00.002Z'
+    WHERE intent_id = ${'c'.repeat(64)}
+  `
+    }),
+  )
+})
+
 const seedTerminalCanceledMutation = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const intentId = '2'.repeat(64)
@@ -545,7 +691,15 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         status: 'EXACT',
         discrepancyCount: 0,
       },
-      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+      mutations: {
+        eventCount: 0,
+        recoveryFoundCount: 0,
+        approvedIntentCount: 0,
+        acknowledgedIntentCount: 0,
+        unresolvedCount: 0,
+        oldestUnresolvedAt: null,
+        latestOccurredAt: null,
+      },
     })
     expect(result.blocked).toMatchObject({
       current: null,
@@ -558,6 +712,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       unfinishedCycleCount: 0,
       mutations: {
         eventCount: 1,
+        recoveryFoundCount: 0,
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
         latestOccurredAt: '2026-03-06T21:02:00.000Z',
@@ -565,6 +720,27 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
     expect(result.blockedReplay).toEqual(result.blocked)
     expect(result.counts).toEqual({ cycles: 1, intents: 1, mutations: 1, reconciliations: 1 })
+  })
+
+  test('projects open-recovery pressure and approved intent backlog as queryable counts', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        yield* seedSafetyState('2026-03-06T21:04:00.000Z')
+        yield* seedOpenRecoveryAndApprovedIntent
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.mutations).toEqual({
+      eventCount: 3,
+      recoveryFoundCount: 1,
+      approvedIntentCount: 1,
+      acknowledgedIntentCount: 1,
+      unresolvedCount: 0,
+      oldestUnresolvedAt: null,
+      latestOccurredAt: '2026-03-06T21:03:00.001Z',
+    })
   })
 
   test('isolates mutation evidence by account and rejects an explicit account-to-cycle mismatch', async () => {
@@ -588,7 +764,15 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       current: null,
       last: null,
       reconciliation: { accountId },
-      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+      mutations: {
+        eventCount: 0,
+        recoveryFoundCount: 0,
+        approvedIntentCount: 0,
+        acknowledgedIntentCount: 0,
+        unresolvedCount: 0,
+        oldestUnresolvedAt: null,
+        latestOccurredAt: null,
+      },
     })
     expect(result.mismatch).toMatchObject({
       _tag: 'CycleObservabilityError',

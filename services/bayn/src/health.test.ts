@@ -353,7 +353,15 @@ const emptyCycleProjection = (): CycleOperationsProjection => ({
   unfinishedCycleCount: 0,
   authority: null,
   reconciliation: null,
-  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+  mutations: {
+    eventCount: 0,
+    recoveryFoundCount: 0,
+    approvedIntentCount: 0,
+    acknowledgedIntentCount: 0,
+    unresolvedCount: 0,
+    oldestUnresolvedAt: null,
+    latestOccurredAt: null,
+  },
 })
 
 const pendingCycle = (updatedAt: string) =>
