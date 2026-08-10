@@ -111,7 +111,7 @@ jobs:
       lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
-      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn lint:effect && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn
+      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 

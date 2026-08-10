@@ -35,7 +35,7 @@ test('keeps the existing Bayn PR gate aggregation', () => {
     expect(baynCiWorkflow).toContain(check)
   }
   expect(baynCiWorkflow).toContain(
-    'test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn lint:effect && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn',
+    'test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn',
   )
   expect(baynCiWorkflow).not.toContain('verify-release-review')
 })

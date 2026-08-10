@@ -167,6 +167,9 @@ export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, {
 
 export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 
+const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
+  Layer.merge(HttpServerLive(config), NodeHttpClient.layerNodeHttp)
+
 const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
   return MarketDataResourceLive(plan).pipe(Layer.provide(clickHouse))
@@ -178,24 +181,22 @@ const PostgresAuthorityLive = (config: LoadedRuntimeConfig) =>
 export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'BrokerlessService'>) => {
   const postgres = PostgresAuthorityLive(plan.config)
   return Layer.mergeAll(
-    HttpServerLive(plan.config),
     SignalMarketDataLive(plan),
     postgres,
     JournalResourceLive(plan.config),
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
   const postgres = PostgresAuthorityLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    HttpServerLive(plan.config),
     SignalMarketDataLive(plan),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {

@@ -9,6 +9,8 @@
         "name": "@effect/language-service",
         "diagnostics": true,
         "includeSuggestionsInTsc": false,
+        "ignoreEffectErrorsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "error",
           "globalDateInEffect": "error",
