@@ -319,8 +319,13 @@ const executionProgramError = (
   cause: BrokerMutationError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
 ) =>
   cause instanceof BrokerMutationError
-    ? operationalError('config', 'broker-mutation', cause.message, cause)
-    : operationalError('config', 'execution-program', 'execution program requires validated mutation authority', cause)
+    ? operationalError({ component: 'config', operation: 'broker-mutation', message: cause.message, cause })
+    : operationalError({
+        component: 'config',
+        operation: 'execution-program',
+        message: 'execution program requires validated mutation authority',
+        cause,
+      })
 
 type ReadOnlyExecutionPolicy = Extract<ExecutionPolicy, { readonly brokerAccess: BrokerAccess.ReadOnly }>
 
@@ -1664,7 +1669,12 @@ const writeDiscoveryReceipt = (receipt: ExecutionCandidateDiscoveryReceipt) =>
   pipe(
     encodeJson(receipt),
     Effect.mapError((cause) =>
-      operationalError('strategy', 'paper-candidate-output', 'paper candidate receipt encoding failed', cause),
+      operationalError({
+        component: 'strategy',
+        operation: 'paper-candidate-output',
+        message: 'paper candidate receipt encoding failed',
+        cause,
+      }),
     ),
     Effect.flatMap((output) =>
       pipe(
@@ -1678,7 +1688,12 @@ const writeExecutionPrepareOutput = (output: ExecutionPrepareOutput) =>
   pipe(
     encodeJson(output),
     Effect.mapError((cause) =>
-      operationalError('strategy', 'execution-prepare-output', 'EXECUTION_PREPARE output encoding failed', cause),
+      operationalError({
+        component: 'strategy',
+        operation: 'execution-prepare-output',
+        message: 'EXECUTION_PREPARE output encoding failed',
+        cause,
+      }),
     ),
     Effect.flatMap((output) =>
       pipe(
@@ -1695,7 +1710,12 @@ const policyHash = (
   pipe(
     canonicalHashV1Result(policy),
     Result.mapError((cause) =>
-      operationalError('strategy', operation, 'source-controlled OBSERVE risk policy content hashing failed', cause),
+      operationalError({
+        component: 'strategy',
+        operation,
+        message: 'source-controlled OBSERVE risk policy content hashing failed',
+        cause,
+      }),
     ),
     Effect.fromResult,
   )
@@ -1720,12 +1740,12 @@ const executionCandidateIdentity = (
 const discoverExecutionCandidate = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) =>
   discoverExecutionCandidatesHistoricalCodec(executionCandidateIdentity(plan, riskPolicyHash)).pipe(
     Effect.mapError((cause) =>
-      operationalError(
-        'strategy',
-        'execution-candidate-discovery',
-        renderExecutionCandidateDiscoveryError(cause),
+      operationalError({
+        component: 'strategy',
+        operation: 'execution-candidate-discovery',
+        message: renderExecutionCandidateDiscoveryError(cause),
         cause,
-      ),
+      }),
     ),
   )
 
@@ -1733,12 +1753,12 @@ const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandi
   pipe(
     loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.definition.parameters.universe),
     Effect.mapError((cause) =>
-      operationalError(
-        'config',
-        'execution-candidate-discovery',
-        'source-controlled OBSERVE risk policy is invalid',
+      operationalError({
+        component: 'config',
+        operation: 'execution-candidate-discovery',
+        message: 'source-controlled OBSERVE risk policy is invalid',
         cause,
-      ),
+      }),
     ),
     Effect.flatMap((policy) => policyHash(policy, 'paper-candidate-policy')),
     Effect.flatMap((riskPolicyHash) => discoverExecutionCandidate(plan, riskPolicyHash)),
@@ -1796,7 +1816,12 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
       plan.strategy.definition.parameters.universe,
     ).pipe(
       Effect.mapError((cause) =>
-        operationalError('config', 'execution-prepare', 'source-controlled OBSERVE risk policy is invalid', cause),
+        operationalError({
+          component: 'config',
+          operation: 'execution-prepare',
+          message: 'source-controlled OBSERVE risk policy is invalid',
+          cause,
+        }),
       ),
     )
     const riskPolicyHash = yield* policyHash(riskPolicy, 'execution-prepare-policy')

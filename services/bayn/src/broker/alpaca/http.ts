@@ -275,29 +275,42 @@ const makeFreshBrokerPriceReaderDataFirst = (
           'APCA-API-SECRET-KEY': secret,
         },
       })
-      const response = yield* authenticated
-        .execute(request)
-        .pipe(
-          Effect.mapError((cause) =>
-            operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote request failed', cause),
-          ),
-        )
+      const response = yield* authenticated.execute(request).pipe(
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'http',
+            operation: 'alpaca-latest-quote',
+            message: 'Alpaca latest quote request failed',
+            cause,
+          }),
+        ),
+      )
       if (response.status < 200 || response.status >= 300) {
-        return yield* operationalError(
-          'http',
-          'alpaca-latest-quote',
-          `Alpaca latest quote returned HTTP ${response.status.toString()}`,
-        )
+        return yield* operationalError({
+          component: 'http',
+          operation: 'alpaca-latest-quote',
+          message: `Alpaca latest quote returned HTTP ${response.status.toString()}`,
+        })
       }
       const raw = yield* response.json.pipe(
         Effect.mapError((cause) =>
-          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote body is not valid JSON', cause),
+          operationalError({
+            component: 'http',
+            operation: 'alpaca-latest-quote',
+            message: 'Alpaca latest quote body is not valid JSON',
+            cause,
+          }),
         ),
       )
       const observedAt = yield* currentUtcInstant
       return yield* Effect.fromResult(decodeFreshBrokerPrice(symbol, raw, observedAt)).pipe(
         Effect.mapError((cause) =>
-          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote violates the price contract', cause),
+          operationalError({
+            component: 'http',
+            operation: 'alpaca-latest-quote',
+            message: 'Alpaca latest quote violates the price contract',
+            cause,
+          }),
         ),
       )
     }).pipe(
@@ -305,11 +318,11 @@ const makeFreshBrokerPriceReaderDataFirst = (
         duration: connection.operationTimeoutMs,
         orElse: () =>
           Effect.fail(
-            operationalError(
-              'http',
-              'alpaca-latest-quote',
-              `Alpaca latest quote timed out after ${connection.operationTimeoutMs.toString()}ms`,
-            ),
+            operationalError({
+              component: 'http',
+              operation: 'alpaca-latest-quote',
+              message: `Alpaca latest quote timed out after ${connection.operationTimeoutMs.toString()}ms`,
+            }),
           ),
       }),
       Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),

@@ -1349,7 +1349,13 @@ describe('Bayn startup lifecycle', () => {
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
-            Effect.fail(operationalError('http', 'test', 'run remained alive after its startup worker died')),
+            Effect.fail(
+              operationalError({
+                component: 'http',
+                operation: 'test',
+                message: 'run remained alive after its startup worker died',
+              }),
+            ),
         }),
       ),
     )
@@ -1377,7 +1383,13 @@ describe('Bayn startup lifecycle', () => {
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
-            Effect.fail(operationalError('http', 'test', 'run remained live after a retryable startup failure')),
+            Effect.fail(
+              operationalError({
+                component: 'http',
+                operation: 'test',
+                message: 'run remained live after a retryable startup failure',
+              }),
+            ),
         }),
       ),
     )

@@ -214,7 +214,9 @@ const protocolOperationalBoundary = <A>(
   decoded: Result.Result<A, ProtocolDecodeError>,
 ): Effect.Effect<A, OperationalError> =>
   Effect.fromResult(decoded).pipe(
-    Effect.mapError((error) => operationalError('strategy', 'parameters', error.message, error)),
+    Effect.mapError((error) =>
+      operationalError({ component: 'strategy', operation: 'parameters', message: error.message, cause: error }),
+    ),
   )
 
 export const loadProtocol = (input: unknown): Effect.Effect<Protocol, OperationalError> =>

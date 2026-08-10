@@ -318,7 +318,9 @@ const journal = (control: JournalControl): JournalService => ({
     Effect.suspend(() => {
       control.planHashes.push(successOfResult(hashLedgerPlanResult(plan)))
       return control.fail
-        ? Effect.fail(operationalError('journal', 'post', 'injected TigerBeetle failure'))
+        ? Effect.fail(
+            operationalError({ component: 'journal', operation: 'post', message: 'injected TigerBeetle failure' }),
+          )
         : Effect.void
     }),
   verifyAccount: () => Effect.succeed(true),

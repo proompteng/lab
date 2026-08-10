@@ -249,7 +249,13 @@ const collectHealthProbeResults = (
           !qualificationEvidenceRequired
             ? Effect.void
             : evidence === null
-              ? Effect.fail(operationalError('database', 'verify-evidence', 'startup evidence is unavailable'))
+              ? Effect.fail(
+                  operationalError({
+                    component: 'database',
+                    operation: 'verify-evidence',
+                    message: 'startup evidence is unavailable',
+                  }),
+                )
               : withinDeadline(
                   Effect.all([
                     databaseOperation(
@@ -272,7 +278,13 @@ const collectHealthProbeResults = (
         ),
         observe(
           cycleBindingId === undefined
-            ? Effect.fail(operationalError('database', 'cycle-observability', 'startup evidence is unavailable'))
+            ? Effect.fail(
+                operationalError({
+                  component: 'database',
+                  operation: 'cycle-observability',
+                  message: 'startup evidence is unavailable',
+                }),
+              )
             : withinDeadline(
                 databaseOperation(
                   cycleObservability.read(cycleBindingId, broker?.expectedAccountId),

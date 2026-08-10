@@ -397,7 +397,13 @@ describe('autonomous cycle finalized-publication readiness', () => {
           () =>
             TestClock.setTime(Date.parse(cycle.window.publicationDeadlineAt)).pipe(
               Effect.andThen(
-                Effect.fail(operationalError('market-data', 'inspect-publication', 'mutated finalized manifest')),
+                Effect.fail(
+                  operationalError({
+                    component: 'market-data',
+                    operation: 'inspect-publication',
+                    message: 'mutated finalized manifest',
+                  }),
+                ),
               ),
             ),
           control,

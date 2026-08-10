@@ -190,12 +190,12 @@ const currentUtcInstant = Clock.currentTimeMillis.pipe(
     Effect.try({
       try: () => utcInstantFromEpochMillis(millis),
       catch: (cause) =>
-        operationalError(
-          'strategy',
-          'cycle-loop-clock',
-          'runtime clock did not produce a canonical UTC instant',
+        operationalError({
+          component: 'strategy',
+          operation: 'cycle-loop-clock',
+          message: 'runtime clock did not produce a canonical UTC instant',
           cause,
-        ),
+        }),
     }),
   ),
 )
