@@ -132,6 +132,7 @@ import {
   type MutationPreparationFacts,
   type MutationPreparationFactsRequest,
 } from './observe-composition/mutation-intent-interpreter'
+import { Pipeable } from './pipeable'
 
 export {
   appendPendingMutationOrder,
@@ -180,7 +181,7 @@ const observeRiskLimits = {
   decisionTtlMs: 300_000,
 } as const
 
-export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
+const loadObserveRiskPolicyDataFirst = (accountId: string, allowedSymbols: readonly string[]) =>
   decodePolicy({
     schemaVersion: 'bayn.paper-risk-policy.v1',
     accountId,
@@ -190,6 +191,8 @@ export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonl
     allowedTimeInForce: [TimeInForce.Day],
     ...observeRiskLimits,
   })
+
+export const loadObserveRiskPolicy = Pipeable.dual(2, loadObserveRiskPolicyDataFirst)
 
 type ObserveStrategy = StrategyRuntime
 
@@ -1599,7 +1602,7 @@ const terminalizeUnboundMutationCycleAtCutoff = (
     })),
   )
 
-export const terminalizeBlockedPaperCycle = (
+const terminalizeBlockedPaperCycleDataFirst = (
   cycle: AutonomousCycle,
   outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | AuthorityRestrictionStore | WriterFence> =>
@@ -1620,6 +1623,8 @@ export const terminalizeBlockedPaperCycle = (
       cycle: receipt.cycle,
     })),
   )
+
+export const terminalizeBlockedPaperCycle = Pipeable.dual(2, terminalizeBlockedPaperCycleDataFirst)
 
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,

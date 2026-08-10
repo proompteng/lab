@@ -69,6 +69,7 @@ import {
   positionsUrl,
   responseEvidenceResult,
 } from './requests'
+import { Pipeable } from '../../pipeable'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -186,7 +187,7 @@ export interface AlpacaFreshBrokerQuote {
   readonly observedAt: string
 }
 
-export const decodeFreshBrokerPrice = (
+const decodeFreshBrokerPriceDataFirst = (
   requestedSymbol: string,
   raw: unknown,
   observedAt: string,
@@ -235,13 +236,15 @@ export const decodeFreshBrokerPrice = (
   })
 }
 
+export const decodeFreshBrokerPrice = Pipeable.dual(3, decodeFreshBrokerPriceDataFirst)
+
 export const latestQuoteUrl = (symbol: string): URL => {
   const url = new URL(`/v2/stocks/${encodeURIComponent(symbol)}/quotes/latest`, 'https://data.alpaca.markets')
   url.searchParams.set('feed', 'sip')
   return url
 }
 
-export const makeFreshBrokerPriceReader = (
+const makeFreshBrokerPriceReaderDataFirst = (
   connection: BrokerConnection,
   client: HttpClient.HttpClient,
 ): ((symbol: string) => Effect.Effect<AlpacaFreshBrokerQuote, ReturnType<typeof operationalError>>) => {
@@ -300,6 +303,8 @@ export const makeFreshBrokerPriceReader = (
       }),
     )
 }
+
+export const makeFreshBrokerPriceReader = Pipeable.dual(2, makeFreshBrokerPriceReaderDataFirst)
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {

@@ -1,4 +1,5 @@
 import { CycleState, type AutonomousCycle } from '../cycle'
+import { Pipeable } from '../pipeable'
 
 export type CyclePublicationAdmission =
   | { readonly _tag: 'RETURN_BLOCKED' }
@@ -8,7 +9,7 @@ export type CyclePublicationAdmission =
   | { readonly _tag: 'WAIT_SIGNAL' }
   | { readonly _tag: 'INSPECT_PUBLICATION' }
 
-export const decideCyclePublicationAdmission = (
+const decideCyclePublicationAdmissionDataFirst = (
   cycle: AutonomousCycle,
   observedAt: string,
 ): CyclePublicationAdmission => {
@@ -20,6 +21,8 @@ export const decideCyclePublicationAdmission = (
   return { _tag: 'INSPECT_PUBLICATION' }
 }
 
+export const decideCyclePublicationAdmission = Pipeable.dual(2, decideCyclePublicationAdmissionDataFirst)
+
 export type FinalizedPublicationBindingDecision =
   | { readonly _tag: 'RETURN_BLOCKED' }
   | { readonly _tag: 'REJECT_IMMUTABLE_BINDING' }
@@ -29,7 +32,7 @@ export type FinalizedPublicationBindingDecision =
   | { readonly _tag: 'REJECT_BEFORE_SIGNAL_CLOSE' }
   | { readonly _tag: 'BIND' }
 
-export const decideFinalizedPublicationBinding = (
+const decideFinalizedPublicationBindingDataFirst = (
   cycle: AutonomousCycle,
   snapshotId: string,
   observedAt: string,
@@ -46,12 +49,14 @@ export const decideFinalizedPublicationBinding = (
   return { _tag: 'BIND' }
 }
 
+export const decideFinalizedPublicationBinding = Pipeable.dual(3, decideFinalizedPublicationBindingDataFirst)
+
 export type PublicationInspectionDecision =
   | { readonly _tag: 'BLOCK_MISSED' }
   | { readonly _tag: 'WAIT_MISSING' }
   | { readonly _tag: 'BIND_FINALIZED' }
 
-export const decidePublicationInspection = (
+const decidePublicationInspectionDataFirst = (
   publicationFound: boolean,
   observedAt: string,
   publicationDeadlineAt: string,
@@ -59,3 +64,5 @@ export const decidePublicationInspection = (
   if (observedAt >= publicationDeadlineAt) return { _tag: 'BLOCK_MISSED' }
   return publicationFound ? { _tag: 'BIND_FINALIZED' } : { _tag: 'WAIT_MISSING' }
 }
+
+export const decidePublicationInspection = Pipeable.dual(3, decidePublicationInspectionDataFirst)

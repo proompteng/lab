@@ -40,8 +40,9 @@ import {
   verifyExactTransfers,
   verifyLedgerPlanRecords,
 } from './ledger-plan/verification'
+import { Pipeable } from './pipeable'
 
-export const buildLedgerPlan = (
+const buildLedgerPlanDataFirst = (
   input: unknown,
   ledger: number,
 ): Result.Result<EvaluationLedgerPlan, LedgerPlanFailure> =>
@@ -49,6 +50,8 @@ export const buildLedgerPlan = (
     Result.flatMap(decodeLedgerInput(input), (decoded) => planDecodedLedgerInput(decoded, ledger)),
     (failure) => makeLedgerPlanFailure(ledger, failure),
   )
+
+export const buildLedgerPlan = Pipeable.dual(2, buildLedgerPlanDataFirst)
 
 export {
   AccountCode,

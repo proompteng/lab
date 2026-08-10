@@ -1,6 +1,7 @@
 import { CycleState, CycleTerminalReason, isTerminalCycleState, type AutonomousCycle } from '../cycle'
 import type { MarketDataInspection } from '../market-data'
 import type { NonEmptyPublications } from './calendar-decisions'
+import { Pipeable } from '../pipeable'
 
 type CycleAuthoritySlotDecision =
   | { readonly _tag: 'UNCLAIMED'; readonly publication: MarketDataInspection }
@@ -59,7 +60,7 @@ export const beginCycleAuthoritySelection = (slot: CycleAuthoritySlot): CycleAut
   }
 }
 
-export const reduceCycleAuthoritySelection = (
+const reduceCycleAuthoritySelectionDataFirst = (
   state: CycleAuthoritySelectionState,
   slot: CycleAuthoritySlot,
 ): CycleAuthoritySelectionReduction => {
@@ -86,6 +87,8 @@ export const reduceCycleAuthoritySelection = (
       return decision
   }
 }
+
+export const reduceCycleAuthoritySelection = Pipeable.dual(2, reduceCycleAuthoritySelectionDataFirst)
 
 export const completeCycleAuthoritySelection = (
   state: CycleAuthoritySelectionState,

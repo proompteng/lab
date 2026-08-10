@@ -13,6 +13,7 @@ import {
 } from '../types'
 import type { ReferenceEvaluationFailure } from './reference'
 import type { StrategyApplication } from '../strategy/core'
+import { Pipeable } from '../pipeable'
 
 export const auditContract = {
   name: 'risk-balanced-trend',
@@ -118,7 +119,7 @@ export type SignalTableClassificationFailure = {
   readonly expectedTables: readonly string[]
 }
 
-export const classifySignalTableAccess = (
+const classifySignalTableAccessDataFirst = (
   observedTables: readonly string[],
   signalTables: InputManifest['tables'],
 ): Result.Result<SignalAccessRecord['kind'], SignalTableClassificationFailure> => {
@@ -136,6 +137,8 @@ export const classifySignalTableAccess = (
     ].sort(),
   })
 }
+
+export const classifySignalTableAccess = Pipeable.dual(2, classifySignalTableAccessDataFirst)
 
 export interface RepositoryAudit {
   readonly sourceCommitExists: boolean

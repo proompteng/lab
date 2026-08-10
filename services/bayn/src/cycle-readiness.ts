@@ -15,6 +15,7 @@ import { CycleStore, type CycleMutationReceipt, type CycleStoreError, type Cycle
 import type { OperationalError } from './errors'
 import { MarketData, type MarketDataInspection, type MarketDataService } from './market-data'
 import { currentUtcInstant } from './time'
+import { Pipeable } from './pipeable'
 
 export type {
   CyclePublicationReadiness,
@@ -167,12 +168,14 @@ const bindFinalizedCyclePublicationWith = (
     )
   })
 
-export const bindFinalizedCyclePublication = (
+const bindFinalizedCyclePublicationDataFirst = (
   cycle: AutonomousCycle,
   inspection: MarketDataInspection,
   observedAt: string,
 ): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, CycleStore> =>
   Effect.flatMap(CycleStore, (store) => bindFinalizedCyclePublicationWith(store, cycle, inspection, observedAt))
+
+export const bindFinalizedCyclePublication = Pipeable.dual(3, bindFinalizedCyclePublicationDataFirst)
 
 const inspectBoundPublication = (
   cycle: AutonomousCycle,

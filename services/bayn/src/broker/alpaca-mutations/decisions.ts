@@ -26,6 +26,7 @@ import {
   type MutationEvidence,
   type SubmitReceipt,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 const inputParseOptions = { onExcessProperty: 'error' } as const
 
@@ -194,7 +195,7 @@ export const authorizeMutationAccess = (
   return Result.succeed(BrokerAccess.Mutation)
 }
 
-export const resolveMutationCapability = (
+const resolveMutationCapabilityDataFirst = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
 ): Result.Result<ResolvedMutationCapability, BrokerMutationError> => {
@@ -240,6 +241,8 @@ export const resolveMutationCapability = (
     }
   })
 }
+
+export const resolveMutationCapability = Pipeable.dual(2, resolveMutationCapabilityDataFirst)
 
 export const historicalMarketOrderRequestBody = (
   intent: OrderRequestIntent,
@@ -328,7 +331,7 @@ const submitRequestHash = (body: OrderRequestBody): Result.Result<string, Broker
     invalidRequest(MutationOperation.Submit, 'order request cannot be canonically hashed', cause),
   )
 
-export const prepareSubmit = (
+const prepareSubmitDataFirst = (
   input: unknown,
   expectedAccountId: string,
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
@@ -352,6 +355,8 @@ export const prepareSubmit = (
     requestHash,
   }))
 }
+
+export const prepareSubmit = Pipeable.dual(2, prepareSubmitDataFirst)
 
 export const cancelRequestHash = (brokerOrderId: string): string =>
   canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })

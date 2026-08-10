@@ -6,6 +6,7 @@ import {
   ImageRepositorySchema as ImageRepository,
   Sha256Schema as Sha256,
 } from './schemas'
+import { Pipeable } from './pipeable'
 
 declare const __BAYN_BUILD_SOURCE_REVISION__: string
 declare const __BAYN_BUILD_IMAGE_REPOSITORY__: string
@@ -44,7 +45,7 @@ export const embeddedBuildMetadata: EmbeddedBuildMetadata | undefined = hasNoEmb
       strategyParameterHash: strategyParameterHash ?? 'incomplete',
     }
 
-export const verifyParameterHash = (
+const verifyParameterHashDataFirst = (
   metadata: EmbeddedBuildMetadata,
   actualParameterHash: string,
 ): Effect.Effect<void, OperationalError> =>
@@ -52,10 +53,14 @@ export const verifyParameterHash = (
     ? Effect.void
     : Effect.fail(operationalError('config', 'provenance', 'compiled strategy parameters do not match build metadata'))
 
-export const verifyBehaviorHash = (
+export const verifyParameterHash = Pipeable.dual(2, verifyParameterHashDataFirst)
+
+const verifyBehaviorHashDataFirst = (
   metadata: EmbeddedBuildMetadata,
   actualBehaviorHash: string,
 ): Effect.Effect<void, OperationalError> =>
   metadata.strategyBehaviorHash === actualBehaviorHash
     ? Effect.void
     : Effect.fail(operationalError('config', 'provenance', 'compiled strategy behavior does not match build metadata'))
+
+export const verifyBehaviorHash = Pipeable.dual(2, verifyBehaviorHashDataFirst)

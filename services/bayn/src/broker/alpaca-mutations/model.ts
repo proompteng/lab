@@ -4,6 +4,7 @@ import { MutationOutcome } from '../../paper'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../../schemas'
 import type { Intent } from '../../paper'
 import type { BrokerReadError, Order, ReadResult } from '../alpaca'
+import { Pipeable } from '../../pipeable'
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
 
@@ -125,7 +126,7 @@ export const unknownOutcome = (
     ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
   })
 
-export const knownRejection = (
+const knownRejectionDataFirst = (
   requestHash: string,
   evidence: MutationEvidence,
   code: string | number,
@@ -141,7 +142,9 @@ export const knownRejection = (
     brokerCode: String(code),
   })
 
-export const mismatchedAcceptedOrder = (requestHash: string, evidence: MutationEvidence, brokerOrderId: string) =>
+export const knownRejection = Pipeable.dual(4, knownRejectionDataFirst)
+
+const mismatchedAcceptedOrderDataFirst = (requestHash: string, evidence: MutationEvidence, brokerOrderId: string) =>
   new BrokerMutationError({
     operation: MutationOperation.Submit,
     failure: MutationFailure.Unknown,
@@ -151,3 +154,5 @@ export const mismatchedAcceptedOrder = (requestHash: string, evidence: MutationE
     evidence,
     brokerOrderId,
   })
+
+export const mismatchedAcceptedOrder = Pipeable.dual(3, mismatchedAcceptedOrderDataFirst)

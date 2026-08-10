@@ -5,6 +5,7 @@ import { CycleState, type AutonomousCycle } from '../cycle'
 import type { CycleReadinessError } from '../cycle-readiness'
 import type { CycleRecoverySelection } from '../cycle-recovery'
 import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
+import { Pipeable } from '../pipeable'
 
 export const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure'] => {
   switch (cause.failure) {
@@ -17,7 +18,7 @@ export const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['
   }
 }
 
-export const finishRecoveryResult = (
+const finishRecoveryResultDataFirst = (
   selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRunResult, CycleRunnerError> => {
@@ -36,6 +37,8 @@ export const finishRecoveryResult = (
       return Result.fail(runnerError('recover-cycle', 'contract', 'cycle finish did not produce a terminal state'))
   }
 }
+
+export const finishRecoveryResult = Pipeable.dual(2, finishRecoveryResultDataFirst)
 
 export interface CyclePassLogFacts {
   readonly level: 'INFO' | 'ERROR'

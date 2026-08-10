@@ -24,6 +24,7 @@ import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './execution/contracts'
 import { makeQualificationDiagnosis } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
+import { Pipeable } from './pipeable'
 
 type ReadEvidence = EvidenceStoreService['read']
 
@@ -289,7 +290,7 @@ const publicCycleState = (state: RuntimeState) =>
         error: cyclePresentationReason(state.cycle.error),
       }
 
-export const statusFacts = (
+const statusFactsDataFirst = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
@@ -385,12 +386,16 @@ export const statusFacts = (
   } as const
 }
 
-export const statusResponseDecision = (
+export const statusFacts = Pipeable.dual(4, statusFactsDataFirst)
+
+const statusResponseDecisionDataFirst = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
+
+export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDataFirst)
 
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
@@ -440,7 +445,7 @@ export const historicalEvidenceResponseDecision = (stored: Option.Option<unknown
     onSome: (evidence) => jsonDecision(evidence),
   })
 
-export const historicalReadFailureDecision = (runId: string, error: OperationalError) =>
+const historicalReadFailureDecisionDataFirst = (runId: string, error: OperationalError) =>
   ({
     response: jsonDecision({ error: 'evidence_unavailable' }, 503),
     log: {
@@ -456,6 +461,8 @@ export const historicalReadFailureDecision = (runId: string, error: OperationalE
       },
     },
   }) as const
+
+export const historicalReadFailureDecision = Pipeable.dual(2, historicalReadFailureDecisionDataFirst)
 
 export const readHistoricalEvidence = <A, R>(
   read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
@@ -478,7 +485,7 @@ const epochSeconds = (instant: string | null | undefined): number =>
 
 const booleanMetric = (value: boolean | null): number => (value === true ? 1 : 0)
 
-export const renderPrometheusMetrics = (
+const renderPrometheusMetricsDataFirst = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
@@ -710,6 +717,8 @@ export const renderPrometheusMetrics = (
   return `${lines.join('\n')}\n`
 }
 
+export const renderPrometheusMetrics = Pipeable.dual(4, renderPrometheusMetricsDataFirst)
+
 const interpretResponseDecision = (
   decision: HttpResponseDecision,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -835,7 +844,7 @@ const registerHttpRoutes = (
   })
 }
 
-export const serveHttp = (
+const serveHttpDataFirst = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
@@ -850,3 +859,5 @@ export const serveHttp = (
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
+
+export const serveHttp = Pipeable.dual(5, serveHttpDataFirst)

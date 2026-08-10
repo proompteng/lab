@@ -21,6 +21,7 @@ import {
   unknownOutcome,
   type BrokerMutationShape,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -105,7 +106,7 @@ const readCancelBody = (
         ),
       )
 
-export const makeMutation = (
+const makeMutationDataFirst = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
   client: HttpClient.HttpClient,
@@ -192,3 +193,5 @@ export const makeMutation = (
       orderByClientId: session.read.orderByClientId,
     }
   })
+
+export const makeMutation = Pipeable.dual(3, makeMutationDataFirst)

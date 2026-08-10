@@ -30,8 +30,9 @@ import {
   makeReferenceOrderIdentity,
 } from './replay/identities'
 import type { Position, ReferenceComputation, Session } from './model'
+import { Pipeable } from '../../pipeable'
 
-export const calculateReplayMetrics = (
+const calculateReplayMetricsDataFirst = (
   equityMicros: readonly bigint[],
   turnoverMicros: bigint,
   feeMicros: bigint,
@@ -94,6 +95,8 @@ export const calculateReplayMetrics = (
   })
 }
 
+export const calculateReplayMetrics = Pipeable.dual(7, calculateReplayMetricsDataFirst)
+
 export const makeReferenceOrder = (
   runId: string,
   decision: DecisionEvent,
@@ -137,7 +140,7 @@ export const makeReferenceOrder = (
     }),
   )
 
-export const restrictReferenceBuyFill = (
+const restrictReferenceBuyFillDataFirst = (
   runId: string,
   simulatedOrder: SimulatedOrder,
   permittedQuantity: bigint,
@@ -166,7 +169,9 @@ export const restrictReferenceBuyFill = (
   return makeReferenceOrderIdentity(runId, material)
 }
 
-export const makeReferenceFill = (
+export const restrictReferenceBuyFill = Pipeable.dual(3, restrictReferenceBuyFillDataFirst)
+
+const makeReferenceFillDataFirst = (
   runId: string,
   decision: DecisionEvent,
   simulatedOrder: SimulatedOrder,
@@ -190,7 +195,9 @@ export const makeReferenceFill = (
   return makeReferenceFillIdentity(runId, material)
 }
 
-export const makeCashChange = (
+export const makeReferenceFill = Pipeable.dual(5, makeReferenceFillDataFirst)
+
+const makeCashChangeDataFirst = (
   runId: string,
   source:
     | Pick<FillEvent | FeeEvent, 'kind' | 'id' | 'sessionDate'>
@@ -199,7 +206,9 @@ export const makeCashChange = (
   cashAfterMicros: bigint,
 ): ReferenceComputation<CashChange> => makeReferenceCashChangeIdentity(runId, source, amountMicros, cashAfterMicros)
 
-export const replayPrices = (
+export const makeCashChange = Pipeable.dual(4, makeCashChangeDataFirst)
+
+const replayPricesDataFirst = (
   session: Session,
   protocol: SimulationProtocol,
   price: (bar: DailyBar) => number,
@@ -226,7 +235,9 @@ export const replayPrices = (
     Result.map((entries) => Object.fromEntries(entries)),
   )
 
-export const replayPositionValue = (
+export const replayPrices = Pipeable.dual(3, replayPricesDataFirst)
+
+const replayPositionValueDataFirst = (
   prices: Readonly<Record<string, bigint>>,
   positions: ReadonlyMap<string, Position>,
   protocol: SimulationProtocol,
@@ -242,7 +253,9 @@ export const replayPositionValue = (
   return Result.succeed(total)
 }
 
-export const replayPriceFor = (
+export const replayPositionValue = Pipeable.dual(3, replayPositionValueDataFirst)
+
+const replayPriceForDataFirst = (
   prices: Readonly<Record<string, bigint>>,
   symbol: string,
 ): ReferenceComputation<bigint> => {
@@ -252,7 +265,9 @@ export const replayPriceFor = (
     : Result.succeed(priceMicros)
 }
 
-export const replayQuantityFor = (
+export const replayPriceFor = Pipeable.dual(2, replayPriceForDataFirst)
+
+const replayQuantityForDataFirst = (
   quantities: Readonly<Record<string, bigint>>,
   symbol: string,
 ): ReferenceComputation<bigint> => {
@@ -262,7 +277,9 @@ export const replayQuantityFor = (
     : Result.succeed(quantityMicros)
 }
 
-export const replayDesiredQuantities = (
+export const replayQuantityFor = Pipeable.dual(2, replayQuantityForDataFirst)
+
+const replayDesiredQuantitiesDataFirst = (
   equityMicros: bigint,
   weights: Readonly<Record<string, number>>,
   prices: Readonly<Record<string, bigint>>,
@@ -283,6 +300,8 @@ export const replayDesiredQuantities = (
     ),
     Result.map((entries) => Object.fromEntries(entries)),
   )
+
+export const replayDesiredQuantities = Pipeable.dual(4, replayDesiredQuantitiesDataFirst)
 
 interface ReferenceBuyCandidate {
   readonly symbol: string

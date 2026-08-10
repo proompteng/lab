@@ -14,6 +14,7 @@ import {
   type OrdersQuery,
   type ReadEvidence,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 export const accountConfigurationRequestMaterial = {
   schemaVersion: accountConfigurationObservationSchemaVersion,
@@ -37,10 +38,12 @@ export const accountConfigurationUrl = (connection: BrokerConnection): URL =>
 
 export const positionsUrl = (connection: BrokerConnection): URL => new URL('/v2/positions', connection.baseUrl)
 
-export const assetBySymbolUrl = (connection: BrokerConnection, requestedSymbol: string): URL =>
+const assetBySymbolUrlDataFirst = (connection: BrokerConnection, requestedSymbol: string): URL =>
   new URL(assetRequestMaterial(requestedSymbol).path, connection.baseUrl)
 
-export const marketCalendarUrl = (connection: BrokerConnection, query: MarketCalendarQuery): URL => {
+export const assetBySymbolUrl = Pipeable.dual(2, assetBySymbolUrlDataFirst)
+
+const marketCalendarUrlDataFirst = (connection: BrokerConnection, query: MarketCalendarQuery): URL => {
   const url = new URL('/v2/calendar', connection.baseUrl)
   url.searchParams.set('start', query.start)
   url.searchParams.set('end', query.end)
@@ -48,7 +51,9 @@ export const marketCalendarUrl = (connection: BrokerConnection, query: MarketCal
   return url
 }
 
-export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL => {
+export const marketCalendarUrl = Pipeable.dual(2, marketCalendarUrlDataFirst)
+
+const ordersUrlDataFirst = (connection: BrokerConnection, query: OrdersQuery): URL => {
   const url = new URL('/v2/orders', connection.baseUrl)
   if (query.status !== undefined) url.searchParams.set('status', query.status)
   if (query.limit !== undefined) url.searchParams.set('limit', String(query.limit))
@@ -60,25 +65,34 @@ export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL
   return url
 }
 
+export const ordersUrl = Pipeable.dual(2, ordersUrlDataFirst)
+
 export const submitOrderUrl = (connection: BrokerConnection): URL => new URL('/v2/orders', connection.baseUrl)
 
-export const orderByIdUrl = (connection: BrokerConnection, orderId: string): URL =>
+const orderByIdUrlDataFirst = (connection: BrokerConnection, orderId: string): URL =>
   new URL(`/v2/orders/${encodeURIComponent(orderId)}`, connection.baseUrl)
 
-export const cancelOrderUrl = (connection: BrokerConnection, orderId: string): URL => orderByIdUrl(connection, orderId)
+export const orderByIdUrl = Pipeable.dual(2, orderByIdUrlDataFirst)
 
-export const orderByClientIdUrl = (connection: BrokerConnection, clientOrderId: string): URL => {
+const cancelOrderUrlDataFirst = (connection: BrokerConnection, orderId: string): URL =>
+  orderByIdUrl(connection, orderId)
+
+export const cancelOrderUrl = Pipeable.dual(2, cancelOrderUrlDataFirst)
+
+const orderByClientIdUrlDataFirst = (connection: BrokerConnection, clientOrderId: string): URL => {
   const url = new URL('/v2/orders:by_client_order_id', connection.baseUrl)
   url.searchParams.set('client_order_id', clientOrderId)
   return url
 }
+
+export const orderByClientIdUrl = Pipeable.dual(2, orderByClientIdUrlDataFirst)
 
 export interface FillActivitiesRequest {
   readonly url: URL
   readonly pageSize: number
 }
 
-export const fillActivitiesRequest = (
+const fillActivitiesRequestDataFirst = (
   connection: BrokerConnection,
   query: FillActivitiesQuery,
 ): FillActivitiesRequest => {
@@ -93,7 +107,9 @@ export const fillActivitiesRequest = (
   return { url, pageSize }
 }
 
-export const responseEvidenceResult = (
+export const fillActivitiesRequest = Pipeable.dual(2, fillActivitiesRequestDataFirst)
+
+const responseEvidenceResultDataFirst = (
   headers: typeof ResponseHeadersSchema.Type,
   status: number,
   contentHash: string,
@@ -130,3 +146,5 @@ export const responseEvidenceResult = (
     ...(rateLimit === undefined ? {} : { rateLimit }),
   })
 }
+
+export const responseEvidenceResult = Pipeable.dual(4, responseEvidenceResultDataFirst)

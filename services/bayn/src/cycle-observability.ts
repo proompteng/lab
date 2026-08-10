@@ -3,6 +3,7 @@ import { Result } from 'effect'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { CycleState, type CycleTerminalReason } from './cycle'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from './time'
+import { Pipeable } from './pipeable'
 
 export interface CycleOperationsThresholds {
   readonly cycleStallThresholdMs: number
@@ -547,7 +548,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   }
 }
 
-export const deriveCycleOperationsStatusResult = (
+const deriveCycleOperationsStatusResultDataFirst = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
@@ -561,10 +562,14 @@ export const deriveCycleOperationsStatusResult = (
     (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
   )
 
-export const deriveCycleOperationsStatus = (
+export const deriveCycleOperationsStatusResult = Pipeable.dual(4, deriveCycleOperationsStatusResultDataFirst)
+
+const deriveCycleOperationsStatusDataFirst = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
 ): CycleOperationsStatus =>
   Result.getOrThrow(deriveCycleOperationsStatusResult(projection, nowMs, maximumAuthority, thresholds))
+
+export const deriveCycleOperationsStatus = Pipeable.dual(4, deriveCycleOperationsStatusDataFirst)

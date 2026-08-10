@@ -3,6 +3,7 @@ import { Result } from 'effect'
 import type { DailyBar, DecisionPlan, InputManifest, IsoDate, Protocol, SimulationProtocol } from '../../types'
 import { hashReferenceMaterial } from './replay/identities'
 import type { ReferenceComputation, Session } from './model'
+import { Pipeable } from '../../pipeable'
 
 export const tradingDays = 252
 
@@ -27,7 +28,7 @@ export const sampleDeviation = (values: readonly number[]): number => {
   return Math.sqrt(variance)
 }
 
-export const align = (
+const alignDataFirst = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
   universe: readonly string[],
@@ -104,6 +105,8 @@ export const align = (
   }
   return Result.succeed(sessions)
 }
+
+export const align = Pipeable.dual(3, alignDataFirst)
 
 export const monthEnds = (dates: readonly IsoDate[]): readonly number[] => {
   const result: number[] = []
@@ -253,7 +256,7 @@ const portfolioVolatility = (
   return Result.succeed(annualized)
 }
 
-export const riskBalancedDecisionPlan = (
+const riskBalancedDecisionPlanDataFirst = (
   signalIndex: number,
   sessions: readonly Session[],
   protocol: Protocol,
@@ -481,7 +484,9 @@ export const riskBalancedDecisionPlan = (
   })
 }
 
-export const directVolatilityTarget = (
+export const riskBalancedDecisionPlan = Pipeable.dual(3, riskBalancedDecisionPlanDataFirst)
+
+const directVolatilityTargetDataFirst = (
   sessions: readonly Session[],
   signalIndex: number,
   protocol: SimulationProtocol,
@@ -532,3 +537,5 @@ export const directVolatilityTarget = (
   const weight = roundWeight(exposure / protocol.universe.length)
   return Result.succeed(Object.fromEntries(protocol.universe.map((symbol) => [symbol, weight])))
 }
+
+export const directVolatilityTarget = Pipeable.dual(3, directVolatilityTargetDataFirst)

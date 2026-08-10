@@ -20,6 +20,7 @@ import type {
   LedgerQueryFilter,
   LedgerTransferRecord,
 } from './ledger-plan/model'
+import { Pipeable } from './pipeable'
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
@@ -187,7 +188,7 @@ export const parseReplicaEndpoints = (
       })
     : Result.all(configuredAddresses.map(parseReplicaEndpoint))
 
-export const validateResolvedReplicaEndpoint = (
+const validateResolvedReplicaEndpointDataFirst = (
   endpoint: ReplicaEndpoint,
   resolvedAddresses: readonly string[],
 ): Result.Result<string, ReplicaAddressValidationError> => {
@@ -210,6 +211,8 @@ export const validateResolvedReplicaEndpoint = (
   }
   return Result.succeed(`${ipv4Addresses[0]}:${endpoint.port}`)
 }
+
+export const validateResolvedReplicaEndpoint = Pipeable.dual(2, validateResolvedReplicaEndpointDataFirst)
 
 export const validateResolvedReplicaAddresses = (
   addresses: readonly string[],

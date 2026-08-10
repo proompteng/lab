@@ -11,6 +11,7 @@ import {
   type PaperProofDependencies,
   type PaperProofReceipt,
 } from './paper-proof'
+import { Pipeable } from './pipeable'
 
 const ownDataProperty = (value: unknown, property: string): unknown => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
@@ -29,7 +30,7 @@ const malformedOperation = (input: unknown): PaperProofCliEnvelope['command']['o
     : undefined
 }
 
-export const runPaperProofCommand = (
+const runPaperProofCommandDataFirst = (
   input: unknown,
   dependencies: PaperProofDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> => {
@@ -57,6 +58,8 @@ export const runPaperProofCommand = (
     protectedEntryToken: envelope.protectedEntryToken,
   })
 }
+
+export const runPaperProofCommand = Pipeable.dual(2, runPaperProofCommandDataFirst)
 
 export const paperProofCommandEntryGate = Effect.fail(
   new PaperProofError({
