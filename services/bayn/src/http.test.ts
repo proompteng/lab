@@ -1588,7 +1588,7 @@ describe('Bayn HTTP probes', () => {
     await withHttpServer({ state: runtimeState }, ({ port }) =>
       request(port, '/v1/status').pipe(
         Effect.tap((response) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             expect(response.body).toMatchObject({
               broker: {
                 configured: true,
@@ -1603,7 +1603,8 @@ describe('Bayn HTTP probes', () => {
             expect(body.broker).not.toHaveProperty('read')
             expect(body.broker).not.toHaveProperty('expectedAccountId')
             expect(body.broker).not.toHaveProperty('accountId')
-            expect(Schema.encodeSync(Schema.UnknownFromJsonString)(response.body)).not.toContain('paper-account-1')
+            const encodedBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(response.body)
+            expect(encodedBody).not.toContain('paper-account-1')
             expect(Object.values(body.broker).some((value) => typeof value === 'function')).toBe(false)
           }),
         ),

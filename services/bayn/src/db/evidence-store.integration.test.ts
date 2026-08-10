@@ -2350,9 +2350,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             yield* Effect.sleep(Duration.millis(10))
           }
           if (mutationPid === undefined) {
-            return yield* Effect.fail(
-              `mutation did not wait on the table lock: ${Schema.encodeSync(Schema.UnknownFromJsonString)(activities)}`,
-            )
+            const encodedActivities = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(activities)
+            return yield* Effect.fail(`mutation did not wait on the table lock: ${encodedActivities}`)
           }
           const terminated = yield* Effect.promise(() =>
             runtime.runPromise(
@@ -4415,9 +4414,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             yield* Effect.sleep(Duration.millis(10))
           }
           if (lockWait === undefined) {
-            return yield* Effect.fail(
-              `update is not waiting on the lock: ${Schema.encodeSync(Schema.UnknownFromJsonString)(activities)}`,
-            )
+            const encodedActivities = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(activities)
+            return yield* Effect.fail(`update is not waiting on the lock: ${encodedActivities}`)
           }
           yield* Effect.promise(() =>
             observerRuntime.runPromise(

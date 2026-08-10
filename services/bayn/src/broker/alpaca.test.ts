@@ -200,12 +200,23 @@ describe('Alpaca paper reads', () => {
     let inspected = ''
     let surface: readonly string[] = []
     const client = HttpClient.make((request, target) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         method = request.method
         url = target.toString()
         key = request.headers['apca-api-key-id'] ?? ''
         secret = request.headers['apca-api-secret-key'] ?? ''
-        inspected = Schema.encodeSync(Schema.UnknownFromJsonString)(request.toJSON())
+        inspected = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(request.toJSON()).pipe(
+          Effect.mapError(
+            (cause) =>
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.EncodeError({
+                  request,
+                  cause,
+                  description: 'failed to encode redacted request inspection',
+                }),
+              }),
+          ),
+        )
         return jsonResponse(request, accountResponse)
       }),
     )

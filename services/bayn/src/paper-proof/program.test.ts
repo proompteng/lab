@@ -391,7 +391,7 @@ const fixture = (options: FixtureOptions) => {
         Effect.gen(function* () {
           sequence.push('submit:preflight')
           if (options.failSubmitPrerequisite === true) {
-            return yield* Effect.fail(new TestFailure({ message: 'submit prerequisite failed before mutation start' }))
+            return yield* new TestFailure({ message: 'submit prerequisite failed before mutation start' })
           }
           sequence.push('submit:mutation-started')
           yield* beforeBrokerMutation()
@@ -399,7 +399,7 @@ const fixture = (options: FixtureOptions) => {
           sequence.push('submit')
           if (options.neverSubmitAfterMarker === true) return yield* Effect.never
           if (options.failSubmit === true) {
-            return yield* Effect.fail(new TestFailure({ message: 'submit failed after durable marker' }))
+            return yield* new TestFailure({ message: 'submit failed after durable marker' })
           }
           const submitted = options.submitEvent ?? event(MutationEventType.SubmitAccepted)
           mutationState.submit = submitted
@@ -410,7 +410,7 @@ const fixture = (options: FixtureOptions) => {
         Effect.gen(function* () {
           sequence.push('cancel:preflight')
           if (options.failCancelPrerequisite === true) {
-            return yield* Effect.fail(new TestFailure({ message: 'cancel prerequisite failed before mutation start' }))
+            return yield* new TestFailure({ message: 'cancel prerequisite failed before mutation start' })
           }
           sequence.push('cancel:mutation-started')
           if (options.cancelStartedEvent !== undefined) mutationState.cancel = options.cancelStartedEvent
@@ -419,7 +419,7 @@ const fixture = (options: FixtureOptions) => {
           sequence.push('cancel')
           if (options.neverCancelAfterMarker === true) return yield* Effect.never
           if (options.failCancel === true) {
-            return yield* Effect.fail(new TestFailure({ message: 'cancel failed after durable marker' }))
+            return yield* new TestFailure({ message: 'cancel failed after durable marker' })
           }
           const canceled = options.cancelEvent ?? event(MutationEventType.CancelAccepted, MutationOperation.Cancel)
           mutationState.cancel = canceled
