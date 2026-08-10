@@ -26,7 +26,7 @@ binding or an explicit research binding; Bayn never composes live-capital author
 - PostgreSQL stores paper mutation transitions in one append-only `mutation_events` table. Request identity, broker
   response identity, and the lookup delay are committed before use; unresolved outcomes block later exposure. An
   OBSERVE generation cannot create mutation rows, while an authorized PAPER generation must durably commit its intent
-  and risk binding before broker I/O.
+  and risk binding before broker mutation I/O.
 - Paper execution is long-only: risk blocks an existing short or a sell beyond reconciled long inventory before broker
   I/O. Fill accounting persists Alpaca's full source timestamp and orders equal timestamps by fill ID, rejects late
   predecessors, and records a receipt only after the complete TigerBeetle transaction-tag transfer set matches.
