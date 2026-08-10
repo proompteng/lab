@@ -427,7 +427,7 @@ const validateOrderShape = (
   )
 }
 
-export const orderObservation = (
+const orderObservationDataFirst = (
   value: AlpacaOrder,
   evidence: ReadEvidence,
   intentId?: string,
@@ -483,7 +483,15 @@ export const orderObservation = (
     ),
   )
 
-export const fillObservation = (
+export const orderObservation = Pipeable.by<
+  (evidence: ReadEvidence, intentId?: string) => (value: AlpacaOrder) => ReturnType<typeof orderObservationDataFirst>,
+  typeof orderObservationDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'brokerOrderId' in arguments_[0],
+  orderObservationDataFirst,
+)
+
+const fillObservationDataFirst = (
   activity: FillActivity,
   order: AlpacaOrder,
   evidence: ReadEvidence,
@@ -543,6 +551,18 @@ export const fillObservation = (
         brokerOrderId: order.brokerOrderId,
       })
 }
+
+export const fillObservation = Pipeable.by<
+  (
+    order: AlpacaOrder,
+    evidence: ReadEvidence,
+    options?: { readonly intentId?: string; readonly feeMicros?: string },
+  ) => (activity: FillActivity) => ReturnType<typeof fillObservationDataFirst>,
+  typeof fillObservationDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'activityId' in arguments_[0],
+  fillObservationDataFirst,
+)
 
 export const renderBrokerObservationError = (error: BrokerObservationError): string => {
   switch (error._tag) {

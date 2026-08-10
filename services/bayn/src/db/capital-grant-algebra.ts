@@ -388,7 +388,7 @@ const validateAuthorityObservationDataFirst = (
 
 export const validateAuthorityObservation = Pipeable.dual(2, validateAuthorityObservationDataFirst)
 
-export const validateCurrentGenerationHistory = <History extends AuthorityGenerationHistoryFacts>(
+const validateCurrentGenerationHistoryDataFirst = <History extends AuthorityGenerationHistoryFacts>(
   current: AuthorityState,
   history: History | undefined,
 ): Result.Result<History, CapitalGrantAlgebraFailure> => {
@@ -433,6 +433,13 @@ export const validateCurrentGenerationHistory = <History extends AuthorityGenera
   }
   return Result.succeed(history)
 }
+
+export const validateCurrentGenerationHistory = Pipeable.generic<
+  <History extends AuthorityGenerationHistoryFacts>(
+    history: History | undefined,
+  ) => (current: AuthorityState) => Result.Result<History, CapitalGrantAlgebraFailure>,
+  typeof validateCurrentGenerationHistoryDataFirst
+>(2, validateCurrentGenerationHistoryDataFirst)
 
 const requireUnusedAuthorityGenerationDataFirst = (
   generationHash: string,

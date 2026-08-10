@@ -133,7 +133,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     return { settlement, consistencyDelayMs: event.consistencyDelayMs, operation }
   })
 
-export const executeMutationIntent = (
+const executeMutationIntentDataFirst = (
   executionProgram: ExecutionProgram,
   intentId: string,
   action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
@@ -149,3 +149,12 @@ export const executeMutationIntent = (
     submitExpiresAt,
     currentUtcInstant,
   )
+
+export const executeMutationIntent = Pipeable.by<
+  (
+    intentId: string,
+    action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
+    submitExpiresAt?: string,
+  ) => (executionProgram: ExecutionProgram) => ReturnType<typeof executeMutationIntentDataFirst>,
+  typeof executeMutationIntentDataFirst
+>((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, executeMutationIntentDataFirst)

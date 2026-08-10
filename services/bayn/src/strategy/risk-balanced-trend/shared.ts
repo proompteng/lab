@@ -16,7 +16,7 @@ export const fail = <A = never>(failure: RiskBalancedTrendFailure): Result.Resul
 
 export const requiredHistory = (protocol: Protocol): number => Math.max(protocol.volatilityWindow, ...protocol.horizons)
 
-export const finite = (
+const finiteDataFirst = (
   value: number,
   operation: Extract<RiskBalancedTrendFailure, { readonly _tag: 'InvalidRiskBalancedTrendNumber' }>['operation'],
   symbol: string | null = null,
@@ -26,6 +26,14 @@ export const finite = (
     : value < 0 && operation === 'portfolio-variance'
       ? fail({ _tag: 'InvalidRiskBalancedTrendNumber', operation, value, symbol, reason: 'negative' })
       : Result.succeed(value)
+
+export const finite = Pipeable.by<
+  (
+    operation: Extract<RiskBalancedTrendFailure, { readonly _tag: 'InvalidRiskBalancedTrendNumber' }>['operation'],
+    symbol?: string | null,
+  ) => (value: number) => ReturnType<typeof finiteDataFirst>,
+  typeof finiteDataFirst
+>((arguments_) => typeof arguments_[0] === 'number', finiteDataFirst)
 
 const dailyReturnsDataFirst = (
   closes: readonly number[],

@@ -90,7 +90,7 @@ const reduceCycleAuthoritySelectionDataFirst = (
 
 export const reduceCycleAuthoritySelection = Pipeable.dual(2, reduceCycleAuthoritySelectionDataFirst)
 
-export const completeCycleAuthoritySelection = (
+const completeCycleAuthoritySelectionDataFirst = (
   state: CycleAuthoritySelectionState,
   cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
 ): CycleAuthoritySelection => {
@@ -112,6 +112,13 @@ export const completeCycleAuthoritySelection = (
   }
   return { _tag: 'READ_CALENDAR', publications: state.publications }
 }
+
+export const completeCycleAuthoritySelection = Pipeable.by<
+  (
+    cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
+  ) => (state: CycleAuthoritySelectionState) => ReturnType<typeof completeCycleAuthoritySelectionDataFirst>,
+  typeof completeCycleAuthoritySelectionDataFirst
+>((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, completeCycleAuthoritySelectionDataFirst)
 
 export const selectCycleAuthoritySlots = (slots: NonEmptyAuthoritySlots): CycleAuthoritySelection => {
   const [first, ...remaining] = slots

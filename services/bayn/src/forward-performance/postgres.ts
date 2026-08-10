@@ -31,6 +31,7 @@ import type {
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const TerminalCycleRow = Schema.Struct({
   cycle_id: Sha256,
@@ -978,7 +979,7 @@ const marketVolumeRequestsFromRows = (
   })
 }
 
-export const readForwardPerformancePostgres = (
+const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -1751,3 +1752,11 @@ export const readForwardPerformancePostgres = (
       }),
     )
     .pipe(Effect.mapError(postgresError))
+
+export const readForwardPerformancePostgres = Pipeable.by<
+  (
+    accountId: string,
+    authorityGenerationHash?: string,
+  ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
+  typeof readForwardPerformancePostgresDataFirst
+>((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

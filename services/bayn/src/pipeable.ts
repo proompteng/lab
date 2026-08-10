@@ -23,4 +23,14 @@ const dual = <DataFirst extends AnyFunction>(
   >
 }
 
-export const Pipeable = { dual } as const
+const generic = <DataLast extends AnyFunction, DataFirst extends AnyFunction>(
+  arity: Parameters<DataFirst>['length'],
+  body: DataFirst,
+): DataLast & DataFirst => Function.dual<DataLast, DataFirst>(arity, body)
+
+const by = <DataLast extends AnyFunction, DataFirst extends AnyFunction>(
+  isDataFirst: (arguments_: IArguments) => boolean,
+  body: DataFirst,
+): DataLast & DataFirst => Function.dual<DataLast, DataFirst>(isDataFirst, body)
+
+export const Pipeable = { by, dual, generic } as const

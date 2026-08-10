@@ -3,6 +3,7 @@ import { Cause, Effect, Exit } from 'effect'
 import type { ExecutionStoreError, ReconciliationPersistence } from '../db/execution-store'
 import type { WriterFenceError, WriterFenceService } from '../execution/writer-fence'
 import { ReconciliationError, incompletePassReason, type ReconciliationPassError } from './broker-reconciler-model'
+import { Pipeable } from '../pipeable'
 
 export type ContainmentDecision =
   | { readonly _tag: 'PreserveInterruption' }
@@ -52,7 +53,7 @@ const preserveFailureAfterContainment = (
     : Effect.fail(containmentError)
 }
 
-export const containRuntimeFailure = <A, R>(
+const containRuntimeFailureDataFirst = <A, R>(
   effect: Effect.Effect<A, ReconciliationPassError, R>,
   store: ReconciliationPersistence,
   fence: WriterFenceService,
@@ -68,3 +69,12 @@ export const containRuntimeFailure = <A, R>(
     },
     onSuccess: Effect.succeed,
   })
+
+export const containRuntimeFailure = Pipeable.generic<
+  <A, R>(
+    store: ReconciliationPersistence,
+    fence: WriterFenceService,
+    now: Effect.Effect<string>,
+  ) => (effect: Effect.Effect<A, ReconciliationPassError, R>) => Effect.Effect<A, ReconciliationPassError, R>,
+  typeof containRuntimeFailureDataFirst
+>(4, containRuntimeFailureDataFirst)

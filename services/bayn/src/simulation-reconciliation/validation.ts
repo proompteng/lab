@@ -132,7 +132,7 @@ export const validateCanonicalIdentity = Pipeable.dual(2, validateCanonicalIdent
 
 type IndexedIdentity = CanonicalIdentityEvidence
 
-export const indexUnique = <A extends { readonly id: string }>(
+const indexUniqueDataFirst = <A extends { readonly id: string }>(
   values: readonly A[],
   entity: Extract<InvalidEvidenceStateProblem, { readonly _tag: 'DuplicateIdentity' }>['entity'],
   evidenceFor: (value: A) => IndexedIdentity,
@@ -150,7 +150,15 @@ export const indexUnique = <A extends { readonly id: string }>(
   return Result.succeed(byId)
 }
 
-export const indexUniqueBy = <A>(
+export const indexUnique = Pipeable.generic<
+  <A extends { readonly id: string }>(
+    entity: Extract<InvalidEvidenceStateProblem, { readonly _tag: 'DuplicateIdentity' }>['entity'],
+    evidenceFor: (value: A) => IndexedIdentity,
+  ) => (values: readonly A[]) => Validation<ReadonlyMap<string, A>>,
+  typeof indexUniqueDataFirst
+>(3, indexUniqueDataFirst)
+
+const indexUniqueByDataFirst = <A>(
   values: readonly A[],
   keyOf: (value: A) => string,
   duplicate: (value: A) => SimulationReconciliationIssue,
@@ -164,7 +172,15 @@ export const indexUniqueBy = <A>(
   return Result.succeed(indexed)
 }
 
-export const groupValuesBy = <A>(
+export const indexUniqueBy = Pipeable.generic<
+  <A>(
+    keyOf: (value: A) => string,
+    duplicate: (value: A) => SimulationReconciliationIssue,
+  ) => (values: readonly A[]) => Validation<ReadonlyMap<string, A>>,
+  typeof indexUniqueByDataFirst
+>(3, indexUniqueByDataFirst)
+
+const groupValuesByDataFirst = <A>(
   values: readonly A[],
   keyOf: (value: A) => string,
 ): ReadonlyMap<string, readonly A[]> => {
@@ -175,6 +191,11 @@ export const groupValuesBy = <A>(
   }
   return grouped
 }
+
+export const groupValuesBy = Pipeable.generic<
+  <A>(keyOf: (value: A) => string) => (values: readonly A[]) => ReadonlyMap<string, readonly A[]>,
+  typeof groupValuesByDataFirst
+>(2, groupValuesByDataFirst)
 
 const validateDecisionIdentityDataFirst = (runId: string, decision: DecisionEvent): Validation<void> => {
   const { id: _, kind: __, ...payload } = decision

@@ -5,6 +5,7 @@ import { CycleObservabilityError } from './db/cycle-observability'
 import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
 import { retryLayerAcquisition } from './resource-boundary'
+import { Pipeable } from './pipeable'
 
 type DatabaseOperationFailure = DatabaseError | CycleObservabilityError
 
@@ -34,7 +35,7 @@ export const sqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A
     ),
   )
 
-export const withinDeadline = <A, R>(
+const withinDeadlineDataFirst = <A, R>(
   effect: Effect.Effect<A, OperationalError, R>,
   timeoutMs: number,
   component: Component,
@@ -48,7 +49,16 @@ export const withinDeadline = <A, R>(
     }),
   )
 
-export const databaseOperation = <A, R>(
+export const withinDeadline = Pipeable.generic<
+  <A, R>(
+    timeoutMs: number,
+    component: Component,
+    operation: string,
+  ) => (effect: Effect.Effect<A, OperationalError, R>) => Effect.Effect<A, OperationalError, R>,
+  typeof withinDeadlineDataFirst
+>(4, withinDeadlineDataFirst)
+
+const databaseOperationDataFirst = <A, R>(
   effect: Effect.Effect<A, DatabaseOperationFailure, R>,
   operation: string,
 ): Effect.Effect<A, OperationalError, R> =>
@@ -62,3 +72,10 @@ export const databaseOperation = <A, R>(
       return makeError('database', operation, `PostgreSQL ${operation} failed`, cause)
     }),
   )
+
+export const databaseOperation = Pipeable.generic<
+  <A, R>(
+    operation: string,
+  ) => (effect: Effect.Effect<A, DatabaseOperationFailure, R>) => Effect.Effect<A, OperationalError, R>,
+  typeof databaseOperationDataFirst
+>(2, databaseOperationDataFirst)

@@ -133,7 +133,7 @@ export const sandboxCapitalAuthority = (authorityGenerationHash: string): Sandbo
   authorityGenerationHash,
 })
 
-export const liveCapitalAuthority = (
+const liveCapitalAuthorityDataFirst = (
   grant: LiveCapitalGrant,
   revocation?: LiveCapitalGrantRevocation,
 ): LiveCapitalAuthority => ({
@@ -141,6 +141,19 @@ export const liveCapitalAuthority = (
   grant,
   ...(revocation === undefined ? {} : { revocation }),
 })
+
+export const liveCapitalAuthority = Pipeable.by<
+  (
+    revocation?: LiveCapitalGrantRevocation,
+  ) => (grant: LiveCapitalGrant) => ReturnType<typeof liveCapitalAuthorityDataFirst>,
+  typeof liveCapitalAuthorityDataFirst
+>(
+  (arguments_) =>
+    typeof arguments_[0] === 'object' &&
+    arguments_[0] !== null &&
+    arguments_[0].schemaVersion === 'bayn.live-capital-grant.v1',
+  liveCapitalAuthorityDataFirst,
+)
 
 export type ExecutionAuthority =
   | {

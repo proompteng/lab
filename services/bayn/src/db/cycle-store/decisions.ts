@@ -285,7 +285,7 @@ const decideCompletionDataFirst = (
 
 export const decideCompletion = Pipeable.dual(3, decideCompletionDataFirst)
 
-export const validateCompletionDocument = (
+const validateCompletionDocumentDataFirst = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   paperCompletionEvidenceMatches?: boolean,
@@ -306,6 +306,16 @@ export const validateCompletionDocument = (
     ? Result.succeed(undefined)
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
+
+export const validateCompletionDocument = Pipeable.by<
+  (
+    storedDocuments: readonly CycleDecisionDocument[],
+    paperCompletionEvidenceMatches?: boolean,
+  ) => (
+    decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
+  ) => ReturnType<typeof validateCompletionDocumentDataFirst>,
+  typeof validateCompletionDocumentDataFirst
+>((arguments_) => !Array.isArray(arguments_[0]), validateCompletionDocumentDataFirst)
 
 const decideBlockDataFirst = (
   cycle: AutonomousCycle,
@@ -341,7 +351,7 @@ const decideBlockDataFirst = (
 
 export const decideBlock = Pipeable.dual(3, decideBlockDataFirst)
 
-export const validateBlockedDecision = (
+const validateBlockedDecisionDataFirst = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   paperGenerationIsSuperseded?: boolean,
@@ -384,3 +394,13 @@ export const validateBlockedDecision = (
   }
   return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired PAPER decision')
 }
+
+export const validateBlockedDecision = Pipeable.by<
+  (
+    storedDocuments: readonly CycleDecisionDocument[],
+    paperGenerationIsSuperseded?: boolean,
+  ) => (
+    decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
+  ) => ReturnType<typeof validateBlockedDecisionDataFirst>,
+  typeof validateBlockedDecisionDataFirst
+>((arguments_) => !Array.isArray(arguments_[0]), validateBlockedDecisionDataFirst)

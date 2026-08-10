@@ -209,7 +209,7 @@ const decideMutationStartReplayDataFirst = (
 
 export const decideMutationStartReplay = Pipeable.dual(3, decideMutationStartReplayDataFirst)
 
-export const decideMutationAuthority = (
+const decideMutationAuthorityDataFirst = (
   operation: MutationOperation,
   authority: MutationAuthoritySnapshot | undefined,
   closeOnly = false,
@@ -248,6 +248,14 @@ export const decideMutationAuthority = (
     generationHash: authority.generationHash,
   })
 }
+
+export const decideMutationAuthority = Pipeable.by<
+  (
+    authority: MutationAuthoritySnapshot | undefined,
+    closeOnly?: boolean,
+  ) => (operation: MutationOperation) => ReturnType<typeof decideMutationAuthorityDataFirst>,
+  typeof decideMutationAuthorityDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', decideMutationAuthorityDataFirst)
 
 export const decideFinalSubmitAuthorization = (
   authority: MutationAuthorityBinding,

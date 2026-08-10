@@ -52,7 +52,7 @@ const makeDecisionDataFirst = (
 
 export const makeDecision = Pipeable.dual(4, makeDecisionDataFirst)
 
-export const makeOrder = (
+const makeOrderDataFirst = (
   runId: string,
   decision: DecisionEvent,
   sessionDate: IsoDate,
@@ -100,6 +100,20 @@ export const makeOrder = (
       )
     }),
   )
+
+export const makeOrder = Pipeable.by<
+  (
+    decision: DecisionEvent,
+    sessionDate: IsoDate,
+    symbol: string,
+    side: 'buy' | 'sell',
+    requestedQuantityMicros: bigint,
+    referencePrice: bigint,
+    protocol: SimulationProtocol,
+    forceFullFill?: boolean,
+  ) => (runId: string) => ReturnType<typeof makeOrderDataFirst>,
+  typeof makeOrderDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', makeOrderDataFirst)
 
 const limitOrderFillToBuyingPowerDataFirst = (
   runId: string,

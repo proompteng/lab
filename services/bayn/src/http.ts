@@ -464,11 +464,20 @@ const historicalReadFailureDecisionDataFirst = (runId: string, error: Operationa
 
 export const historicalReadFailureDecision = Pipeable.dual(2, historicalReadFailureDecisionDataFirst)
 
-export const readHistoricalEvidence = <A, R>(
+const readHistoricalEvidenceDataFirst = <A, R>(
   read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
   timeoutMs: number,
 ): Effect.Effect<Option.Option<A>, OperationalError, R> =>
   withinDeadline(databaseOperation(read, 'read-evidence'), timeoutMs, 'database', 'read-evidence')
+
+export const readHistoricalEvidence = Pipeable.generic<
+  <A, R>(
+    timeoutMs: number,
+  ) => (
+    read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
+  ) => Effect.Effect<Option.Option<A>, OperationalError, R>,
+  typeof readHistoricalEvidenceDataFirst
+>(2, readHistoricalEvidenceDataFirst)
 
 export const fallbackResponseDecision = (method: string): HttpResponseDecision =>
   method === 'GET'

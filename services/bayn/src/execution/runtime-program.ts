@@ -124,7 +124,7 @@ const validatePaperEpisodeLease = (
     return yield* Effect.fail({ _tag: 'PaperEpisodeExpired' as const, expiresAt, observedAt })
   })
 
-export const authorizeFinalBrokerSubmit = <A, E, R>(
+const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
   authority: MutationExecutionAuthority,
   intent: Intent,
   transmit: Effect.Effect<A, E, R>,
@@ -165,6 +165,15 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
       ),
     )
 }
+
+export const authorizeFinalBrokerSubmit = Pipeable.generic<
+  <A, E, R>(
+    intent: Intent,
+    transmit: Effect.Effect<A, E, R>,
+    dependencies: ExecutionProgramDependencies,
+  ) => (authority: MutationExecutionAuthority) => Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R>,
+  typeof authorizeFinalBrokerSubmitDataFirst
+>(4, authorizeFinalBrokerSubmitDataFirst)
 
 const provideCoordinatorDependencies = <A, E, R>(
   effect: Effect.Effect<A, E, R>,

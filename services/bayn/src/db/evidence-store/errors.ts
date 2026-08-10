@@ -92,11 +92,16 @@ const classifyDatabaseErrorDataFirst = (operation: string, cause: unknown): Data
 
 export const classifyDatabaseError = Pipeable.dual(2, classifyDatabaseErrorDataFirst)
 
-export const runDatabase = <A, E, R>(
+const runDatabaseDataFirst = <A, E, R>(
   operation: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, DatabaseError, R> =>
   effect.pipe(Effect.mapError((cause) => classifyDatabaseError(operation, cause)))
+
+export const runDatabase = Pipeable.generic<
+  <A, E, R>(effect: Effect.Effect<A, E, R>) => (operation: string) => Effect.Effect<A, DatabaseError, R>,
+  typeof runDatabaseDataFirst
+>(2, runDatabaseDataFirst)
 
 const ensureDataFirst = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
   condition ? Effect.void : Effect.fail(databaseError('invariant', operation, message))

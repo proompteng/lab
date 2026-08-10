@@ -97,7 +97,7 @@ const calculateReplayMetricsDataFirst = (
 
 export const calculateReplayMetrics = Pipeable.dual(7, calculateReplayMetricsDataFirst)
 
-export const makeReferenceOrder = (
+const makeReferenceOrderDataFirst = (
   runId: string,
   decision: DecisionEvent,
   sessionDate: IsoDate,
@@ -139,6 +139,20 @@ export const makeReferenceOrder = (
       return makeReferenceOrderIdentity(runId, material)
     }),
   )
+
+export const makeReferenceOrder = Pipeable.by<
+  (
+    decision: DecisionEvent,
+    sessionDate: IsoDate,
+    symbol: string,
+    side: 'buy' | 'sell',
+    requestedQuantityMicros: bigint,
+    referencePrice: bigint,
+    protocol: SimulationProtocol,
+    forceFullFill?: boolean,
+  ) => (runId: string) => ReturnType<typeof makeReferenceOrderDataFirst>,
+  typeof makeReferenceOrderDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', makeReferenceOrderDataFirst)
 
 const restrictReferenceBuyFillDataFirst = (
   runId: string,
@@ -333,7 +347,7 @@ const replayBuyFeeInputs = (
   return Result.succeed(inputs)
 }
 
-export const replayBuysFitCash = (
+const replayBuysFitCashDataFirst = (
   buys: readonly ReferenceBuyCandidate[],
   scalePpm: bigint,
   prices: Readonly<Record<string, bigint>>,
@@ -355,3 +369,15 @@ export const replayBuysFitCash = (
       ),
     ),
   )
+
+export const replayBuysFitCash = Pipeable.by<
+  (
+    scalePpm: bigint,
+    prices: Readonly<Record<string, bigint>>,
+    protocol: SimulationProtocol,
+    costMultiplierMicros: bigint,
+    availableCashMicros: bigint,
+    minimumNotionalMicros?: bigint,
+  ) => (buys: readonly ReferenceBuyCandidate[]) => ReturnType<typeof replayBuysFitCashDataFirst>,
+  typeof replayBuysFitCashDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), replayBuysFitCashDataFirst)

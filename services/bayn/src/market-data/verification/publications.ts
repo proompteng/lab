@@ -30,7 +30,7 @@ const verifyFinalizedPublicationDataFirst = (
 
 export const verifyFinalizedPublication = Pipeable.dual(4, verifyFinalizedPublicationDataFirst)
 
-export const selectPublicationManifest = (
+const selectPublicationManifestDataFirst = (
   manifests: readonly SignalManifestRow[],
   expectedSnapshotId?: string,
 ): Result.Result<SignalManifestRow | undefined, MarketDataVerificationError> => {
@@ -45,7 +45,14 @@ export const selectPublicationManifest = (
     : Result.succeed(manifests[0])
 }
 
-export const verifyBoundFinalizedPublication = (
+export const selectPublicationManifest = Pipeable.by<
+  (
+    expectedSnapshotId?: string,
+  ) => (manifests: readonly SignalManifestRow[]) => ReturnType<typeof selectPublicationManifestDataFirst>,
+  typeof selectPublicationManifestDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), selectPublicationManifestDataFirst)
+
+const verifyBoundFinalizedPublicationDataFirst = (
   rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
   input: FinalizedPublicationRequest,
   contract: MarketDataContract,
@@ -72,6 +79,21 @@ export const verifyBoundFinalizedPublication = (
           : Result.succeed(inspection),
     ),
   )
+
+export const verifyBoundFinalizedPublication = Pipeable.by<
+  (
+    input: FinalizedPublicationRequest,
+    contract: MarketDataContract,
+    observedAt: string,
+    expectedSnapshotId?: string,
+  ) => (
+    rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
+  ) => ReturnType<typeof verifyBoundFinalizedPublicationDataFirst>,
+  typeof verifyBoundFinalizedPublicationDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'sessions' in arguments_[0],
+  verifyBoundFinalizedPublicationDataFirst,
+)
 
 const selectCyclePublicationManifestsDataFirst = (
   manifests: readonly SignalManifestRow[],

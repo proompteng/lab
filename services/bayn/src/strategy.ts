@@ -8,6 +8,7 @@ import type {
   StrategyDecisionFailure,
   TargetPortfolio,
 } from './strategy/core'
+import { Pipeable } from './pipeable'
 
 export type {
   CompiledStrategyDecision,
@@ -31,7 +32,7 @@ export const activeStrategyName = 'risk-balanced-trend' as const
 export const activeStrategyBehaviorHash = riskBalancedTrendBehaviorHash
 
 /** Attach the reviewed module identity to the executable application exported by that module. */
-export const bindReviewedStrategySource = <
+const bindReviewedStrategySourceDataFirst = <
   TMarket,
   TFailure extends StrategyDecisionFailure,
   TTarget extends TargetPortfolio,
@@ -42,6 +43,15 @@ export const bindReviewedStrategySource = <
   ...application,
   reviewedSource: Object.freeze({ ...reviewedSource }),
 })
+
+export const bindReviewedStrategySource = Pipeable.generic<
+  <TMarket, TFailure extends StrategyDecisionFailure, TTarget extends TargetPortfolio>(
+    reviewedSource: ReviewedStrategySource,
+  ) => (
+    application: StrategyApplication<TMarket, TFailure, TTarget>,
+  ) => StrategyApplication<TMarket, TFailure, TTarget>,
+  typeof bindReviewedStrategySourceDataFirst
+>(2, bindReviewedStrategySourceDataFirst)
 export type {
   RiskBalancedTrendMarketContext,
   RiskBalancedTrendStrategyApplication,

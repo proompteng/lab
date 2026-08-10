@@ -259,12 +259,17 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-export const submit = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
+const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
     fence: WriterFence,
   }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)))
+
+export const submit = Pipeable.by<
+  (consistencyDelayMs: number, closeOnly?: boolean) => (intentId: string) => ReturnType<typeof submitDataFirst>,
+  typeof submitDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', submitDataFirst)
 
 const persistCancelDecision = (
   services: MutationServices,

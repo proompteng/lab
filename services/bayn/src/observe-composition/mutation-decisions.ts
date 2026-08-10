@@ -178,7 +178,7 @@ export type PreparedMutationIntentAdmissionFailure = {
   readonly message: string
 }
 
-export const decidePreparedMutationIntentAdmission = (
+const decidePreparedMutationIntentAdmissionDataFirst = (
   prepared: PreparedMutationIntentDecision,
   effectiveAuthority: Authority,
   observedAt: string,
@@ -234,7 +234,23 @@ export const decidePreparedMutationIntentAdmission = (
   return Result.succeed(undefined)
 }
 
-export const decidePreparedCloseIntentAdmission = (
+export const decidePreparedMutationIntentAdmission = Pipeable.by<
+  (
+    effectiveAuthority: Authority,
+    observedAt: string,
+    expiresAt: string,
+    unknownMutationCount: number,
+    reconciliationStatus?: ReconciliationStatus,
+    accountingExact?: boolean,
+    unknownOrderCount?: number,
+  ) => (prepared: PreparedMutationIntentDecision) => ReturnType<typeof decidePreparedMutationIntentAdmissionDataFirst>,
+  typeof decidePreparedMutationIntentAdmissionDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
+  decidePreparedMutationIntentAdmissionDataFirst,
+)
+
+const decidePreparedCloseIntentAdmissionDataFirst = (
   intent: Pick<Intent, 'side'>,
   prepared: PreparedMutationIntentDecision,
   observedAt: string,
@@ -289,6 +305,22 @@ export const decidePreparedCloseIntentAdmission = (
   }
   return Result.succeed(undefined)
 }
+
+export const decidePreparedCloseIntentAdmission = Pipeable.by<
+  (
+    prepared: PreparedMutationIntentDecision,
+    observedAt: string,
+    expiresAt: string,
+    unknownMutationCount: number,
+    reconciliationStatus?: ReconciliationStatus,
+    accountingExact?: boolean,
+    unknownOrderCount?: number,
+  ) => (intent: Pick<Intent, 'side'>) => ReturnType<typeof decidePreparedCloseIntentAdmissionDataFirst>,
+  typeof decidePreparedCloseIntentAdmissionDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'side' in arguments_[0],
+  decidePreparedCloseIntentAdmissionDataFirst,
+)
 
 const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: Order): readonly Order[] =>
   orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)

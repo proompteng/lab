@@ -11,6 +11,7 @@ import {
   layer as brokerSessionLayer,
 } from './session'
 import { BrokerRead } from './model'
+import { Pipeable } from '../../pipeable'
 
 const brokerSessionAcquisitionError = (
   connection: BrokerConnection,
@@ -35,7 +36,7 @@ const mapHttpAcquisitionError = (
     ),
   )
 
-export const AlpacaBrokerResourcesLive = (
+const AlpacaBrokerResourcesLiveDataFirst = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError> = alpacaHttpLayer(connection),
 ): Layer.Layer<BrokerSession | BrokerRead | AlpacaHttpClient, BrokerSessionAcquisitionError> => {
@@ -44,3 +45,13 @@ export const AlpacaBrokerResourcesLive = (
   const client = Layer.effect(AlpacaHttpClient, HttpClient.HttpClient).pipe(Layer.provide(sharedHttp))
   return Layer.merge(session, client)
 }
+
+export const AlpacaBrokerResourcesLive = Pipeable.by<
+  (
+    http?: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
+  ) => (connection: BrokerConnection) => ReturnType<typeof AlpacaBrokerResourcesLiveDataFirst>,
+  typeof AlpacaBrokerResourcesLiveDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'baseUrl' in arguments_[0],
+  AlpacaBrokerResourcesLiveDataFirst,
+)
