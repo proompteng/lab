@@ -576,6 +576,32 @@ describe('same-code execution program composition', () => {
 
     expect(exit._tag).toBe('Success')
     expect(posts).toBe(1)
+
+    const shortElsewhere = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...testDependencies,
+          brokerRead: stableBrokerRead([
+            brokerPosition(),
+            brokerPosition({
+              assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+              symbol: 'NVDA',
+              side: PositionSide.Short,
+              quantityMicros: '-2000000',
+              marketValueMicros: '-200000000',
+            }),
+          ]),
+        },
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(shortElsewhere)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(posts).toBe(1)
   })
 
   test('keeps a distinct live-grant order cap on an exposure-reducing close', async () => {

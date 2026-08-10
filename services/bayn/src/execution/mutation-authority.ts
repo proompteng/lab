@@ -772,16 +772,20 @@ const validateExecutionCapitalLimitsDataFirst = (
   )
   const currentGross = worstCaseGross(false)
   const projectedGross = worstCaseGross(true)
+  const currentNet = [...currentBySymbol.values()].reduce((total, notional) => total + notional, 0n)
+  const projectedNet = currentNet + proposedSignedNotional
   const projectedQuantity = minimumSymbolQuantityAfterPendingSells(intent, snapshot)
   if (Result.isFailure(projectedQuantity)) return Result.fail(projectedQuantity.failure)
   const exposureReducingClose =
     context.closeOnly &&
     intent.side === IntentOrderSide.Sell &&
+    snapshot.positions.every((position) => BigInt(position.quantityMicros) >= 0n) &&
     projectedQuantity.success.beforeIntentMicros > 0n &&
     projectedQuantity.success.afterIntentMicros >= 0n &&
     projectedQuantity.success.afterIntentMicros < projectedQuantity.success.beforeIntentMicros &&
     projectedSymbol < currentSymbol &&
-    projectedGross <= currentGross
+    projectedGross <= currentGross &&
+    absolute(projectedNet) <= absolute(currentNet)
 
   const enforcedOrderLimit = exposureReducingClose
     ? context.hardCloseLimits?.maxOrderNotionalMicros
