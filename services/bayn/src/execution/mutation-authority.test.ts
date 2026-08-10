@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Fiber, Result } from 'effect'
+import { Cause, Effect, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -34,7 +34,13 @@ import {
   type LiveCapitalLimits,
   type MutationExecutionAuthority,
 } from './authority'
-import { makeAuthorityGuardedBrokerMutation, type FinalSubmitAuthorization } from './mutation-authority'
+import {
+  isLiveMutationExecutionAuthority,
+  makeAuthorityGuardedBrokerMutation,
+  refreshLiveBrokerSubmitSnapshot,
+  validateLiveBrokerSubmitSnapshot,
+  type FinalSubmitAuthorization,
+} from './mutation-authority'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -269,47 +275,58 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       }),
     cancel: () => Effect.succeed(cancelReceipt),
   }
-  const guarded = makeAuthorityGuardedBrokerMutation(
-    mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant)),
-    {
-      brokerRead,
-      brokerMutation,
-      liveCapitalGrants: {
-        read: () =>
-          Effect.sync(() => {
-            trace.push('grant')
-            grantReads += 1
-            if (input.persistedAtRead !== undefined) return input.persistedAtRead(priceReads)
-            return input.persisted === undefined && !('persisted' in input)
-              ? liveCapitalAuthority(grant)
-              : input.persisted
-          }),
-      },
-      freshBrokerPrice: (symbol) =>
-        Effect.sync(() => {
-          trace.push('price')
-          priceReads += 1
-          const quote = input.freshPricesBySymbol?.[symbol]
-          return {
-            symbol,
-            bidPriceMicros: quote?.bid ?? input.freshBidPriceMicros ?? '100000000',
-            askPriceMicros: quote?.ask ?? input.freshAskPriceMicros ?? '100000000',
-            quotedAt: input.quotedAt ?? activeAt,
-            observedAt: input.observedAt ?? activeAt,
-          }
-        }),
-      currentUtcInstant: Effect.sync(() => {
-        trace.push('clock')
-        return input.observedAt ?? activeAt
+  const authority = mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant))
+  if (!isLiveMutationExecutionAuthority(authority)) throw new Error('live submit fixture requires live authority')
+  const liveCapitalGrants = {
+    read: () =>
+      Effect.sync(() => {
+        trace.push('grant')
+        grantReads += 1
+        if (input.persistedAtRead !== undefined) return input.persistedAtRead(priceReads)
+        return input.persisted === undefined && !('persisted' in input) ? liveCapitalAuthority(grant) : input.persisted
       }),
-      finalSubmitAuthorization:
-        input.finalSubmitAuthorization ??
-        ((_intent, transmit) =>
-          Effect.sync(() => {
-            trace.push('authorize')
-          }).pipe(Effect.andThen(transmit))),
-    },
-  )
+  }
+  const freshBrokerPrice = (symbol: string) =>
+    Effect.sync(() => {
+      trace.push('price')
+      priceReads += 1
+      const quote = input.freshPricesBySymbol?.[symbol]
+      return {
+        symbol,
+        bidPriceMicros: quote?.bid ?? input.freshBidPriceMicros ?? '100000000',
+        askPriceMicros: quote?.ask ?? input.freshAskPriceMicros ?? '100000000',
+        quotedAt: input.quotedAt ?? activeAt,
+        observedAt: input.observedAt ?? activeAt,
+      }
+    })
+  const currentUtcInstant = Effect.sync(() => {
+    trace.push('clock')
+    return input.observedAt ?? activeAt
+  })
+  const finalSubmitAuthorization: FinalSubmitAuthorization =
+    input.finalSubmitAuthorization ??
+    ((proposedIntent, transmit) =>
+      Effect.gen(function* () {
+        const snapshot = yield* refreshLiveBrokerSubmitSnapshot(authority, proposedIntent, {
+          brokerRead,
+          freshBrokerPrice,
+        })
+        const persisted = yield* liveCapitalGrants.read()
+        if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
+        const observedAt = yield* currentUtcInstant
+        const validation = validateLiveBrokerSubmitSnapshot(authority, persisted, proposedIntent, snapshot, observedAt)
+        if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
+        trace.push('authorize')
+        return yield* transmit
+      }))
+  const guarded = makeAuthorityGuardedBrokerMutation(authority, {
+    brokerRead,
+    brokerMutation,
+    liveCapitalGrants,
+    freshBrokerPrice,
+    currentUtcInstant,
+    finalSubmitAuthorization,
+  })
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
   return { exit, grant, grantReads, orderLimit, positionReads, priceReads, submits, trace }
 }
@@ -350,95 +367,6 @@ describe('final broker mutation authority', () => {
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
     expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
-  })
-
-  test('serializes concurrent live snapshots through broker submission', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxOpenOrders: 1 })
-    const observed = await Effect.runPromise(
-      Effect.gen(function* () {
-        const firstSubmitStarted = yield* Deferred.make<void>()
-        const releaseFirstSubmit = yield* Deferred.make<void>()
-        let openOrders: readonly Order[] = []
-        let snapshotReads = 0
-        let submits = 0
-        const unusedRead = Effect.die(new Error('unused broker read in concurrent mutation authority test'))
-        const brokerRead: BrokerReadShape = {
-          account: Effect.succeed(readResult(account())),
-          accountConfiguration: unusedRead,
-          assetBySymbol: () => unusedRead,
-          positions: Effect.succeed(readResult([])),
-          orders: () =>
-            Effect.sync(() => {
-              snapshotReads += 1
-              return readResult(openOrders)
-            }),
-          orderById: () => unusedRead,
-          orderByClientId: () => unusedRead,
-          fillActivities: () => unusedRead,
-          marketCalendar: () => unusedRead,
-        }
-        const brokerMutation: BrokerMutationShape = {
-          submit: (submittedIntent) =>
-            Effect.gen(function* () {
-              submits += 1
-              if (submits === 1) {
-                yield* Deferred.succeed(firstSubmitStarted, undefined)
-                yield* Deferred.await(releaseFirstSubmit)
-              }
-              const accepted = order({ clientOrderId: submittedIntent.clientOrderId })
-              openOrders = [...openOrders, accepted]
-              return { ...submitReceipt, order: accepted }
-            }),
-          cancel: () => Effect.succeed(cancelReceipt),
-        }
-        const guarded = makeAuthorityGuardedBrokerMutation(
-          mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant)),
-          {
-            brokerRead,
-            brokerMutation,
-            liveCapitalGrants: { read: () => Effect.succeed(liveCapitalAuthority(grant)) },
-            freshBrokerPrice: (symbol) =>
-              Effect.succeed({
-                symbol,
-                bidPriceMicros: '100000000',
-                askPriceMicros: '100000000',
-                quotedAt: activeAt,
-                observedAt: activeAt,
-              }),
-            currentUtcInstant: Effect.succeed(activeAt),
-            finalSubmitAuthorization: (_intent, transmit) => transmit,
-          },
-        )
-        const first = yield* guarded
-          .submit(intent({ intentId: 'a'.repeat(64), clientOrderId: 'concurrent-live-1' }))
-          .pipe(Effect.exit, Effect.forkChild)
-        yield* Deferred.await(firstSubmitStarted)
-        const second = yield* guarded
-          .submit(intent({ intentId: 'b'.repeat(64), clientOrderId: 'concurrent-live-2' }))
-          .pipe(Effect.exit, Effect.forkChild)
-        yield* Effect.sleep('10 millis')
-        const snapshotReadsWhileFirstBlocked = snapshotReads
-        yield* Deferred.succeed(releaseFirstSubmit, undefined)
-        return {
-          first: yield* Fiber.join(first),
-          second: yield* Fiber.join(second),
-          snapshotReads,
-          snapshotReadsWhileFirstBlocked,
-          submits,
-        }
-      }),
-    )
-
-    expect(observed.snapshotReadsWhileFirstBlocked).toBe(1)
-    expect(observed.snapshotReads).toBe(2)
-    expect(observed.submits).toBe(1)
-    expect([observed.first._tag, observed.second._tag].sort()).toEqual(['Failure', 'Success'])
-    const rejected = observed.first._tag === 'Failure' ? observed.first : observed.second
-    expect(rejected._tag).toBe('Failure')
-    if (rejected._tag === 'Failure') {
-      const failure = rejected.cause.reasons.find(Cause.isFailReason)?.error
-      expect(failure?.cause?.['tag']).toBe('LiveOpenOrderLimitExceeded')
-    }
   })
 
   test.each([
@@ -493,13 +421,15 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('rechecks the final submit window after live preflight with zero broker submits', async () => {
+  test('delegates final-submit rejection before any broker preflight', async () => {
     const observed = await runLiveSubmit({
       finalSubmitAuthorization: () => Effect.fail({ _tag: 'ExpiredRiskDecision' as const }),
     })
 
     expect(failureTag(observed.exit)).toBe('ExpiredRiskDecision')
-    expect(observed.priceReads).toBe(1)
+    expect(observed.priceReads).toBe(0)
+    expect(observed.grantReads).toBe(0)
+    expect(observed.positionReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
 

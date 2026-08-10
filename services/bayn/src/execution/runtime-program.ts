@@ -5,6 +5,8 @@ import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutat
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
 import type { OperationalError } from '../errors'
+import { canonicalHashV1Result } from '../hash'
+import type { Policy } from '../risk'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordinator-decisions'
@@ -12,6 +14,7 @@ import type { Intent } from './contracts'
 import {
   BrokerAccess,
   CapitalAuthorityKind,
+  type ExecutionCapitalLimits,
   type ExecutionAuthority,
   type LiveCapitalAuthority,
   type MutationExecutionAuthority,
@@ -20,9 +23,10 @@ import { IntentStore, type IntentStoreService } from './intents'
 import { MutationStore, type MutationStoreShape } from './mutations'
 import {
   makeAuthorityGuardedBrokerMutation,
-  isLiveMutationExecutionAuthority,
-  refreshLiveBrokerSubmitSnapshot,
-  validateLiveBrokerSubmitSnapshot,
+  constrainExecutionCapitalLimits,
+  executionCapitalLimitsFromPolicy,
+  refreshExecutionBrokerSubmitSnapshot,
+  validateExecutionBrokerSubmitSnapshot,
   validateLiveGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
   type FreshBrokerQuote,
@@ -37,6 +41,7 @@ export interface ExecutionProgramDependencies {
   readonly mutationStore: MutationStoreShape
   readonly writerFence: WriterFenceService
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
+  readonly riskPolicy: Policy
   readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed PAPER entry lease, checked at the final writer fence. */
@@ -51,12 +56,47 @@ export interface ExecutionProgramConstructionFailure {
   readonly brokerAccess: BrokerAccess
 }
 
-const finalLiveGrantAuthorization = (
+interface FinalExecutionCapitalAuthorization {
+  readonly limits: ExecutionCapitalLimits
+  readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
+  readonly liveGrant?: LiveCapitalAuthority
+}
+
+const executionPolicyLimits = (
   authority: MutationExecutionAuthority,
+  intent: Intent,
   dependencies: ExecutionProgramDependencies,
-): Effect.Effect<LiveCapitalAuthority | undefined, FinalSubmitAuthorizationFailure> => {
+): Result.Result<ExecutionCapitalLimits, FinalSubmitAuthorizationFailure> => {
+  const policyHash = canonicalHashV1Result(dependencies.riskPolicy)
+  if (Result.isFailure(policyHash)) {
+    return Result.fail({ _tag: 'ExecutionRiskPolicyInvalid' as const })
+  }
+  if (policyHash.success !== intent.policyHash) {
+    return Result.fail({
+      _tag: 'ExecutionRiskPolicyHashMismatch' as const,
+      expected: intent.policyHash,
+      observed: policyHash.success,
+    })
+  }
+  if (dependencies.riskPolicy.accountId !== authority.brokerIdentity.accountId) {
+    return Result.fail({
+      _tag: 'ExecutionRiskPolicyAccountMismatch' as const,
+      expected: authority.brokerIdentity.accountId,
+      observed: dependencies.riskPolicy.accountId,
+    })
+  }
+  return Result.succeed(executionCapitalLimitsFromPolicy(dependencies.riskPolicy))
+}
+
+const finalExecutionGrantAuthorization = (
+  authority: MutationExecutionAuthority,
+  intent: Intent,
+  dependencies: ExecutionProgramDependencies,
+): Effect.Effect<FinalExecutionCapitalAuthorization, FinalSubmitAuthorizationFailure> => {
+  const policyLimits = executionPolicyLimits(authority, intent, dependencies)
+  if (Result.isFailure(policyLimits)) return Effect.fail(policyLimits.failure)
   const capital = authority.capitalAuthority
-  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.as(Effect.void, undefined)
+  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.succeed({ limits: policyLimits.success })
   const grantHash = capital.grant.grantHash
   return Effect.gen(function* () {
     const persisted = yield* dependencies.liveCapitalGrants.lockForSubmit(grantHash)
@@ -66,23 +106,41 @@ const finalLiveGrantAuthorization = (
     const observedAt = yield* dependencies.currentUtcInstant
     const validated = validateLiveGrantForSubmit(authority, persisted, observedAt)
     if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
-    return persisted
+    const grantLimits = validated.success.capitalAuthority.grant.limits
+    return {
+      limits: constrainExecutionCapitalLimits(policyLimits.success, grantLimits),
+      hardCloseLimits: grantLimits,
+      liveGrant: persisted,
+    }
   })
 }
 
-const finalLiveBrokerAuthorization = (
+const finalBrokerAuthorization = (
   authority: MutationExecutionAuthority,
-  persisted: LiveCapitalAuthority,
+  capital: FinalExecutionCapitalAuthorization,
   intent: Intent,
+  closeOnly: boolean,
   dependencies: ExecutionProgramDependencies,
 ): Effect.Effect<void, FinalSubmitAuthorizationFailure> => {
-  if (!isLiveMutationExecutionAuthority(authority)) {
-    return Effect.fail({ _tag: 'FreshAuthorityCapabilityMismatch' as const })
-  }
   return Effect.gen(function* () {
-    const snapshot = yield* refreshLiveBrokerSubmitSnapshot(authority, intent, dependencies)
+    const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
-    const validation = validateLiveBrokerSubmitSnapshot(authority, persisted, intent, snapshot, observedAt)
+    const refreshedAuthority =
+      capital.liveGrant === undefined
+        ? Result.succeed(authority)
+        : validateLiveGrantForSubmit(authority, capital.liveGrant, observedAt)
+    if (Result.isFailure(refreshedAuthority)) return yield* Effect.fail(refreshedAuthority.failure)
+    const validation = validateExecutionBrokerSubmitSnapshot(
+      refreshedAuthority.success,
+      capital.limits,
+      intent,
+      snapshot,
+      observedAt,
+      {
+        closeOnly,
+        ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
+      },
+    )
     if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
   })
 }
@@ -140,12 +198,11 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
             : false
         yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        const persisted = yield* finalLiveGrantAuthorization(authority, dependencies)
+        const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        if (persisted !== undefined) {
-          yield* finalLiveBrokerAuthorization(authority, persisted, intent, dependencies)
-          yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        }
+        yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
+        yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
+        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
         transmissionStarted = true
         return yield* transmit

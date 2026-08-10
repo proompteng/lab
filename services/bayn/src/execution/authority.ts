@@ -40,13 +40,15 @@ export interface SandboxCapitalAuthority {
   readonly authorityGenerationHash: string
 }
 
-export interface LiveCapitalLimits {
+export interface ExecutionCapitalLimits {
   readonly maxGrossNotionalMicros: string
   readonly maxOrderNotionalMicros: string
   readonly maxPositionNotionalMicros: string
   readonly maxDailyLossMicros: string
   readonly maxOpenOrders: number
 }
+
+export type LiveCapitalLimits = ExecutionCapitalLimits
 
 export interface ExecutionStrategyIdentity {
   readonly name: string
