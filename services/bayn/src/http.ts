@@ -526,6 +526,11 @@ const renderPrometheusMetricsDataFirst = (
   const effectiveBrokerMutation = paperActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
   const effectiveCapitalPromotion =
     paperActivationRealized || config.execution.capitalAuthority._tag !== CapitalAuthorityKind.None
+  const paperActivationState =
+    state.paperActivation?._tag === 'NotConfigured' || state.paperActivation === undefined
+      ? 'not_configured'
+      : state.paperActivation._tag.toLowerCase()
+  const paperActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
   const cadence = autonomousCycleCadenceObservation(state)
   const cadenceConditions = Object.values(MonthEndCadenceCondition)
   const cadenceReasons = Object.values(MonthEndCadenceReason)
@@ -538,13 +543,17 @@ const renderPrometheusMetricsDataFirst = (
     state.autonomousCycleLoop.lastPass === null || state.health.checkedAt === null
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
-  const effectiveAuthority = paperActivationRealized
-    ? 'paper'
-    : state.cycle.authority === null
+  const effectiveAuthority =
+    state.cycle.authority === null
       ? 'unknown'
       : state.cycle.authority.effective === Authority.Paper
         ? 'paper'
         : 'observe'
+  const paperActivationRecoveryOnly =
+    paperActivationRealized &&
+    state.cycle.authority?.maximum === Authority.Paper &&
+    state.cycle.authority.effective === Authority.Observe &&
+    state.cycle.alerts.killActive
   const lines = [
     '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
     '# TYPE bayn_runtime_ready gauge',
@@ -726,6 +735,15 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
     '# TYPE bayn_capital_promotion_enabled gauge',
     `bayn_capital_promotion_enabled ${effectiveCapitalPromotion ? 1 : 0}`,
+    '# HELP bayn_paper_activation_state Current PAPER activation lifecycle state.',
+    '# TYPE bayn_paper_activation_state gauge',
+    ...paperActivationStates.map(
+      (activationState) =>
+        `bayn_paper_activation_state{state="${activationState}"} ${paperActivationState === activationState ? 1 : 0}`,
+    ),
+    '# HELP bayn_paper_activation_recovery_only Whether the realized PAPER runtime is restricted to recovery and close operations.',
+    '# TYPE bayn_paper_activation_recovery_only gauge',
+    `bayn_paper_activation_recovery_only ${paperActivationRecoveryOnly ? 1 : 0}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

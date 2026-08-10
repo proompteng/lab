@@ -358,6 +358,30 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_mutation_recovery_found_events_total 185')
     expect(metrics).toContain('bayn_intents{state="approved"} 3')
     expect(metrics).toContain('bayn_intents{state="acknowledged"} 1')
+    expect(metrics).toContain('bayn_paper_activation_recovery_only 0')
+
+    const restrictedMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          authority: {
+            generationHash: realized.paperActivation.generationHash,
+            maximum: Authority.Paper,
+            effective: Authority.Observe,
+            kill: KillState.Active,
+            reason: 'PAPER autonomous cycle loop restricted effective authority: bounded recovery',
+            updatedAt: '2026-09-01T13:31:00.000Z',
+          },
+          alerts: { ...realized.cycle.alerts, killActive: true },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(restrictedMetrics).toContain('bayn_paper_activation_recovery_only 1')
+    expect(restrictedMetrics).toContain('bayn_authority_effective{authority="observe"} 1')
   })
 
   test('covers every readiness decision branch without mutating runtime facts', () => {
@@ -1242,6 +1266,8 @@ describe('Bayn HTTP probes', () => {
               },
             })
             expect(metrics.body).toContain('bayn_runtime_ready 1')
+            expect(metrics.body).toContain('bayn_paper_activation_state{state="realized"} 1')
+            expect(metrics.body).toContain('bayn_paper_activation_state{state="pending"} 0')
           }),
         ),
         Effect.asVoid,
@@ -1819,6 +1845,7 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_cycle_reason{reason="observation_unavailable"} 1')
     expect(metrics).toContain('bayn_cycle_phase{phase="unknown"} 1')
     expect(metrics).toContain('bayn_cycle_terminal_reason{reason="unknown"} 1')
+    expect(metrics).toContain('bayn_paper_activation_state{state="not_configured"} 1')
     expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
     expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
     expect(metrics).not.toContain('bayn_mutation_events_total ')
