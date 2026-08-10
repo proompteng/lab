@@ -55,6 +55,11 @@ export interface ExecutionProgramConstructionFailure {
   readonly brokerAccess: BrokerAccess
 }
 
+interface FinalExecutionCapitalAuthorization {
+  readonly limits: ExecutionCapitalLimits
+  readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
+}
+
 const executionPolicyLimits = (
   authority: MutationExecutionAuthority,
   intent: Intent,
@@ -85,11 +90,11 @@ const finalExecutionGrantAuthorization = (
   authority: MutationExecutionAuthority,
   intent: Intent,
   dependencies: ExecutionProgramDependencies,
-): Effect.Effect<ExecutionCapitalLimits, FinalSubmitAuthorizationFailure> => {
+): Effect.Effect<FinalExecutionCapitalAuthorization, FinalSubmitAuthorizationFailure> => {
   const policyLimits = executionPolicyLimits(authority, intent, dependencies)
   if (Result.isFailure(policyLimits)) return Effect.fail(policyLimits.failure)
   const capital = authority.capitalAuthority
-  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.succeed(policyLimits.success)
+  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.succeed({ limits: policyLimits.success })
   const grantHash = capital.grant.grantHash
   return Effect.gen(function* () {
     const persisted = yield* dependencies.liveCapitalGrants.lockForSubmit(grantHash)
@@ -99,20 +104,28 @@ const finalExecutionGrantAuthorization = (
     const observedAt = yield* dependencies.currentUtcInstant
     const validated = validateLiveGrantForSubmit(authority, persisted, observedAt)
     if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
-    return constrainExecutionCapitalLimits(policyLimits.success, validated.success.capitalAuthority.grant.limits)
+    const grantLimits = validated.success.capitalAuthority.grant.limits
+    return {
+      limits: constrainExecutionCapitalLimits(policyLimits.success, grantLimits),
+      hardCloseLimits: grantLimits,
+    }
   })
 }
 
 const finalBrokerAuthorization = (
   authority: MutationExecutionAuthority,
-  limits: ExecutionCapitalLimits,
+  capital: FinalExecutionCapitalAuthorization,
   intent: Intent,
+  closeOnly: boolean,
   dependencies: ExecutionProgramDependencies,
 ): Effect.Effect<void, FinalSubmitAuthorizationFailure> => {
   return Effect.gen(function* () {
-    const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(limits, intent, dependencies)
+    const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
-    const validation = validateExecutionBrokerSubmitSnapshot(authority, limits, intent, snapshot, observedAt)
+    const validation = validateExecutionBrokerSubmitSnapshot(authority, capital.limits, intent, snapshot, observedAt, {
+      closeOnly,
+      ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
+    })
     if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
   })
 }
@@ -170,10 +183,10 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
             : false
         yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        const limits = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
+        const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
-        yield* finalBrokerAuthorization(authority, limits, intent, dependencies)
+        yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         transmissionStarted = true
         return yield* transmit

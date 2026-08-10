@@ -226,6 +226,11 @@ export type LiveBrokerSubmitSnapshot = ExecutionBrokerSubmitSnapshot
 
 export type LiveBrokerSubmitRefreshDependencies = Pick<MutationAuthorityDependencies, 'brokerRead' | 'freshBrokerPrice'>
 
+export interface ExecutionCapitalLimitContext {
+  readonly closeOnly: boolean
+  readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
+}
+
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const freshBrokerPriceMaximumAgeMs = 5_000
 const microsPerUnit = 1_000_000n
@@ -698,6 +703,7 @@ const validateExecutionCapitalLimitsDataFirst = (
   proposedExposureNotional: bigint,
   proposedOrderNotional: bigint,
   openOrderNotionals: ReadonlyMap<string, bigint>,
+  context: ExecutionCapitalLimitContext,
 ): Result.Result<void, LiveCapitalLimitFailure> => {
   const binding = validateIntentAuthorityBinding(authority, intent)
   if (Result.isFailure(binding)) return Result.fail(binding.failure)
@@ -706,7 +712,6 @@ const validateExecutionCapitalLimitsDataFirst = (
   const pendingSellCoverage = validatePendingSellCoverage(snapshot)
   if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
-  const orderLimit = BigInt(limits.maxOrderNotionalMicros)
   if (snapshot.openOrders.length >= limits.maxOpenOrders) {
     return Result.fail({
       _tag: 'LiveOpenOrderLimitExceeded',
@@ -769,11 +774,22 @@ const validateExecutionCapitalLimitsDataFirst = (
   const projectedGross = worstCaseGross(true)
   const projectedQuantity = minimumSymbolQuantityAfterPendingSells(intent, snapshot)
   if (Result.isFailure(projectedQuantity)) return Result.fail(projectedQuantity.failure)
+  const exposureReducingClose =
+    context.closeOnly &&
+    intent.side === IntentOrderSide.Sell &&
+    projectedQuantity.success.beforeIntentMicros > 0n &&
+    projectedQuantity.success.afterIntentMicros >= 0n &&
+    projectedQuantity.success.afterIntentMicros < projectedQuantity.success.beforeIntentMicros &&
+    projectedSymbol < currentSymbol &&
+    projectedGross <= currentGross
 
-  if (proposedOrderNotional > orderLimit) {
+  const enforcedOrderLimit = exposureReducingClose
+    ? context.hardCloseLimits?.maxOrderNotionalMicros
+    : limits.maxOrderNotionalMicros
+  if (enforcedOrderLimit !== undefined && proposedOrderNotional > BigInt(enforcedOrderLimit)) {
     return Result.fail({
       _tag: 'LiveOrderNotionalLimitExceeded',
-      limitMicros: limits.maxOrderNotionalMicros,
+      limitMicros: enforcedOrderLimit,
       proposedMicros: proposedOrderNotional.toString(),
     })
   }
@@ -805,17 +821,20 @@ const validateExecutionCapitalLimitsDataFirst = (
 
   const dailyLoss = BigInt(snapshot.account.lastEquityMicros) - BigInt(snapshot.account.equityMicros)
   const observedLoss = dailyLoss > 0n ? dailyLoss : 0n
-  if (observedLoss > BigInt(limits.maxDailyLossMicros)) {
+  const enforcedDailyLossLimit = exposureReducingClose
+    ? context.hardCloseLimits?.maxDailyLossMicros
+    : limits.maxDailyLossMicros
+  if (enforcedDailyLossLimit !== undefined && observedLoss > BigInt(enforcedDailyLossLimit)) {
     return Result.fail({
       _tag: 'LiveDailyLossLimitExceeded',
-      limitMicros: limits.maxDailyLossMicros,
+      limitMicros: enforcedDailyLossLimit,
       observedMicros: observedLoss.toString(),
     })
   }
   return Result.succeed(undefined)
 }
 
-export const validateExecutionCapitalLimits = Pipeable.dual(7, validateExecutionCapitalLimitsDataFirst)
+export const validateExecutionCapitalLimits = Pipeable.dual(8, validateExecutionCapitalLimitsDataFirst)
 
 const validateLiveCapitalLimitsDataFirst = (
   authority: LiveMutationExecutionAuthority,
@@ -833,6 +852,7 @@ const validateLiveCapitalLimitsDataFirst = (
     proposedExposureNotional,
     proposedOrderNotional,
     openOrderNotionals,
+    { closeOnly: false },
   )
 
 export const validateLiveCapitalLimits = Pipeable.dual(6, validateLiveCapitalLimitsDataFirst)
@@ -961,6 +981,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
   intent: Intent,
   snapshot: ExecutionBrokerSubmitSnapshot,
   observedAt: string,
+  context: ExecutionCapitalLimitContext,
 ): Result.Result<void, LiveBrokerSubmitValidationFailure> => {
   const intentQuote = snapshot.quotes.get(intent.symbol)
   if (intentQuote === undefined) {
@@ -985,10 +1006,11 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
     requestedNotional.success,
     orderCapNotional.success,
     openOrderNotionals.success,
+    context,
   )
 }
 
-export const validateExecutionBrokerSubmitSnapshot = Pipeable.dual(5, validateExecutionBrokerSubmitSnapshotDataFirst)
+export const validateExecutionBrokerSubmitSnapshot = Pipeable.dual(6, validateExecutionBrokerSubmitSnapshotDataFirst)
 
 const validateLiveBrokerSubmitSnapshotDataFirst = (
   captured: LiveMutationExecutionAuthority,
@@ -1006,6 +1028,7 @@ const validateLiveBrokerSubmitSnapshotDataFirst = (
         intent,
         snapshot,
         observedAt,
+        { closeOnly: false },
       )
 }
 

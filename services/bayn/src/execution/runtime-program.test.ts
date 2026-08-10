@@ -129,7 +129,7 @@ const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
   observedAt,
   ...overrides,
 })
-const brokerPosition = (): Position => ({
+const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
   accountId,
   assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
   symbol: 'AMD',
@@ -142,12 +142,13 @@ const brokerPosition = (): Position => ({
   marketValueMicros: '100000000',
   unrealizedPnlMicros: '0',
   observedAt,
+  ...overrides,
 })
 
-const stableBrokerRead = (positions: readonly Position[] = []): BrokerReadShape => {
+const stableBrokerRead = (positions: readonly Position[] = [], account: Account = brokerAccount()): BrokerReadShape => {
   const unusedRead = Effect.die(new Error('stable broker fixture used an unrelated broker read'))
   return {
-    account: Effect.succeed(readResult(brokerAccount())),
+    account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
     assetBySymbol: () => unusedRead,
     positions: Effect.succeed(readResult(positions)),
@@ -517,6 +518,131 @@ describe('same-code execution program composition', () => {
     )
     expect(finalAuthorizationFailureTag(closeExpired)).toBe('PaperEpisodeExpired')
     expect(posts).toBe(1)
+  })
+
+  test('preserves policy limit exemptions for a freshly verified exposure-reducing close', async () => {
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Sandbox),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const source = finalLiveFixture()
+    const closePolicy: Policy = {
+      ...riskPolicy,
+      maxOrderNotionalMicros: '99999999',
+      maxDailyLossMicros: '99999999',
+    }
+    const policyHash = Result.getOrThrow(canonicalHashV1Result(closePolicy))
+    const intent: Intent = { ...source.intent, side: OrderSide.Sell, policyHash }
+    if (source.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
+    const stored: StoredIntent = {
+      ...source.stored,
+      intent,
+      decision: { ...source.stored.decision, policyHash },
+    }
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('close-policy-exemption'),
+      riskPolicy: closePolicy,
+      brokerRead: stableBrokerRead(
+        [brokerPosition()],
+        brokerAccount({ lastEquityMicros: '1100000000', equityMicros: '1000000000' }),
+      ),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(exit._tag).toBe('Success')
+    expect(posts).toBe(1)
+  })
+
+  test('keeps a distinct live-grant order cap on an exposure-reducing close', async () => {
+    const liveIdentity = identity(BrokerEnvironment.Live)
+    const grant = Result.getOrThrow(
+      makeLiveCapitalGrant({
+        schemaVersion: 'bayn.live-capital-grant.v1',
+        brokerIdentity: liveIdentity,
+        authorityGenerationHash,
+        strategy,
+        limits: {
+          maxGrossNotionalMicros: '100000000000',
+          maxOrderNotionalMicros: '99999999',
+          maxPositionNotionalMicros: '25000000000',
+          maxDailyLossMicros: '1000000000',
+          maxOpenOrders: 5,
+        },
+        validFrom: '2026-07-28T07:00:00.000Z',
+        validUntil: '2026-07-28T09:00:00.000Z',
+        issuedAt: '2026-07-28T06:00:00.000Z',
+        issuedBy: 'operator:test',
+      }),
+    )
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: liveIdentity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: liveCapitalAuthority(grant),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const source = finalLiveFixture()
+    const intent: Intent = { ...source.intent, side: OrderSide.Sell }
+    const stored: StoredIntent = { ...source.stored, intent }
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('close-grant-cap'),
+      brokerRead: stableBrokerRead([brokerPosition()]),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      liveCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(liveCapitalAuthority(grant)),
+      },
+      isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(posts).toBe(0)
   })
 
   test('rechecks risk expiry after a blocking live-grant lock and performs zero broker posts', async () => {
