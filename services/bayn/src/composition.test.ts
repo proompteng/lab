@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { provideTestLayer } from './effect-test-support'
+
 import {
   ApplicationPlatformLive,
   closedCycleReceiptEmissionAllowed,
@@ -95,7 +97,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
         yield* Effect.yieldNow
         yield* TestClock.adjust(17_000)
         yield* Fiber.join(retry)
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(observedAt).toHaveLength(17)
@@ -123,7 +125,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
         yield* Effect.yieldNow
         yield* TestClock.adjust(8_000)
         yield* Fiber.join(retry)
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(observedAt).toHaveLength(8)
@@ -152,7 +154,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
         yield* Effect.yieldNow
         yield* TestClock.adjust(10_000)
         yield* Fiber.join(retry)
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(observedAt).toHaveLength(4)
@@ -243,7 +245,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
         const failure = yield* Fiber.join(activation)
         expect(yield* Ref.get(finalizations)).toBe(1)
         return failure
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(operations).toEqual([])
@@ -271,7 +273,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-03T12:00:00.000Z'))
         yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(restrictions).toEqual([

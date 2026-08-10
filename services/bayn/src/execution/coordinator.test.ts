@@ -4,6 +4,7 @@ import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'eff
 import { TestClock } from 'effect/testing'
 import { utcInstantFromEpochMillis } from '../time'
 
+import { provideTestLayer } from '../effect-test-support'
 import {
   BrokerMutation,
   BrokerMutationError,
@@ -1607,16 +1608,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
         check: fenceCheck,
         transaction: (effect) => effect,
       }),
-      Effect.provide(TestClock.layer()),
+      provideTestLayer(TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
-    effect.pipe(Effect.provideService(IntentStore, intentStore), Effect.provide(TestClock.layer()))
+    effect.pipe(Effect.provideService(IntentStore, intentStore), provideTestLayer(TestClock.layer()))
   const provideRecovery = <A, E>(effect: Effect.Effect<A, E, IntentStore | MutationStore | BrokerRead>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerRead, read),
-      Effect.provide(TestClock.layer()),
+      provideTestLayer(TestClock.layer()),
     )
 
   return {

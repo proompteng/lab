@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Fiber, Layer } from 'effect'
 import { TestClock } from 'effect/testing'
+
+import { provideTestLayer } from './effect-test-support'
 import {
   AuthenticationError,
   AuthorizationError,
@@ -37,7 +39,7 @@ describe('Bayn SQL dependency acquisition', () => {
         yield* Fiber.join(fiber)
         expect(attempts).toBe(2)
       }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     await Effect.runPromise(program)
 
@@ -87,7 +89,7 @@ describe('Bayn SQL dependency acquisition', () => {
         yield* Fiber.join(fiber)
         expect(attempts).toBe(2)
       }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     await Effect.runPromise(program)
   })
@@ -120,7 +122,7 @@ describe('Bayn SQL dependency acquisition', () => {
         yield* Fiber.join(fiber)
         expect(attempts).toBe(2)
       }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     await Effect.runPromise(program)
   })
@@ -142,7 +144,7 @@ describe('Bayn SQL dependency acquisition', () => {
           const exit = yield* Fiber.await(fiber)
           return { attempts, exit }
         }),
-      ).pipe(Effect.provide(TestClock.layer()))
+      ).pipe(provideTestLayer(TestClock.layer()))
     }
     const rawRefusal = SqlError.make({
       reason: UnknownError.make({
@@ -193,7 +195,7 @@ describe('Bayn SQL dependency acquisition', () => {
         yield* TestClock.adjust('2 seconds')
         expect(attempts).toBe(1)
       }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     await Effect.runPromise(program)
   })

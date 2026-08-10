@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { provideTestLayer } from './effect-test-support'
 import {
   addUtcDays,
   currentUtcDate,
@@ -38,7 +39,7 @@ describe('Bayn UTC clock boundary', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-07-26T06:23:57.295Z'))
         return yield* Effect.all([currentUtcInstant, currentUtcDate])
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(instant).toBe('2026-07-26T06:23:57.295Z')
