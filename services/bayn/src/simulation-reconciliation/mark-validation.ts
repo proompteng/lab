@@ -72,7 +72,11 @@ const validateMark = (mark: DailyPositionMark, previous: DailyPositionMark | und
       problem: { _tag: 'DuplicateMarkedPosition', sessionDate: mark.sessionDate, symbols },
     })
   }
-  return symbols.some((symbol, symbolIndex) => symbolIndex > 0 && symbols[symbolIndex - 1] >= symbol)
+  return symbols.some((symbol, symbolIndex) => {
+    if (symbolIndex === 0) return false
+    const previous = symbols[symbolIndex - 1]
+    return previous === undefined || previous >= symbol
+  })
     ? fail({
         _tag: 'InvalidEvidenceState',
         problem: { _tag: 'UnsortedMarkedPositions', sessionDate: mark.sessionDate, symbols },

@@ -56,7 +56,9 @@ const BasisPointLimit = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum:
 
 const isSorted = (values: ReadonlyArray<string>): boolean => {
   for (let index = 1; index < values.length; index += 1) {
-    if (values[index - 1] >= values[index]) return false
+    const previous = values[index - 1]
+    const current = values[index]
+    if (previous === undefined || current === undefined || previous >= current) return false
   }
   return true
 }
@@ -297,7 +299,8 @@ export const StateSchema = StateBase.check(
       ['marketDataObservedAt', state.marketDataObservedAt],
     ] as const
     for (const path of timestamps) {
-      const candidate = path[path.length - 1]
+      const candidate = path.at(-1)
+      if (candidate === undefined) continue
       if (timeDoesNotFollow(candidate, state.evaluatedAt)) {
         issues.push({ path: path.slice(0, -1), issue: 'must not follow evaluatedAt' })
       }

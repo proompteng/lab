@@ -230,23 +230,32 @@ const validateMonetaryEvidence = (
                 reversedEvents: Chunk.prepend(accumulator.reversedEvents, { kind: 'cash-yield', event, cashChange }),
               })
             }
-            return event.kind === 'fill'
-              ? Result.succeed({
-                  reversedEvents: Chunk.prepend(accumulator.reversedEvents, {
-                    ...fills[accumulator.fillIndex],
-                    cashChange,
-                  }),
-                  fillIndex: accumulator.fillIndex + 1,
-                  feeIndex: accumulator.feeIndex,
+            if (event.kind === 'fill') {
+              const fill = fills.at(accumulator.fillIndex)
+              if (fill === undefined) {
+                return fail({
+                  _tag: 'MissingReference',
+                  problem: { _tag: 'ValidatedMonetaryEvent', eventId: event.id, eventKind: event.kind },
                 })
-              : Result.succeed({
-                  reversedEvents: Chunk.prepend(accumulator.reversedEvents, {
-                    ...fees[accumulator.feeIndex],
-                    cashChange,
-                  }),
-                  fillIndex: accumulator.fillIndex,
-                  feeIndex: accumulator.feeIndex + 1,
-                })
+              }
+              return Result.succeed({
+                reversedEvents: Chunk.prepend(accumulator.reversedEvents, { ...fill, cashChange }),
+                fillIndex: accumulator.fillIndex + 1,
+                feeIndex: accumulator.feeIndex,
+              })
+            }
+            const fee = fees.at(accumulator.feeIndex)
+            if (fee === undefined) {
+              return fail({
+                _tag: 'MissingReference',
+                problem: { _tag: 'ValidatedMonetaryEvent', eventId: event.id, eventKind: event.kind },
+              })
+            }
+            return Result.succeed({
+              reversedEvents: Chunk.prepend(accumulator.reversedEvents, { ...fee, cashChange }),
+              fillIndex: accumulator.fillIndex,
+              feeIndex: accumulator.feeIndex + 1,
+            })
           }),
         ),
       Result.succeed({ reversedEvents: Chunk.empty(), fillIndex: 0, feeIndex: 0 }),

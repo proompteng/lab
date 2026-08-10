@@ -643,7 +643,16 @@ const reduceRiskInputs = (
   Result.mapError(
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
-        const referencePrice = BigInt(input.prices.priceMicros[target.symbol])
+        const referencePriceMicros = input.prices.priceMicros[target.symbol]
+        if (referencePriceMicros === undefined) {
+          return Result.fail(
+            compositionFailure(
+              'shadow-risk-inputs',
+              `target ${target.symbol} has no bound signal-session reference price`,
+            ),
+          )
+        }
+        const referencePrice = BigInt(referencePriceMicros)
         return Result.map(
           makeFillTerms(
             target.side === OrderSide.Buy ? 'buy' : 'sell',

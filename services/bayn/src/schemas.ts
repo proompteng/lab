@@ -17,8 +17,10 @@ const isUtcInstant = (value: string): boolean => {
 const isUtcOrderTimestamp = (value: string): boolean => {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{9})Z$/.exec(value)
   if (match === null) return false
-  const date = new Date(`${match[1]}.${match[2].slice(0, 3)}Z`)
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === match[1]
+  const [, seconds, fractional] = match
+  if (seconds === undefined || fractional === undefined) return false
+  const date = new Date(`${seconds}.${fractional.slice(0, 3)}Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === seconds
 }
 
 export const StrictNonEmptyStringSchema = Schema.String.check(

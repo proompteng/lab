@@ -554,15 +554,18 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         }),
         Effect.flatMap(({ pageSize, result }) =>
           Effect.fromResult(normalizeFillActivitiesResult(result.value, connection.expectedAccountId)).pipe(
-            Effect.map((items) => ({
-              value: {
-                items,
-                ...(items.length === pageSize && items.length > 0
-                  ? { nextPageToken: items[items.length - 1]?.activityId }
-                  : {}),
-              },
-              evidence: result.evidence,
-            })),
+            Effect.map((items) => {
+              const lastItem = items.at(-1)
+              return {
+                value: {
+                  items,
+                  ...(items.length === pageSize && lastItem !== undefined
+                    ? { nextPageToken: lastItem.activityId }
+                    : {}),
+                },
+                evidence: result.evidence,
+              }
+            }),
             Effect.mapError((cause) =>
               invalidResponse(
                 'fill-activities',

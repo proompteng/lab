@@ -130,6 +130,11 @@ export type MissingReferenceProblem =
       readonly eventId: string
       readonly eventKind: FillEvent['kind'] | FeeEvent['kind'] | CashYieldEvent['kind']
     }
+  | {
+      readonly _tag: 'ValidatedMonetaryEvent'
+      readonly eventId: string
+      readonly eventKind: FillEvent['kind'] | FeeEvent['kind']
+    }
 
 export type EvidenceMismatchProblem =
   | {

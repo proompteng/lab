@@ -31,9 +31,16 @@ const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   }
 
   const existing: Record[] = []
-  for (let index = 0; index < results.length; index += 1) {
-    const result = results[index]
+  for (const [index, result] of results.entries()) {
     const record = records[index]
+    if (record === undefined) {
+      return failLedgerValidation(
+        operation,
+        'batch-result-count',
+        `TigerBeetle returned a ${kind} result without a corresponding record`,
+        { kind, index, expectedCount: records.length, actualCount: results.length },
+      )
+    }
     if (result.outcome === 'created') continue
     if (result.outcome === 'exists') {
       existing.push(record)

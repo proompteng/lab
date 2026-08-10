@@ -209,8 +209,8 @@ const validateCalendarRangeAndSignal = (
 }
 
 const validateCalendarSessions = (calendar: CalendarIdentity): Result.Result<void, ExecutionSessionBindingFailure> => {
-  for (let index = 0; index < calendar.sessions.length; index += 1) {
-    const session = calendar.sessions[index]
+  let previousDate: string | undefined
+  for (const [index, session] of calendar.sessions.entries()) {
     if (
       session.date < calendar.requestedRange.start ||
       session.date > calendar.requestedRange.end ||
@@ -226,15 +226,16 @@ const validateCalendarSessions = (calendar: CalendarIdentity): Result.Result<voi
         ),
       )
     }
-    if (index > 0 && calendar.sessions[index - 1].date >= session.date) {
+    if (previousDate !== undefined && previousDate >= session.date) {
       return Result.fail(
         deriveWindowFailure('calendar-order', 'Alpaca market calendar sessions must be unique and strictly ordered', {
           index,
-          previousDate: calendar.sessions[index - 1].date,
+          previousDate,
           date: session.date,
         }),
       )
     }
+    previousDate = session.date
   }
   return Result.succeed(undefined)
 }

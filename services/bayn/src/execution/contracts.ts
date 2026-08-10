@@ -48,7 +48,9 @@ const Version = Schema.Int.check(Schema.isGreaterThan(0))
 const ReasonCodes = Schema.Array(NonEmptyString).check(Schema.isUnique())
 const isStrictlyAscending = (values: ReadonlyArray<string>): boolean => {
   for (let index = 1; index < values.length; index += 1) {
-    if (BigInt(values[index - 1]) >= BigInt(values[index])) return false
+    const previous = values[index - 1]
+    const current = values[index]
+    if (previous === undefined || current === undefined || BigInt(previous) >= BigInt(current)) return false
   }
   return true
 }

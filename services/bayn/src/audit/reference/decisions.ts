@@ -107,8 +107,10 @@ export const align = (
 
 export const monthEnds = (dates: readonly IsoDate[]): readonly number[] => {
   const result: number[] = []
-  for (let index = 0; index < dates.length - 1; index += 1) {
-    if (dates[index].slice(0, 7) !== dates[index + 1].slice(0, 7)) result.push(index)
+  for (const [index, date] of dates.entries()) {
+    const nextDate = dates.at(index + 1)
+    if (nextDate === undefined) break
+    if (date.slice(0, 7) !== nextDate.slice(0, 7)) result.push(index)
   }
   return result
 }
@@ -126,24 +128,24 @@ const allocateCapped = (
       .map((symbol) => [symbol, 0]),
   )
   let unallocated = 1
-  let available = Object.keys(scores)
-    .filter((symbol) => scores[symbol] > 0)
-    .sort()
+  let available = Object.entries(scores)
+    .filter(([, score]) => score > 0)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 
   while (available.length > 0 && unallocated > 0) {
-    const availableScore = available.reduce((total, symbol) => total + scores[symbol], 0)
+    const availableScore = available.reduce((total, [, score]) => total + score, 0)
     if (!Number.isFinite(availableScore) || availableScore <= 0) break
-    const exceedsCap = available.filter((symbol) => (unallocated * scores[symbol]) / availableScore > maximumWeight)
+    const exceedsCap = available.filter(([, score]) => (unallocated * score) / availableScore > maximumWeight)
     if (exceedsCap.length === 0) {
-      for (const symbol of available) weights[symbol] = (unallocated * scores[symbol]) / availableScore
+      for (const [symbol, score] of available) weights[symbol] = (unallocated * score) / availableScore
       break
     }
-    for (const symbol of exceedsCap) {
+    for (const [symbol] of exceedsCap) {
       weights[symbol] = maximumWeight
       unallocated = Math.max(0, unallocated - maximumWeight)
     }
-    const allocated = new Set(exceedsCap)
-    available = available.filter((symbol) => !allocated.has(symbol))
+    const allocated = new Set(exceedsCap.map(([symbol]) => symbol))
+    available = available.filter(([symbol]) => !allocated.has(symbol))
   }
 
   return weights
@@ -157,8 +159,9 @@ const quantizeCappedWeights = (
 ): ReferenceComputation<Readonly<Record<string, number>>> => {
   const maximumUnits = Math.floor(maximumWeight * weightScale + Number.EPSILON)
   const units: Record<string, number> = {}
-  for (const symbol of Object.keys(weights).sort()) {
-    const weight = weights[symbol]
+  for (const [symbol, weight] of Object.entries(weights).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
     if (!Number.isFinite(weight) || weight < 0) {
       return Result.fail({ _tag: 'ReferenceInvalidWeight', symbol, weight, maximumWeight })
     }
@@ -168,8 +171,10 @@ const quantizeCappedWeights = (
   let excess = Math.max(0, total - weightScale)
   for (const symbol of Object.keys(units).sort().reverse()) {
     if (excess === 0) break
-    const reduction = Math.min(units[symbol], excess)
-    units[symbol] -= reduction
+    const currentUnits = units[symbol]
+    if (currentUnits === undefined) continue
+    const reduction = Math.min(currentUnits, excess)
+    units[symbol] = currentUnits - reduction
     excess -= reduction
     total -= reduction
   }
@@ -187,9 +192,19 @@ const sampleCovariance = (left: readonly number[], right: readonly number[]): Re
   }
   const leftAverage = average(left)
   const rightAverage = average(right)
-  const value =
-    left.reduce((total, observation, index) => total + (observation - leftAverage) * (right[index] - rightAverage), 0) /
-    (left.length - 1)
+  let covarianceTotal = 0
+  for (const [index, observation] of left.entries()) {
+    const rightObservation = right.at(index)
+    if (rightObservation === undefined) {
+      return Result.fail({
+        _tag: 'ReferenceCovarianceInputMismatch',
+        leftLength: left.length,
+        rightLength: right.length,
+      })
+    }
+    covarianceTotal += (observation - leftAverage) * (rightObservation - rightAverage)
+  }
+  const value = covarianceTotal / (left.length - 1)
   if (!Number.isFinite(value)) {
     return Result.fail({
       _tag: 'ReferenceCovarianceNotFinite',
@@ -208,11 +223,19 @@ const portfolioVolatility = (
   const symbols = Object.keys(weights).sort()
   let dailyVariance = 0
   for (const left of symbols) {
+    const leftReturns = returns[left]
+    const leftWeight = weights[left]
+    if (leftReturns === undefined) return Result.fail({ _tag: 'ReferenceMissingSymbolSeries', symbol: left })
+    if (leftWeight === undefined) return Result.fail({ _tag: 'ReferenceMissingWeight', symbol: left })
     let innerVariance = 0
     for (const right of symbols) {
-      const covariance = sampleCovariance(returns[left], returns[right])
+      const rightReturns = returns[right]
+      const rightWeight = weights[right]
+      if (rightReturns === undefined) return Result.fail({ _tag: 'ReferenceMissingSymbolSeries', symbol: right })
+      if (rightWeight === undefined) return Result.fail({ _tag: 'ReferenceMissingWeight', symbol: right })
+      const covariance = sampleCovariance(leftReturns, rightReturns)
       if (Result.isFailure(covariance)) return covariance
-      innerVariance += weights[left] * weights[right] * covariance.success
+      innerVariance += leftWeight * rightWeight * covariance.success
     }
     dailyVariance += innerVariance
   }
@@ -249,31 +272,42 @@ export const riskBalancedDecisionPlan = (
   const returnsBySymbol: Record<string, readonly number[]> = {}
   const baseSignals: DecisionPlan['signals'][number][] = []
   for (const symbol of protocol.universe) {
-    const closes = history.map((session) => session.bars[symbol].close)
-    const invalidCloseIndex = closes.findIndex((close) => !Number.isFinite(close) || close <= 0)
-    if (invalidCloseIndex !== -1) {
-      return Result.fail({
-        _tag: 'ReferenceInvalidClose',
-        symbol,
-        sessionDate: history[invalidCloseIndex].date,
-        close: closes[invalidCloseIndex],
-      })
+    const closes: number[] = []
+    for (const session of history) {
+      const bar = session.bars[symbol]
+      if (bar === undefined) {
+        return Result.fail({
+          _tag: 'ReferenceIncompleteSession',
+          sessionDate: session.date,
+          missingSymbols: [symbol],
+          actualSymbolCount: Object.keys(session.bars).length,
+          expectedSymbolCount: protocol.universe.length,
+        })
+      }
+      if (!Number.isFinite(bar.close) || bar.close <= 0) {
+        return Result.fail({ _tag: 'ReferenceInvalidClose', symbol, sessionDate: session.date, close: bar.close })
+      }
+      closes.push(bar.close)
     }
     const current = closes.at(-1)
     if (current === undefined) {
       return Result.fail({ _tag: 'ReferenceMissingCurrentClose', symbol, signalIndex })
     }
     const volatilityCloses = closes.slice(-(protocol.volatilityWindow + 1))
-    const recentReturns = volatilityCloses.slice(1).map((close, index) => close / volatilityCloses[index] - 1)
-    const invalidReturnIndex = recentReturns.findIndex((value) => !Number.isFinite(value))
-    if (invalidReturnIndex !== -1) {
-      const firstVolatilitySessionIndex = history.length - volatilityCloses.length
-      return Result.fail({
-        _tag: 'ReferenceInvalidReturn',
-        symbol,
-        sessionDate: history[firstVolatilitySessionIndex + invalidReturnIndex + 1].date,
-        value: recentReturns[invalidReturnIndex],
-      })
+    const recentReturns: number[] = []
+    const firstVolatilitySessionIndex = history.length - volatilityCloses.length
+    for (let index = 1; index < volatilityCloses.length; index += 1) {
+      const close = volatilityCloses.at(index)
+      const priorClose = volatilityCloses.at(index - 1)
+      const session = history.at(firstVolatilitySessionIndex + index)
+      if (close === undefined || priorClose === undefined || session === undefined) {
+        return Result.fail({ _tag: 'ReferenceMissingPriorClose', symbol, signalIndex, horizonSessions: index })
+      }
+      const value = close / priorClose - 1
+      if (!Number.isFinite(value)) {
+        return Result.fail({ _tag: 'ReferenceInvalidReturn', symbol, sessionDate: session.date, value })
+      }
+      recentReturns.push(value)
     }
     returnsBySymbol[symbol] = recentReturns
     const dailyVolatility = sampleDeviation(recentReturns)
@@ -344,7 +378,7 @@ export const riskBalancedDecisionPlan = (
   const scores = Object.fromEntries(baseSignals.map((signal) => [signal.symbol, signal.positiveScore]))
   const scoreTotal = Object.values(scores).reduce((total, score) => total + score, 0)
   const uncappedWeights = Object.fromEntries(
-    protocol.universe.map((symbol) => [symbol, scoreTotal === 0 ? 0 : scores[symbol] / scoreTotal]),
+    baseSignals.map((signal) => [signal.symbol, scoreTotal === 0 ? 0 : signal.positiveScore / scoreTotal]),
   )
   const cappedWeightsResult = quantizeCappedWeights(
     allocateCapped(scores, protocol.maximumSymbolWeight),
@@ -359,8 +393,14 @@ export const riskBalancedDecisionPlan = (
     estimatedAnnualizedPortfolioVolatility === 0
       ? 1
       : Math.min(1, protocol.maximumPortfolioVolatility / estimatedAnnualizedPortfolioVolatility)
+  const scaledWeightEntries: Array<readonly [string, number]> = []
+  for (const symbol of protocol.universe) {
+    const cappedWeight = cappedWeights[symbol]
+    if (cappedWeight === undefined) return Result.fail({ _tag: 'ReferenceMissingWeight', symbol })
+    scaledWeightEntries.push([symbol, cappedWeight * exposureScale])
+  }
   const targetWeightsResult = quantizeCappedWeights(
-    Object.fromEntries(protocol.universe.map((symbol) => [symbol, cappedWeights[symbol] * exposureScale])),
+    Object.fromEntries(scaledWeightEntries),
     protocol.maximumSymbolWeight,
   )
   if (Result.isFailure(targetWeightsResult)) return Result.fail(targetWeightsResult.failure)
@@ -410,6 +450,21 @@ export const riskBalancedDecisionPlan = (
   }
   const sessionsHash = hashReferenceMaterial('covariance-sessions', covarianceDates)
   if (Result.isFailure(sessionsHash)) return Result.fail(sessionsHash.failure)
+  const signals: DecisionPlan['signals'][number][] = []
+  for (const signal of baseSignals) {
+    const uncappedWeight = uncappedWeights[signal.symbol]
+    const cappedWeight = cappedWeights[signal.symbol]
+    const targetWeight = targetWeights[signal.symbol]
+    if (uncappedWeight === undefined || cappedWeight === undefined || targetWeight === undefined) {
+      return Result.fail({ _tag: 'ReferenceMissingWeight', symbol: signal.symbol })
+    }
+    signals.push({
+      ...signal,
+      uncappedWeight: roundWeight(uncappedWeight),
+      cappedWeight,
+      targetWeight,
+    })
+  }
   return Result.succeed({
     schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
     signalDate: signalSession.date,
@@ -422,12 +477,7 @@ export const riskBalancedDecisionPlan = (
     estimatedAnnualizedPortfolioVolatility,
     exposureScale,
     targetWeights,
-    signals: baseSignals.map((signal) => ({
-      ...signal,
-      uncappedWeight: roundWeight(uncappedWeights[signal.symbol]),
-      cappedWeight: cappedWeights[signal.symbol],
-      targetWeight: targetWeights[signal.symbol],
-    })),
+    signals,
   })
 }
 
@@ -456,15 +506,24 @@ export const directVolatilityTarget = (
         sessionCount: sessions.length,
       })
     }
-    const returns = protocol.universe.map((symbol) => session.bars[symbol].close / priorSession.bars[symbol].close - 1)
-    const invalidReturnIndex = returns.findIndex((value) => !Number.isFinite(value))
-    if (invalidReturnIndex !== -1) {
-      return Result.fail({
-        _tag: 'ReferenceInvalidReturn',
-        symbol: protocol.universe[invalidReturnIndex],
-        sessionDate: session.date,
-        value: returns[invalidReturnIndex],
-      })
+    const returns: number[] = []
+    for (const symbol of protocol.universe) {
+      const bar = session.bars[symbol]
+      const priorBar = priorSession.bars[symbol]
+      if (bar === undefined || priorBar === undefined) {
+        return Result.fail({
+          _tag: 'ReferenceIncompleteSession',
+          sessionDate: bar === undefined ? session.date : priorSession.date,
+          missingSymbols: [symbol],
+          actualSymbolCount: Object.keys(bar === undefined ? session.bars : priorSession.bars).length,
+          expectedSymbolCount: protocol.universe.length,
+        })
+      }
+      const value = bar.close / priorBar.close - 1
+      if (!Number.isFinite(value)) {
+        return Result.fail({ _tag: 'ReferenceInvalidReturn', symbol, sessionDate: session.date, value })
+      }
+      returns.push(value)
     }
     portfolioReturns.push(average(returns))
   }

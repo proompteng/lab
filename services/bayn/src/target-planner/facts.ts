@@ -20,7 +20,11 @@ const WEIGHT_SUM_TOLERANCE = 1e-12
 export const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const isStrictlySorted = (values: readonly string[]): boolean =>
-  values.every((value, index) => index === 0 || values[index - 1] < value)
+  values.every((value, index) => {
+    if (index === 0) return true
+    const previous = values[index - 1]
+    return previous !== undefined && previous < value
+  })
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
@@ -114,7 +118,7 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
   const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
   const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
   const positions = new Map(
-    input.brokerState.positions.map((position, index) => [position.symbol, positionQuantities[index]]),
+    input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)] as const),
   )
   const equity = BigInt(input.brokerState.account.equityMicros)
   return {
@@ -230,9 +234,18 @@ export const derivePlannedTargetFacts = (
       (result, [symbol, referencePrice]) =>
         Result.flatMap(result, (targetFacts) => {
           const currentQuantity = facts.positions.get(symbol) ?? 0n
+          const targetWeight = facts.input.targetWeights[symbol]
+          if (targetWeight === undefined) {
+            return Result.fail(
+              deriveTargetsFailure('precision', 'reference-price symbol has no corresponding target weight', {
+                cycleId: facts.input.cycleId,
+                symbol,
+              }),
+            )
+          }
           return Result.map(
             Result.mapError(
-              desiredQuantityMicros(facts.allocationCapital, facts.input.targetWeights[symbol], referencePrice, {
+              desiredQuantityMicros(facts.allocationCapital, targetWeight, referencePrice, {
                 precision: facts.input.precision,
               }),
               (cause) =>
@@ -242,7 +255,7 @@ export const derivePlannedTargetFacts = (
                   {
                     cycleId: facts.input.cycleId,
                     symbol,
-                    targetWeight: facts.input.targetWeights[symbol],
+                    targetWeight,
                   },
                   cause,
                 ),
@@ -254,7 +267,7 @@ export const derivePlannedTargetFacts = (
                 delta: targetQuantity - currentQuantity,
                 target: {
                   symbol,
-                  targetWeight: facts.input.targetWeights[symbol],
+                  targetWeight,
                   referencePriceMicros: referencePrice.toString(),
                   currentQuantityMicros: currentQuantity.toString(),
                   targetQuantityMicros: targetQuantity.toString(),
