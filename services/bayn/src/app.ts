@@ -20,6 +20,7 @@ import { runStartup, type StartupDependencies } from './startup'
 import type { StrategyRuntime } from './strategy'
 import { utcInstantFromEpochMillis } from './time'
 import type { ExecutionProgram } from './execution/runtime-program'
+import { Pipeable } from './pipeable'
 
 export type RecordAutonomousCyclePass = (observation: AutonomousCyclePassObservation) => Effect.Effect<void>
 
@@ -240,7 +241,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
         }),
       )
 
-export const runApplication = <StartupR, LoopR>(
+const runApplicationDataFirst = <StartupR, LoopR>(
   config: RuntimeConfig,
   strategy: StrategyRuntime,
   dependencies: ApplicationDependencies,
@@ -276,3 +277,12 @@ export const runApplication = <StartupR, LoopR>(
     Effect.andThen(Effect.never),
     Effect.scoped,
   )
+
+export const runApplication = Pipeable.generic<
+  <StartupR, LoopR>(
+    strategy: StrategyRuntime,
+    dependencies: ApplicationDependencies,
+    runtime: ApplicationRuntime<StartupR, LoopR>,
+  ) => (config: RuntimeConfig) => Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR>,
+  typeof runApplicationDataFirst
+>(4, runApplicationDataFirst)

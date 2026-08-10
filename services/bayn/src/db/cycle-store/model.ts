@@ -124,7 +124,7 @@ export const cycleStoreError = (
     cause,
   })
 
-export const runCycleStore = <A, E, R>(
+const runCycleStoreDataFirst = <A, E, R>(
   operation: CycleStoreError['operation'],
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, CycleStoreError, R> =>
@@ -168,6 +168,13 @@ export const runCycleStore = <A, E, R>(
     }),
   )
 
+export const runCycleStore = Pipeable.generic<
+  <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => (operation: CycleStoreError['operation']) => Effect.Effect<A, CycleStoreError, R>,
+  typeof runCycleStoreDataFirst
+>(2, runCycleStoreDataFirst)
+
 const failCycleStoreDataFirst = (
   operation: CycleStoreError['operation'],
   failure: CycleStoreError['failure'],
@@ -176,13 +183,20 @@ const failCycleStoreDataFirst = (
 
 export const failCycleStore = Pipeable.dual(3, failCycleStoreDataFirst)
 
-export const liftCycleDecision = <A>(
+const liftCycleDecisionDataFirst = <A>(
   operation: CycleStoreError['operation'],
   decision: Result.Result<A, CycleStoreDecisionFailure>,
 ): Effect.Effect<A, CycleStoreError> =>
   Effect.fromResult(decision).pipe(
     Effect.mapError(({ failure, message }) => cycleStoreError(operation, failure, message)),
   )
+
+export const liftCycleDecision = Pipeable.generic<
+  <A>(
+    decision: Result.Result<A, CycleStoreDecisionFailure>,
+  ) => (operation: CycleStoreError['operation']) => Effect.Effect<A, CycleStoreError>,
+  typeof liftCycleDecisionDataFirst
+>(2, liftCycleDecisionDataFirst)
 
 const exactlyOneCycleDataFirst = (
   operation: CycleStoreError['operation'],

@@ -36,6 +36,7 @@ import {
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
+import { Pipeable } from '../pipeable'
 
 export type MutationPreparationFacts = {
   readonly snapshot: {
@@ -225,7 +226,7 @@ type PaperIntentRecoveryLookup = Omit<PreparedPaperIntent, 'intent'> & {
   readonly intentId: string
 }
 
-export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
   input: I,
   preparation: P,
   policy: Policy,
@@ -594,3 +595,16 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
       : { _tag: 'Wait', observedAt: facts.evaluatedAt }
   })
+
+export const prepareMutationIntent = Pipeable.generic<
+  <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+    preparation: P,
+    policy: Policy,
+    cycle: AutonomousCycle,
+    document: PaperDecisionDocument,
+    reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
+    allowSubmit: boolean,
+    dependencies: MutationPreparationDependencies<R, E, I, P>,
+  ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
+  typeof prepareMutationIntentDataFirst
+>(8, prepareMutationIntentDataFirst)

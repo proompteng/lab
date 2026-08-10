@@ -16,4 +16,15 @@ describe('pipeable functions', () => {
     expect(append('bayn', '-paper')).toBe('bayn-paper')
     expect(append('-paper')('bayn')).toBe('bayn-paper')
   })
+
+  test('preserves generic inference in both call styles', () => {
+    const pairDataFirst = <A>(self: A, suffix: string): readonly [A, string] => [self, suffix]
+    const pair = Pipeable.generic<<A>(suffix: string) => (self: A) => readonly [A, string], typeof pairDataFirst>(
+      2,
+      pairDataFirst,
+    )
+
+    expect(pair(42, 'paper')).toEqual([42, 'paper'])
+    expect(pair('paper')(42)).toEqual([42, 'paper'])
+  })
 })

@@ -73,14 +73,22 @@ const timeoutFailureDataFirst = (operation: PaperProofError['operation'], messag
 
 export const timeoutFailure = Pipeable.dual(2, timeoutFailureDataFirst)
 
-export const lift = <A>(
+const liftDataFirst = <A>(
   operation: PaperProofError['operation'],
   message: string,
   effect: Effect.Effect<A, Error>,
 ): Effect.Effect<A, PaperProofError> =>
   effect.pipe(Effect.mapError((cause) => paperProofFailure(operation, message, cause)))
 
-export const liftBounded = <A>(
+export const lift = Pipeable.generic<
+  <A>(
+    message: string,
+    effect: Effect.Effect<A, Error>,
+  ) => (operation: PaperProofError['operation']) => Effect.Effect<A, PaperProofError>,
+  typeof liftDataFirst
+>(3, liftDataFirst)
+
+const liftBoundedDataFirst = <A>(
   operation: PaperProofError['operation'],
   message: string,
   effect: Effect.Effect<A, Error>,
@@ -95,6 +103,15 @@ export const liftBounded = <A>(
         ),
     }),
   )
+
+export const liftBounded = Pipeable.generic<
+  <A>(
+    message: string,
+    effect: Effect.Effect<A, Error>,
+    timeoutMs: number,
+  ) => (operation: PaperProofError['operation']) => Effect.Effect<A, PaperProofError>,
+  typeof liftBoundedDataFirst
+>(4, liftBoundedDataFirst)
 
 const validateReconciliationAccountDataFirst = (
   expectedAccountId: string,

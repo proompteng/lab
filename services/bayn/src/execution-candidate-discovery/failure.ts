@@ -497,11 +497,18 @@ const requireConditionDataFirst = (
 
 export const requireCondition = Pipeable.dual(2, requireConditionDataFirst)
 
-export const requireValue = <A>(
+const requireValueDataFirst = <A>(
   value: A | null | undefined,
   error: ExecutionCandidateDiscoveryError,
 ): Result.Result<A, ExecutionCandidateDiscoveryError> =>
   value === null || value === undefined ? Result.fail(error) : Result.succeed(value)
+
+export const requireValue = Pipeable.generic<
+  <A>(
+    error: ExecutionCandidateDiscoveryError,
+  ) => (value: A | null | undefined) => Result.Result<A, ExecutionCandidateDiscoveryError>,
+  typeof requireValueDataFirst
+>(2, requireValueDataFirst)
 
 const canonicalHashResultDataFirst = (
   value: unknown,

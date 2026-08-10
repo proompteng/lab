@@ -816,7 +816,7 @@ const prepareResearchPaperActivation = (
     )
   })
 
-export const refreshResearchPaperActivationReconciliation = <E, R>(
+const refreshResearchPaperActivationReconciliationDataFirst = <E, R>(
   reconcile: Effect.Effect<unknown, E, R>,
   operationTimeoutMs: number,
 ): Effect.Effect<void, OperationalError, R> =>
@@ -831,6 +831,13 @@ export const refreshResearchPaperActivationReconciliation = <E, R>(
     ),
     Effect.asVoid,
   )
+
+export const refreshResearchPaperActivationReconciliation = Pipeable.generic<
+  <E, R>(
+    operationTimeoutMs: number,
+  ) => (reconcile: Effect.Effect<unknown, E, R>) => Effect.Effect<void, OperationalError, R>,
+  typeof refreshResearchPaperActivationReconciliationDataFirst
+>(2, refreshResearchPaperActivationReconciliationDataFirst)
 
 const prepareOrRecoverResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,

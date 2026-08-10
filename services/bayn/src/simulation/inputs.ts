@@ -78,7 +78,7 @@ const requiredSessionDataFirst = (
 
 export const requiredSession = Pipeable.dual(3, requiredSessionDataFirst)
 
-export const requiredRecordValue = <A>(
+const requiredRecordValueDataFirst = <A>(
   values: Readonly<Record<string, A>>,
   key: string,
   operation: RecordOperation,
@@ -94,6 +94,15 @@ export const requiredRecordValue = <A>(
     ),
   )
 }
+
+export const requiredRecordValue = Pipeable.generic<
+  <A>(
+    key: string,
+    operation: RecordOperation,
+    context: string,
+  ) => (values: Readonly<Record<string, A>>) => Result.Result<A, SimulationFailure>,
+  typeof requiredRecordValueDataFirst
+>(4, requiredRecordValueDataFirst)
 
 const buildAlignedSession = (
   bars: readonly DailyBar[],

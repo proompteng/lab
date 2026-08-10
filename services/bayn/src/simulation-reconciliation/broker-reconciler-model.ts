@@ -176,7 +176,7 @@ const normalizationFailure = (
     },
   })
 
-export const mapObservationFailure = <A>(
+const mapObservationFailureDataFirst = <A>(
   stage: NormalizationStage,
   identity: string | undefined,
   result: Result.Result<A, BrokerObservationError>,
@@ -185,6 +185,14 @@ export const mapObservationFailure = <A>(
     result,
     Result.mapError((error) => normalizationFailure(stage, identity, error)),
   )
+
+export const mapObservationFailure = Pipeable.generic<
+  <A>(
+    identity: string | undefined,
+    result: Result.Result<A, BrokerObservationError>,
+  ) => (stage: NormalizationStage) => Result.Result<A, ReconciliationError>,
+  typeof mapObservationFailureDataFirst
+>(3, mapObservationFailureDataFirst)
 
 const normalizeTimestampDataFirst = (
   stage: Extract<NormalizationStage, 'order-timestamp' | 'fill-ordering'>,

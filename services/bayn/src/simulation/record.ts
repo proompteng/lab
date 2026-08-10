@@ -1,6 +1,7 @@
 import { Option, pipe, Result } from 'effect'
 
 import type { SimulationFailure } from './model'
+import { Pipeable } from '../pipeable'
 
 type RecordAccessOperation = Extract<SimulationFailure, { readonly _tag: 'RecordAccessFailed' }>['operation']
 
@@ -19,7 +20,7 @@ const accessFailure = (
   cause,
 })
 
-export const optionalRecordValue = <A>(
+const optionalRecordValueDataFirst = <A>(
   values: Readonly<Record<string, A>>,
   key: string,
   operation: RecordAccessOperation,
@@ -38,3 +39,12 @@ export const optionalRecordValue = <A>(
       return Result.succeed(Option.some(descriptor.value as A))
     }),
   )
+
+export const optionalRecordValue = Pipeable.generic<
+  <A>(
+    key: string,
+    operation: RecordAccessOperation,
+    context: string,
+  ) => (values: Readonly<Record<string, A>>) => Result.Result<Option.Option<A>, SimulationFailure>,
+  typeof optionalRecordValueDataFirst
+>(4, optionalRecordValueDataFirst)

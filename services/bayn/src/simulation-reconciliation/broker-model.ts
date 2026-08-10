@@ -310,7 +310,7 @@ const instantDataFirst = (
 
 export const instant = Pipeable.dual(3, instantDataFirst)
 
-export const indexUnique = <A>(
+const indexUniqueDataFirst = <A>(
   values: readonly A[],
   identity: (value: A) => string,
   collection: ReconciliationIdentityCollection,
@@ -328,6 +328,14 @@ export const indexUnique = <A>(
       ),
     Result.succeed(HashMap.empty()),
   )
+
+export const indexUnique = Pipeable.generic<
+  <A>(
+    identity: (value: A) => string,
+    collection: ReconciliationIdentityCollection,
+  ) => (values: readonly A[]) => ReconciliationDecision<HashMap.HashMap<string, A>>,
+  typeof indexUniqueDataFirst
+>(3, indexUniqueDataFirst)
 
 const discrepancy = (
   accountId: string,

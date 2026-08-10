@@ -30,7 +30,7 @@ const failExecutionStoreDataFirst = (
 
 export const failExecutionStore = Pipeable.dual(3, failExecutionStoreDataFirst)
 
-export const runExecutionOperation = <A, E, R>(
+const runExecutionOperationDataFirst = <A, E, R>(
   operation: ExecutionStoreError['operation'],
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, ExecutionStoreError, R> =>
@@ -63,13 +63,27 @@ export const runExecutionOperation = <A, E, R>(
     }),
   )
 
-export const liftStoreDecision = <A>(
+export const runExecutionOperation = Pipeable.generic<
+  <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => (operation: ExecutionStoreError['operation']) => Effect.Effect<A, ExecutionStoreError, R>,
+  typeof runExecutionOperationDataFirst
+>(2, runExecutionOperationDataFirst)
+
+const liftStoreDecisionDataFirst = <A>(
   operation: ExecutionStoreError['operation'],
   decision: Result.Result<A, ExecutionStoreDecisionFailure>,
 ): Effect.Effect<A, ExecutionStoreError> =>
   Effect.fromResult(decision).pipe(
     Effect.mapError((failure) => executionStoreError(operation, failure.failure, failure.message, failure.cause)),
   )
+
+export const liftStoreDecision = Pipeable.generic<
+  <A>(
+    decision: Result.Result<A, ExecutionStoreDecisionFailure>,
+  ) => (operation: ExecutionStoreError['operation']) => Effect.Effect<A, ExecutionStoreError>,
+  typeof liftStoreDecisionDataFirst
+>(2, liftStoreDecisionDataFirst)
 
 export const liftAuthorityDecision = <A>(
   decision: Result.Result<A, CapitalGrantAlgebraFailure>,

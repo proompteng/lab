@@ -18,6 +18,7 @@ import {
   type CycleRunnerError,
   type CycleRunResult,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 type CycleNotDueResult = Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>
 
@@ -80,7 +81,7 @@ const selectCycleCalendarPublication = <R>(
   )
 }
 
-export const selectCycleCalendarCandidate = <R>(
+const selectCycleCalendarCandidateDataFirst = <R>(
   context: CycleRunContext<R>,
   publications: NonEmptyPublications,
   observation: MarketCalendarObservation,
@@ -104,6 +105,16 @@ export const selectCycleCalendarCandidate = <R>(
     selectCycleCalendarPublication(context, first, observation, calendarReadContentHash, observedAt),
   )
 }
+
+export const selectCycleCalendarCandidate = Pipeable.generic<
+  <R>(
+    publications: NonEmptyPublications,
+    observation: MarketCalendarObservation,
+    calendarReadContentHash: string,
+    observedAt: string,
+  ) => (context: CycleRunContext<R>) => Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>,
+  typeof selectCycleCalendarCandidateDataFirst
+>(5, selectCycleCalendarCandidateDataFirst)
 
 export const publicationFailureError = (cause: CyclePublicationFailure): CycleRunnerError =>
   runnerError('inspect-publication', 'contract', 'bounded cycle publication discovery is invalid', cause)

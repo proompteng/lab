@@ -22,11 +22,18 @@ const requireConditionDataFirst = (
 
 export const requireCondition = Pipeable.dual(2, requireConditionDataFirst)
 
-export const requireValue = <A>(
+const requireValueDataFirst = <A>(
   value: A | null | undefined,
   error: MarketDataVerificationError,
 ): Result.Result<A, MarketDataVerificationError> =>
   value === null || value === undefined ? fail(error) : Result.succeed(value)
+
+export const requireValue = Pipeable.generic<
+  <A>(
+    error: MarketDataVerificationError,
+  ) => (value: A | null | undefined) => Result.Result<A, MarketDataVerificationError>,
+  typeof requireValueDataFirst
+>(2, requireValueDataFirst)
 
 export const validateAll = (
   validations: ReadonlyArray<Result.Result<void, MarketDataVerificationError>>,

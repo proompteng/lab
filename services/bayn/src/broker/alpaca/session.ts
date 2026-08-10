@@ -75,7 +75,7 @@ const acquisitionError = (
 const isRetryableBrokerSessionAcquisition = (error: BrokerSessionAcquisitionError): boolean =>
   error.cause instanceof BrokerReadError && error.cause.retryable
 
-export const retryRecoverableBrokerSessionAcquisition = <A, R>(
+const retryRecoverableBrokerSessionAcquisitionDataFirst = <A, R>(
   connection: BrokerConnection,
   effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
 ): Effect.Effect<A, BrokerSessionAcquisitionError, R> =>
@@ -102,6 +102,13 @@ export const retryRecoverableBrokerSessionAcquisition = <A, R>(
       )
     return yield* attempt(connection.retryAttempts)
   })
+
+export const retryRecoverableBrokerSessionAcquisition = Pipeable.generic<
+  <A, R>(
+    effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
+  ) => (connection: BrokerConnection) => Effect.Effect<A, BrokerSessionAcquisitionError, R>,
+  typeof retryRecoverableBrokerSessionAcquisitionDataFirst
+>(2, retryRecoverableBrokerSessionAcquisitionDataFirst)
 
 export const acquireBrokerSession = (
   connection: BrokerConnection,
