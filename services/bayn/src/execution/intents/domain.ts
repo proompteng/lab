@@ -604,7 +604,8 @@ export const classifyExistingCommit = (
 ): Result.Result<ExistingCommitDisposition, ExistingCommitFailure> => {
   if (records.length === 0) return Result.succeed({ _tag: 'InsertIntent' })
   if (records.length > 1) return Result.fail({ _tag: 'MultipleIntentConflicts', count: records.length })
-  const record = records[0]
+  const [record] = records
+  if (record === undefined) return Result.succeed({ _tag: 'InsertIntent' })
   const storedHash = immutableIntentHashResult(record.intent)
   if (Result.isFailure(storedHash)) return Result.fail(storedHash.failure)
   const requestedHash = immutableIntentHashResult(prepared.intent)
@@ -676,7 +677,8 @@ export const validateCurrentAuthority = (
 > => {
   if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
-  const authority = rows[0]
+  const [authority] = rows
+  if (authority === undefined) return Result.fail({ _tag: 'AuthorityMissing' })
   if (authority.maximum !== Authority.Paper) {
     return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
   }
@@ -723,7 +725,8 @@ export const validateCurrentClosingAuthority = (
   if (intent.side !== 'SELL') return Result.fail({ _tag: 'ClosingIntentMustSell' })
   if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
-  const authority = rows[0]
+  const [authority] = rows
+  if (authority === undefined) return Result.fail({ _tag: 'AuthorityMissing' })
   if (authority.maximum !== Authority.Paper) {
     return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
   }
@@ -785,7 +788,8 @@ export const decideIntentInsert = (
   if (decoded.success.length === 0) {
     return Result.succeed({ _tag: 'IntentInsertConflict', intentId: expectedIntentId })
   }
-  if (decoded.success.length === 1 && decoded.success[0].intent_id === expectedIntentId) {
+  const [inserted] = decoded.success
+  if (decoded.success.length === 1 && inserted?.intent_id === expectedIntentId) {
     return Result.succeed({ _tag: 'IntentInserted', intentId: expectedIntentId })
   }
   return Result.fail({
@@ -804,7 +808,8 @@ export const decideRiskCommit = (
   if (Result.isFailure(decoded)) {
     return Result.fail({ _tag: 'ReturningRowsDecodeFailed', write: 'decision', cause: decoded.failure })
   }
-  if (decoded.success.length === 1 && decoded.success[0].decision_id === expectedDecisionId) {
+  const [inserted] = decoded.success
+  if (decoded.success.length === 1 && inserted?.decision_id === expectedDecisionId) {
     return Result.succeed({ _tag: 'RiskDecisionInserted', decisionId: expectedDecisionId })
   }
   return Result.fail({
@@ -823,7 +828,8 @@ export const decideIntentTransition = (
   if (Result.isFailure(decoded)) {
     return Result.fail({ _tag: 'ReturningRowsDecodeFailed', write: 'transition', cause: decoded.failure })
   }
-  if (decoded.success.length === 1 && decoded.success[0].intent_id === expectedIntentId) {
+  const [transitioned] = decoded.success
+  if (decoded.success.length === 1 && transitioned?.intent_id === expectedIntentId) {
     return Result.succeed({ _tag: 'IntentTransitioned', intentId: expectedIntentId })
   }
   return Result.fail({

@@ -156,14 +156,18 @@ const evaluateReferenceWithWork = (
   const sessions = sessionsResult.success
   const dates = sessions.map((session) => session.date)
   const requiredHistory = riskBalancedHistoryLength(protocol)
-  const eligibleSignals = monthEnds(dates).filter(
-    (index) =>
-      index >= requiredHistory &&
-      index < dates.length - 1 &&
-      dates[index - requiredHistory] >= manifest.bounds.lookbackStart &&
-      dates[index + 1] >= manifest.bounds.evaluationStart &&
-      dates[index + 1] <= manifest.bounds.evaluationEnd,
-  )
+  const eligibleSignals = monthEnds(dates).filter((index) => {
+    if (index < requiredHistory || index >= dates.length - 1) return false
+    const firstHistoryDate = dates.at(index - requiredHistory)
+    const executionDate = dates.at(index + 1)
+    return (
+      firstHistoryDate !== undefined &&
+      executionDate !== undefined &&
+      firstHistoryDate >= manifest.bounds.lookbackStart &&
+      executionDate >= manifest.bounds.evaluationStart &&
+      executionDate <= manifest.bounds.evaluationEnd
+    )
+  })
   const firstEligibleSignal = eligibleSignals[0]
   if (firstEligibleSignal === undefined) {
     return Result.fail({

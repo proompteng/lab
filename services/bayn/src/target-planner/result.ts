@@ -47,7 +47,11 @@ const TargetPlanResultBase = Schema.Union([
 ])
 
 const isStrictlySorted = (values: readonly string[]): boolean =>
-  values.every((value, index) => index === 0 || values[index - 1] < value)
+  values.every((value, index) => {
+    if (index === 0) return true
+    const previous = values[index - 1]
+    return previous !== undefined && previous < value
+  })
 
 interface TargetPlanDeltaFact {
   readonly index: number
@@ -119,6 +123,7 @@ const targetPlanOrderingIssues = (
   for (let index = 1; index < result.intentTargets.length; index += 1) {
     const previous = result.intentTargets[index - 1]
     const current = result.intentTargets[index]
+    if (previous === undefined || current === undefined) continue
     if (
       (previous.side === OrderSide.Buy && current.side === OrderSide.Sell) ||
       (previous.side === current.side && previous.symbol >= current.symbol)

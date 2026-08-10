@@ -44,7 +44,19 @@ const Decimal = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-
 const isUtcTimestamp = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
   if (match === null) return false
-  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number)
+  const components = match.slice(1, 7).map(Number)
+  if (components.length !== 6) return false
+  const [year, month, day, hour, minute, second] = components
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined
+  ) {
+    return false
+  }
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second))
   return (
     date.getUTCFullYear() === year &&

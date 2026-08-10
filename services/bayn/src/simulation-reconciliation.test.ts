@@ -237,6 +237,7 @@ type IssueLeaf =
   | 'MissingReference/OrderDecision'
   | 'MissingReference/FillOrder'
   | 'MissingReference/MonetaryEventCashChange'
+  | 'MissingReference/ValidatedMonetaryEvent'
   | 'EvidenceMismatch/OrderExecutionSession'
   | 'EvidenceMismatch/FillBinding'
   | 'EvidenceMismatch/FillQuantity'

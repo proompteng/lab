@@ -119,7 +119,9 @@ const protocolIssues = (
     issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
   }
   for (let index = 1; index < parameters.horizons.length; index += 1) {
-    if (parameters.horizons[index] <= parameters.horizons[index - 1]) {
+    const previous = parameters.horizons[index - 1]
+    const current = parameters.horizons[index]
+    if (previous === undefined || current === undefined || current <= previous) {
       issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
       break
     }

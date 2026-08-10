@@ -32,8 +32,10 @@ import {
   makeReferenceOrder,
   replayBuysFitCash,
   replayDesiredQuantities,
+  replayPriceFor,
   replayPositionValue,
   replayPrices,
+  replayQuantityFor,
   restrictReferenceBuyFill,
 } from './replay-calculations'
 
@@ -97,7 +99,10 @@ export const replay = (
   const marks: DailyPositionMark[] = []
   const daily: DailyPerformancePoint[] = []
   for (let index = startIndex; index < sessions.length; index += 1) {
-    const session = sessions[index]
+    const session = sessions.at(index)
+    if (session === undefined) {
+      return Result.fail({ _tag: 'ReferenceReplaySessionMissing', sessionIndex: index, sessionCount: sessions.length })
+    }
     const scheduledTarget = targetBySession.get(index)
     const lastTarget = targets.at(-1)
     const beforeTurnover = state.turnoverMicros
@@ -204,20 +209,18 @@ export const replay = (
       const desired = desiredResult.success
       const targetFills: FillEvent[] = []
 
-      const sellPlans = [...protocol.universe]
-        .sort()
-        .map((symbol) => {
-          const held = positions.get(symbol)?.quantityMicros ?? 0n
-          return { symbol, quantityMicros: desired[symbol] < held ? held - desired[symbol] : 0n }
-        })
-        .filter((candidate) => candidate.quantityMicros > 0n)
-      const buyPlans = [...protocol.universe]
-        .sort()
-        .map((symbol) => {
-          const held = positions.get(symbol)?.quantityMicros ?? 0n
-          return { symbol, quantityMicros: desired[symbol] > held ? desired[symbol] - held : 0n }
-        })
-        .filter((candidate) => candidate.quantityMicros > 0n)
+      const sellPlans: Array<{ readonly symbol: string; readonly quantityMicros: bigint }> = []
+      const buyPlans: Array<{ readonly symbol: string; readonly quantityMicros: bigint }> = []
+      for (const symbol of [...protocol.universe].sort()) {
+        const desiredQuantity = replayQuantityFor(desired, symbol)
+        if (Result.isFailure(desiredQuantity)) return Result.fail(desiredQuantity.failure)
+        const held = positions.get(symbol)?.quantityMicros ?? 0n
+        if (desiredQuantity.success < held) {
+          sellPlans.push({ symbol, quantityMicros: held - desiredQuantity.success })
+        } else if (desiredQuantity.success > held) {
+          buyPlans.push({ symbol, quantityMicros: desiredQuantity.success - held })
+        }
+      }
       const minimumBuyNotionalMicros = BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
       let acceptedPlanScale = 0n
       let upperPlanScale = ppm
@@ -238,16 +241,18 @@ export const replay = (
       }
       const sellOrdersResult = Result.all(
         sellPlans.map((candidate) =>
-          makeReferenceOrder(
-            runId,
-            decision,
-            session.date,
-            candidate.symbol,
-            'sell',
-            candidate.quantityMicros,
-            fillPrices[candidate.symbol],
-            protocol,
-            terminalClose,
+          Result.flatMap(replayPriceFor(fillPrices, candidate.symbol), (fillPrice) =>
+            makeReferenceOrder(
+              runId,
+              decision,
+              session.date,
+              candidate.symbol,
+              'sell',
+              candidate.quantityMicros,
+              fillPrice,
+              protocol,
+              terminalClose,
+            ),
           ),
         ),
       )
@@ -258,9 +263,13 @@ export const replay = (
         const requested = scaleQuantityMicros(candidate.quantityMicros, acceptedPlanScale, protocol.executionModel)
         if (Result.isFailure(requested)) return Result.fail(requested.failure)
         if (requested.success === 0n) continue
-        const requestedNotional = notionalMicros(requested.success, planPrices[candidate.symbol])
+        const planPrice = replayPriceFor(planPrices, candidate.symbol)
+        if (Result.isFailure(planPrice)) return Result.fail(planPrice.failure)
+        const requestedNotional = notionalMicros(requested.success, planPrice.success)
         if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
         if (requestedNotional.success < minimumBuyNotionalMicros) continue
+        const fillPrice = replayPriceFor(fillPrices, candidate.symbol)
+        if (Result.isFailure(fillPrice)) return Result.fail(fillPrice.failure)
         const simulatedOrder = makeReferenceOrder(
           runId,
           decision,
@@ -268,7 +277,7 @@ export const replay = (
           candidate.symbol,
           'buy',
           requested.success,
-          fillPrices[candidate.symbol],
+          fillPrice.success,
           protocol,
         )
         if (Result.isFailure(simulatedOrder)) return Result.fail(simulatedOrder.failure)
@@ -312,10 +321,12 @@ export const replay = (
         const position = positions.get(simulatedOrder.symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
         const quantity = BigInt(simulatedOrder.filledQuantityMicros)
         if (quantity === 0n) continue
+        const fillPrice = replayPriceFor(fillPrices, simulatedOrder.symbol)
+        if (Result.isFailure(fillPrice)) return Result.fail(fillPrice.failure)
         const termsResult = makeFillTerms(
           'sell',
           quantity,
-          fillPrices[simulatedOrder.symbol],
+          fillPrice.success,
           protocol.executionModel,
           costMultiplierMicros,
         )
@@ -348,10 +359,12 @@ export const replay = (
         if (retainTrace) orders.push(simulatedOrder)
         const quantity = BigInt(simulatedOrder.filledQuantityMicros)
         if (quantity === 0n) continue
+        const fillPrice = replayPriceFor(fillPrices, simulatedOrder.symbol)
+        if (Result.isFailure(fillPrice)) return Result.fail(fillPrice.failure)
         const termsResult = makeFillTerms(
           'buy',
           quantity,
-          fillPrices[simulatedOrder.symbol],
+          fillPrice.success,
           protocol.executionModel,
           costMultiplierMicros,
         )
@@ -566,13 +579,15 @@ export const replay = (
       const markedPositions: DailyPositionMark['positions'][number][] = []
       for (const symbol of [...protocol.universe].sort()) {
         const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
-        const marketValue = notionalMicros(position.quantityMicros, closes[symbol])
+        const close = replayPriceFor(closes, symbol)
+        if (Result.isFailure(close)) return Result.fail(close.failure)
+        const marketValue = notionalMicros(position.quantityMicros, close.success)
         if (Result.isFailure(marketValue)) return Result.fail(marketValue.failure)
         markedPositions.push({
           symbol,
           quantityMicros: position.quantityMicros.toString(),
           costBasisMicros: position.costBasisMicros.toString(),
-          priceMicros: closes[symbol].toString(),
+          priceMicros: close.success.toString(),
           marketValueMicros: marketValue.success.toString(),
         })
       }

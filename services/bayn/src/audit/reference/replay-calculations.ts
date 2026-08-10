@@ -62,7 +62,12 @@ export const calculateReplayMetrics = (
   const equity = equityMicros.map(microsToNumber)
   const initial = microsToNumber(initialMicros)
   const endingEquity = microsToNumber(endingEquityMicros)
-  const returns = equity.map((value, index) => value / (index === 0 ? initial : equity[index - 1]) - 1)
+  const returns: number[] = []
+  let previousEquity = initial
+  for (const value of equity) {
+    returns.push(value / previousEquity - 1)
+    previousEquity = value
+  }
   const totalReturn = endingEquity / initial - 1
   const annualizedReturn = Math.pow(endingEquity / initial, tradingDays / equity.length) - 1
   const annualizedVolatility = sampleDeviation(returns) * Math.sqrt(tradingDays)
@@ -201,12 +206,22 @@ export const replayPrices = (
 ): ReferenceComputation<Readonly<Record<string, bigint>>> =>
   pipe(
     Result.all(
-      protocol.universe.map((symbol) =>
-        pipe(
-          referencePriceMicros(price(session.bars[symbol]), protocol.executionModel),
+      protocol.universe.map((symbol) => {
+        const bar = session.bars[symbol]
+        if (bar === undefined) {
+          return Result.fail({
+            _tag: 'ReferenceIncompleteSession' as const,
+            sessionDate: session.date,
+            missingSymbols: [symbol],
+            actualSymbolCount: Object.keys(session.bars).length,
+            expectedSymbolCount: protocol.universe.length,
+          })
+        }
+        return pipe(
+          referencePriceMicros(price(bar), protocol.executionModel),
           Result.map((priceMicros) => [symbol, priceMicros] as const),
-        ),
-      ),
+        )
+      }),
     ),
     Result.map((entries) => Object.fromEntries(entries)),
   )
@@ -215,20 +230,37 @@ export const replayPositionValue = (
   prices: Readonly<Record<string, bigint>>,
   positions: ReadonlyMap<string, Position>,
   protocol: SimulationProtocol,
-): ReferenceComputation<bigint> =>
-  protocol.universe.reduce<ReferenceComputation<bigint>>(
-    (total, symbol) =>
-      pipe(
-        total,
-        Result.flatMap((value) =>
-          pipe(
-            notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, prices[symbol]),
-            Result.map((notional) => value + notional),
-          ),
-        ),
-      ),
-    Result.succeed(0n),
-  )
+): ReferenceComputation<bigint> => {
+  let total = 0n
+  for (const symbol of protocol.universe) {
+    const priceMicros = prices[symbol]
+    if (priceMicros === undefined) return Result.fail({ _tag: 'ReferenceMissingPrice', symbol })
+    const notional = notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, priceMicros)
+    if (Result.isFailure(notional)) return Result.fail(notional.failure)
+    total += notional.success
+  }
+  return Result.succeed(total)
+}
+
+export const replayPriceFor = (
+  prices: Readonly<Record<string, bigint>>,
+  symbol: string,
+): ReferenceComputation<bigint> => {
+  const priceMicros = prices[symbol]
+  return priceMicros === undefined
+    ? Result.fail({ _tag: 'ReferenceMissingPrice', symbol })
+    : Result.succeed(priceMicros)
+}
+
+export const replayQuantityFor = (
+  quantities: Readonly<Record<string, bigint>>,
+  symbol: string,
+): ReferenceComputation<bigint> => {
+  const quantityMicros = quantities[symbol]
+  return quantityMicros === undefined
+    ? Result.fail({ _tag: 'ReferenceMissingQuantity', symbol })
+    : Result.succeed(quantityMicros)
+}
 
 export const replayDesiredQuantities = (
   equityMicros: bigint,
@@ -238,12 +270,16 @@ export const replayDesiredQuantities = (
 ): ReferenceComputation<Readonly<Record<string, bigint>>> =>
   pipe(
     Result.all(
-      protocol.universe.map((symbol) =>
-        pipe(
-          desiredQuantityMicros(equityMicros, weights[symbol], prices[symbol], protocol.executionModel),
+      protocol.universe.map((symbol) => {
+        const weight = weights[symbol]
+        if (weight === undefined) return Result.fail({ _tag: 'ReferenceMissingWeight' as const, symbol })
+        const priceMicros = prices[symbol]
+        if (priceMicros === undefined) return Result.fail({ _tag: 'ReferenceMissingPrice' as const, symbol })
+        return pipe(
+          desiredQuantityMicros(equityMicros, weight, priceMicros, protocol.executionModel),
           Result.map((quantityMicros) => [symbol, quantityMicros] as const),
-        ),
-      ),
+        )
+      }),
     ),
     Result.map((entries) => Object.fromEntries(entries)),
   )
@@ -260,43 +296,23 @@ const replayBuyFeeInputs = (
   protocol: SimulationProtocol,
   costMultiplierMicros: bigint,
   minimumNotionalMicros?: bigint,
-): ReferenceComputation<readonly FeeInput[]> =>
-  buys.reduce<ReferenceComputation<readonly FeeInput[]>>(
-    (result, buy) =>
-      pipe(
-        result,
-        Result.flatMap((inputs) =>
-          pipe(
-            scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel),
-            Result.flatMap((quantityMicros) => {
-              if (quantityMicros === 0n) return Result.succeed(inputs)
-              return pipe(
-                notionalMicros(quantityMicros, prices[buy.symbol]),
-                Result.flatMap((referenceNotionalMicros) => {
-                  if (minimumNotionalMicros !== undefined && referenceNotionalMicros < minimumNotionalMicros) {
-                    return Result.succeed(inputs)
-                  }
-                  return pipe(
-                    makeFillTerms(
-                      'buy',
-                      quantityMicros,
-                      prices[buy.symbol],
-                      protocol.executionModel,
-                      costMultiplierMicros,
-                    ),
-                    Result.map((terms) => [
-                      ...inputs,
-                      { side: 'buy' as const, quantityMicros, notionalMicros: terms.notionalMicros },
-                    ]),
-                  )
-                }),
-              )
-            }),
-          ),
-        ),
-      ),
-    Result.succeed([]),
-  )
+): ReferenceComputation<readonly FeeInput[]> => {
+  const inputs: FeeInput[] = []
+  for (const buy of buys) {
+    const quantity = scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel)
+    if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+    if (quantity.success === 0n) continue
+    const priceMicros = prices[buy.symbol]
+    if (priceMicros === undefined) return Result.fail({ _tag: 'ReferenceMissingPrice', symbol: buy.symbol })
+    const referenceNotional = notionalMicros(quantity.success, priceMicros)
+    if (Result.isFailure(referenceNotional)) return Result.fail(referenceNotional.failure)
+    if (minimumNotionalMicros !== undefined && referenceNotional.success < minimumNotionalMicros) continue
+    const terms = makeFillTerms('buy', quantity.success, priceMicros, protocol.executionModel, costMultiplierMicros)
+    if (Result.isFailure(terms)) return Result.fail(terms.failure)
+    inputs.push({ side: 'buy', quantityMicros: quantity.success, notionalMicros: terms.success.notionalMicros })
+  }
+  return Result.succeed(inputs)
+}
 
 export const replayBuysFitCash = (
   buys: readonly ReferenceBuyCandidate[],

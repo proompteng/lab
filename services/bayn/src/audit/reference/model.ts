@@ -131,6 +131,22 @@ export type ReferenceEvaluationFailure =
       readonly maximumWeight: number
     }
   | {
+      readonly _tag: 'ReferenceMissingWeight'
+      readonly symbol: string
+    }
+  | {
+      readonly _tag: 'ReferenceMissingPrice'
+      readonly symbol: string
+    }
+  | {
+      readonly _tag: 'ReferenceMissingQuantity'
+      readonly symbol: string
+    }
+  | {
+      readonly _tag: 'ReferenceMissingSymbolSeries'
+      readonly symbol: string
+    }
+  | {
       readonly _tag: 'ReferenceWeightBoundingFailed'
       readonly totalUnits: number
       readonly excessUnits: number
@@ -232,6 +248,11 @@ export type ReferenceEvaluationFailure =
       readonly _tag: 'ReferenceTargetSignalMissing'
       readonly signalIndex: number
       readonly executionIndex: number
+      readonly sessionCount: number
+    }
+  | {
+      readonly _tag: 'ReferenceReplaySessionMissing'
+      readonly sessionIndex: number
       readonly sessionCount: number
     }
   | {
