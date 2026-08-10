@@ -158,6 +158,7 @@ export type PaperEpisodeAuthorityDecision =
   | { readonly _tag: 'Activate' }
   | { readonly _tag: 'Rearm' }
   | { readonly _tag: 'Resume' }
+  | { readonly _tag: 'ResumeRestricted' }
 
 export const decidePaperEpisodeAuthority = (
   facts: PaperEpisodeAuthorityFacts,
@@ -194,7 +195,7 @@ export const decidePaperEpisodeAuthority = (
     facts.generationHash !== facts.sourceGenerationHash &&
     facts.reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true
   ) {
-    return Result.succeed({ _tag: 'Rearm' })
+    return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })
 }
