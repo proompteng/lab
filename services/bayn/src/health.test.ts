@@ -192,8 +192,6 @@ const brokerReadOperation = (name: BrokerHealthReadName): BrokerReadOperation =>
     case 'recent-fills':
       return 'fill-activities'
   }
-  const exhaustive: never = name
-  return exhaustive
 }
 
 const controlledBrokerRead = <A>(

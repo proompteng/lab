@@ -175,7 +175,7 @@ describe('strategy protocol', () => {
 
     for (const path of requiredPaths) {
       const document: Record<string, unknown> = structuredClone(defaultProtocolDocument)
-      let parent = document.executionModel as Record<string, unknown>
+      let parent = document['executionModel'] as Record<string, unknown>
       for (const segment of path.slice(0, -1)) parent = parent[segment] as Record<string, unknown>
       const key = path.at(-1)
       if (key === undefined) throw new Error('execution path cannot be empty')

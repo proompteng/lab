@@ -88,7 +88,7 @@ describe('canonical hashing', () => {
 
   test('rejects cycles while accepting repeated non-cyclic references', () => {
     const cyclicObject: Record<string, unknown> = {}
-    cyclicObject.self = cyclicObject
+    cyclicObject['self'] = cyclicObject
     expect(failureOf(canonicalJsonV1Result(cyclicObject))).toEqual({
       _tag: 'CanonicalJsonFailure',
       path: '$.self',

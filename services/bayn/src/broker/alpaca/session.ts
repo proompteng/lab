@@ -56,8 +56,6 @@ const acquisitionStage = (cause: BrokerReadError | BrokerAccountPreflightError):
     case 'market-calendar':
       return BrokerSessionAcquisitionStage.ReadSurface
   }
-  const exhaustive: never = cause.operation
-  return exhaustive
 }
 
 const acquisitionError = (

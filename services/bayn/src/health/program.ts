@@ -65,8 +65,6 @@ const renderBrokerPermissionFailure = (failure: BrokerAccountPreflightFailure): 
     case 'BrokerFractionalTradingDisabled':
       return 'fractional trading is disabled'
   }
-  const exhaustive: never = failure
-  return exhaustive
 }
 
 const namedBrokerRead = <A, E, R>(

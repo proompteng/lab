@@ -237,6 +237,4 @@ export const renderBrokerConnectionDecodeFailure = (failure: BrokerConnectionDec
     case 'InvalidBrokerProxyUrl':
       return `invalid broker proxy URL: ${failure.reason}`
   }
-  const exhaustive: never = failure
-  return exhaustive
 }

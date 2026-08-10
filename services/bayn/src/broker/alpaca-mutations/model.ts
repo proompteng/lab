@@ -26,6 +26,9 @@ export const MutationEvidenceSchema = Schema.Struct({
   observedAt: UtcInstant,
 })
 export type MutationEvidence = typeof MutationEvidenceSchema.Type
+export type PartialMutationEvidence = {
+  readonly [K in keyof MutationEvidence]?: MutationEvidence[K] | undefined
+}
 
 export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')<{
   readonly operation: MutationOperation
@@ -33,7 +36,7 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
   readonly outcome: MutationOutcome
   readonly message: string
   readonly requestHash?: string
-  readonly evidence?: Partial<MutationEvidence>
+  readonly evidence?: PartialMutationEvidence
   readonly brokerOrderId?: string
   readonly brokerCode?: string
   readonly cause?: Readonly<Record<string, string>>
@@ -93,7 +96,7 @@ export const configurationError = (message: string, cause?: unknown) =>
     failure: MutationFailure.Configuration,
     outcome: MutationOutcome.Known,
     message,
-    cause: cause === undefined ? undefined : causeSummary(cause),
+    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
   })
 
 export const invalidRequest = (operation: MutationOperation, message: string, cause?: unknown) =>
@@ -102,14 +105,14 @@ export const invalidRequest = (operation: MutationOperation, message: string, ca
     failure: MutationFailure.InvalidRequest,
     outcome: MutationOutcome.Known,
     message,
-    cause: cause === undefined ? undefined : causeSummary(cause),
+    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
   })
 
 export const unknownOutcome = (
   operation: MutationOperation,
   message: string,
   requestHash?: string,
-  evidence?: Partial<MutationEvidence>,
+  evidence?: PartialMutationEvidence,
   cause?: unknown,
 ) =>
   new BrokerMutationError({
@@ -117,9 +120,9 @@ export const unknownOutcome = (
     failure: MutationFailure.Unknown,
     outcome: MutationOutcome.Unknown,
     message,
-    requestHash,
-    evidence,
-    cause: cause === undefined ? undefined : causeSummary(cause),
+    ...(requestHash === undefined ? {} : { requestHash }),
+    ...(evidence === undefined ? {} : { evidence }),
+    ...(cause === undefined ? {} : { cause: causeSummary(cause) }),
   })
 
 export const knownRejection = (

@@ -471,6 +471,4 @@ export const renderExecutionPolicyFailure = (failure: ExecutionPolicyResolutionF
     case 'UnexpectedLiveCapitalGrantHash':
       return `live capital grant hash is not valid for ${failure.capitalAuthority}`
   }
-  const exhaustive: never = failure
-  return exhaustive
 }

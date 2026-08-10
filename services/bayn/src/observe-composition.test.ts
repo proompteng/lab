@@ -1038,7 +1038,13 @@ describe('OBSERVE runtime composition', () => {
     expect(
       decidePaperCycleCompletion(
         evaluatedAt,
-        [{ ...filled, state: IntentState.Acknowledged, terminalOutcome: undefined }],
+        [
+          {
+            state: IntentState.Acknowledged,
+            updatedAt: filled.updatedAt,
+            latestMutationAt: filled.latestMutationAt,
+          },
+        ],
         laterReconciliation,
       ),
     ).toEqual({ _tag: 'Wait', reason: 'intent-nonterminal' })
@@ -1209,11 +1215,11 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'accepted-broker-order',
       occurredAt: evaluatedAt,
     }
+    const { brokerOrderId: _acceptedBrokerOrderId, ...acceptedWithoutBrokerOrderId } = accepted
     const unknownEvent: MutationEvent = {
-      ...accepted,
+      ...acceptedWithoutBrokerOrderId,
       eventId: '2'.repeat(64),
       eventType: MutationEventType.SubmitUnknown,
-      brokerOrderId: undefined,
     }
     const cancelAccepted: MutationEvent = {
       ...accepted,
@@ -1711,12 +1717,12 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'superseded-accepted-order',
       occurredAt,
     }
+    const { brokerOrderId: _supersededBrokerOrderId, ...acceptedWithoutBrokerOrderId } = accepted
     const unknown: MutationEvent = {
-      ...accepted,
+      ...acceptedWithoutBrokerOrderId,
       eventId: '4'.repeat(64),
       mutationId: '5'.repeat(64),
       eventType: MutationEventType.SubmitUnknown,
-      brokerOrderId: undefined,
     }
     const cancelAccepted: MutationEvent = {
       ...accepted,

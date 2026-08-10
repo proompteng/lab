@@ -767,10 +767,8 @@ function buildCycleDecision<R>(
         input,
         facts,
         compiled,
-        authorityRequirement === Authority.Paper
-          ? {
-              allocationCapitalMicros: allocationCapitalMicros?.toString(),
-            }
+        authorityRequirement === Authority.Paper && allocationCapitalMicros !== undefined
+          ? { allocationCapitalMicros: allocationCapitalMicros.toString() }
           : {},
       ),
     )
@@ -1510,8 +1508,10 @@ const executeBoundPaperCycle = (
       paperMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
-        paperEpisodeCutoffAt: input.paperEpisodeCutoffAt,
-        paperEpisodeCloseSubmitCutoffAt: input.paperEpisodeCloseSubmitCutoffAt,
+        ...(input.paperEpisodeCutoffAt === undefined ? {} : { paperEpisodeCutoffAt: input.paperEpisodeCutoffAt }),
+        ...(input.paperEpisodeCloseSubmitCutoffAt === undefined
+          ? {}
+          : { paperEpisodeCloseSubmitCutoffAt: input.paperEpisodeCloseSubmitCutoffAt }),
         observedAt,
       }),
     )

@@ -151,10 +151,9 @@ describe('live-causal simulation', () => {
       decision: plan('2026-01-02', { AAA: 1, BBB: 0 }),
     }
     const close = (target: SimulationTarget, executionIndex: number): SimulationTarget => ({
-      ...target,
+      signalIndex: target.signalIndex,
       executionIndex,
       weights: { AAA: 0, BBB: 0 },
-      decision: undefined,
       requireDecisionEvidence: false,
       terminalClose: true,
     })
@@ -167,10 +166,9 @@ describe('live-causal simulation', () => {
 
   test('replaces a final non-flat target with the terminal close instead of a same-session round trip', () => {
     const close = (target: SimulationTarget, executionIndex: number): SimulationTarget => ({
-      ...target,
+      signalIndex: target.signalIndex,
       executionIndex,
       weights: { AAA: 0, BBB: 0 },
-      decision: undefined,
       requireDecisionEvidence: false,
       terminalClose: true,
     })

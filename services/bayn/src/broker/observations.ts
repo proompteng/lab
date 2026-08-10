@@ -394,7 +394,7 @@ export const positionSnapshot = (
         )
 }
 
-type QuantityOrder = AlpacaOrder & {
+type QuantityOrder = Omit<AlpacaOrder, 'notionalMicros' | 'quantityMicros' | 'updatedAt'> & {
   readonly quantityMicros: string
   readonly notionalMicros?: undefined
   readonly updatedAt: string
@@ -415,12 +415,12 @@ const validateOrderShape = (
   if (updatedAt === undefined) {
     return fail({ _tag: 'OrderUpdatedAtMissing', brokerOrderId: value.brokerOrderId })
   }
+  const { notionalMicros: _omittedNotionalMicros, ...order } = value
   return pipe(
     validateObservationTime(value.observedAt, evidence),
     Result.map(() => ({
-      ...value,
+      ...order,
       quantityMicros,
-      notionalMicros: undefined,
       updatedAt,
     })),
   )

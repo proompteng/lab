@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
+import { MutationOperation, type MutationEvidence, type PartialMutationEvidence } from '../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { strictParseOptions } from '../../schemas'
@@ -34,7 +34,7 @@ import { MutationStoreError as MutationStoreErrorValue } from './model'
 
 const decodeStartInputResult = Schema.decodeUnknownResult(StartInputSchema, strictParseOptions)
 const decodeOutcomeInputResult = Schema.decodeUnknownResult(OutcomeInputSchema, strictParseOptions)
-const hasCompleteEvidence = (evidence: Partial<MutationEvidence>): evidence is MutationEvidence =>
+const hasCompleteEvidence = (evidence: PartialMutationEvidence): evidence is MutationEvidence =>
   evidence.requestId !== undefined &&
   evidence.status !== undefined &&
   evidence.contentHash !== undefined &&
@@ -42,9 +42,9 @@ const hasCompleteEvidence = (evidence: Partial<MutationEvidence>): evidence is M
 
 type MutationEvidenceDecision =
   | { readonly _tag: 'OmitIncompleteEvidence' }
-  | { readonly _tag: 'RetainCompleteEvidence'; readonly evidence: Partial<MutationEvidence> }
+  | { readonly _tag: 'RetainCompleteEvidence'; readonly evidence: PartialMutationEvidence }
 
-const decideMutationEvidence = (evidence: Partial<MutationEvidence> | undefined): MutationEvidenceDecision =>
+const decideMutationEvidence = (evidence: PartialMutationEvidence | undefined): MutationEvidenceDecision =>
   evidence !== undefined && hasCompleteEvidence(evidence)
     ? { _tag: 'RetainCompleteEvidence', evidence }
     : { _tag: 'OmitIncompleteEvidence' }
@@ -827,7 +827,7 @@ export const decodeOutcomeInput = (
     readonly requestHash: string
     readonly occurredAt: string
     readonly brokerOrderId?: string
-    readonly evidence?: Partial<MutationEvidence>
+    readonly evidence?: PartialMutationEvidence
   },
 ): Result.Result<MutationOutcomeInput, MutationStoreError> => {
   const evidence = decideMutationEvidence(input.evidence)

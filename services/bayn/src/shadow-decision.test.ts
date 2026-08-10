@@ -374,7 +374,7 @@ const makeInput = (
     NVDA: '5000000',
   }
   const riskInputs: ShadowDeltaRiskInput[] =
-    targetWeights.AMD === 0.4 && targetWeights.NVDA === 0.6
+    targetWeights['AMD'] === 0.4 && targetWeights['NVDA'] === 0.6
       ? ['AMD', 'NVDA'].map((symbol) => ({
           symbol,
           notionalLimitMicros: (
@@ -747,7 +747,7 @@ describe('OBSERVE shadow decision', () => {
     expect(failures.every((failure) => failure._tag === 'ShadowDecisionError')).toBe(true)
 
     const cyclic: Record<string, unknown> = {}
-    cyclic.self = cyclic
+    cyclic['self'] = cyclic
     const constructorFailures = [
       makeObserveShadowDecisionDocument(null),
       makeObserveShadowDecisionDocument({}),

@@ -485,7 +485,8 @@ const programError = (
   operation: ForwardPerformanceProgramError['operation'],
   message: string,
   cause?: ForwardPerformanceProgramCause,
-): ForwardPerformanceProgramError => new ForwardPerformanceProgramError({ operation, message, cause })
+): ForwardPerformanceProgramError =>
+  new ForwardPerformanceProgramError({ operation, message, ...(cause === undefined ? {} : { cause }) })
 
 const requireBrokerIdentity = (
   config: LoadedRuntimeConfig,

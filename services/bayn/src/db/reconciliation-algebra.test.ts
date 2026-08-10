@@ -78,7 +78,7 @@ const prepared = preparedResult.success
 const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
 const receiptMaterial = {
   schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
-  intentId: fill.intentId,
+  ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),
   brokerEventId: prepared.transaction.brokerEventId,
   tigerBeetleClusterId: tigerBeetle.clusterId.toString(),
   tigerBeetleLedger: tigerBeetle.ledger,
@@ -122,7 +122,7 @@ const order: Order = {
   accountId,
   brokerOrderId: fill.brokerOrderId,
   clientOrderId: fill.clientOrderId,
-  intentId: fill.intentId,
+  ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),
   symbol: fill.symbol,
   side: fill.side,
   orderType: OrderType.Limit,

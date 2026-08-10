@@ -93,7 +93,7 @@ import { PostgresClientLive } from '../evidence-store'
 import { migrationLoader } from '../migrations'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
 
-const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
+const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -144,7 +144,7 @@ interface PostgresProcessRestartEvidence {
 }
 
 const restartGithubPostgres18Process = async (): Promise<PostgresProcessRestartEvidence | undefined> => {
-  if (process.env.GITHUB_ACTIONS !== 'true') return undefined
+  if (process.env['GITHUB_ACTIONS'] !== 'true') return undefined
 
   const url = new URL(testUrl)
   const port = url.port.length === 0 ? '5432' : url.port
@@ -4570,7 +4570,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       await firstRuntime.dispose()
 
       const processRestart = await restartGithubPostgres18Process()
-      if (process.env.GITHUB_ACTIONS === 'true') {
+      if (process.env['GITHUB_ACTIONS'] === 'true') {
         expect(processRestart).toMatchObject({
           containerId: expect.any(String),
           image: expect.stringMatching(/^postgres:18(?:-|$)/),

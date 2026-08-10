@@ -421,14 +421,12 @@ export const replay = (
     const terminalSession = closeAtEnd && index === sessions.length - 1
     const replaceScheduledTarget = terminalSession && scheduledTarget !== undefined && !isFlatTarget(scheduledTarget)
     const terminalTargetFor = (source: Target | undefined): Target => ({
-      ...(source ?? {
-        signalIndex: Math.max(0, index - 1),
-        executionIndex: index,
-        weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-      }),
+      signalIndex: source?.signalIndex ?? Math.max(0, index - 1),
       executionIndex: index,
       weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-      plan: undefined,
+      ...(source?.requireDecisionEvidence === undefined
+        ? {}
+        : { requireDecisionEvidence: source.requireDecisionEvidence }),
       terminalClose: true,
     })
     const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
@@ -444,23 +442,7 @@ export const replay = (
 
     const mustCloseAtEnd = terminalSession && !replaceScheduledTarget && hasOpenPosition(positions)
     const closeSource = scheduledTarget ?? lastTarget
-    const terminalTarget =
-      mustCloseAtEnd && closeSource !== undefined
-        ? {
-            ...closeSource,
-            executionIndex: index,
-            weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-            plan: undefined,
-            terminalClose: true,
-          }
-        : mustCloseAtEnd
-          ? {
-              signalIndex: Math.max(0, index - 1),
-              executionIndex: index,
-              weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-              terminalClose: true,
-            }
-          : undefined
+    const terminalTarget = mustCloseAtEnd ? terminalTargetFor(closeSource) : undefined
     if (terminalTarget !== undefined) {
       const terminalResult = runTarget(terminalTarget)
       if (Result.isFailure(terminalResult)) return Result.fail(terminalResult.failure)

@@ -217,7 +217,9 @@ const withMutation = <A, E>(
   use: (mutation: BrokerMutationShape) => Effect.Effect<A, E>,
   options: MutationHarnessOptions = {},
 ): Effect.Effect<A, BrokerMutationError | E> => {
-  const session = options.session ?? verifiedSession({ operationTimeoutMs: options.operationTimeoutMs })
+  const session =
+    options.session ??
+    verifiedSession(options.operationTimeoutMs === undefined ? {} : { operationTimeoutMs: options.operationTimeoutMs })
   return makeMutation(session, options.authority ?? submitAuthority, client).pipe(Effect.flatMap(use))
 }
 

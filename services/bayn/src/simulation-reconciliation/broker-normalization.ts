@@ -113,9 +113,15 @@ const normalizeFills = (
       return mapObservationFailure(
         'fill',
         observed.value.activityId,
-        fillObservation(observed.value, order, observed.evidence, {
-          intentId: Option.getOrUndefined(HashMap.get(intentByClient, order.clientOrderId)),
-        }),
+        fillObservation(
+          observed.value,
+          order,
+          observed.evidence,
+          Option.match(HashMap.get(intentByClient, order.clientOrderId), {
+            onNone: () => ({}),
+            onSome: (intentId) => ({ intentId }),
+          }),
+        ),
       )
     }),
   )

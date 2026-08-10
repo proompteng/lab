@@ -165,11 +165,11 @@ export const invalidResponse = (
     kind: BrokerReadErrorKind.InvalidResponse,
     message,
     retryable: false,
-    status: evidence?.status,
-    requestId: evidence?.requestId,
-    contentHash: evidence?.contentHash,
-    observedAt: evidence?.observedAt,
-    cause: cause === undefined ? undefined : safeCause(cause),
+    ...(evidence?.status === undefined ? {} : { status: evidence.status }),
+    ...(evidence?.requestId === undefined ? {} : { requestId: evidence.requestId }),
+    ...(evidence?.contentHash === undefined ? {} : { contentHash: evidence.contentHash }),
+    ...(evidence?.observedAt === undefined ? {} : { observedAt: evidence.observedAt }),
+    ...(cause === undefined ? {} : { cause: safeCause(cause) }),
   })
 
 export const invalidRequest = (operation: BrokerReadOperation, message: string, cause: unknown): BrokerReadError =>

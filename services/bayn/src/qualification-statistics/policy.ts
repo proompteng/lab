@@ -100,7 +100,10 @@ export const makeQualificationStatisticsPolicy = ({
   walkForward,
 }: QualificationStatisticsPolicyOptions): QualificationStatisticsPolicyResult =>
   Result.map(
-    validateQualificationStatisticsPolicyOptions({ maximumCandidateOrdinal, walkForward }),
+    validateQualificationStatisticsPolicyOptions({
+      maximumCandidateOrdinal,
+      ...(walkForward === undefined ? {} : { walkForward }),
+    }),
     ({ testSessions, minimumFolds }) => ({
       schemaVersion: qualificationStatisticsPolicySchemaVersion,
       annualizationSessions: 252,

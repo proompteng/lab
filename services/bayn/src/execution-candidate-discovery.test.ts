@@ -1145,7 +1145,7 @@ describe('paper candidate discovery', () => {
   })
 })
 
-const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
+const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 
 describePostgres('paper candidate discovery PostgreSQL transaction', () => {

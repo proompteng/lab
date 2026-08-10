@@ -1,6 +1,5 @@
 import { Context, Effect, Layer } from 'effect'
 
-import type { RuntimeConfig } from '../config'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -9,6 +8,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
+  type ExecutionStoreRuntimeConfig,
 } from './execution-store/contract'
 import { makeExecutionPersistence } from './execution-store/postgres'
 
@@ -35,7 +35,7 @@ export {
   type ValuationStoreShape,
 } from './execution-store/contract'
 
-export const ExecutionStoreLive = (config: RuntimeConfig) =>
+export const ExecutionStoreLive = (config: ExecutionStoreRuntimeConfig) =>
   Layer.effectContext(
     makeExecutionPersistence(config).pipe(
       Effect.map((persistence) =>

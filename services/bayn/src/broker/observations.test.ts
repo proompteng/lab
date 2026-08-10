@@ -186,7 +186,8 @@ describe('paper broker observations', () => {
       _tag: 'ExtendedHoursUnsupported',
       brokerOrderId: order.brokerOrderId,
     })
-    expect(failure(orderObservation({ ...order, updatedAt: undefined }, evidence))).toEqual({
+    const { updatedAt: _omittedUpdatedAt, ...orderWithoutUpdatedAt } = order
+    expect(failure(orderObservation(orderWithoutUpdatedAt, evidence))).toEqual({
       _tag: 'OrderUpdatedAtMissing',
       brokerOrderId: order.brokerOrderId,
     })

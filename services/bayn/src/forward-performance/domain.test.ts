@@ -1084,7 +1084,9 @@ describe('forward performance domain', () => {
   })
 
   test('missing starting capital is an evidence gap rather than malformed micros', () => {
-    const receipt = success(makeForwardPerformanceReceipt(input({ startingCapitalMicros: undefined })))
+    const evidence = input()
+    Reflect.deleteProperty(evidence, 'startingCapitalMicros')
+    const receipt = success(makeForwardPerformanceReceipt(evidence))
 
     expect(receipt.evidence.reasonCodes).toContain('STARTING_CAPITAL_GAP')
     expect(receipt.evidence.reasonCodes).not.toContain('INVALID_MICROS')
