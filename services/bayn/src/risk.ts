@@ -39,6 +39,7 @@ import {
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { Pipeable } from './pipeable'
+import { utcInstantFromEpochMillis } from './time'
 
 const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
 const MAX_AGE_MS = 86_400_000
@@ -551,7 +552,7 @@ const divideUp = (numerator: bigint, denominator: bigint): bigint =>
 const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
   numerator < 0n ? -divideUp(-numerator, denominator) : divideUp(numerator, denominator)
 const instant = (value: string): number => Date.parse(value)
-const utc = (value: number): string => new Date(value).toISOString()
+const utc = utcInstantFromEpochMillis
 
 const makeGate = (
   name: Gate,

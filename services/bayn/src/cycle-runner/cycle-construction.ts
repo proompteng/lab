@@ -3,6 +3,7 @@ import { Data, DateTime, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { ExecutionModelV2Schema } from '../protocol'
 import { strictParseOptions } from '../schemas'
+import { utcInstantFromEpochMillis } from '../time'
 import {
   cycleTimeZone,
   decodeCycleDraftResult,
@@ -343,10 +344,10 @@ const deriveCycleWindowTimes = (
       ),
     )
   }
-  const submissionCutoffAt = new Date(
+  const submissionCutoffAt = utcInstantFromEpochMillis(
     Date.parse(calendar.executionOpenAt) - policy.submissionCutoffBeforeOpenMs,
-  ).toISOString()
-  const submissionOpenAt = new Date(Date.parse(submissionCutoffAt) - policy.submissionWindowMs).toISOString()
+  )
+  const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(submissionCutoffAt) - policy.submissionWindowMs)
   if (submissionOpenAt <= signalCloseAt) {
     return Result.fail(
       failure('cycle-window', 'submission-window', 'submission window must begin after the Signal session close', {

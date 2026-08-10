@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { DateTime, Option, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { CycleState, type CycleTerminalReason } from './cycle'
@@ -73,8 +73,8 @@ export type AutonomousCycleCadenceFreshness = 'AVAILABLE' | 'STALE' | 'UNAVAILAB
 
 const isIsoDate = (value: string | undefined): value is string => {
   if (value === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00.000Z`)
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  const date = DateTime.make(`${value}T00:00:00.000Z`)
+  return Option.isSome(date) && DateTime.formatIsoDate(date.value) === value
 }
 
 const unknownNextEligibility = (

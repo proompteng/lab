@@ -27,6 +27,7 @@ import {
 } from './model'
 import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 import { Pipeable } from '../pipeable'
+import { utcInstantFromEpochMillisResult } from '../time'
 
 const assetEligibilityRules = [
   [PaperCandidateIneligibility.AssetClass, (asset: AssetObservation) => asset.assetClass !== AssetClass.UsEquity],
@@ -206,8 +207,8 @@ const assembleValidatedObservationsDataFirst = (
       cause: { _tag: 'ObservationCaptureEpochNotSafeInteger', observedAtMs: capturedAtMs },
     })
   }
-  const capturedAtDate = new Date(capturedAtMs)
-  if (!Number.isFinite(capturedAtDate.getTime())) {
+  const capturedAtResult = utcInstantFromEpochMillisResult(capturedAtMs)
+  if (Result.isFailure(capturedAtResult)) {
     return Result.fail({
       _tag: 'ObservationCaptureTimeInvalid',
       failure: 'broker',
@@ -215,7 +216,7 @@ const assembleValidatedObservationsDataFirst = (
       cause: { _tag: 'ObservationCaptureEpochOutOfRange', observedAtMs: capturedAtMs },
     })
   }
-  const capturedAt = capturedAtDate.toISOString()
+  const capturedAt = capturedAtResult.success
   return pipe(
     Result.all([
       requireCondition(capturedAtMs < Date.parse(validatedSnapshot.snapshot.document.expiresAt), {
