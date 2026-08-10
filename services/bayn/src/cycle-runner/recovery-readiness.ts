@@ -12,6 +12,7 @@ import {
   type DecodedCycleRecoveryState,
   type WaitingReadiness,
 } from './recovery-model'
+import { Pipeable } from '../pipeable'
 
 const readinessBindingFacts = (
   cycle: AutonomousCycle,
@@ -134,7 +135,7 @@ const readinessOutcomeMatches = (cycle: AutonomousCycle, readiness: CyclePublica
   }
 }
 
-export const readinessIsCorrelated = (
+const readinessIsCorrelatedDataFirst = (
   cycle: AutonomousCycle,
   recoveryObservedAt: string,
   readiness: CyclePublicationReadiness,
@@ -143,7 +144,9 @@ export const readinessIsCorrelated = (
   readinessCommonMatches(cycle, readiness) &&
   readinessOutcomeMatches(cycle, readiness)
 
-export const validateReadiness = (
+export const readinessIsCorrelated = Pipeable.dual(3, readinessIsCorrelatedDataFirst)
+
+const validateReadinessDataFirst = (
   cycle: AutonomousCycle,
   recoveryObservedAt: string,
   readiness: CyclePublicationReadiness,
@@ -158,7 +161,9 @@ export const validateReadiness = (
         ),
       )
 
-export const correlatedReadinessOf = (
+export const validateReadiness = Pipeable.dual(3, validateReadinessDataFirst)
+
+const correlatedReadinessOfDataFirst = (
   state: DecodedCycleRecoveryState,
   cycle: AutonomousCycle,
 ): AlreadyBoundReadiness | undefined => {
@@ -169,3 +174,5 @@ export const correlatedReadinessOf = (
     ? readiness
     : undefined
 }
+
+export const correlatedReadinessOf = Pipeable.dual(2, correlatedReadinessOfDataFirst)

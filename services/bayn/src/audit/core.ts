@@ -20,10 +20,11 @@ import type {
 } from './audit'
 import { evaluateReference, type ReferenceEvaluation } from './reference'
 import { auditContract } from './audit'
+import { Pipeable } from '../pipeable'
 
 export const MICROS_STRING = '1000000'
 
-export const hashAuditMaterial = (
+const hashAuditMaterialDataFirst = (
   subject: AuditCanonicalizationSubject,
   value: unknown,
 ): Result.Result<string, QualificationAuditFailure> =>
@@ -32,7 +33,9 @@ export const hashAuditMaterial = (
     (cause): QualificationAuditFailure => ({ _tag: 'AuditCanonicalizationFailed', subject, cause }),
   )
 
-export const sameAuditMaterial = (
+export const hashAuditMaterial = Pipeable.dual(2, hashAuditMaterialDataFirst)
+
+const sameAuditMaterialDataFirst = (
   subject: AuditCanonicalizationSubject,
   left: unknown,
   right: unknown,
@@ -43,12 +46,16 @@ export const sameAuditMaterial = (
     return leftHash === rightHash
   })
 
-export const auditHashMatches = (
+export const sameAuditMaterial = Pipeable.dual(3, sameAuditMaterialDataFirst)
+
+const auditHashMatchesDataFirst = (
   subject: AuditCanonicalizationSubject,
   value: unknown,
   expectedHash: string,
 ): Result.Result<boolean, QualificationAuditFailure> =>
   Result.map(hashAuditMaterial(subject, value), (actualHash) => actualHash === expectedHash)
+
+export const auditHashMatches = Pipeable.dual(3, auditHashMatchesDataFirst)
 
 export const expectedResultReason = (gateName: string): string =>
   `EVALUATION_${gateName
@@ -56,11 +63,13 @@ export const expectedResultReason = (gateName: string): string =>
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}_FAILED`
 
-export const makeAuditCheck = (name: string, passed: boolean, evidence: string): AuditCheck => ({
+const makeAuditCheckDataFirst = (name: string, passed: boolean, evidence: string): AuditCheck => ({
   name,
   passed,
   evidence,
 })
+
+export const makeAuditCheck = Pipeable.dual(3, makeAuditCheckDataFirst)
 
 export const makePolicyDocuments = (lock: QualificationLock) =>
   (
@@ -72,7 +81,7 @@ export const makePolicyDocuments = (lock: QualificationLock) =>
     ] as const
   ).map(([name, policy]) => ({ name, ...policy }))
 
-export const makeEvaluationSummary = (
+const makeEvaluationSummaryDataFirst = (
   input: QualificationAuditInput,
   reference: ReferenceEvaluation,
   trace: SimulationTrace,
@@ -110,6 +119,8 @@ export const makeEvaluationSummary = (
   },
   markedEquityReconciliation: markedEquity,
 })
+
+export const makeEvaluationSummary = Pipeable.dual(4, makeEvaluationSummaryDataFirst)
 
 const hasTerminalCloseEvent = (database: AuditDatabaseSnapshot): boolean =>
   database.events.some(({ payload }) => payload.kind === 'decision' && payload.terminalClose === true)

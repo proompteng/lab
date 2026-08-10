@@ -11,8 +11,9 @@ import type {
   SimulatedOrder,
 } from '../../../types'
 import type { ReferenceCanonicalizationSubject, ReferenceComputation } from '../model'
+import { Pipeable } from '../../../pipeable'
 
-export const hashReferenceMaterial = (
+const hashReferenceMaterialDataFirst = (
   subject: ReferenceCanonicalizationSubject,
   value: unknown,
 ): ReferenceComputation<string> =>
@@ -22,7 +23,9 @@ export const hashReferenceMaterial = (
     cause,
   }))
 
-export const makeReferenceDecisionEvent = (
+export const hashReferenceMaterial = Pipeable.dual(2, hashReferenceMaterialDataFirst)
+
+const makeReferenceDecisionEventDataFirst = (
   runId: string,
   material: Omit<DecisionEvent, 'id' | 'kind'>,
 ): ReferenceComputation<DecisionEvent> =>
@@ -32,7 +35,9 @@ export const makeReferenceDecisionEvent = (
     ...material,
   }))
 
-export const makeReferenceCashYieldEvent = (
+export const makeReferenceDecisionEvent = Pipeable.dual(2, makeReferenceDecisionEventDataFirst)
+
+const makeReferenceCashYieldEventDataFirst = (
   runId: string,
   material: Omit<CashYieldEvent, 'id' | 'kind'>,
 ): ReferenceComputation<CashYieldEvent> =>
@@ -42,7 +47,9 @@ export const makeReferenceCashYieldEvent = (
     ...material,
   }))
 
-export const makeReferenceFeeEvent = (
+export const makeReferenceCashYieldEvent = Pipeable.dual(2, makeReferenceCashYieldEventDataFirst)
+
+const makeReferenceFeeEventDataFirst = (
   runId: string,
   material: Omit<FeeEvent, 'id' | 'kind'>,
 ): ReferenceComputation<FeeEvent> =>
@@ -52,7 +59,9 @@ export const makeReferenceFeeEvent = (
     ...material,
   }))
 
-export const makeReferenceOrderIdentity = (
+export const makeReferenceFeeEvent = Pipeable.dual(2, makeReferenceFeeEventDataFirst)
+
+const makeReferenceOrderIdentityDataFirst = (
   runId: string,
   material: Omit<SimulatedOrder, 'id'>,
 ): ReferenceComputation<SimulatedOrder> =>
@@ -61,7 +70,9 @@ export const makeReferenceOrderIdentity = (
     ...material,
   }))
 
-export const makeReferenceFillIdentity = (
+export const makeReferenceOrderIdentity = Pipeable.dual(2, makeReferenceOrderIdentityDataFirst)
+
+const makeReferenceFillIdentityDataFirst = (
   runId: string,
   material: Omit<FillEvent, 'id' | 'kind'>,
 ): ReferenceComputation<FillEvent> =>
@@ -71,7 +82,9 @@ export const makeReferenceFillIdentity = (
     ...material,
   }))
 
-export const makeReferenceCashChangeIdentity = (
+export const makeReferenceFillIdentity = Pipeable.dual(2, makeReferenceFillIdentityDataFirst)
+
+const makeReferenceCashChangeIdentityDataFirst = (
   runId: string,
   source:
     | Pick<FillEvent | FeeEvent, 'kind' | 'id' | 'sessionDate'>
@@ -95,3 +108,5 @@ export const makeReferenceCashChangeIdentity = (
     ...material,
   }))
 }
+
+export const makeReferenceCashChangeIdentity = Pipeable.dual(4, makeReferenceCashChangeIdentityDataFirst)

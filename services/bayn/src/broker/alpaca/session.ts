@@ -7,6 +7,7 @@ import { alpacaHttpLayer, make } from './http'
 import { BrokerRead, type BrokerReadShape, type ReadPreflight } from './model'
 import { BrokerAccountPreflightError, verifyReadAccess } from './preflight'
 import { mapLayerAcquisitionError } from '../../resource-boundary'
+import { Pipeable } from '../../pipeable'
 
 export enum BrokerSessionAcquisitionStage {
   Connection = 'CONNECTION',
@@ -131,11 +132,13 @@ export const layer = (
   ).pipe(Layer.provideMerge(session))
 }
 
-export const mapHttpAcquisitionError = (
+const mapHttpAcquisitionErrorDataFirst = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
 ): Layer.Layer<HttpClient.HttpClient, BrokerSessionAcquisitionError> =>
   mapLayerAcquisitionError(http, (cause) => acquisitionError(connection, cause))
+
+export const mapHttpAcquisitionError = Pipeable.dual(2, mapHttpAcquisitionErrorDataFirst)
 
 export const live = (
   connection: BrokerConnection,

@@ -6,6 +6,7 @@ import {
   type IdleReconciliationCadenceDecision,
   type ReconciliationCadenceState,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const nanosPerMillisecond = 1_000_000n
 
@@ -16,7 +17,7 @@ export const validateReconciliationInterval = (
     ? Result.succeed(reconciliationIntervalMs)
     : Result.fail(runnerError('configure', 'invalid-config', 'reconciliation interval must be a positive safe integer'))
 
-export const validateCyclePassTimeout = (
+const validateCyclePassTimeoutDataFirst = (
   cyclePassTimeoutMs: number,
   reconciliationIntervalMs: number,
 ): Result.Result<number, CycleRunnerError> =>
@@ -29,6 +30,8 @@ export const validateCyclePassTimeout = (
           'cycle pass timeout must be a positive safe integer no longer than the reconciliation interval',
         ),
       )
+
+export const validateCyclePassTimeout = Pipeable.dual(2, validateCyclePassTimeoutDataFirst)
 
 export const shouldDeferCyclePollForReconciliation = (input: {
   readonly lastAttemptAtNanos: bigint | undefined
@@ -46,7 +49,7 @@ export const shouldDeferCyclePollForReconciliation = (input: {
   )
 }
 
-export const decideIdleReconciliationCadence = (
+const decideIdleReconciliationCadenceDataFirst = (
   state: ReconciliationCadenceState,
   nowNanos: bigint,
   reconciliationIntervalMs: number,
@@ -59,3 +62,5 @@ export const decideIdleReconciliationCadence = (
     ? { _tag: 'RECONCILE' }
     : { _tag: 'WAIT', remainingNanos: intervalNanos - elapsedNanos }
 }
+
+export const decideIdleReconciliationCadence = Pipeable.dual(3, decideIdleReconciliationCadenceDataFirst)

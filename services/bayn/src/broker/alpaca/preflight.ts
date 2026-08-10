@@ -24,6 +24,7 @@ import {
   type ReadPreflight,
   type ReadResult,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'
 const missingClientOrderId = 'bayn-observe-read-proof-does-not-exist'
@@ -62,7 +63,7 @@ export class BrokerAccountPreflightError extends Data.TaggedError('BrokerAccount
   readonly failure: BrokerAccountPreflightFailure
 }> {}
 
-export const verifyBrokerAccountPermissions = (
+const verifyBrokerAccountPermissionsDataFirst = (
   account: Account,
   configuration: AccountConfigurationObservation,
 ): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
@@ -81,6 +82,8 @@ export const verifyBrokerAccountPermissions = (
     fractionalTrading: true,
   })
 }
+
+export const verifyBrokerAccountPermissions = Pipeable.dual(2, verifyBrokerAccountPermissionsDataFirst)
 
 const permissionFailure = (
   connection: BrokerConnection,
@@ -142,7 +145,7 @@ const verifyOrderLookup = (
     ),
   )
 
-export const verifyReadAccess = (
+const verifyReadAccessDataFirst = (
   connection: BrokerConnection,
   read: BrokerReadShape,
 ): Effect.Effect<ReadPreflight, BrokerReadError | BrokerAccountPreflightError> =>
@@ -265,3 +268,5 @@ export const verifyReadAccess = (
     }),
     Effect.withLogSpan('broker.read.preflight'),
   )
+
+export const verifyReadAccess = Pipeable.dual(2, verifyReadAccessDataFirst)

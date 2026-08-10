@@ -1,6 +1,7 @@
 import { canonicalHashV1 } from './hash'
 import type { QualificationResult } from './qualification'
 import type { EvaluationSummary, PerformanceMetrics } from './types'
+import { Pipeable } from './pipeable'
 
 const round = (value: number): number => Number.parseFloat(value.toFixed(12))
 
@@ -46,7 +47,7 @@ const metricFacts = (metrics: PerformanceMetrics) => ({
   totalCashYieldMicros: metrics.totalCashYieldMicros,
 })
 
-export const makeQualificationDiagnosis = (evaluation: EvaluationSummary, result: QualificationResult) => {
+const makeQualificationDiagnosisDataFirst = (evaluation: EvaluationSummary, result: QualificationResult) => {
   const bootstrap = result.analysis.bootstrap
   const benchmarkMetrics =
     bootstrap.selectedBenchmark === 'buy-and-hold' ? evaluation.buyAndHold : evaluation.directVolTiming
@@ -93,5 +94,7 @@ export const makeQualificationDiagnosis = (evaluation: EvaluationSummary, result
   }
   return { ...material, diagnosisHash: canonicalHashV1(material) }
 }
+
+export const makeQualificationDiagnosis = Pipeable.dual(2, makeQualificationDiagnosisDataFirst)
 
 export type QualificationDiagnosis = ReturnType<typeof makeQualificationDiagnosis>

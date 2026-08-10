@@ -33,6 +33,7 @@ import {
   type ReadEvidence,
   type ReadResult,
 } from './alpaca'
+import { Pipeable } from '../pipeable'
 
 const CommonEventInput = {
   broker: Schema.Literal(Broker.Alpaca),
@@ -367,7 +368,7 @@ const duplicatePosition = (positions: readonly AlpacaPosition[]): BrokerObservat
   return duplicateSymbol === undefined ? undefined : { _tag: 'DuplicatePositionSymbol', symbol: duplicateSymbol.symbol }
 }
 
-export const positionSnapshot = (
+const positionSnapshotDataFirst = (
   accountId: string,
   result: ReadResult<readonly AlpacaPosition[]>,
 ): Result.Result<PositionSnapshotInput, BrokerObservationError> => {
@@ -391,6 +392,8 @@ export const positionSnapshot = (
           ),
         )
 }
+
+export const positionSnapshot = Pipeable.dual(2, positionSnapshotDataFirst)
 
 type QuantityOrder = Omit<AlpacaOrder, 'notionalMicros' | 'quantityMicros' | 'updatedAt'> & {
   readonly quantityMicros: string

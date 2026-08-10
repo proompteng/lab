@@ -10,6 +10,7 @@ import {
   type CycleRecoverySelection,
 } from './recovery-model'
 import { cycleCompletionStateForTargetPlan, cycleTerminalReasonForBlockedTargetPlan } from './recovery-decisions'
+import { Pipeable } from '../pipeable'
 
 export { cycleCompletionStateForTargetPlan, cycleTerminalReasonForBlockedTargetPlan } from './recovery-decisions'
 
@@ -61,7 +62,7 @@ const validateDecisionBinding = (
     : Result.succeed(undefined)
 }
 
-export const selectBoundDecision = (
+const selectBoundDecisionDataFirst = (
   cycle: AutonomousCycle,
   document: CycleDecisionDocument | null | undefined,
   observedAt: string,
@@ -105,3 +106,5 @@ export const selectBoundDecision = (
     },
   )
 }
+
+export const selectBoundDecision = Pipeable.dual(3, selectBoundDecisionDataFirst)

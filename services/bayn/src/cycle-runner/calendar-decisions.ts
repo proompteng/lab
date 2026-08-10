@@ -11,6 +11,7 @@ import {
 } from '../cycle'
 import type { MarketDataInspection } from '../market-data'
 import type { CycleCandidate } from './model'
+import { Pipeable } from '../pipeable'
 
 const calendarRangeDays = 31
 const publicationCatchUpRangeDays = 21
@@ -188,7 +189,7 @@ export const boundedCyclePublications = <Publication extends CyclePublicationDat
   )
 }
 
-export const selectNextExecutionSession = (
+const selectNextExecutionSessionDataFirst = (
   signalSessionDate: string,
   observation: MarketCalendarObservation,
 ): MarketCalendarSession | undefined =>
@@ -198,10 +199,14 @@ export const selectNextExecutionSession = (
     undefined,
   )
 
-export const isMonthEndCycleDue = (signalSessionDate: string, executionSessionDate: string): boolean =>
+export const selectNextExecutionSession = Pipeable.dual(2, selectNextExecutionSessionDataFirst)
+
+const isMonthEndCycleDueDataFirst = (signalSessionDate: string, executionSessionDate: string): boolean =>
   signalSessionDate.slice(0, 7) !== executionSessionDate.slice(0, 7)
 
-export const makeDueCycleDraft = (
+export const isMonthEndCycleDue = Pipeable.dual(2, isMonthEndCycleDueDataFirst)
+
+const makeDueCycleDraftDataFirst = (
   candidate: CycleCandidate,
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
@@ -238,3 +243,5 @@ export const makeDueCycleDraft = (
               ),
           ),
       )
+
+export const makeDueCycleDraft = Pipeable.dual(3, makeDueCycleDraftDataFirst)

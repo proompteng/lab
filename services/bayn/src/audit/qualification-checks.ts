@@ -9,6 +9,7 @@ import {
   sameAuditMaterial,
   type QualificationAuditFacts,
 } from './core'
+import { Pipeable } from '../pipeable'
 
 export const auditQualificationBindings = (
   facts: QualificationAuditFacts,
@@ -145,7 +146,7 @@ export const auditQualificationBindings = (
     ]
   })
 
-export const makeAuditReport = (
+const makeAuditReportDataFirst = (
   facts: QualificationAuditFacts,
   checks: readonly AuditCheck[],
 ): Result.Result<QualificationAuditReport, QualificationAuditFailure> =>
@@ -187,3 +188,5 @@ export const makeAuditReport = (
     const auditHash = yield* hashAuditMaterial({ scope: 'audit', name: 'report' }, material)
     return { ...material, auditHash }
   })
+
+export const makeAuditReport = Pipeable.dual(2, makeAuditReportDataFirst)

@@ -1,4 +1,5 @@
 import { Clock, DateTime, Effect, Option, pipe, Result } from 'effect'
+import { Pipeable } from './pipeable'
 
 export type UtcEpochMillisFailure =
   | {
@@ -26,8 +27,10 @@ export const utcInstantFromEpochMillis = (epochMillis: number): string =>
 export const utcDateFromEpochMillis = (epochMillis: number): string =>
   DateTime.formatIsoDate(DateTime.makeUnsafe(epochMillis))
 
-export const addUtcDays = (date: string, days: number): string =>
+const addUtcDaysDataFirst = (date: string, days: number): string =>
   pipe(DateTime.makeUnsafe(`${date}T00:00:00.000Z`), DateTime.add({ days }), DateTime.formatIsoDate)
+
+export const addUtcDays = Pipeable.dual(2, addUtcDaysDataFirst)
 
 export const currentUtcInstant = Clock.currentTimeMillis.pipe(Effect.map(utcInstantFromEpochMillis))
 

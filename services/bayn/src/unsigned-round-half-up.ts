@@ -1,5 +1,7 @@
 import { Result } from 'effect'
 
+import { Pipeable } from './pipeable'
+
 export type UnsignedRoundHalfUpFailure =
   | {
       readonly _tag: 'NegativeUnsignedRoundHalfUpNumerator'
@@ -14,7 +16,7 @@ export type UnsignedRoundHalfUpFailure =
       readonly minimumDenominator: 1n
     }
 
-export const roundUnsignedHalfUp = (
+const roundUnsignedHalfUpDataFirst = (
   numerator: bigint,
   denominator: bigint,
 ): Result.Result<bigint, UnsignedRoundHalfUpFailure> => {
@@ -36,3 +38,5 @@ export const roundUnsignedHalfUp = (
   }
   return Result.succeed((numerator + denominator / 2n) / denominator)
 }
+
+export const roundUnsignedHalfUp = Pipeable.dual(2, roundUnsignedHalfUpDataFirst)

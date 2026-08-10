@@ -25,6 +25,7 @@ import {
   type ExecutionCalendarObservation,
   type SignalCycleSession,
 } from './cycle-model'
+import { Pipeable } from '../pipeable'
 
 const autonomousCycleSubmissionWindowMs = 30 * 60_000
 const decodeSelectedExecutionCalendarSessionResult = Schema.decodeUnknownResult(
@@ -375,7 +376,7 @@ const assembleCycleWindow = (
     (cause) => failure('cycle-window', 'decode', 'derived cycle window is invalid', {}, cause),
   )
 
-export const makeCycleWindow = (
+const makeCycleWindowDataFirst = (
   signalSession: unknown,
   executionCalendar: unknown,
   executionPolicy: unknown,
@@ -386,7 +387,9 @@ export const makeCycleWindow = (
     ),
   )
 
-export const makeCycleDraft = (
+export const makeCycleWindow = Pipeable.dual(3, makeCycleWindowDataFirst)
+
+const makeCycleDraftDataFirst = (
   identity: unknown,
   window: unknown,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -421,3 +424,5 @@ export const makeCycleDraft = (
           ),
       ),
   )
+
+export const makeCycleDraft = Pipeable.dual(2, makeCycleDraftDataFirst)

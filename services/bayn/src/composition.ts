@@ -135,6 +135,7 @@ import { currentUtcInstant } from './time'
 import type { RuntimeEvidence, RuntimeState } from './runtime-state'
 import { scopedAcquisition } from './resource-boundary'
 import { strategyApplication } from './strategy'
+import { Pipeable } from './pipeable'
 
 export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
   ClickhouseClient.layer({
@@ -964,7 +965,7 @@ const completedPaperActivation = (
     error: null,
   }))
 
-export const restrictExpiredPaperActivation = (
+const restrictExpiredPaperActivationDataFirst = (
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,
 ): Effect.Effect<void, OperationalError> =>
@@ -973,6 +974,8 @@ export const restrictExpiredPaperActivation = (
     Effect.provideService(WriterFence, writerFence),
     Effect.mapError((cause) => paperActivationOperationalError('expired PAPER activation restriction failed', cause)),
   )
+
+export const restrictExpiredPaperActivation = Pipeable.dual(2, restrictExpiredPaperActivationDataFirst)
 
 const restrictPaperAtExpiry = (
   expiresAt: string,
@@ -1096,7 +1099,7 @@ const makeClosedCycleReceiptEmitter =
       ),
     )
 
-export const finalizePaperEpisode = (
+const finalizePaperEpisodeDataFirst = (
   state: Ref.Ref<RuntimeState>,
   request: PaperActivationRequest,
   generationHash: string,
@@ -1130,7 +1133,9 @@ export const finalizePaperEpisode = (
     ),
   )
 
-export const retryClosedCycleReceipts = (
+export const finalizePaperEpisode = Pipeable.dual(8, finalizePaperEpisodeDataFirst)
+
+const retryClosedCycleReceiptsDataFirst = (
   emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
   cutoffAt: string,
   retryUntilAt: string,
@@ -1155,15 +1160,21 @@ export const retryClosedCycleReceipts = (
     }
   })
 
-export const closedCycleReceiptEmissionAllowed = (cutoffAt: string, observedAt: string): boolean =>
+export const retryClosedCycleReceipts = Pipeable.dual(4, retryClosedCycleReceiptsDataFirst)
+
+const closedCycleReceiptEmissionAllowedDataFirst = (cutoffAt: string, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(cutoffAt)
 
-export const paperReceiptFinalizationWindowOpen = (authorityExpiresAt: string, observedAt: string): boolean => {
+export const closedCycleReceiptEmissionAllowed = Pipeable.dual(2, closedCycleReceiptEmissionAllowedDataFirst)
+
+const paperReceiptFinalizationWindowOpenDataFirst = (authorityExpiresAt: string, observedAt: string): boolean => {
   const observedMs = Date.parse(observedAt)
   const closeExpiresMs = Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt))
   const finalizationExpiresMs = Date.parse(paperEpisodeReceiptFinalizationExpiresAt(authorityExpiresAt))
   return Number.isFinite(observedMs) && observedMs >= closeExpiresMs && observedMs < finalizationExpiresMs
 }
+
+export const paperReceiptFinalizationWindowOpen = Pipeable.dual(2, paperReceiptFinalizationWindowOpenDataFirst)
 
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {

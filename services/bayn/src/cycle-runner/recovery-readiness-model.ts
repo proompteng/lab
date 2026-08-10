@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { signalSessionCloseAt, type AutonomousCycle, type CycleConstructionFailure } from '../cycle'
 import type { MarketDataInspection } from '../market-data'
+import { Pipeable } from '../pipeable'
 
 export interface PublicationFreshness {
   readonly dataAgeMs: number
@@ -75,7 +76,7 @@ const elapsed = (
     : Result.succeed(milliseconds)
 }
 
-export const measurePublicationFreshness = (
+const measurePublicationFreshnessDataFirst = (
   cycle: AutonomousCycle,
   inspection: MarketDataInspection,
   observedAt: string,
@@ -131,3 +132,5 @@ export const measurePublicationFreshness = (
           ),
   )
 }
+
+export const measurePublicationFreshness = Pipeable.dual(3, measurePublicationFreshnessDataFirst)
