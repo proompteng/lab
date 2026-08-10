@@ -10,6 +10,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export const cycleTimeZone = 'America/New_York' as const
 export const maximumSubmissionDurationMs = 86_400_000
@@ -396,40 +397,86 @@ export const CycleWindowPolicyInputSchema = Schema.Union([
 export type SignalCycleSession = typeof SignalCycleSessionSchema.Type
 export type CycleWindowPolicyInput = typeof CycleWindowPolicyInputSchema.Type
 
-export const decodeExecutionCalendarMaterialResult = Schema.decodeUnknownResult(
+const decodeExecutionCalendarMaterialResultDataFirst = Schema.decodeUnknownResult(
   ExecutionCalendarObservationMaterialSchema,
   strictParseOptions,
 )
-export const decodeExecutionCalendarObservationResult = Schema.decodeUnknownResult(
+
+export const decodeExecutionCalendarMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarMaterialResultDataFirst(input),
+)
+const decodeExecutionCalendarObservationResultDataFirst = Schema.decodeUnknownResult(
   ExecutionCalendarObservationSchema,
   strictParseOptions,
 )
-export const decodeCycleWindowPolicyInputResult = Schema.decodeUnknownResult(
+
+export const decodeExecutionCalendarObservationResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarObservationResultDataFirst(input),
+)
+const decodeCycleWindowPolicyInputResultDataFirst = Schema.decodeUnknownResult(
   CycleWindowPolicyInputSchema,
   strictParseOptions,
 )
-export const decodeCycleExecutionPolicyMaterialResult = Schema.decodeUnknownResult(
+
+export const decodeCycleWindowPolicyInputResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleWindowPolicyInputResultDataFirst(input),
+)
+const decodeCycleExecutionPolicyMaterialResultDataFirst = Schema.decodeUnknownResult(
   CycleExecutionPolicyMaterialSchema,
   strictParseOptions,
 )
-export const decodeCycleExecutionPolicyResult = Schema.decodeUnknownResult(
+
+export const decodeCycleExecutionPolicyMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyMaterialResultDataFirst(input),
+)
+const decodeCycleExecutionPolicyResultDataFirst = Schema.decodeUnknownResult(
   CycleExecutionPolicySchema,
   strictParseOptions,
 )
-export const decodeCycleIdentityMaterialResult = Schema.decodeUnknownResult(
+
+export const decodeCycleExecutionPolicyResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyResultDataFirst(input),
+)
+const decodeCycleIdentityMaterialResultDataFirst = Schema.decodeUnknownResult(
   CycleIdentityMaterialSchema,
   strictParseOptions,
 )
-export const decodeCycleIdentityResult = Schema.decodeUnknownResult(CycleIdentitySchema, strictParseOptions)
-export const decodeCycleWindowResult = Schema.decodeUnknownResult(CycleWindowSchema, strictParseOptions)
-export const decodeCycleDraftResult = Schema.decodeUnknownResult(CycleDraftSchema, strictParseOptions)
 
-export const decodeExecutionCalendarObservation = Schema.decodeUnknownEffect(
+export const decodeCycleIdentityMaterialResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleIdentityMaterialResultDataFirst(input),
+)
+const decodeCycleIdentityResultDataFirst = Schema.decodeUnknownResult(CycleIdentitySchema, strictParseOptions)
+
+export const decodeCycleIdentityResult = Pipeable.dual(1, (input: unknown) => decodeCycleIdentityResultDataFirst(input))
+const decodeCycleWindowResultDataFirst = Schema.decodeUnknownResult(CycleWindowSchema, strictParseOptions)
+
+export const decodeCycleWindowResult = Pipeable.dual(1, (input: unknown) => decodeCycleWindowResultDataFirst(input))
+const decodeCycleDraftResultDataFirst = Schema.decodeUnknownResult(CycleDraftSchema, strictParseOptions)
+
+export const decodeCycleDraftResult = Pipeable.dual(1, (input: unknown) => decodeCycleDraftResultDataFirst(input))
+
+const decodeExecutionCalendarObservationDataFirst = Schema.decodeUnknownEffect(
   ExecutionCalendarObservationSchema,
   strictParseOptions,
 )
-export const decodeCycleExecutionPolicy = Schema.decodeUnknownEffect(CycleExecutionPolicySchema, strictParseOptions)
-export const decodeCycleIdentity = Schema.decodeUnknownEffect(CycleIdentitySchema, strictParseOptions)
-export const decodeCycleWindow = Schema.decodeUnknownEffect(CycleWindowSchema, strictParseOptions)
-export const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
-export const decodeAutonomousCycle = Schema.decodeUnknownEffect(AutonomousCycleSchema, strictParseOptions)
+
+export const decodeExecutionCalendarObservation = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionCalendarObservationDataFirst(input),
+)
+const decodeCycleExecutionPolicyDataFirst = Schema.decodeUnknownEffect(CycleExecutionPolicySchema, strictParseOptions)
+
+export const decodeCycleExecutionPolicy = Pipeable.dual(1, (input: unknown) =>
+  decodeCycleExecutionPolicyDataFirst(input),
+)
+const decodeCycleIdentityDataFirst = Schema.decodeUnknownEffect(CycleIdentitySchema, strictParseOptions)
+
+export const decodeCycleIdentity = Pipeable.dual(1, (input: unknown) => decodeCycleIdentityDataFirst(input))
+const decodeCycleWindowDataFirst = Schema.decodeUnknownEffect(CycleWindowSchema, strictParseOptions)
+
+export const decodeCycleWindow = Pipeable.dual(1, (input: unknown) => decodeCycleWindowDataFirst(input))
+const decodeCycleDraftDataFirst = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
+
+export const decodeCycleDraft = Pipeable.dual(1, (input: unknown) => decodeCycleDraftDataFirst(input))
+const decodeAutonomousCycleDataFirst = Schema.decodeUnknownEffect(AutonomousCycleSchema, strictParseOptions)
+
+export const decodeAutonomousCycle = Pipeable.dual(1, (input: unknown) => decodeAutonomousCycleDataFirst(input))

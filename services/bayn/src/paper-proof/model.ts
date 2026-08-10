@@ -19,6 +19,7 @@ import {
   StrictNonEmptyStringSchema,
   strictParseOptions,
 } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export const paperProofCommandSchemaVersion = 'bayn.paper-proof-command.v1' as const
 export const paperProofReceiptSchemaVersion = 'bayn.paper-proof-receipt.v1' as const
@@ -44,7 +45,11 @@ export const PaperProofCommandSchema = Schema.Struct({
 })
 export type PaperProofCommand = typeof PaperProofCommandSchema.Type
 
-export const decodePaperProofCommandResult = Schema.decodeUnknownResult(PaperProofCommandSchema, strictParseOptions)
+const decodePaperProofCommandResultDataFirst = Schema.decodeUnknownResult(PaperProofCommandSchema, strictParseOptions)
+
+export const decodePaperProofCommandResult = Pipeable.dual(1, (input: unknown) =>
+  decodePaperProofCommandResultDataFirst(input),
+)
 
 export interface PaperProofSourcePlan {
   readonly schemaVersion: 'bayn.paper-proof-plan.v1'
@@ -182,7 +187,11 @@ export const PaperProofCliEnvelopeSchema = Schema.Struct({
   protectedEntryToken: StrictNonEmptyStringSchema,
 })
 export type PaperProofCliEnvelope = typeof PaperProofCliEnvelopeSchema.Type
-export const decodePaperProofCliEnvelopeResult = Schema.decodeUnknownResult(
+const decodePaperProofCliEnvelopeResultDataFirst = Schema.decodeUnknownResult(
   PaperProofCliEnvelopeSchema,
   strictParseOptions,
+)
+
+export const decodePaperProofCliEnvelopeResult = Pipeable.dual(1, (input: unknown) =>
+  decodePaperProofCliEnvelopeResultDataFirst(input),
 )

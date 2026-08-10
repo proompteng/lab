@@ -17,6 +17,7 @@ import {
   StrictNonEmptyStringSchema,
   strictParseOptions,
 } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export const executionPrepareRequestSchemaVersion = 'bayn.execution-prepare-request.v1' as const
 export const executionPrepareProofPlanSchemaVersion = 'bayn.execution-prepare-proof-plan.v1' as const
@@ -74,9 +75,13 @@ export const ExecutionPrepareRequestSchema = Schema.Struct({
 })
 export type ExecutionPrepareRequest = typeof ExecutionPrepareRequestSchema.Type
 
-export const decodeExecutionPrepareRequestResult = Schema.decodeUnknownResult(
+const decodeExecutionPrepareRequestResultDataFirst = Schema.decodeUnknownResult(
   ExecutionPrepareRequestSchema,
   strictParseOptions,
+)
+
+export const decodeExecutionPrepareRequestResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionPrepareRequestResultDataFirst(input),
 )
 
 export const ExecutionPrepareProofPlanRequestSchema = Schema.Struct({
@@ -87,9 +92,13 @@ export const ExecutionPrepareProofPlanRequestSchema = Schema.Struct({
 })
 export type ExecutionPrepareProofPlanRequest = typeof ExecutionPrepareProofPlanRequestSchema.Type
 
-export const decodeExecutionPrepareProofPlanRequestResult = Schema.decodeUnknownResult(
+const decodeExecutionPrepareProofPlanRequestResultDataFirst = Schema.decodeUnknownResult(
   ExecutionPrepareProofPlanRequestSchema,
   strictParseOptions,
+)
+
+export const decodeExecutionPrepareProofPlanRequestResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionPrepareProofPlanRequestResultDataFirst(input),
 )
 
 export const ExecutionPrepareRuntimeBindingSchema = Schema.Struct({
@@ -167,9 +176,13 @@ export const ExecutionPrepareReceiptSchema = ExecutionPrepareReceiptBase.check(
 )
 export type ExecutionPrepareReceipt = typeof ExecutionPrepareReceiptSchema.Type
 
-export const decodeExecutionPrepareReceiptResult = Schema.decodeUnknownResult(
+const decodeExecutionPrepareReceiptResultDataFirst = Schema.decodeUnknownResult(
   ExecutionPrepareReceiptSchema,
   strictParseOptions,
+)
+
+export const decodeExecutionPrepareReceiptResult = Pipeable.dual(1, (input: unknown) =>
+  decodeExecutionPrepareReceiptResultDataFirst(input),
 )
 
 export interface ExecutionPrepareOutput {

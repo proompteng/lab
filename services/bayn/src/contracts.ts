@@ -13,6 +13,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
+import { Pipeable } from './pipeable'
 export enum DataSource {
   Alpaca = 'alpaca',
 }
@@ -248,10 +249,21 @@ export const makeStrategyProtocolHashResult = (
     ),
   )
 
-export const decodeFinalizedSnapshot = Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
-export const decodeEvaluationBounds = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
-export const decodeRunIdentity = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
-export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvenanceSchema, StrictParseOptions)
+const decodeFinalizedSnapshotDataFirst = Schema.decodeUnknownEffect(
+  FinalizedSnapshotProvenanceSchema,
+  StrictParseOptions,
+)
+
+export const decodeFinalizedSnapshot = Pipeable.dual(1, (input: unknown) => decodeFinalizedSnapshotDataFirst(input))
+const decodeEvaluationBoundsDataFirst = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
+
+export const decodeEvaluationBounds = Pipeable.dual(1, (input: unknown) => decodeEvaluationBoundsDataFirst(input))
+const decodeRunIdentityDataFirst = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
+
+export const decodeRunIdentity = Pipeable.dual(1, (input: unknown) => decodeRunIdentityDataFirst(input))
+const decodeRuntimeProvenanceDataFirst = Schema.decodeUnknownEffect(RuntimeProvenanceSchema, StrictParseOptions)
+
+export const decodeRuntimeProvenance = Pipeable.dual(1, (input: unknown) => decodeRuntimeProvenanceDataFirst(input))
 
 const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)

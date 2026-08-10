@@ -14,6 +14,7 @@ import {
   TrimmedNonEmptyStringSchema as NonEmptyString,
 } from '../schemas'
 import type { ParsedRuntimeConfig, RuntimeOperation } from './model'
+import { Pipeable } from '../pipeable'
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -185,4 +186,6 @@ export const runtimeConfigSource = Config.all({
   ),
 )
 
-export const evaluationBoundsDecoder = Schema.decodeUnknownResult(EvaluationBoundsSchema)
+const evaluationBoundsDecoderDataFirst = Schema.decodeUnknownResult(EvaluationBoundsSchema)
+
+export const evaluationBoundsDecoder = Pipeable.dual(1, (input: unknown) => evaluationBoundsDecoderDataFirst(input))
