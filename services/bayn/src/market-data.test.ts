@@ -378,15 +378,15 @@ describe('finalized Signal snapshot reader', () => {
       const authorization = marketDataOperationError(
         operation,
         'Signal query failed',
-        new SqlError({
-          reason: new AuthorizationError({ cause: new Error('SELECT denied'), operation: 'query' }),
+        SqlError.make({
+          reason: AuthorizationError.make({ cause: new Error('SELECT denied'), operation: 'query' }),
         }),
       )
       const connection = marketDataOperationError(
         operation,
         'Signal query failed',
-        new SqlError({
-          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        SqlError.make({
+          reason: ConnectionError.make({ cause: new Error('connection reset'), operation: 'query' }),
         }),
       )
 

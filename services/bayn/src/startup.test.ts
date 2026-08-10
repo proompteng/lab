@@ -1437,8 +1437,8 @@ describe('Bayn startup lifecycle', () => {
 
   test('keeps PostgreSQL authentication failures observable as terminal startup failures', async () => {
     const state = await Effect.runPromise(Ref.make(initialState({})))
-    const authentication = new SqlError({
-      reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'persist' }),
+    const authentication = SqlError.make({
+      reason: AuthenticationError.make({ cause: new Error('invalid credentials'), operation: 'persist' }),
     })
     const unauthorized: EvidenceStoreService = {
       ...successfulEvidenceStore,

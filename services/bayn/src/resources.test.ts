@@ -622,8 +622,8 @@ describe('Bayn resource lifecycle', () => {
   })
 
   test('keeps ClickHouse authorization failures observable as terminal startup failures', async () => {
-    const authorization = new SqlError({
-      reason: new AuthorizationError({ cause: new Error('SELECT denied'), operation: 'query' }),
+    const authorization = SqlError.make({
+      reason: AuthorizationError.make({ cause: new Error('SELECT denied'), operation: 'query' }),
     })
     const marketData = marketDataService(
       Effect.fail(marketDataOperationError('load', 'failed to load finalized Signal snapshot', authorization)),

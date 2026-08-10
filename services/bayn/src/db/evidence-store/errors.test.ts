@@ -7,18 +7,18 @@ import { classifyDatabaseError } from './errors'
 describe('evidence persistence error classification', () => {
   test('retains connectivity, transaction, constraint, and query distinctions', () => {
     const cases = [
-      [new ConnectionError({ cause: new Error('reset'), operation: 'connect' }), 'unavailable', 'connectivity'],
-      [new DeadlockError({ cause: new Error('deadlock'), operation: 'query' }), 'unavailable', 'transaction'],
+      [ConnectionError.make({ cause: new Error('reset'), operation: 'connect' }), 'unavailable', 'connectivity'],
+      [DeadlockError.make({ cause: new Error('deadlock'), operation: 'query' }), 'unavailable', 'transaction'],
       [
-        new UniqueViolation({ cause: new Error('duplicate'), operation: 'query', constraint: 'evaluation_runs_pkey' }),
+        UniqueViolation.make({ cause: new Error('duplicate'), operation: 'query', constraint: 'evaluation_runs_pkey' }),
         'constraint',
         'constraint',
       ],
-      [new SqlSyntaxError({ cause: new Error('syntax'), operation: 'query' }), 'query', 'query'],
+      [SqlSyntaxError.make({ cause: new Error('syntax'), operation: 'query' }), 'query', 'query'],
     ] as const
 
     for (const [reason, failure, persistenceFailure] of cases) {
-      expect(classifyDatabaseError('persist', new SqlError({ reason }))).toMatchObject({
+      expect(classifyDatabaseError('persist', SqlError.make({ reason }))).toMatchObject({
         failure,
         persistenceFailure,
         operation: 'persist',

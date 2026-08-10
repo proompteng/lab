@@ -19,8 +19,8 @@ const buildSqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.build(s
 describe('Bayn SQL dependency acquisition', () => {
   test('retries only retryable SQL failures', async () => {
     let attempts = 0
-    const retryable = new SqlError({
-      reason: new ConnectionError({ cause: new Error('transient timeout'), operation: 'connect' }),
+    const retryable = SqlError.make({
+      reason: ConnectionError.make({ cause: new Error('transient timeout'), operation: 'connect' }),
     })
     const dependencies = Layer.effectDiscard(
       Effect.suspend(() => {
@@ -42,8 +42,8 @@ describe('Bayn SQL dependency acquisition', () => {
     await Effect.runPromise(program)
 
     attempts = 0
-    const nonRetryable = new SqlError({
-      reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'connect' }),
+    const nonRetryable = SqlError.make({
+      reason: AuthenticationError.make({ cause: new Error('invalid credentials'), operation: 'connect' }),
     })
     const exit = await Effect.runPromiseExit(
       Effect.scoped(
@@ -63,8 +63,8 @@ describe('Bayn SQL dependency acquisition', () => {
 
   test('retries retryable SQL failures wrapped by the database layer', async () => {
     let attempts = 0
-    const connection = new SqlError({
-      reason: new ConnectionError({ cause: new Error('connection refused'), operation: 'connect' }),
+    const connection = SqlError.make({
+      reason: ConnectionError.make({ cause: new Error('connection refused'), operation: 'connect' }),
     })
     const unavailable = new DatabaseError({
       failure: 'unavailable',
@@ -98,8 +98,8 @@ describe('Bayn SQL dependency acquisition', () => {
       failure: 'unavailable',
       operation: 'connect',
       message: 'PostgreSQL operation failed',
-      cause: new SqlError({
-        reason: new UnknownError({
+      cause: SqlError.make({
+        reason: UnknownError.make({
           cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
           operation: 'connect',
         }),
@@ -144,8 +144,8 @@ describe('Bayn SQL dependency acquisition', () => {
         }),
       ).pipe(Effect.provide(TestClock.layer()))
     }
-    const rawRefusal = new SqlError({
-      reason: new UnknownError({
+    const rawRefusal = SqlError.make({
+      reason: UnknownError.make({
         cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
         operation: 'connect',
       }),
@@ -154,8 +154,8 @@ describe('Bayn SQL dependency acquisition', () => {
       failure: 'unavailable',
       operation: 'connect',
       message: 'PostgreSQL operation failed',
-      cause: new SqlError({
-        reason: new UnknownError({
+      cause: SqlError.make({
+        reason: UnknownError.make({
           cause: Object.assign(new Error('invalid certificate'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }),
           operation: 'connect',
         }),
@@ -175,8 +175,8 @@ describe('Bayn SQL dependency acquisition', () => {
 
   test('interrupts a pending retry', async () => {
     let attempts = 0
-    const retryable = new SqlError({
-      reason: new ConnectionError({ cause: new Error('transient timeout'), operation: 'connect' }),
+    const retryable = SqlError.make({
+      reason: ConnectionError.make({ cause: new Error('transient timeout'), operation: 'connect' }),
     })
     const program = Effect.scoped(
       Effect.gen(function* () {
@@ -240,18 +240,18 @@ describe('Bayn database operation failures', () => {
 
     const [authentication, authorization, connection] = await Promise.all([
       classify(
-        new SqlError({
-          reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'connect' }),
+        SqlError.make({
+          reason: AuthenticationError.make({ cause: new Error('invalid credentials'), operation: 'connect' }),
         }),
       ),
       classify(
-        new SqlError({
-          reason: new AuthorizationError({ cause: new Error('permission denied'), operation: 'query' }),
+        SqlError.make({
+          reason: AuthorizationError.make({ cause: new Error('permission denied'), operation: 'query' }),
         }),
       ),
       classify(
-        new SqlError({
-          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        SqlError.make({
+          reason: ConnectionError.make({ cause: new Error('connection reset'), operation: 'query' }),
         }),
       ),
     ])
@@ -281,13 +281,13 @@ describe('Bayn database operation failures', () => {
 
     const [connection, authorization] = await Promise.all([
       classify(
-        new SqlError({
-          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        SqlError.make({
+          reason: ConnectionError.make({ cause: new Error('connection reset'), operation: 'query' }),
         }),
       ),
       classify(
-        new SqlError({
-          reason: new AuthorizationError({ cause: new Error('permission denied'), operation: 'query' }),
+        SqlError.make({
+          reason: AuthorizationError.make({ cause: new Error('permission denied'), operation: 'query' }),
         }),
       ),
     ])
