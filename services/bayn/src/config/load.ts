@@ -126,7 +126,14 @@ export const loadConfig = (
   embedded: EmbeddedBuildMetadata | undefined = embeddedBuildMetadata,
 ): Effect.Effect<LoadedRuntimeConfig, OperationalError> =>
   runtimeConfigSource.pipe(
-    Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'config',
+        operation: 'load',
+        message: 'invalid runtime configuration',
+        cause,
+      }),
+    ),
     Effect.flatMap((parsed) =>
       Effect.fromResult(resolveRuntimeConfig({ parsed, embeddedBuildMetadata: embedded })).pipe(
         Effect.mapError(resolutionFailureToOperationalError),

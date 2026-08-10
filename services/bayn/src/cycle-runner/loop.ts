@@ -45,7 +45,7 @@ const sleepUntil = (deadlineNanos: bigint): Effect.Effect<void> =>
   )
 
 const idleReconciliationError = (cause: CycleNotDueReconciliationError): CycleRunnerError =>
-  runnerError('reconcile-not-due', cause.failure, cause.message, cause)
+  runnerError({ operation: 'reconcile-not-due', failure: cause.failure, message: cause.message, cause })
 
 const markReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
@@ -103,7 +103,12 @@ const runLoopPass = <E, ContextR, DecisionR>(
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
   options.context.pipe(
     Effect.mapError((cause) =>
-      runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
+      runnerError({
+        operation: 'load-context',
+        failure: 'context',
+        message: 'autonomous cycle context loading failed',
+        cause,
+      }),
     ),
     Effect.map((context) => trackDecisionReconciliation(cadence, context)),
     Effect.flatMap(runAutonomousCycleUntilSettled),
@@ -111,11 +116,11 @@ const runLoopPass = <E, ContextR, DecisionR>(
   )
 
 const cyclePassTimeoutError = (timeoutMs: number): CycleRunnerError =>
-  runnerError(
-    'run-cycle-pass',
-    'operational',
-    `autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
-  )
+  runnerError({
+    operation: 'run-cycle-pass',
+    failure: 'operational',
+    message: `autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
+  })
 
 const runBoundedLoopPass = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,

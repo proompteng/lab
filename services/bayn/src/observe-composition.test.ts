@@ -3042,7 +3042,11 @@ describe('OBSERVE runtime composition', () => {
 
   test('closes read and reconciliation failures with their operational classifications and exact causes', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
-    const snapshotCause = operationalError('market-data', 'load', 'snapshot fixture failed')
+    const snapshotCause = operationalError({
+      component: 'market-data',
+      operation: 'load',
+      message: 'snapshot fixture failed',
+    })
     const calendarRootCause = { _tag: 'CalendarTransportFixtureFailure' }
     const calendarCause = new BrokerReadError({
       operation: 'market-calendar',

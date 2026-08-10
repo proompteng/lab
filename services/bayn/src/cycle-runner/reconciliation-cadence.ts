@@ -15,7 +15,13 @@ export const validateReconciliationInterval = (
 ): Result.Result<number, CycleRunnerError> =>
   Number.isSafeInteger(reconciliationIntervalMs) && reconciliationIntervalMs > 0
     ? Result.succeed(reconciliationIntervalMs)
-    : Result.fail(runnerError('configure', 'invalid-config', 'reconciliation interval must be a positive safe integer'))
+    : Result.fail(
+        runnerError({
+          operation: 'configure',
+          failure: 'invalid-config',
+          message: 'reconciliation interval must be a positive safe integer',
+        }),
+      )
 
 const validateCyclePassTimeoutDataFirst = (
   cyclePassTimeoutMs: number,
@@ -24,11 +30,11 @@ const validateCyclePassTimeoutDataFirst = (
   Number.isSafeInteger(cyclePassTimeoutMs) && cyclePassTimeoutMs > 0 && cyclePassTimeoutMs <= reconciliationIntervalMs
     ? Result.succeed(cyclePassTimeoutMs)
     : Result.fail(
-        runnerError(
-          'configure',
-          'invalid-config',
-          'cycle pass timeout must be a positive safe integer no longer than the reconciliation interval',
-        ),
+        runnerError({
+          operation: 'configure',
+          failure: 'invalid-config',
+          message: 'cycle pass timeout must be a positive safe integer no longer than the reconciliation interval',
+        }),
       )
 
 export const validateCyclePassTimeout = Pipeable.dual(2, validateCyclePassTimeoutDataFirst)

@@ -84,12 +84,12 @@ const plannerInputHash = (
   pipe(
     canonicalHashV1Result(value),
     Result.mapError((cause) =>
-      canonicalizePlannerInputFailure(
-        'hash',
-        `validated target-planner ${operation} evidence is not canonicalizable`,
-        { cycleId: input.cycleId },
+      canonicalizePlannerInputFailure({
+        reason: 'hash',
+        message: `validated target-planner ${operation} evidence is not canonicalizable`,
+        facts: { cycleId: input.cycleId },
         cause,
-      ),
+      }),
     ),
   )
 
@@ -102,12 +102,12 @@ export const deriveTargetPlannerHashes = (
     reconciledBrokerStateHash: pipe(
       reconciledStateHash(input.brokerState),
       Result.mapError((cause) =>
-        canonicalizePlannerInputFailure(
-          'hash',
-          'validated target-planner reconciled broker state is not canonicalizable',
-          { cycleId: input.cycleId },
+        canonicalizePlannerInputFailure({
+          reason: 'hash',
+          message: 'validated target-planner reconciled broker state is not canonicalizable',
+          facts: { cycleId: input.cycleId },
           cause,
-        ),
+        }),
       ),
     ),
   })
@@ -247,9 +247,13 @@ export const derivePlannedTargetFacts = (
           const targetWeight = facts.input.targetWeights[symbol]
           if (targetWeight === undefined) {
             return Result.fail(
-              deriveTargetsFailure('precision', 'reference-price symbol has no corresponding target weight', {
-                cycleId: facts.input.cycleId,
-                symbol,
+              deriveTargetsFailure({
+                reason: 'precision',
+                message: 'reference-price symbol has no corresponding target weight',
+                facts: {
+                  cycleId: facts.input.cycleId,
+                  symbol,
+                },
               }),
             )
           }
@@ -259,16 +263,16 @@ export const derivePlannedTargetFacts = (
                 precision: facts.input.precision,
               }),
               (cause) =>
-                deriveTargetsFailure(
-                  'precision',
-                  'target quantity could not be represented at the declared precision',
-                  {
+                deriveTargetsFailure({
+                  reason: 'precision',
+                  message: 'target quantity could not be represented at the declared precision',
+                  facts: {
                     cycleId: facts.input.cycleId,
                     symbol,
                     targetWeight,
                   },
                   cause,
-                ),
+                }),
             ),
             (targetQuantity) => [
               ...targetFacts,

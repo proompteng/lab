@@ -51,7 +51,13 @@ const verifyParameterHashDataFirst = (
 ): Effect.Effect<void, OperationalError> =>
   metadata.strategyParameterHash === actualParameterHash
     ? Effect.void
-    : Effect.fail(operationalError('config', 'provenance', 'compiled strategy parameters do not match build metadata'))
+    : Effect.fail(
+        operationalError({
+          component: 'config',
+          operation: 'provenance',
+          message: 'compiled strategy parameters do not match build metadata',
+        }),
+      )
 
 export const verifyParameterHash = Pipeable.dual(2, verifyParameterHashDataFirst)
 
@@ -61,6 +67,12 @@ const verifyBehaviorHashDataFirst = (
 ): Effect.Effect<void, OperationalError> =>
   metadata.strategyBehaviorHash === actualBehaviorHash
     ? Effect.void
-    : Effect.fail(operationalError('config', 'provenance', 'compiled strategy behavior does not match build metadata'))
+    : Effect.fail(
+        operationalError({
+          component: 'config',
+          operation: 'provenance',
+          message: 'compiled strategy behavior does not match build metadata',
+        }),
+      )
 
 export const verifyBehaviorHash = Pipeable.dual(2, verifyBehaviorHashDataFirst)

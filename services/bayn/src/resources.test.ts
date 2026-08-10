@@ -595,7 +595,12 @@ describe('Bayn resource lifecycle', () => {
   test('fails closed when ClickHouse returns a malformed row', async () => {
     const marketData = marketDataService(
       Effect.fail(
-        operationalError('market-data', 'verify', 'Signal snapshot verification failed', new Error('malformed row')),
+        operationalError({
+          component: 'market-data',
+          operation: 'verify',
+          message: 'Signal snapshot verification failed',
+          cause: new Error('malformed row'),
+        }),
       ),
     )
     const state = await Effect.runPromise(Ref.make(initialState()))

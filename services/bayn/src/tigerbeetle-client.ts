@@ -335,7 +335,13 @@ type TigerBeetleClientRef = ScopedRef.ScopedRef<Option.Option<TigerBeetleClient>
 const closeTigerBeetleClient = (client: TigerBeetleClient): Effect.Effect<void> =>
   Effect.try({
     try: () => client.destroy(),
-    catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
+    catch: (cause) =>
+      operationalError({
+        component: 'journal',
+        operation: 'close',
+        message: 'failed to close TigerBeetle client',
+        cause,
+      }),
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning('TigerBeetle client close failed').pipe(

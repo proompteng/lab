@@ -158,9 +158,11 @@ export interface AutonomousCycleLoopOptions<E = never, ContextR = never, Decisio
   readonly reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>
 }
 
-export const runnerError = (
-  operation: CycleRunnerError['operation'],
-  failure: CycleRunnerError['failure'],
-  message: string,
-  cause?: unknown,
-): CycleRunnerError => new CycleRunnerError({ operation, failure, message, cause })
+export interface CycleRunnerErrorInput {
+  readonly operation: CycleRunnerError['operation']
+  readonly failure: CycleRunnerError['failure']
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const runnerError = (input: CycleRunnerErrorInput): CycleRunnerError => new CycleRunnerError(input)

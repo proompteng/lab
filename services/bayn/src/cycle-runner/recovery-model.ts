@@ -133,26 +133,21 @@ type CycleRecoveryReason<Operation extends CycleRecoveryIssue['operation']> = Ex
   { readonly operation: Operation }
 >['reason']
 
-export const decodeRecoveryStateFailure = (
-  reason: CycleRecoveryReason<'decode-state'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): CycleRecoveryFailure => new CycleRecoveryFailure({ operation: 'decode-state', reason, message, facts, cause })
+interface CycleRecoveryFailureInput<Operation extends CycleRecoveryIssue['operation']> {
+  readonly reason: CycleRecoveryReason<Operation>
+  readonly message: string
+  readonly facts?: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
 
-export const selectRecoveryFailure = (
-  reason: CycleRecoveryReason<'select'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): CycleRecoveryFailure => new CycleRecoveryFailure({ operation: 'select', reason, message, facts, cause })
+export const decodeRecoveryStateFailure = (input: CycleRecoveryFailureInput<'decode-state'>): CycleRecoveryFailure =>
+  new CycleRecoveryFailure({ operation: 'decode-state', ...input, facts: input.facts ?? {} })
 
-export const validateDecisionFailure = (
-  reason: CycleRecoveryReason<'validate-decision'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): CycleRecoveryFailure => new CycleRecoveryFailure({ operation: 'validate-decision', reason, message, facts, cause })
+export const selectRecoveryFailure = (input: CycleRecoveryFailureInput<'select'>): CycleRecoveryFailure =>
+  new CycleRecoveryFailure({ operation: 'select', ...input, facts: input.facts ?? {} })
+
+export const validateDecisionFailure = (input: CycleRecoveryFailureInput<'validate-decision'>): CycleRecoveryFailure =>
+  new CycleRecoveryFailure({ operation: 'validate-decision', ...input, facts: input.facts ?? {} })
 
 const PublicationFreshnessSchema = Schema.Struct({
   dataAgeMs: NonNegativeFiniteSchema,

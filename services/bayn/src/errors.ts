@@ -12,33 +12,26 @@ export class OperationalError extends Data.TaggedError('OperationalError')<{
 
 const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
-export const operationalError = (
-  component: Component,
-  operation: string,
-  message: string,
-  cause?: unknown,
-): OperationalError =>
+export interface OperationalErrorInput {
+  readonly component: Component
+  readonly operation: string
+  readonly message: string
+  readonly cause?: unknown
+}
+
+const makeOperationalError = (input: OperationalErrorInput, retryable: boolean): OperationalError =>
   new OperationalError({
-    component,
-    operation,
-    message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
-    retryable: false,
-    cause,
+    component: input.component,
+    operation: input.operation,
+    message: input.cause === undefined ? input.message : `${input.message}: ${causeMessage(input.cause)}`,
+    retryable,
+    cause: input.cause,
   })
 
-export const retryableOperationalError = (
-  component: Component,
-  operation: string,
-  message: string,
-  cause?: unknown,
-): OperationalError =>
-  new OperationalError({
-    component,
-    operation,
-    message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
-    retryable: true,
-    cause,
-  })
+export const operationalError = (input: OperationalErrorInput): OperationalError => makeOperationalError(input, false)
+
+export const retryableOperationalError = (input: OperationalErrorInput): OperationalError =>
+  makeOperationalError(input, true)
 
 export const formatError = (error: OperationalError): string =>
   `${error.component}.${error.operation}: ${error.message}`

@@ -34,7 +34,13 @@ const finishRecoveryResultDataFirst = (
     case CycleState.Blocked:
       return result('BLOCKED')
     default:
-      return Result.fail(runnerError('recover-cycle', 'contract', 'cycle finish did not produce a terminal state'))
+      return Result.fail(
+        runnerError({
+          operation: 'recover-cycle',
+          failure: 'contract',
+          message: 'cycle finish did not produce a terminal state',
+        }),
+      )
   }
 }
 
@@ -228,4 +234,10 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
 export const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
   Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
     ? Result.succeed(pollIntervalMs)
-    : Result.fail(runnerError('configure', 'invalid-config', 'cycle loop interval must be a positive safe integer'))
+    : Result.fail(
+        runnerError({
+          operation: 'configure',
+          failure: 'invalid-config',
+          message: 'cycle loop interval must be a positive safe integer',
+        }),
+      )

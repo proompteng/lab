@@ -154,11 +154,12 @@ const validateReadinessDataFirst = (
   readinessIsCorrelated(cycle, recoveryObservedAt, readiness)
     ? Result.succeed(undefined)
     : Result.fail(
-        selectRecoveryFailure(
-          'readiness-binding',
-          'publication readiness must be the permitted transition of the exact selected cycle draft and snapshot',
-          readinessBindingFacts(cycle, recoveryObservedAt, readiness),
-        ),
+        selectRecoveryFailure({
+          reason: 'readiness-binding',
+          message:
+            'publication readiness must be the permitted transition of the exact selected cycle draft and snapshot',
+          facts: readinessBindingFacts(cycle, recoveryObservedAt, readiness),
+        }),
       )
 
 export const validateReadiness = Pipeable.dual(3, validateReadinessDataFirst)

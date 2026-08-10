@@ -13,7 +13,12 @@ const program = Effect.gen(function* () {
     strictParseOptions,
   )(embeddedBuildMetadata).pipe(
     Effect.mapError((cause) =>
-      operationalError('config', 'provenance', 'production image is missing complete build metadata', cause),
+      operationalError({
+        component: 'config',
+        operation: 'provenance',
+        message: 'production image is missing complete build metadata',
+        cause,
+      }),
     ),
   )
   const protocol = yield* loadDefaultProtocol

@@ -45,7 +45,13 @@ const withinDeadlineDataFirst = <A, R>(
     Effect.timeoutOrElse({
       duration: timeoutMs,
       orElse: () =>
-        Effect.fail(retryableOperationalError(component, operation, `${operation} timed out after ${timeoutMs}ms`)),
+        Effect.fail(
+          retryableOperationalError({
+            component,
+            operation,
+            message: `${operation} timed out after ${timeoutMs}ms`,
+          }),
+        ),
     }),
   )
 
@@ -69,7 +75,7 @@ const databaseOperationDataFirst = <A, R>(
           ? cause.failure === 'unavailable' && (!isSqlError(cause.cause) || cause.cause.isRetryable)
           : cause.failure === 'query' && isSqlError(cause.cause) && cause.cause.isRetryable
       const makeError = retryable ? retryableOperationalError : operationalError
-      return makeError('database', operation, `PostgreSQL ${operation} failed`, cause)
+      return makeError({ component: 'database', operation, message: `PostgreSQL ${operation} failed`, cause })
     }),
   )
 

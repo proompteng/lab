@@ -53,11 +53,11 @@ const validateDecisionBinding = (
     document.createdAt < cycle.window.submissionOpenAt ||
     document.createdAt > cycle.updatedAt
     ? Result.fail(
-        validateDecisionFailure(
-          'decision-binding',
-          'durable shadow decision does not match the active cycle binding',
+        validateDecisionFailure({
+          reason: 'decision-binding',
+          message: 'durable shadow decision does not match the active cycle binding',
           facts,
-        ),
+        }),
       )
     : Result.succeed(undefined)
 }
@@ -70,8 +70,12 @@ const selectBoundDecisionDataFirst = (
   if (document === undefined) return Result.succeed({ action: 'READ_DECISION', cycle })
   if (document === null) {
     return Result.fail(
-      selectRecoveryFailure('decision-missing', 'decision-bound cycle is missing its durable document', {
-        cycleId: cycle.identity.cycleId,
+      selectRecoveryFailure({
+        reason: 'decision-missing',
+        message: 'decision-bound cycle is missing its durable document',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+        },
       }),
     )
   }

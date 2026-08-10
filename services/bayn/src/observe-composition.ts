@@ -315,13 +315,33 @@ const compositionFailure = (
 const reconciliationOperationalError = (cause: ReconciliationPassError): OperationalError => {
   switch (cause._tag) {
     case 'BrokerReadError':
-      return operationalError('market-data', 'reconciliation', 'same-pass broker reconciliation read failed', cause)
+      return operationalError({
+        component: 'market-data',
+        operation: 'reconciliation',
+        message: 'same-pass broker reconciliation read failed',
+        cause,
+      })
     case 'ExecutionStoreError':
-      return operationalError('database', 'reconciliation', 'same-pass reconciliation store operation failed', cause)
+      return operationalError({
+        component: 'database',
+        operation: 'reconciliation',
+        message: 'same-pass reconciliation store operation failed',
+        cause,
+      })
     case 'ReconciliationError':
-      return operationalError('strategy', 'reconciliation', 'same-pass reconciliation failed', cause)
+      return operationalError({
+        component: 'strategy',
+        operation: 'reconciliation',
+        message: 'same-pass reconciliation failed',
+        cause,
+      })
     case 'WriterFenceError':
-      return operationalError('database', 'reconciliation', 'same-pass reconciliation fence operation failed', cause)
+      return operationalError({
+        component: 'database',
+        operation: 'reconciliation',
+        message: 'same-pass reconciliation fence operation failed',
+        cause,
+      })
     case 'ReconciliationPassTimeoutError':
       return new OperationalError({
         component: 'market-data',
@@ -435,21 +455,24 @@ const readObserveDecisionFacts = <R>(
           })
           .pipe(
             Effect.mapError((cause) =>
-              operationalError(
-                'market-data',
-                'load-snapshot-publication',
-                'bound cycle snapshot publication read failed',
+              operationalError({
+                component: 'market-data',
+                operation: 'load-snapshot-publication',
+                message: 'bound cycle snapshot publication read failed',
                 cause,
-              ),
+              }),
             ),
           ),
-        brokerRead
-          .marketCalendar(preparation.marketCalendarQuery)
-          .pipe(
-            Effect.mapError((cause) =>
-              operationalError('market-data', 'market-calendar', 'execution-session calendar read failed', cause),
-            ),
+        brokerRead.marketCalendar(preparation.marketCalendarQuery).pipe(
+          Effect.mapError((cause) =>
+            operationalError({
+              component: 'market-data',
+              operation: 'market-calendar',
+              message: 'execution-session calendar read failed',
+              cause,
+            }),
           ),
+        ),
         input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)),
       ],
       { concurrency: 3 },
@@ -568,12 +591,12 @@ const compileObserveStrategyDecision = <R>(
     })(),
   ).pipe(
     Effect.mapError((cause) =>
-      operationalError(
-        'strategy',
-        'current-decision',
-        'current strategy decision compilation failed',
-        unwrapStrategyApplicationFailure(cause),
-      ),
+      operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'current strategy decision compilation failed',
+        cause: unwrapStrategyApplicationFailure(cause),
+      }),
     ),
   )
 
@@ -1113,12 +1136,21 @@ export const prepareObserveStartup = (
   const executionModel = strategyApplication(input.strategy).definition.parameters.executionModel
   if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail(
-      operationalError('strategy', 'cycle-loop', 'autonomous cycles require the causal v2 execution model'),
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: 'autonomous cycles require the causal v2 execution model',
+      }),
     )
   }
   return Result.map(
     Result.mapError(makeCycleExecutionPolicyFromModel(executionModel), (cause) =>
-      operationalError('strategy', 'cycle-policy', 'autonomous cycle execution policy construction failed', cause),
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'autonomous cycle execution policy construction failed',
+        cause,
+      }),
     ),
     (executionPolicy) => ({
       executionModel,
@@ -1136,7 +1168,11 @@ const validateObserveAuthorityInitialization = (
   authority.maximum !== Authority.Observe ||
   authority.effective !== Authority.Observe
     ? Result.fail(
-        operationalError('database', 'authority', 'OBSERVE authority initialization returned incompatible state'),
+        operationalError({
+          component: 'database',
+          operation: 'authority',
+          message: 'OBSERVE authority initialization returned incompatible state',
+        }),
       )
     : Result.succeed(authority)
 
@@ -1151,7 +1187,12 @@ const initializeObserveAuthority = (
       }),
     ),
     Effect.mapError((cause) =>
-      operationalError('database', 'authority', 'OBSERVE authority initialization failed', cause),
+      operationalError({
+        component: 'database',
+        operation: 'authority',
+        message: 'OBSERVE authority initialization failed',
+        cause,
+      }),
     ),
     Effect.flatMap((authority) => Effect.fromResult(validateObserveAuthorityInitialization(authority, input))),
   )
@@ -1206,11 +1247,11 @@ const validateMutationExecutionProgram = (
     authority.strategy.parameterHash !== strategy.parameterHash ||
     authority.strategy.parameterSchemaVersion !== strategy.parameterSchemaVersion
     ? Result.fail(
-        operationalError(
-          'config',
-          'cycle-loop',
-          'mutation cycle execution program does not match its account, authority generation, and strategy',
-        ),
+        operationalError({
+          component: 'config',
+          operation: 'cycle-loop',
+          message: 'mutation cycle execution program does not match its account, authority generation, and strategy',
+        }),
       )
     : Result.succeed(undefined)
 }
@@ -2011,7 +2052,13 @@ const makeRecoveryFirstAutonomousLoop = (
       Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
       Result.map(() => recoveryFirstCycleLoop(input, startup, preparation, policy, capability, buildDecision)),
     ),
-    (cause) => operationalError('strategy', 'cycle-loop', `${operation} failed to start`, cause),
+    (cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: `${operation} failed to start`,
+        cause,
+      }),
   )
 }
 
@@ -2052,7 +2099,12 @@ export const makeObserveAutonomousCycleStartup =
         strategyApplication(input.strategy).definition.parameters.universe,
       ).pipe(
         Effect.mapError((cause) =>
-          operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
+          operationalError({
+            component: 'strategy',
+            operation: 'risk-policy',
+            message: 'source-controlled paper risk policy is invalid',
+            cause,
+          }),
         ),
       )
       yield* initializeObserveAuthority(input)
@@ -2080,7 +2132,12 @@ export const makeMutationAutonomousCycleStartup =
         strategyApplication(input.strategy).definition.parameters.universe,
       ).pipe(
         Effect.mapError((cause) =>
-          operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
+          operationalError({
+            component: 'strategy',
+            operation: 'risk-policy',
+            message: 'source-controlled paper risk policy is invalid',
+            cause,
+          }),
         ),
       )
       return yield* Effect.fromResult(

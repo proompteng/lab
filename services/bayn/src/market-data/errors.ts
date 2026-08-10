@@ -12,7 +12,7 @@ const marketDataOperationErrorDataFirst = (
   if (cause instanceof OperationalError) return cause
   if (isSqlError(cause)) {
     const makeError = cause.isRetryable ? retryableOperationalError : operationalError
-    return makeError('market-data', operation, message, cause)
+    return makeError({ component: 'market-data', operation, message, cause })
   }
   if (isMarketDataVerificationError(cause)) {
     return new OperationalError({
@@ -23,7 +23,7 @@ const marketDataOperationErrorDataFirst = (
       cause,
     })
   }
-  return retryableOperationalError('market-data', operation, message, cause)
+  return retryableOperationalError({ component: 'market-data', operation, message, cause })
 }
 
 export const marketDataOperationError = Pipeable.dual(3, marketDataOperationErrorDataFirst)

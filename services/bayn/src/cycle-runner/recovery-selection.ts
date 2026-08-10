@@ -19,34 +19,46 @@ const validateRecoveryCycleContext = (
 ): Result.Result<void, CycleRecoveryFailure> => {
   if (cycle.identity.qualificationRunId !== state.qualificationRunId || cycle.identity.accountId !== state.accountId) {
     return Result.fail(
-      selectRecoveryFailure('scope', 'unfinished cycle does not match the configured recovery scope', {
-        cycleId: cycle.identity.cycleId,
-        expectedQualificationRunId: state.qualificationRunId,
-        actualQualificationRunId: cycle.identity.qualificationRunId,
-        expectedAccountId: state.accountId,
-        actualAccountId: cycle.identity.accountId,
-        cycleState: cycle.state,
-        cycleStateVersion: cycle.stateVersion,
-        submissionCutoffAt: cycle.window.submissionCutoffAt,
+      selectRecoveryFailure({
+        reason: 'scope',
+        message: 'unfinished cycle does not match the configured recovery scope',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+          expectedQualificationRunId: state.qualificationRunId,
+          actualQualificationRunId: cycle.identity.qualificationRunId,
+          expectedAccountId: state.accountId,
+          actualAccountId: cycle.identity.accountId,
+          cycleState: cycle.state,
+          cycleStateVersion: cycle.stateVersion,
+          submissionCutoffAt: cycle.window.submissionCutoffAt,
+        },
       }),
     )
   }
   if (isTerminalCycleState(cycle.state)) {
     return Result.fail(
-      selectRecoveryFailure('terminal-cycle', 'terminal cycles must not enter autonomous recovery', {
-        cycleId: cycle.identity.cycleId,
-        state: cycle.state,
+      selectRecoveryFailure({
+        reason: 'terminal-cycle',
+        message: 'terminal cycles must not enter autonomous recovery',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+          state: cycle.state,
+        },
       }),
     )
   }
   if (state.observedAt < cycle.updatedAt) {
     return Result.fail(
-      selectRecoveryFailure('chronology', 'recovery observation cannot precede the selected cycle update', {
-        actualObservedAt: state.observedAt,
-        expectedMinimumObservedAt: cycle.updatedAt,
-        cycleId: cycle.identity.cycleId,
-        cycleState: cycle.state,
-        cycleStateVersion: cycle.stateVersion,
+      selectRecoveryFailure({
+        reason: 'chronology',
+        message: 'recovery observation cannot precede the selected cycle update',
+        facts: {
+          actualObservedAt: state.observedAt,
+          expectedMinimumObservedAt: cycle.updatedAt,
+          cycleId: cycle.identity.cycleId,
+          cycleState: cycle.state,
+          cycleStateVersion: cycle.stateVersion,
+        },
       }),
     )
   }
@@ -59,8 +71,12 @@ const selectDecisionBoundRecovery = (
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
   if (state.readiness !== undefined) {
     return Result.fail(
-      selectRecoveryFailure('state-evidence', 'active cycle recovery does not accept publication readiness', {
-        cycleId: cycle.identity.cycleId,
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'active cycle recovery does not accept publication readiness',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+        },
       }),
     )
   }
@@ -130,15 +146,23 @@ const selectActiveRecovery = (
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
   if (state.readiness !== undefined) {
     return Result.fail(
-      selectRecoveryFailure('state-evidence', 'active cycle recovery does not accept publication readiness', {
-        cycleId: cycle.identity.cycleId,
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'active cycle recovery does not accept publication readiness',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+        },
       }),
     )
   }
   if (state.decisionDocument !== undefined) {
     return Result.fail(
-      selectRecoveryFailure('state-evidence', 'unbound active cycle cannot have durable decision evidence', {
-        cycleId: cycle.identity.cycleId,
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'unbound active cycle cannot have durable decision evidence',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+        },
       }),
     )
   }
@@ -175,8 +199,12 @@ const selectPendingRecovery = (
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
   if (state.decisionDocument !== undefined) {
     return Result.fail(
-      selectRecoveryFailure('state-evidence', 'pending cycle recovery does not accept decision evidence', {
-        cycleId: cycle.identity.cycleId,
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'pending cycle recovery does not accept decision evidence',
+        facts: {
+          cycleId: cycle.identity.cycleId,
+        },
       }),
     )
   }
@@ -192,7 +220,10 @@ const selectDecodedCycleRecovery = (
   if (cycle === undefined) {
     if (state.readiness !== undefined || state.decisionDocument !== undefined) {
       return Result.fail(
-        selectRecoveryFailure('evidence-without-cycle', 'recovery evidence requires an unfinished cycle'),
+        selectRecoveryFailure({
+          reason: 'evidence-without-cycle',
+          message: 'recovery evidence requires an unfinished cycle',
+        }),
       )
     }
     return Result.succeed({ action: 'DISCOVER' })
@@ -211,9 +242,13 @@ const selectDecodedCycleRecovery = (
       return selectPendingRecovery(state, cycle)
     default:
       return Result.fail(
-        selectRecoveryFailure('state-evidence', `unsupported unfinished cycle state ${cycle.state}`, {
-          cycleId: cycle.identity.cycleId,
-          state: cycle.state,
+        selectRecoveryFailure({
+          reason: 'state-evidence',
+          message: `unsupported unfinished cycle state ${cycle.state}`,
+          facts: {
+            cycleId: cycle.identity.cycleId,
+            state: cycle.state,
+          },
         }),
       )
   }
@@ -222,7 +257,12 @@ const selectDecodedCycleRecovery = (
 export const selectCycleRecovery = (state: unknown): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> =>
   Result.flatMap(
     Result.mapError(decodeCycleRecoveryStateResult(state), (cause) =>
-      decodeRecoveryStateFailure('decode', 'autonomous cycle recovery state is invalid', {}, cause),
+      decodeRecoveryStateFailure({
+        reason: 'decode',
+        message: 'autonomous cycle recovery state is invalid',
+        facts: {},
+        cause,
+      }),
     ),
     selectDecodedCycleRecovery,
   )

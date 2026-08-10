@@ -19,7 +19,12 @@ const decodeTargetPlannerInputResult = Schema.decodeUnknownResult(TargetPlannerI
 
 export const planTargets = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> => {
   const decoded = Result.mapError(decodeTargetPlannerInputResult(input), (cause) =>
-    decodePlannerInputFailure('contract', 'target-planner input failed its durable contract', {}, cause),
+    decodePlannerInputFailure({
+      reason: 'contract',
+      message: 'target-planner input failed its durable contract',
+      facts: {},
+      cause,
+    }),
   )
   return Result.flatMap(decoded, (value) =>
     Result.flatMap(deriveTargetPlannerHashes(value), (hashes) =>

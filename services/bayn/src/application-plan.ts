@@ -113,28 +113,28 @@ const runtimeIdentityError = (failure: RuntimeIdentityFailure) =>
   pipe(
     Match.value(failure),
     Match.tag('RuntimeParameterHashFailed', ({ cause }) =>
-      operationalError(
-        'strategy',
-        'runtime-identity/parameter-hash',
-        'runtime strategy parameter-hash construction failed',
+      operationalError({
+        component: 'strategy',
+        operation: 'runtime-identity/parameter-hash',
+        message: 'runtime strategy parameter-hash construction failed',
         cause,
-      ),
+      }),
     ),
     Match.tag('RuntimeProvenanceFailed', ({ cause }) =>
-      operationalError(
-        'strategy',
-        'runtime-identity/provenance',
-        'runtime strategy provenance construction failed',
+      operationalError({
+        component: 'strategy',
+        operation: 'runtime-identity/provenance',
+        message: 'runtime strategy provenance construction failed',
         cause,
-      ),
+      }),
     ),
     Match.tag('RuntimeStrategyProtocolHashFailed', ({ cause }) =>
-      operationalError(
-        'strategy',
-        'runtime-identity/strategy-protocol-hash',
-        'runtime strategy protocol-hash construction failed',
+      operationalError({
+        component: 'strategy',
+        operation: 'runtime-identity/strategy-protocol-hash',
+        message: 'runtime strategy protocol-hash construction failed',
         cause,
-      ),
+      }),
     ),
     Match.exhaustive,
   )
