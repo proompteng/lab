@@ -53,7 +53,12 @@ const makeQualificationProgramsDataFirst = (
       Effect.gen(function* () {
         const plan = yield* Effect.fromResult(validateQualificationOpenInput(input)).pipe(
           Effect.mapError((cause) =>
-            databaseError('invariant', 'open-qualification', renderQualificationDecisionFailure(cause), cause),
+            databaseError({
+              failure: 'invariant',
+              operation: 'open-qualification',
+              message: renderQualificationDecisionFailure(cause),
+              cause,
+            }),
           ),
         )
         const lock = plan.lock
@@ -122,11 +127,11 @@ const makeQualificationProgramsDataFirst = (
               Effect.mapError((failure) => storedQualificationDatabaseError('open-qualification', failure)),
             )
             if (Option.isNone(stored)) {
-              return yield* databaseError(
-                'invariant',
-                'open-qualification',
-                'conflicting qualification lock is missing',
-              )
+              return yield* databaseError({
+                failure: 'invariant',
+                operation: 'open-qualification',
+                message: 'conflicting qualification lock is missing',
+              })
             }
             yield* Effect.fromResult(validateQualificationLockMatch(stored.value.lock, lock)).pipe(
               Effect.mapError((failure) => qualificationDecisionDatabaseError('open-qualification', failure)),

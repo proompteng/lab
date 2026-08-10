@@ -67,7 +67,14 @@ const makeEvidenceReferenceProgramsDataFirst = (
   const ensureSnapshotReference: EvidenceReferencePrograms['ensureSnapshotReference'] = (inputManifest) =>
     ensureSnapshotReferenceRow(sql, inputManifest).pipe(
       Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
-        Effect.fail(databaseError('invariant', 'snapshot-reference', renderSnapshotReferenceIssue(cause), cause)),
+        Effect.fail(
+          databaseError({
+            failure: 'invariant',
+            operation: 'snapshot-reference',
+            message: renderSnapshotReferenceIssue(cause),
+            cause,
+          }),
+        ),
       ),
     )
 

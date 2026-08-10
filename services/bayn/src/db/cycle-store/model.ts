@@ -109,20 +109,24 @@ const defaultPersistenceFailure = (
   }
 }
 
-export const cycleStoreError = (
-  operation: CycleStoreError['operation'],
-  failure: CycleStoreError['failure'],
-  message: string,
-  cause?: unknown,
-  persistenceFailure = defaultPersistenceFailure(failure),
-): CycleStoreError =>
-  new CycleStoreError({
+export interface CycleStoreErrorInput {
+  readonly operation: CycleStoreError['operation']
+  readonly failure: CycleStoreError['failure']
+  readonly message: string
+  readonly cause?: unknown
+  readonly persistenceFailure?: NonNullable<CycleStoreError['persistenceFailure']>
+}
+
+export const cycleStoreError = (input: CycleStoreErrorInput): CycleStoreError => {
+  const { operation, failure, message, cause, persistenceFailure = defaultPersistenceFailure(failure) } = input
+  return new CycleStoreError({
     operation,
     failure,
     persistenceFailure,
     message: cause === undefined ? message : `${message}: ${messageOf(cause)}`,
     cause,
   })
+}
 
 const runCycleStoreDataFirst = <A, E, R>(
   operation: CycleStoreError['operation'],
@@ -132,7 +136,12 @@ const runCycleStoreDataFirst = <A, E, R>(
     Effect.mapError((cause) => {
       if (cause instanceof CycleStoreError) return cause
       if (Schema.isSchemaError(cause)) {
-        return cycleStoreError(operation, 'decode', 'autonomous cycle contract decoding failed', cause)
+        return cycleStoreError({
+          operation,
+          failure: 'decode',
+          message: 'autonomous cycle contract decoding failed',
+          cause,
+        })
       }
       if (isSqlError(cause)) {
         const failure =
@@ -156,15 +165,20 @@ const runCycleStoreDataFirst = <A, E, R>(
               return 'query'
           }
         })()
-        return cycleStoreError(
+        return cycleStoreError({
           operation,
           failure,
-          'autonomous cycle PostgreSQL operation failed',
+          message: 'autonomous cycle PostgreSQL operation failed',
           cause,
           persistenceFailure,
-        )
+        })
       }
-      return cycleStoreError(operation, 'invariant', 'autonomous cycle operation failed unexpectedly', cause)
+      return cycleStoreError({
+        operation,
+        failure: 'invariant',
+        message: 'autonomous cycle operation failed unexpectedly',
+        cause,
+      })
     }),
   )
 
@@ -179,7 +193,7 @@ const failCycleStoreDataFirst = (
   operation: CycleStoreError['operation'],
   failure: CycleStoreError['failure'],
   message: string,
-): Effect.Effect<never, CycleStoreError> => Effect.fail(cycleStoreError(operation, failure, message))
+): Effect.Effect<never, CycleStoreError> => Effect.fail(cycleStoreError({ operation, failure, message }))
 
 export const failCycleStore = Pipeable.dual(3, failCycleStoreDataFirst)
 
@@ -188,7 +202,7 @@ const liftCycleDecisionDataFirst = <A>(
   decision: Result.Result<A, CycleStoreDecisionFailure>,
 ): Effect.Effect<A, CycleStoreError> =>
   Effect.fromResult(decision).pipe(
-    Effect.mapError(({ failure, message }) => cycleStoreError(operation, failure, message)),
+    Effect.mapError(({ failure, message }) => cycleStoreError({ operation, failure, message })),
   )
 
 export const liftCycleDecision = Pipeable.generic<

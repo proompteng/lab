@@ -27,7 +27,12 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
   return Layer.unwrap(
     readCertificate.pipe(
       Effect.mapError((cause) =>
-        databaseError('unavailable', 'tls', 'failed to read PostgreSQL CA certificate', cause),
+        databaseError({
+          failure: 'unavailable',
+          operation: 'tls',
+          message: 'failed to read PostgreSQL CA certificate',
+          cause,
+        }),
       ),
       Effect.map((ca) =>
         PgClient.layerFrom(
@@ -57,7 +62,11 @@ const migrate = Effect.gen(function* () {
     `,
   )
   if (boundary.legacy_exists) {
-    return yield* databaseError('migration', 'migrate', 'legacy migration tracker is unsupported after the hard cut')
+    return yield* databaseError({
+      failure: 'migration',
+      operation: 'migrate',
+      message: 'legacy migration tracker is unsupported after the hard cut',
+    })
   }
   if (boundary.current_exists) {
     const identities = yield* decodeMigrationIdentities(
@@ -65,7 +74,11 @@ const migrate = Effect.gen(function* () {
     )
     const [initial] = identities
     if (identities.length !== 1 || initial?.name !== 'initial_schema') {
-      return yield* databaseError('migration', 'migrate', 'legacy migration history is unsupported after the hard cut')
+      return yield* databaseError({
+        failure: 'migration',
+        operation: 'migrate',
+        message: 'legacy migration history is unsupported after the hard cut',
+      })
     }
   }
   yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
@@ -77,7 +90,7 @@ const migrations = migrate.pipe(
       ? cause
       : isSqlError(cause)
         ? classifyDatabaseError('migrate', cause)
-        : databaseError('migration', 'migrate', 'PostgreSQL migration failed', cause),
+        : databaseError({ failure: 'migration', operation: 'migrate', message: 'PostgreSQL migration failed', cause }),
   ),
   Effect.asVoid,
 )
@@ -91,7 +104,11 @@ const withMigrationDeadline = <R>(
       duration: operationTimeoutMs,
       orElse: () =>
         Effect.fail(
-          databaseError('migration', 'migrate', `PostgreSQL migration timed out after ${operationTimeoutMs}ms`),
+          databaseError({
+            failure: 'migration',
+            operation: 'migrate',
+            message: `PostgreSQL migration timed out after ${operationTimeoutMs}ms`,
+          }),
         ),
     }),
   )
