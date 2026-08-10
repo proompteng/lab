@@ -7,10 +7,13 @@ import { BrokerAccess, CapitalAuthorityKind } from './authority'
 import { Authority, makeResearchCapitalGrantGenerationResult } from './contracts'
 import {
   CapitalAuthoritySelection,
+  decodePaperActivationConfigurationResult,
   decodePaperActivationRequestResult,
   makePaperActivationRequest,
   makeResearchPaperActivationRequest,
+  makeResearchPaperBuildContinuation,
   makeResearchPaperPlanHash,
+  researchPaperBuildContinuationIsBound,
   researchCapitalGrantProof,
   researchPaperGenerationIsBoundToRequest,
   resolveExecutionPolicy,
@@ -260,5 +263,59 @@ describe('execution policy configuration', () => {
     expect(researchPaperGenerationIsBoundToRequest(request, 'f'.repeat(64), generation)).toMatchObject({
       _tag: 'Failure',
     })
+
+    const currentActivation = {
+      sourceRevision: 'b'.repeat(40),
+      imageRepository: request.activation.imageRepository,
+      imageDigest: `sha256:${'c'.repeat(64)}`,
+    }
+    const continuation = Result.getOrThrow(
+      makeResearchPaperBuildContinuation({
+        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        request,
+        generationHash: generation.generationHash,
+        activation: currentActivation,
+      }),
+    )
+    expect(decodePaperActivationConfigurationResult(continuation)).toEqual(Result.succeed(continuation))
+    expect(
+      researchPaperBuildContinuationIsBound(continuation, sourceGenerationHash, generation, currentActivation),
+    ).toEqual(Result.succeed(undefined))
+    expect(
+      researchPaperBuildContinuationIsBound(continuation, sourceGenerationHash, generation, {
+        ...currentActivation,
+        imageDigest: `sha256:${'d'.repeat(64)}`,
+      }),
+    ).toMatchObject({ _tag: 'Failure' })
+    const wrongGenerationContinuation = Result.getOrThrow(
+      makeResearchPaperBuildContinuation({
+        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        request,
+        generationHash: 'e'.repeat(64),
+        activation: currentActivation,
+      }),
+    )
+    expect(
+      researchPaperBuildContinuationIsBound(
+        wrongGenerationContinuation,
+        sourceGenerationHash,
+        generation,
+        currentActivation,
+      ),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(
+      decodePaperActivationConfigurationResult({
+        ...continuation,
+        generationHash: 'e'.repeat(64),
+      }),
+    ).toMatchObject({ _tag: 'Failure' })
+    expect(
+      makeResearchPaperBuildContinuation({
+        schemaVersion: 'bayn.paper-research-build-continuation.v1',
+        request,
+        generationHash: generation.generationHash,
+        activation: { ...currentActivation, imageRepository: 'ghcr.io/other/bayn' },
+      }),
+    ).toEqual(Result.fail('ResearchPaperBuildContinuationCanonicalizationFailed'))
   })
 })

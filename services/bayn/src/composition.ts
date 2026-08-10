@@ -76,15 +76,18 @@ import {
 } from './execution/contracts'
 import {
   CapitalAuthoritySelection,
-  decodePaperActivationRequestResult,
+  decodePaperActivationConfigurationResult,
   isResearchPaperActivationRequest,
+  isResearchPaperBuildContinuation,
   researchCapitalGrantProof,
+  researchPaperBuildContinuationIsBound,
   researchPaperGenerationIsBoundToRequest,
   resolveExecutionPolicy,
   type ExecutionPolicy,
   type PaperActivationRequest,
   type QualifiedPaperActivationRequest,
   type ResearchPaperActivationRequest,
+  type ResearchPaperBuildContinuation,
 } from './execution/configuration'
 import { IntentStore, IntentStoreLive } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
@@ -338,17 +341,24 @@ const paperActivationOperationalError = (message: string, cause?: unknown): Oper
     cause: cause === undefined ? { _tag: 'PaperActivationPreparationRejected' } : cause,
   })
 
-const decodeConfiguredPaperActivationRequest = (serialized: string): Result.Result<PaperActivationRequest, string> => {
+interface ConfiguredPaperActivation {
+  readonly request: PaperActivationRequest
+  readonly buildContinuation: ResearchPaperBuildContinuation | null
+}
+
+const decodeConfiguredPaperActivation = (serialized: string): Result.Result<ConfiguredPaperActivation, string> => {
   let value: unknown
   try {
     value = JSON.parse(serialized) as unknown
   } catch {
-    return Result.fail('configured PAPER activation request is not valid JSON')
+    return Result.fail('configured PAPER activation is not valid JSON')
   }
-  const decoded = decodePaperActivationRequestResult(value)
+  const decoded = decodePaperActivationConfigurationResult(value)
   return Result.isFailure(decoded)
-    ? Result.fail('configured PAPER activation request failed its canonical schema and hash validation')
-    : Result.succeed(decoded.success)
+    ? Result.fail('configured PAPER activation failed its canonical schema and hash validation')
+    : isResearchPaperBuildContinuation(decoded.success)
+      ? Result.succeed({ request: decoded.success.request, buildContinuation: decoded.success })
+      : Result.succeed({ request: decoded.success, buildContinuation: null })
 }
 
 const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousService'>): ReadOnlyExecutionPolicy => ({
@@ -362,9 +372,12 @@ const paperActivationRequestIsCurrent = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   evidence: RuntimeEvidence | null,
   observedAt: string,
-  allowCloseRecovery = false,
+  options: {
+    readonly allowCloseRecovery?: boolean
+    readonly buildContinuation?: ResearchPaperBuildContinuation | null
+  } = {},
 ): Result.Result<void, string> => {
-  if (!allowCloseRecovery && (request.expiresAt <= observedAt || request.cutoffAt <= observedAt)) {
+  if (options.allowCloseRecovery !== true && (request.expiresAt <= observedAt || request.cutoffAt <= observedAt)) {
     return Result.fail('paper activation request is expired or past its immutable cutoff')
   }
   if (request.strategy.protocolHash !== plan.strategyProtocolHash) {
@@ -379,11 +392,19 @@ const paperActivationRequestIsCurrent = (
   ) {
     return Result.fail('paper activation request strategy identity does not match the current strategy')
   }
-  if (
-    request.activation.sourceRevision !== plan.config.build.sourceRevision ||
-    request.activation.imageRepository !== plan.config.build.imageRepository ||
-    request.activation.imageDigest !== plan.config.build.imageDigest
-  ) {
+  const requestBuildIsCurrent =
+    request.activation.sourceRevision === plan.config.build.sourceRevision &&
+    request.activation.imageRepository === plan.config.build.imageRepository &&
+    request.activation.imageDigest === plan.config.build.imageDigest
+  const continuationBuildIsCurrent =
+    isResearchPaperActivationRequest(request) &&
+    options.buildContinuation !== null &&
+    options.buildContinuation !== undefined &&
+    options.buildContinuation.request.requestHash === request.requestHash &&
+    options.buildContinuation.activation.sourceRevision === plan.config.build.sourceRevision &&
+    options.buildContinuation.activation.imageRepository === plan.config.build.imageRepository &&
+    options.buildContinuation.activation.imageDigest === plan.config.build.imageDigest
+  if (!requestBuildIsCurrent && !continuationBuildIsCurrent) {
     return Result.fail('paper activation request is not bound to the current activation build')
   }
   if (isResearchPaperActivationRequest(request)) {
@@ -525,6 +546,7 @@ const preparedPaperActivationIsBound = (
 const readBoundPaperActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
+  buildContinuation: ResearchPaperBuildContinuation | null,
   authorityStore: AuthorityGenerationStoreShape,
 ): Effect.Effect<PaperAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
@@ -561,9 +583,16 @@ const readBoundPaperActivationGeneration = (
       if (generation === undefined) {
         return yield* paperActivationOperationalError('durable research PAPER history is missing')
       }
-      yield* Effect.fromResult(
-        researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, generation),
-      ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
+      const binding =
+        buildContinuation === null
+          ? researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, generation)
+          : researchPaperBuildContinuationIsBound(
+              buildContinuation,
+              plan.config.alpaca.authorityGenerationHash,
+              generation,
+              plan.config.build,
+            )
+      yield* Effect.fromResult(binding).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
       return generation
     }
     if (authorityStore.readAuthorityGeneration === undefined) {
@@ -583,9 +612,10 @@ const readBoundPaperActivationGeneration = (
     return generation
   })
 
-const recoverPaperActivationGeneration = (
+export const recoverPaperActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
+  buildContinuation: ResearchPaperBuildContinuation | null,
   evidence: RuntimeEvidence | null,
   authorityStore: AuthorityGenerationStoreShape,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
@@ -593,9 +623,12 @@ const recoverPaperActivationGeneration = (
 ): Effect.Effect<PaperAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(paperActivationRequestIsCurrent(request, plan, evidence, observedAt, true)).pipe(
-      Effect.mapError((message) => paperActivationOperationalError(message)),
-    )
+    yield* Effect.fromResult(
+      paperActivationRequestIsCurrent(request, plan, evidence, observedAt, {
+        allowCloseRecovery: true,
+        buildContinuation,
+      }),
+    ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
     const closeExpiresAt = paperEpisodeCloseExpiresAt(request.expiresAt)
     if (observedAt >= closeExpiresAt) {
       yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
@@ -604,12 +637,13 @@ const recoverPaperActivationGeneration = (
     if (observedAt < request.cutoffAt) {
       return yield* paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease')
     }
-    return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
+    return yield* readBoundPaperActivationGeneration(plan, request, buildContinuation, authorityStore)
   })
 
 const recoverPaperReceiptFinalizationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
+  buildContinuation: ResearchPaperBuildContinuation | null,
   evidence: RuntimeEvidence | null,
   authorityStore: AuthorityGenerationStoreShape,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
@@ -617,14 +651,17 @@ const recoverPaperReceiptFinalizationGeneration = (
 ): Effect.Effect<PaperAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(paperActivationRequestIsCurrent(request, plan, evidence, observedAt, true)).pipe(
-      Effect.mapError((message) => paperActivationOperationalError(message)),
-    )
+    yield* Effect.fromResult(
+      paperActivationRequestIsCurrent(request, plan, evidence, observedAt, {
+        allowCloseRecovery: true,
+        buildContinuation,
+      }),
+    ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
     if (observedAt < paperEpisodeCloseExpiresAt(request.expiresAt)) {
       return yield* paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease')
     }
     yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
-    return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
+    return yield* readBoundPaperActivationGeneration(plan, request, buildContinuation, authorityStore)
   })
 
 type PaperActivationStartupResolution =
@@ -812,7 +849,7 @@ const prepareResearchPaperActivation = (
     yield* Effect.fromResult(validateActivatedResearchAuthority(authority)).pipe(
       Effect.mapError((message) => paperActivationOperationalError(message)),
     )
-    return yield* readBoundPaperActivationGeneration(plan, request, authorityStore).pipe(
+    return yield* readBoundPaperActivationGeneration(plan, request, null, authorityStore).pipe(
       Effect.flatMap((generation) =>
         generation.schemaVersion === 'bayn.paper-authority-generation.v3'
           ? Effect.succeed(generation)
@@ -844,9 +881,10 @@ export const refreshResearchPaperActivationReconciliation = Pipeable.generic<
   typeof refreshResearchPaperActivationReconciliationDataFirst
 >(2, refreshResearchPaperActivationReconciliationDataFirst)
 
-const prepareOrRecoverResearchPaperActivation = (
+export const prepareOrRecoverResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
+  buildContinuation: ResearchPaperBuildContinuation | null,
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
@@ -864,7 +902,18 @@ const prepareOrRecoverResearchPaperActivation = (
     const currentGenerationMatchesRequest =
       currentGeneration !== undefined &&
       Result.isSuccess(
-        researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, currentGeneration),
+        buildContinuation === null
+          ? researchPaperGenerationIsBoundToRequest(
+              request,
+              plan.config.alpaca.authorityGenerationHash,
+              currentGeneration,
+            )
+          : researchPaperBuildContinuationIsBound(
+              buildContinuation,
+              plan.config.alpaca.authorityGenerationHash,
+              currentGeneration,
+              plan.config.build,
+            ),
       )
     const decision = yield* Effect.fromResult(
       decidePaperEpisodeAuthority({
@@ -881,6 +930,11 @@ const prepareOrRecoverResearchPaperActivation = (
         paperActivationOperationalError('research PAPER durable authority does not match this episode', cause),
       ),
     )
+    if (buildContinuation !== null && decision._tag !== 'Resume') {
+      return yield* paperActivationOperationalError(
+        'research PAPER build continuation requires the exact active generation',
+      )
+    }
     if (decision._tag === 'Rearm') {
       const rearmed = yield* authorityStore
         .ensureAuthorityGeneration({
@@ -907,7 +961,20 @@ const prepareOrRecoverResearchPaperActivation = (
       yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
       return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle)
     }
-    return currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
+    const generation =
+      currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
+    if (buildContinuation !== null) {
+      yield* Effect.logInfo('Bayn PAPER build continuation resumed the active generation').pipe(
+        Effect.annotateLogs({
+          service: 'bayn',
+          continuationHash: buildContinuation.continuationHash,
+          generationHash: generation.generationHash,
+          sourceRevision: plan.config.build.sourceRevision,
+          imageDigest: plan.config.build.imageDigest,
+        }),
+      )
+    }
+    return generation
   })
 
 const pendingPaperActivation = (
@@ -1203,12 +1270,12 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       strategyProtocolHash: plan.strategyProtocolHash,
     }) as ApplicationPlanFor<'AutonomousService'>
     const serializedRequest = observePlan.config.paperActivationRequestJson
-    const decodedRequest: Result.Result<PaperActivationRequest | null, string> =
-      serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredPaperActivationRequest(serializedRequest)
+    const decodedActivation: Result.Result<ConfiguredPaperActivation | null, string> =
+      serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredPaperActivation(serializedRequest)
     const startupEvidenceMode =
-      Result.isSuccess(decodedRequest) &&
-      decodedRequest.success !== null &&
-      isResearchPaperActivationRequest(decodedRequest.success)
+      Result.isSuccess(decodedActivation) &&
+      decodedActivation.success !== null &&
+      isResearchPaperActivationRequest(decodedActivation.success.request)
         ? ('Research' as const)
         : ('Qualification' as const)
     const noCycle = (
@@ -1228,30 +1295,40 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
     const resolveAfterStartup: AutonomousRuntimeResolver<never, never> = (state) => {
       const validateStaticRequest: Effect.Effect<
         Result.Result<
-          { readonly request: PaperActivationRequest | null; readonly evidence: RuntimeEvidence | null },
+          {
+            readonly request: PaperActivationRequest | null
+            readonly buildContinuation: ResearchPaperBuildContinuation | null
+            readonly evidence: RuntimeEvidence | null
+          },
           string
         >,
         OperationalError
       > = Effect.gen(function* () {
-        if (Result.isFailure(decodedRequest)) {
+        if (Result.isFailure(decodedActivation)) {
           yield* pendingPaperActivation(state, null, 'REQUEST_INVALID')
           return Result.fail('request-invalid')
         }
-        const request = decodedRequest.success
+        const configured = decodedActivation.success
+        const request = configured?.request ?? null
+        const buildContinuation = configured?.buildContinuation ?? null
         const current = yield* Ref.get(state)
-        if (request === null) return Result.succeed({ request, evidence: current.evidence })
+        if (request === null) return Result.succeed({ request, buildContinuation, evidence: current.evidence })
         const observedAt = yield* currentUtcInstant
-        const validation = paperActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, true)
+        const validation = paperActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
+          allowCloseRecovery: true,
+          buildContinuation,
+        })
         if (Result.isFailure(validation)) {
           yield* pendingPaperActivation(state, request, 'PREPARATION_FAILED')
           return Result.fail(validation.failure)
         }
-        return Result.succeed({ request, evidence: current.evidence })
+        return Result.succeed({ request, buildContinuation, evidence: current.evidence })
       })
       return validateStaticRequest.pipe(
         Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never, Scope.Scope> => {
           if (Result.isFailure(validated)) return Effect.succeed(pendingRuntime())
           const request = validated.success.request
+          const buildContinuation = validated.success.buildContinuation
           return Effect.flatMap(Scope.Scope, (scope) =>
             scopedAcquisition(
               (attemptScope) =>
@@ -1334,6 +1411,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   ? recoverPaperReceiptFinalizationGeneration(
                                       observePlan,
                                       request,
+                                      buildContinuation,
                                       evidence,
                                       runtimeServices.authorityGenerationStore,
                                       runtimeServices.authorityRestrictionStore,
@@ -1348,6 +1426,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     ? recoverPaperActivationGeneration(
                                         observePlan,
                                         request,
+                                        buildContinuation,
                                         evidence,
                                         runtimeServices.authorityGenerationStore,
                                         runtimeServices.authorityRestrictionStore,
@@ -1357,6 +1436,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       ? prepareOrRecoverResearchPaperActivation(
                                           observePlan,
                                           request,
+                                          buildContinuation,
                                           runtimeServices.session,
                                           runtimeServices.authorityGenerationStore,
                                           runtimeServices.capitalGrantLifecycleStore,

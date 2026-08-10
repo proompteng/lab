@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Ref, Result } from 'effect'
+import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { config, fixtureRuntime } from './app-test-support'
 import { provideTestLayer } from './effect-test-support'
 
 import {
@@ -10,17 +11,38 @@ import {
   closedCycleReceiptEmissionAllowed,
   finalizePaperEpisode,
   paperReceiptFinalizationWindowOpen,
+  prepareOrRecoverResearchPaperActivation,
+  recoverPaperActivationGeneration,
   refreshResearchPaperActivationReconciliation,
   restrictExpiredPaperActivation,
   retryClosedCycleReceipts,
 } from './composition'
-import { BrokerEnvironment } from './broker/identity'
-import type { AuthorityRestrictionStoreShape } from './db/execution-store'
-import { makeResearchPaperActivationRequest, makeResearchPaperPlanHash } from './execution/configuration'
+import { makeApplicationPlan, type ApplicationPlanFor } from './app'
+import { alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
+import { makeStrategyProtocolHash } from './contracts'
+import type {
+  AuthorityGenerationStoreShape,
+  AuthorityRestrictionStoreShape,
+  CapitalGrantLifecycleStoreShape,
+} from './db/execution-store'
+import { BrokerAccess, noCapitalAuthority } from './execution/authority'
+import {
+  makeResearchPaperActivationRequest,
+  makeResearchPaperBuildContinuation,
+  makeResearchPaperPlanHash,
+} from './execution/configuration'
+import {
+  Authority,
+  KillState,
+  makeResearchCapitalGrantGenerationResult,
+  type AuthorityState,
+} from './execution/contracts'
 import type { WriterFenceService } from './execution/writer-fence'
 import { utcInstantFromEpochMillis } from './time'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState } from './runtime-state'
+import { fixtureProtocol } from './test-fixtures'
 
 const hash = (value: string) => value.repeat(64).slice(0, 64)
 
@@ -58,6 +80,205 @@ const researchRequest = Result.getOrThrow(
     ...researchPlanFields,
   }),
 )
+
+const continuationAccountId = 'paper-continuation-account'
+const continuationSourceGenerationHash = hash('a')
+const continuationBrokerIdentity = Result.getOrThrow(
+  makeBrokerIdentity({
+    schemaVersion: 'bayn.broker-identity.v2',
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    accountId: continuationAccountId,
+  }),
+)
+const continuationStrategyProtocolHash = makeStrategyProtocolHash(fixtureRuntime.provenance.strategy)
+const continuationResearchPlan = {
+  schemaVersion: 'bayn.paper-research-plan.v1' as const,
+  activation: {
+    sourceRevision: config.build.sourceRevision,
+    imageRepository: config.build.imageRepository,
+    imageDigest: config.build.imageDigest,
+  },
+  strategy: {
+    name: fixtureRuntime.provenance.strategy.name,
+    behaviorHash: fixtureRuntime.provenance.strategy.behaviorHash,
+    parameterHash: fixtureRuntime.provenance.strategy.parameterHash,
+    parameterSchemaVersion: fixtureRuntime.provenance.strategy.parameterSchemaVersion,
+    protocolHash: continuationStrategyProtocolHash,
+  },
+  broker: {
+    environment: BrokerEnvironment.Sandbox,
+    accountId: continuationAccountId,
+    identityHash: continuationBrokerIdentity.identityHash,
+  },
+  riskPolicyHash: hash('b'),
+  limits: { maxOpenOrders: 0 as const, maxPositions: 0 as const },
+  cutoffAt: '2026-09-01T13:30:00.000Z',
+  expiresAt: '2026-09-03T20:00:00.000Z',
+  maximumCloseSessions: 3 as const,
+} as const
+const { schemaVersion: _continuationPlanSchemaVersion, ...continuationResearchPlanFields } = continuationResearchPlan
+const continuationRequest = Result.getOrThrow(
+  makeResearchPaperActivationRequest({
+    schemaVersion: 'bayn.paper-research-activation-request.v1',
+    grant: {
+      _tag: 'Research',
+      planHash: Result.getOrThrow(makeResearchPaperPlanHash(continuationResearchPlan)),
+    },
+    ...continuationResearchPlanFields,
+  }),
+)
+const continuationGeneration = Result.getOrThrow(
+  makeResearchCapitalGrantGenerationResult({
+    schemaVersion: 'bayn.paper-authority-generation.v3',
+    maximum: Authority.Paper,
+    previousGenerationHash: continuationSourceGenerationHash,
+    grant: continuationRequest.grant,
+    activationSourceRevision: continuationRequest.activation.sourceRevision,
+    activationImageRepository: continuationRequest.activation.imageRepository,
+    activationImageDigest: continuationRequest.activation.imageDigest,
+    strategyName: continuationRequest.strategy.name,
+    strategyBehaviorHash: continuationRequest.strategy.behaviorHash,
+    strategyParameterHash: continuationRequest.strategy.parameterHash,
+    strategyParameterSchemaVersion: continuationRequest.strategy.parameterSchemaVersion,
+    strategyProtocolHash: continuationRequest.strategy.protocolHash,
+    accountId: continuationRequest.broker.accountId,
+    brokerIdentityHash: continuationRequest.broker.identityHash,
+    riskPolicyHash: continuationRequest.riskPolicyHash,
+    proofPlanHash: continuationRequest.grant.planHash,
+    reconciliationId: hash('c'),
+    reconciliationContentHash: hash('d'),
+  }),
+)
+const continuationBuild = {
+  sourceRevision: 'e'.repeat(40),
+  imageRepository: continuationRequest.activation.imageRepository,
+  imageDigest: `sha256:${hash('f')}`,
+} as const
+const researchBuildContinuation = Result.getOrThrow(
+  makeResearchPaperBuildContinuation({
+    schemaVersion: 'bayn.paper-research-build-continuation.v1',
+    request: continuationRequest,
+    generationHash: continuationGeneration.generationHash,
+    activation: continuationBuild,
+  }),
+)
+const mismatchedResearchBuildContinuation = Result.getOrThrow(
+  makeResearchPaperBuildContinuation({
+    schemaVersion: 'bayn.paper-research-build-continuation.v1',
+    request: continuationRequest,
+    generationHash: hash('0'),
+    activation: continuationBuild,
+  }),
+)
+const staleResearchBuildContinuation = Result.getOrThrow(
+  makeResearchPaperBuildContinuation({
+    schemaVersion: 'bayn.paper-research-build-continuation.v1',
+    request: continuationRequest,
+    generationHash: continuationGeneration.generationHash,
+    activation: {
+      ...continuationBuild,
+      sourceRevision: '0'.repeat(40),
+      imageDigest: `sha256:${hash('1')}`,
+    },
+  }),
+)
+const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (() => {
+  const plan = makeApplicationPlan({
+    config: {
+      ...config,
+      runtimeMode: 'AutonomousService',
+      cyclePollIntervalMs: 30_000,
+      execution: {
+        brokerIdentity: continuationBrokerIdentity,
+        brokerAccess: BrokerAccess.ReadOnly,
+        capitalAuthority: noCapitalAuthority,
+      },
+      build: { ...config.build, ...continuationBuild },
+      alpaca: {
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        identity: continuationBrokerIdentity,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: continuationAccountId,
+        authorityGenerationHash: continuationSourceGenerationHash,
+        key: Redacted.make('test-key'),
+        secret: Redacted.make('test-secret'),
+        proxyUrl: 'http://proxy.test:3128',
+        operationTimeoutMs: config.operationTimeoutMs,
+        retryAttempts: 0,
+        reconciliationIntervalMs: 30_000,
+      },
+    },
+    protocol: fixtureProtocol,
+    parameterHash: fixtureRuntime.provenance.strategy.parameterHash,
+    strategy: fixtureRuntime,
+    strategyProtocolHash: continuationStrategyProtocolHash,
+  })
+  if (plan._tag !== 'AutonomousService') throw new Error('continuation fixture must produce AutonomousService')
+  return plan
+})()
+const continuationAuthority: AuthorityState = {
+  schemaVersion: 'bayn.paper-authority.v1',
+  generationHash: continuationGeneration.generationHash,
+  maximum: Authority.Paper,
+  effective: Authority.Paper,
+  kill: KillState.Clear,
+  version: 2,
+  updatedAt: '2026-08-10T18:00:00.000Z',
+}
+
+const continuationAuthorityStore = (
+  generation: typeof continuationGeneration | null = continuationGeneration,
+  authority: AuthorityState = continuationAuthority,
+): AuthorityGenerationStoreShape => ({
+  ensureAuthorityGeneration: () => Effect.die(new Error('build continuation must not rearm authority')),
+  readAuthorityState: Effect.succeed(authority),
+  readResearchAuthorityGeneration: (generationHash) =>
+    Effect.succeed(generation?.generationHash === generationHash ? generation : undefined),
+})
+
+const unusedCapitalGrantLifecycle: CapitalGrantLifecycleStoreShape = {
+  prepareCapitalGrant: () => Effect.die(new Error('build continuation must not prepare authority')),
+  activateCapitalGrant: () => Effect.die(new Error('build continuation must not activate qualified authority')),
+  activateResearchCapitalGrant: () => Effect.die(new Error('build continuation must not activate research authority')),
+}
+
+const unusedBrokerSession = {} as BrokerSessionShape
+const unusedAuthorityRestrictionStore: AuthorityRestrictionStoreShape = {
+  restrictAuthority: () => Effect.die(new Error('active close lease must not restrict authority')),
+}
+const unusedWriterFence: WriterFenceService = {
+  backendPid: 1,
+  check: Effect.void,
+  transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+}
+
+const resumeBuildContinuation = (
+  continuation = researchBuildContinuation,
+  authorityStore = continuationAuthorityStore(),
+) =>
+  prepareOrRecoverResearchPaperActivation(
+    continuationApplicationPlan,
+    continuationRequest,
+    continuation,
+    unusedBrokerSession,
+    authorityStore,
+    unusedCapitalGrantLifecycle,
+    Effect.die(new Error('build continuation must not run pre-activation reconciliation')),
+    config.operationTimeoutMs,
+  )
+
+const recoverBuildContinuation = (continuation = researchBuildContinuation) =>
+  recoverPaperActivationGeneration(
+    continuationApplicationPlan,
+    continuationRequest,
+    continuation,
+    null,
+    continuationAuthorityStore(),
+    unusedAuthorityRestrictionStore,
+    unusedWriterFence,
+  )
 
 describe('Bayn application platform', () => {
   test('provides filesystem access for TLS-backed PostgreSQL acquisition', async () => {
@@ -173,6 +394,68 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn PAPER startup recovery boundary', () => {
+  test('resumes only the exact active research generation across a reviewed build change', async () => {
+    const logs: Array<{ readonly message: unknown; readonly annotations: Record<string, unknown> }> = []
+    const logger = Logger.make<unknown, void>((entry) => {
+      logs.push({
+        message: entry.message,
+        annotations: { ...entry.fiber.getRef(References.CurrentLogAnnotations) },
+      })
+    })
+    const generation = await Effect.runPromise(resumeBuildContinuation().pipe(Effect.provide(Logger.layer([logger]))))
+
+    expect(generation).toEqual(continuationGeneration)
+    expect(logs).toContainEqual({
+      message: ['Bayn PAPER build continuation resumed the active generation'],
+      annotations: {
+        service: 'bayn',
+        continuationHash: researchBuildContinuation.continuationHash,
+        generationHash: continuationGeneration.generationHash,
+        sourceRevision: continuationBuild.sourceRevision,
+        imageDigest: continuationBuild.imageDigest,
+      },
+    })
+  })
+
+  test('fails closed before rearm or activation when continuation generation history is absent or mismatched', async () => {
+    const cases = [
+      {
+        continuation: researchBuildContinuation,
+        store: continuationAuthorityStore(null),
+        message: 'durable research PAPER history is missing',
+      },
+      {
+        continuation: mismatchedResearchBuildContinuation,
+        store: continuationAuthorityStore(),
+        message: 'research PAPER build continuation requires the exact active generation',
+      },
+    ] as const
+
+    for (const fixture of cases) {
+      const failure = await Effect.runPromise(Effect.flip(resumeBuildContinuation(fixture.continuation, fixture.store)))
+
+      expect(failure.message).toBe(fixture.message)
+    }
+  })
+
+  test('recovers the exact continuation after cutoff and rejects stale build or generation bindings', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-02T13:30:00.000Z'))
+        const recovered = yield* recoverBuildContinuation()
+        const mismatched = yield* recoverBuildContinuation(mismatchedResearchBuildContinuation).pipe(Effect.flip)
+        const stale = yield* recoverBuildContinuation(staleResearchBuildContinuation).pipe(Effect.flip)
+        return { recovered, mismatched, stale }
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(result.recovered).toEqual(continuationGeneration)
+    expect(result.mismatched.message).toBe(
+      'research PAPER build continuation is not bound to the active generation and current build',
+    )
+    expect(result.stale.message).toBe('paper activation request is not bound to the current activation build')
+  })
+
   test('persists one fresh reconciliation before activating a new research PAPER generation', async () => {
     const operations: string[] = []
 
