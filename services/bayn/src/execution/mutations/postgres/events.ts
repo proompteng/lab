@@ -53,7 +53,9 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
     fromDecision(() => decodeIntentId(intentId)).pipe(
       Effect.flatMap((decodedIntentId) => readLatest(decodedIntentId, operation)),
       Effect.mapError((cause) =>
-        cause instanceof MutationStoreError ? cause : storeError('read', 'query', 'mutation read failed', cause),
+        cause instanceof MutationStoreError
+          ? cause
+          : storeError({ operation: 'read', failure: 'query', message: 'mutation read failed', cause }),
       ),
     )
 

@@ -991,25 +991,25 @@ export const buildClosingPaperCycleDecision = (
 ): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError('PAPER close reconciliation failed', cause)),
+      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER close reconciliation failed', cause })),
     )
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const executionSession = yield* Effect.fromResult(
       recoverPaperExecutionSession(preparation, cycle, entryDocument),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const symbols = [
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),
     ]
     const closeDecision = yield* Effect.fromResult(
       makeClosingDecisionPlan(cycle.identity.signalSessionDate, symbols),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const closeDecisionHash = yield* Effect.fromResult(
       hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const prices = yield* Effect.fromResult(
       makeClosingReferencePrices(
         entryDocument,
@@ -1017,10 +1017,10 @@ export const buildClosingPaperCycleDecision = (
         cycle.identity.signalSessionDate,
         evaluatedAt,
       ),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const policyHash = yield* Effect.fromResult(
       hashObserveMaterial('risk-policy-hash', 'PAPER close risk policy is not canonicalizable', policy),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const plannerInput: TargetPlannerInput = {
       schemaVersion: 'bayn.paper-target-planner-input.v1',
       strategyName: cycle.identity.strategyName,
@@ -1038,7 +1038,7 @@ export const buildClosingPaperCycleDecision = (
       observedAt: evaluatedAt,
     }
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
-      Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')),
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
@@ -1052,7 +1052,7 @@ export const buildClosingPaperCycleDecision = (
         evaluatedAt,
         closeOnlyExpiresAt: closeExpiresAt,
       }),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     return yield* buildPaperDecision({
       cycle,
       snapshot: {
@@ -1072,7 +1072,11 @@ export const buildClosingPaperCycleDecision = (
     }).pipe(
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
-        return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
+        return mutationRunnerError({
+          message: 'deterministic PAPER close plan construction failed',
+          cause: converted,
+          failure: converted.failure,
+        })
       }),
     )
   })
@@ -1261,12 +1265,18 @@ const readBoundMutationDocument = (
 ): Effect.Effect<CycleDecisionDocument, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(
     Effect.flatMap((store) => store.readDecisionDocument(cycle.identity.cycleId)),
-    Effect.mapError((cause) => mutationRunnerError('durable mutation-cycle shadow plan read failed', cause, 'store')),
+    Effect.mapError((cause) =>
+      mutationRunnerError({ message: 'durable mutation-cycle shadow plan read failed', cause, failure: 'store' }),
+    ),
     Effect.flatMap((document) =>
       Option.match(document, {
         onNone: () =>
           Effect.fail(
-            mutationRunnerError('decision-bound mutation cycle is missing its durable shadow plan', undefined, 'store'),
+            mutationRunnerError({
+              message: 'decision-bound mutation cycle is missing its durable shadow plan',
+              cause: undefined,
+              failure: 'store',
+            }),
           ),
         onSome: Effect.succeed,
       }),
@@ -1278,7 +1288,9 @@ const readPaperCycleClosure = (
   store: PaperCycleClosureStoreShape,
 ): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
   store.read(cycleId).pipe(
-    Effect.mapError((cause) => mutationRunnerError('durable PAPER close plan read failed', cause, 'store')),
+    Effect.mapError((cause) =>
+      mutationRunnerError({ message: 'durable PAPER close plan read failed', cause, failure: 'store' }),
+    ),
     Effect.map(Option.getOrUndefined),
   )
 
@@ -1287,7 +1299,9 @@ const readLatestPaperCycleCloseReplan = (
   store: PaperCycleClosureStoreShape,
 ): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
   store.readLatestReplan(cycleId).pipe(
-    Effect.mapError((cause) => mutationRunnerError('durable PAPER close replan read failed', cause, 'store')),
+    Effect.mapError((cause) =>
+      mutationRunnerError({ message: 'durable PAPER close replan read failed', cause, failure: 'store' }),
+    ),
     Effect.map(Option.getOrUndefined),
   )
 
@@ -1303,7 +1317,9 @@ const closePlanNeedsResidualReplan = (
         intentStore
           .read(intentId)
           .pipe(
-            Effect.mapError((cause) => mutationRunnerError('PAPER close intent recovery read failed', cause, 'store')),
+            Effect.mapError((cause) =>
+              mutationRunnerError({ message: 'PAPER close intent recovery read failed', cause, failure: 'store' }),
+            ),
           ),
       { concurrency: 1 },
     )
@@ -1315,7 +1331,7 @@ const closePlanNeedsResidualReplan = (
       return false
     }
     const facts = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError('PAPER residual close reconciliation failed', cause)),
+      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER residual close reconciliation failed', cause })),
     )
     return paperClosePlanNeedsResidualReplan(
       records
@@ -1343,11 +1359,11 @@ const ensurePaperCycleClosure = (
     const existing = yield* readPaperCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
-      return yield* mutationRunnerError(
-        'active PAPER cycle has no immutable entry decision hash for its close plan',
-        undefined,
-        'contract',
-      )
+      return yield* mutationRunnerError({
+        message: 'active PAPER cycle has no immutable entry decision hash for its close plan',
+        cause: undefined,
+        failure: 'contract',
+      })
     }
     if (existing === undefined) {
       const document = yield* buildClosingPaperCycleDecision(
@@ -1370,11 +1386,17 @@ const ensurePaperCycleClosure = (
           expiresAt: closeExpiresAt,
         }),
       ).pipe(
-        Effect.mapError((cause) => mutationRunnerError('PAPER close plan canonical binding failed', cause, 'contract')),
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'PAPER close plan canonical binding failed', cause, failure: 'contract' }),
+        ),
       )
       const stored = yield* store
         .bind(closure)
-        .pipe(Effect.mapError((cause) => mutationRunnerError('PAPER close plan durable bind failed', cause, 'store')))
+        .pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({ message: 'PAPER close plan durable bind failed', cause, failure: 'store' }),
+          ),
+        )
       return stored.document
     }
 
@@ -1404,14 +1426,18 @@ const ensurePaperCycleClosure = (
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        mutationRunnerError('PAPER residual close plan canonical binding failed', cause, 'contract'),
+        mutationRunnerError({
+          message: 'PAPER residual close plan canonical binding failed',
+          cause,
+          failure: 'contract',
+        }),
       ),
     )
     const stored = yield* store
       .bindReplan(closure)
       .pipe(
         Effect.mapError((cause) =>
-          mutationRunnerError('PAPER residual close plan durable bind failed', cause, 'store'),
+          mutationRunnerError({ message: 'PAPER residual close plan durable bind failed', cause, failure: 'store' }),
         ),
       )
     return stored.document
@@ -1427,7 +1453,11 @@ const entryPaperCycleHasUnsuccessfulIntent = (
       (intentId) =>
         store
           .read(intentId)
-          .pipe(Effect.mapError((cause) => mutationRunnerError('entry PAPER intent read failed', cause, 'store'))),
+          .pipe(
+            Effect.mapError((cause) =>
+              mutationRunnerError({ message: 'entry PAPER intent read failed', cause, failure: 'store' }),
+            ),
+          ),
       { concurrency: 1 },
     )
     return records.some(
@@ -1470,17 +1500,19 @@ const readMutationPreparationFacts = (
       request.reconcile,
     )
     const reads = yield* Effect.fromResult(prepareObserveDecisionReads(decisionInput)).pipe(
-      Effect.mapError((cause) => mutationRunnerError('mutation cycle decision reads are invalid', cause, 'contract')),
+      Effect.mapError((cause) =>
+        mutationRunnerError({ message: 'mutation cycle decision reads are invalid', cause, failure: 'contract' }),
+      ),
     )
     const facts = yield* readObserveDecisionFacts(decisionInput, reads).pipe(
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
-        return mutationRunnerError(converted.message, cause, converted.failure)
+        return mutationRunnerError({ message: converted.message, cause, failure: converted.failure })
       }),
     )
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(facts.reconciliation, request.policy, request.input.authorityGenerationHash),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     return {
       snapshot: facts.snapshot.manifest.finalizedSnapshot,
       reconciliation: facts.reconciliation,
@@ -1499,12 +1531,12 @@ const readCloseMutationPreparationFacts = (
 ): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const reconciliation = yield* request.reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError('PAPER close reconciliation failed', cause)),
+      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER close reconciliation failed', cause })),
     )
     const evaluatedAt = yield* currentUtcInstant
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, request.policy, request.input.authorityGenerationHash),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     return {
       snapshot: {
         contentHash: request.document.bindings.snapshotContentHash,
@@ -1621,7 +1653,9 @@ const readUnfinishedMutationCycle = (
         accountId: context.accountId,
       }),
     ),
-    Effect.mapError((cause) => mutationRunnerError('oldest unfinished mutation cycle read failed', cause, 'store')),
+    Effect.mapError((cause) =>
+      mutationRunnerError({ message: 'oldest unfinished mutation cycle read failed', cause, failure: 'store' }),
+    ),
     Effect.map(Option.getOrUndefined),
   )
 
@@ -1634,7 +1668,9 @@ const terminalizeUnboundMutationCycleAtCutoff = (
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(
     Effect.flatMap((store) => store.block(cycle.identity.cycleId, CycleTerminalReason.Authority, observedAt)),
-    Effect.mapError((cause) => mutationRunnerError('expired PAPER unbound cycle finalization failed', cause, 'store')),
+    Effect.mapError((cause) =>
+      mutationRunnerError({ message: 'expired PAPER unbound cycle finalization failed', cause, failure: 'store' }),
+    ),
     Effect.map((receipt) => ({
       outcome: 'RECOVERED' as const,
       action: 'BLOCKED' as const,
@@ -1654,7 +1690,9 @@ const terminalizeBlockedPaperCycleDataFirst = (
     Effect.andThen(
       CycleStore.pipe(
         Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
-        Effect.mapError((cause) => mutationRunnerError('blocked PAPER cycle finalization failed', cause, 'store')),
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'blocked PAPER cycle finalization failed', cause, failure: 'store' }),
+        ),
       ),
     ),
     Effect.map((receipt) => ({
@@ -1688,7 +1726,9 @@ const interpretBoundMutationCycleOutcome = (
     case 'Complete':
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),
-        Effect.mapError((cause) => mutationRunnerError('completed PAPER cycle finalization failed', cause, 'store')),
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'completed PAPER cycle finalization failed', cause, failure: 'store' }),
+        ),
         Effect.tap((receipt) =>
           receipt.changed && input.onClosedCycle !== undefined
             ? input.onClosedCycle(cycle.identity.cycleId, outcome.observedAt)
