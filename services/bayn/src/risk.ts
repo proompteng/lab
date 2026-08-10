@@ -1235,8 +1235,8 @@ const evaluateDecoded = (
 ): Result.Result<Evaluation, RiskEvaluationFailure> =>
   Result.flatMap(validateAuthorityBinding(intent, state), () => {
     const facts = parseRiskFacts(intent, state, policy, proposedPositions)
-    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) => {
-      return Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
+    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) =>
+      Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
         const gates = buildRiskGates(facts, metrics, reconciledHash)
         const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
         const outcome = reasonCodes.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
@@ -1248,8 +1248,8 @@ const evaluateDecoded = (
             ),
           ),
         )
-      })
-    })
+      }),
+    )
   })
 
 export interface RiskEvaluationInput {

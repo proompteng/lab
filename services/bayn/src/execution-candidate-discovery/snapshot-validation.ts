@@ -24,7 +24,7 @@ export const validateIdentity = (
   input: ExecutionCandidateDiscoveryIdentity,
 ): Result.Result<ExecutionCandidateDiscoveryIdentity, ExecutionCandidateDiscoveryError> =>
   pipe(
-    Schema.decodeUnknownResult(RuntimeIdentitySchema, strictParseOptions)(input),
+    Schema.decodeResult(RuntimeIdentitySchema, strictParseOptions)(input),
     Result.mapError(
       (cause): ExecutionCandidateDiscoveryError => ({ _tag: 'IdentityDecodeFailed', failure: 'invalid-input', cause }),
     ),

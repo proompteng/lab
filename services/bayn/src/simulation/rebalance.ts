@@ -358,8 +358,8 @@ const applyBuyOrder = (
         Result.flatMap((terms) =>
           pipe(
             makeFill(input.runId, decision, order, terms, terms.notionalMicros),
-            Result.flatMap((fill) => {
-              return pipe(
+            Result.flatMap((fill) =>
+              pipe(
                 positionFor(state.positions, order.event.symbol),
                 Result.flatMap((position) => {
                   const updated = {
@@ -389,8 +389,8 @@ const applyBuyOrder = (
                     })),
                   )
                 }),
-              )
-            }),
+              ),
+            ),
           ),
         ),
       ),

@@ -61,8 +61,8 @@ const markedPositions = (
   Result.all(
     Object.keys(session.bars)
       .sort()
-      .map((symbol) => {
-        return pipe(
+      .map((symbol) =>
+        pipe(
           Result.all({
             position: positionFor(positions, symbol),
             priceMicros: requiredRecordValue(closingPrices, symbol, 'price', 'closing prices'),
@@ -79,8 +79,8 @@ const markedPositions = (
               })),
             ),
           ),
-        )
-      }),
+        ),
+      ),
   )
 
 const closeSessionDataFirst = (

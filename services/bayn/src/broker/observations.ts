@@ -148,10 +148,7 @@ export const sourceTimestamp = (value: string): Result.Result<string, BrokerObse
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
   if (match === null) return fail({ _tag: 'TimestampInvalid', value })
   return pipe(
-    Schema.decodeUnknownResult(
-      UtcOrderTimestamp,
-      strictParseOptions,
-    )(`${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`),
+    Schema.decodeResult(UtcOrderTimestamp, strictParseOptions)(`${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`),
     Result.mapError((): BrokerObservationError => ({ _tag: 'TimestampInvalid', value })),
   )
 }
@@ -161,7 +158,7 @@ const canonicalInstant = (value: string): Result.Result<string, BrokerObservatio
     sourceTimestamp(value),
     Result.flatMap((timestamp) =>
       pipe(
-        Schema.decodeUnknownResult(UtcInstant, strictParseOptions)(`${timestamp.slice(0, 23)}Z`),
+        Schema.decodeResult(UtcInstant, strictParseOptions)(`${timestamp.slice(0, 23)}Z`),
         Result.mapError((): BrokerObservationError => ({ _tag: 'TimestampInvalid', value })),
       ),
     ),

@@ -410,8 +410,8 @@ const recoverAtBroker = (
   stored: StoredIntent,
   operation: MutationOperation,
   interrupted: MutationEvent,
-) => {
-  return services.broker.orderByClientId(stored.intent.clientOrderId).pipe(
+) =>
+  services.broker.orderByClientId(stored.intent.clientOrderId).pipe(
     Effect.matchEffect({
       onFailure: (error) =>
         persistRecoveryDecision(
@@ -431,7 +431,6 @@ const recoverAtBroker = (
         ),
     }),
   )
-}
 
 const continueRecovery = (
   services: RecoveryServices,

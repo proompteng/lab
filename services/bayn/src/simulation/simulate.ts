@@ -169,9 +169,9 @@ const runSession = (
         ? recordSkippedTargetDecision(accrued, session, scheduledTarget, input)
         : Result.succeed(accrued),
     ),
-    Result.flatMap((accrued) => {
-      return target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input)
-    }),
+    Result.flatMap((accrued) =>
+      target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input),
+    ),
     Result.flatMap((updated) => {
       if (replaceScheduledTarget || !finalSession || !hasOpenPosition(updated)) {
         return Result.succeed(updated)

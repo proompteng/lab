@@ -191,7 +191,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
   const intentId = referenceIntentIdResult(decoded)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
-    Schema.decodeUnknownResult(
+    Schema.decodeResult(
       ReferenceIntentSchema,
       strictParseOptions,
     )({

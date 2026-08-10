@@ -164,7 +164,7 @@ const decodeReceipt = (
     ),
     Result.flatMap((observationReceiptHash) =>
       pipe(
-        Schema.decodeUnknownResult(
+        Schema.decodeResult(
           DiscoveryReceiptSchema,
           strictParseOptions,
         )({
@@ -214,7 +214,7 @@ const makeExecutionCandidateDiscoveryReceiptDataFirst = (
           candidates,
           consistencyDelayMs: { status: 'REQUIRED_UNBOUND' as const },
         },
-        Schema.decodeUnknownResult(CandidateFactsMaterialSchema, strictParseOptions),
+        Schema.decodeResult(CandidateFactsMaterialSchema, strictParseOptions),
         Result.mapError(
           (cause): ExecutionCandidateDiscoveryError => ({
             _tag: 'CandidateFactsDecodeFailed',
