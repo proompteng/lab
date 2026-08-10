@@ -505,6 +505,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
     let unsuccessfulIntentFound = false
+    let deferredExpiration:
+      | {
+          readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.Risk
+          readonly observedAt: string
+        }
+      | undefined
     const hasFilledIntent = paperCycleHasFilledIntent({
       intents: preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
       orders: facts.reconciliation.brokerState.orders,
@@ -593,12 +599,10 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             submissionCutoffAt,
           )
           if (expirationReason !== undefined) {
-            return {
-              _tag: 'Block',
-              reason: expirationReason,
-              observedAt: facts.evaluatedAt,
-            }
+            deferredExpiration ??= { reason: expirationReason, observedAt: facts.evaluatedAt }
+            continue
           }
+          if (deferredExpiration !== undefined) continue
           yield* Effect.fromResult(
             input.mutationPhase === 'CLOSE'
               ? decidePreparedCloseIntentAdmission(
@@ -635,7 +639,21 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    if (pendingIntentFound) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+    if (pendingIntentFound) {
+      if (deferredExpiration !== undefined) {
+        yield* Effect.logInfo('Bayn PAPER cutoff terminalization deferred by a nonterminal broker intent').pipe(
+          Effect.annotateLogs({
+            service: 'bayn',
+            cycleId: cycle.identity.cycleId,
+            authorityGenerationHash: document.bindings.authorityGenerationHash,
+            mutationPhase: input.mutationPhase ?? 'ENTRY',
+            terminalReason: deferredExpiration.reason,
+            observedAt: facts.evaluatedAt,
+          }),
+        )
+      }
+      return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+    }
 
     if (unsuccessfulIntentFound) {
       const recoveryDeadline =
@@ -651,6 +669,14 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         _tag: 'Block',
         reason: CycleTerminalReason.Risk,
         observedAt: facts.evaluatedAt,
+      }
+    }
+
+    if (deferredExpiration !== undefined) {
+      return {
+        _tag: 'Block',
+        reason: deferredExpiration.reason,
+        observedAt: deferredExpiration.observedAt,
       }
     }
 

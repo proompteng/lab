@@ -30,7 +30,7 @@ import {
   makeExecutionCalendarObservation,
 } from './cycle'
 import { makeStrategyProtocolHash } from './contracts'
-import { CycleStore, type CycleStoreShape } from './db/cycle-store'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from './db/cycle-store'
 import { decideCompletion, validateCompletionDocument } from './db/cycle-store/decisions'
 import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from './db/cycle-store/model'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
@@ -880,6 +880,102 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
+  test('defers an expired untouched remainder while an earlier acknowledged order is stably open', async () => {
+    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const first = fixture.intents[0]
+    const second = fixture.intents[1]
+    if (first === undefined || second === undefined) {
+      return expect.unreachable('fixture requires two intents')
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '4'.repeat(64),
+      mutationId: '5'.repeat(64),
+      intentId: first.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '6'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'stable-open-after-cutoff',
+      occurredAt: fixture.document.createdAt,
+    }
+    const pending = Result.getOrThrow(decidePreparedMutationIntent(first, accepted))
+    if (pending._tag !== 'Pending') return expect.unreachable('accepted intent must be pending')
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const firstRecord = storedIntent(first, IntentState.Acknowledged, accepted.occurredAt)
+    const secondRecord = storedIntent(second, IntentState.Approved, accepted.occurredAt)
+
+    const step = await prepareStoredPaperStep(
+      fixture,
+      firstRecord,
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      fixture.input,
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      new Map([
+        [first.intentId, firstRecord],
+        [second.intentId, secondRecord],
+      ]),
+      new Map<string, MutationEvent | undefined>([
+        [first.intentId, accepted],
+        [second.intentId, undefined],
+      ]),
+      [{ ...pending.order, observedAt }],
+    )
+
+    expect(step).toEqual({ _tag: 'Wait', observedAt })
+  })
+
+  test('uses a settled unsuccessful predecessor instead of an expired untouched remainder as the terminal cause', async () => {
+    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const first = fixture.intents[0]
+    const second = fixture.intents[1]
+    if (first === undefined || second === undefined) {
+      return expect.unreachable('fixture requires two intents')
+    }
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const firstRecord = storedIntent(
+      { ...first, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Rejected },
+      IntentState.Terminal,
+      observedAt,
+    )
+    const secondRecord = storedIntent(second, IntentState.Approved, fixture.document.createdAt)
+
+    const step = await prepareStoredPaperStep(
+      fixture,
+      firstRecord,
+      undefined,
+      observedAt,
+      0,
+      () => undefined,
+      fixture.input,
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      new Map([
+        [first.intentId, firstRecord],
+        [second.intentId, secondRecord],
+      ]),
+      new Map<string, MutationEvent | undefined>([
+        [first.intentId, undefined],
+        [second.intentId, undefined],
+      ]),
+    )
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt,
+    })
+  })
+
   test('executes unsubmitted intents and skips terminal intents in fresh mutation passes', () => {
     const base: Intent = {
       schemaVersion: 'bayn.paper-intent.v3',
@@ -1625,7 +1721,7 @@ describe('OBSERVE runtime composition', () => {
     expect(Result.isFailure(validateCompletionDocument(completion, [fixture.document]))).toBe(true)
   })
 
-  test('revokes PAPER authority before persisting a risk-blocked cycle terminal', async () => {
+  test('atomically persists a risk-blocked cycle before restricting PAPER authority', async () => {
     const fixture = await paperLifecycleFixture((policy) => ({
       ...policy,
       maxOrderNotionalMicros: '1',
@@ -1697,8 +1793,66 @@ describe('OBSERVE runtime composition', () => {
       ),
     )
 
-    expect(events).toEqual(['fence', 'restrict', 'block'])
+    expect(events).toEqual(['fence', 'block', 'restrict'])
     expect(result).toMatchObject({ action: 'BLOCKED', cycle: { state: CycleState.Blocked } })
+  })
+
+  test('does not restrict PAPER authority when the causal cycle block is rejected', async () => {
+    const fixture = await paperLifecycleFixture()
+    const observedAt = fixture.document.submissionCutoffAt
+    const unused = Effect.die(new Error('failed PAPER terminalization used an unrelated store operation'))
+    let restrictions = 0
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unused,
+      read: () => unused,
+      readAuthoritySlot: () => unused,
+      readDecisionDocument: () => unused,
+      readOldestUnfinished: () => unused,
+      bindSnapshot: () => unused,
+      activate: () => unused,
+      bindDecision: () => unused,
+      finish: () => unused,
+      block: () =>
+        Effect.fail(
+          new CycleStoreError({
+            operation: 'block',
+            failure: 'query',
+            persistenceFailure: 'constraint',
+            message: 'open mutation prevents cycle block',
+          }),
+        ),
+    }
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          restrictions += 1
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: unused,
+      transaction: (effect) => effect,
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        terminalizeBlockedPaperCycle(fixture.boundCycle, {
+          _tag: 'Block',
+          reason: CycleTerminalReason.MissedSubmission,
+          observedAt,
+        }).pipe(
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+          Effect.provideService(WriterFence, writerFence),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'store',
+      message: 'blocked PAPER cycle finalization failed',
+    })
+    expect(restrictions).toBe(0)
   })
 
   test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {

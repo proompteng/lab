@@ -65,6 +65,7 @@ import {
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
   prepareObserveStartup,
+  terminalizeBlockedPaperCycle,
   type ObserveDecisionFailure,
 } from '../../observe-composition'
 import {
@@ -3459,6 +3460,156 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       orders: 0,
     })
   })
+
+  test('atomically rolls back a rejected PAPER block and commits a settled PAPER block with restriction', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const atomicRuntime = makeAutonomousRuntime()
+    try {
+      const result = await atomicRuntime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+          if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+          const {
+            evaluationAt: evaluatedAt,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+            snapshotBoundAt,
+          } = monthEndExecutionWindow(clock.evaluated_at)
+          const draft = makeDraft('paper-account-atomic-terminalization', {
+            executionPolicy,
+            executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+          })
+          const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+          const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
+          const manifest = makeInputManifest(snapshotA, {
+            asOfSession: signalSessionDate,
+            finalizedAt: snapshotBoundAt,
+            lastSession: signalSessionDate,
+          })
+          const store = yield* CycleStore
+          yield* store.acquire(draft, acquisitionAt)
+          yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+          const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+          const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+            evaluatedAt,
+            snapshotFinalizedAt: snapshotBoundAt,
+          })
+          if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+            return yield* Effect.die(new Error('atomic terminalization fixture requires a planned PAPER decision'))
+          }
+          yield* insertReconciliation(planned.reconciliation)
+          yield* insertQualifiedPaperLineage(planned.document)
+          const unfinished = yield* insertUnfinishedPlannedPaperMutation(planned.document, 'cancel-unknown')
+          const bound = yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+          yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state,
+            reason, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)},
+            'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1,
+            ${utcInstantFromEpochMillis(Date.parse(planned.document.createdAt) - 1_000)}
+          )
+        `
+          yield* sql`
+          UPDATE authority_state
+          SET
+            generation_hash = ${planned.document.bindings.authorityGenerationHash},
+            maximum = 'PAPER',
+            effective = 'PAPER',
+            version = 2,
+            updated_at = ${planned.document.createdAt}
+          WHERE singleton
+        `
+
+          const terminalization = yield* Effect.exit(
+            terminalizeBlockedPaperCycle(bound.cycle, {
+              _tag: 'Block',
+              reason: CycleTerminalReason.MissedSubmission,
+              observedAt: draft.window.submissionCutoffAt,
+            }),
+          )
+          const [authorityAfterRejectedBlock] = yield* sql<{
+            effective: string
+            kill_state: string
+            reason: string | null
+            version: string
+          }>`
+          SELECT effective, kill_state, reason, version
+          FROM authority_state
+          WHERE singleton
+        `
+          const cycleAfterRejectedBlock = yield* store.read(draft.identity.cycleId)
+          const settled = yield* settleSupersededMutation(
+            planned.document,
+            unfinished.intent.intentId,
+            'cancel-unknown',
+          )
+          const committed = yield* terminalizeBlockedPaperCycle(bound.cycle, {
+            _tag: 'Block',
+            reason: CycleTerminalReason.Risk,
+            observedAt: settled.recoveredAt,
+          })
+          const [authorityAfterCommittedBlock] = yield* sql<{
+            effective: string
+            kill_state: string
+            reason: string | null
+            version: string
+          }>`
+          SELECT effective, kill_state, reason, version
+          FROM authority_state
+          WHERE singleton
+        `
+          return {
+            authorityAfterCommittedBlock,
+            authorityAfterRejectedBlock,
+            committed,
+            cycleAfterRejectedBlock,
+            terminalization,
+          }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      expect(Exit.isFailure(result.terminalization)).toBe(true)
+      if (Exit.isFailure(result.terminalization)) {
+        expect(Cause.squash(result.terminalization.cause)).toMatchObject({
+          failure: 'store',
+          message: 'blocked PAPER cycle finalization failed',
+        })
+      }
+      expect(result.authorityAfterRejectedBlock).toEqual({
+        effective: 'PAPER',
+        kill_state: 'CLEAR',
+        reason: null,
+        version: '2',
+      })
+      expect(Option.getOrUndefined(result.cycleAfterRejectedBlock)).toMatchObject({ state: CycleState.Active })
+      expect(result.committed).toMatchObject({ action: 'BLOCKED', cycle: { state: CycleState.Blocked } })
+      if (result.committed.outcome !== 'RECOVERED' || result.committed.action !== 'BLOCKED') {
+        return expect.unreachable('settled PAPER terminalization must return a blocked recovery receipt')
+      }
+      expect(result.authorityAfterCommittedBlock).toMatchObject({
+        effective: 'OBSERVE',
+        kill_state: 'ACTIVE',
+        version: '3',
+      })
+      expect(result.authorityAfterCommittedBlock?.reason).toContain(
+        `bound cycle ${result.committed.cycle.identity.cycleId} blocked: BLOCKED_RISK`,
+      )
+    } finally {
+      await atomicRuntime.dispose()
+    }
+  }, 15_000)
 
   test.each(['submit-accepted', 'submit-unknown', 'cancel-accepted', 'cancel-unknown'] as const)(
     'keeps superseded %s mutation history recoverable before an exact idempotent provenance block',

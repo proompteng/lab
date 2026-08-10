@@ -1782,24 +1782,54 @@ const terminalizeBlockedPaperCycleDataFirst = (
   cycle: AutonomousCycle,
   outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | AuthorityRestrictionStore | WriterFence> =>
-  restrictMutationAuthority(
-    'PAPER autonomous cycle loop',
-    `bound cycle ${cycle.identity.cycleId} blocked: ${outcome.reason}`,
-  ).pipe(
-    Effect.andThen(
-      CycleStore.pipe(
-        Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
+  Effect.gen(function* () {
+    const store = yield* CycleStore
+    const restrictionStore = yield* AuthorityRestrictionStore
+    const fence = yield* WriterFence
+    const restrictionReason = `bound cycle ${cycle.identity.cycleId} blocked: ${outcome.reason}`
+    const receipt = yield* fence.transaction(
+      store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt).pipe(
         Effect.mapError((cause) =>
           mutationRunnerError({ message: 'blocked PAPER cycle finalization failed', cause, failure: 'store' }),
         ),
+        Effect.tap(() =>
+          restrictionStore
+            .restrictAuthority(
+              `PAPER autonomous cycle loop restricted effective authority: ${restrictionReason}`,
+              outcome.observedAt,
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                mutationRunnerError({
+                  message: 'authority restriction failed after a bound PAPER cycle failure',
+                  cause: { subject: 'PAPER autonomous cycle loop', reason: restrictionReason, cause },
+                  failure: 'store',
+                }),
+              ),
+            ),
+        ),
       ),
-    ),
-    Effect.map((receipt) => ({
+    )
+    yield* Effect.logWarning('Bayn PAPER cycle terminalized with restricted mutation authority').pipe(
+      Effect.annotateLogs({
+        service: 'bayn',
+        cycleId: cycle.identity.cycleId,
+        terminalReason: outcome.reason,
+        observedAt: outcome.observedAt,
+      }),
+    )
+    return {
       outcome: 'RECOVERED' as const,
       action: 'BLOCKED' as const,
       observedAt: outcome.observedAt,
       cycle: receipt.cycle,
-    })),
+    }
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof CycleRunnerError
+        ? cause
+        : mutationRunnerError({ message: 'blocked PAPER cycle transaction failed', cause, failure: 'store' }),
+    ),
   )
 
 export const terminalizeBlockedPaperCycle = Pipeable.dual(2, terminalizeBlockedPaperCycleDataFirst)
