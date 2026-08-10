@@ -612,7 +612,7 @@ const readBoundPaperActivationGeneration = (
     return generation
   })
 
-const recoverPaperActivationGeneration = (
+export const recoverPaperActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
   buildContinuation: ResearchPaperBuildContinuation | null,
@@ -881,7 +881,7 @@ export const refreshResearchPaperActivationReconciliation = Pipeable.generic<
   typeof refreshResearchPaperActivationReconciliationDataFirst
 >(2, refreshResearchPaperActivationReconciliationDataFirst)
 
-const prepareOrRecoverResearchPaperActivation = (
+export const prepareOrRecoverResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
   buildContinuation: ResearchPaperBuildContinuation | null,
