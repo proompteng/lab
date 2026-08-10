@@ -36,6 +36,7 @@ import type {
   PaperProofRecoveryCompletion,
   PaperProofRecoveryStore,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export interface PaperProofRecoverDependencies extends PaperProofRestrictionDependencies {
   readonly recovery: PaperProofRecoveryStore
@@ -155,7 +156,7 @@ const refreshCompletionAfterContainment = (
   })
 }
 
-export const runPaperProofRecover = (
+const runPaperProofRecoverDataFirst = (
   context: PaperProofOperationContext<'RECOVER'>,
   dependencies: PaperProofRecoverDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
@@ -187,3 +188,5 @@ export const runPaperProofRecover = (
     }
     return yield* recoverAuthoritativeMutation(context, dependencies, selection.operation, selection.recorded)
   })
+
+export const runPaperProofRecover = Pipeable.dual(2, runPaperProofRecoverDataFirst)

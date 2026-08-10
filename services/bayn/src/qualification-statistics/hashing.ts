@@ -2,13 +2,14 @@ import { pipe, Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import type { QualificationStatisticsFailure } from './failure'
+import { Pipeable } from '../pipeable'
 
 export type QualificationStatisticsHashOperation = Extract<
   QualificationStatisticsFailure,
   { readonly _tag: 'QualificationStatisticsCanonicalizationFailed' }
 >['operation']
 
-export const hashQualificationEvidence = (
+const hashQualificationEvidenceDataFirst = (
   operation: QualificationStatisticsHashOperation,
   value: unknown,
 ): Result.Result<string, QualificationStatisticsFailure> =>
@@ -22,3 +23,5 @@ export const hashQualificationEvidence = (
       }),
     ),
   )
+
+export const hashQualificationEvidence = Pipeable.dual(2, hashQualificationEvidenceDataFirst)

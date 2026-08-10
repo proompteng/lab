@@ -5,6 +5,7 @@ import { statisticsFailure, type QualificationStatisticsFailure } from './failur
 import { hashQualificationEvidence } from './hashing'
 import type { QualificationSeries, QualificationStatisticsPolicy, WalkForwardAnalysis } from './model'
 import { compoundedReturn, maximumDrawdown, roundStatistic } from './numerical-methods'
+import { Pipeable } from '../pipeable'
 
 export interface QualificationSelectedBenchmarkWalkForwardFold {
   readonly schemaVersion: 'bayn.selected-benchmark-walk-forward-fold.v1'
@@ -37,7 +38,7 @@ export interface QualificationSelectedBenchmarkWalkForwardComparison {
   readonly sufficient: boolean
 }
 
-export const calculateWalkForward = (
+const calculateWalkForwardDataFirst = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
 ): Result.Result<WalkForwardAnalysis, QualificationStatisticsFailure> => {
@@ -124,7 +125,9 @@ export const calculateWalkForward = (
   )
 }
 
-export const calculateSelectedBenchmarkWalkForwardComparison = (
+export const calculateWalkForward = Pipeable.dual(2, calculateWalkForwardDataFirst)
+
+const calculateSelectedBenchmarkWalkForwardComparisonDataFirst = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
 ): Result.Result<QualificationSelectedBenchmarkWalkForwardComparison, QualificationStatisticsFailure> => {
@@ -214,3 +217,8 @@ export const calculateSelectedBenchmarkWalkForwardComparison = (
     }),
   )
 }
+
+export const calculateSelectedBenchmarkWalkForwardComparison = Pipeable.dual(
+  2,
+  calculateSelectedBenchmarkWalkForwardComparisonDataFirst,
+)

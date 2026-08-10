@@ -5,6 +5,7 @@ import { DIRECT_VOLATILITY_WINDOW } from '../protocol'
 import type { EconomicVerdict, GateResult, PerformanceMetrics, SimulationProtocol } from '../types'
 import { requiredRecordValue, requiredSession } from './inputs'
 import type { AlignedSession, SimulationFailure } from './model'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
@@ -100,7 +101,7 @@ const directVolatilityReturn = (
     ),
   )
 
-export const directVolatilityWeights = (
+const directVolatilityWeightsDataFirst = (
   sessions: readonly AlignedSession[],
   signalIndex: number,
   protocol: SimulationProtocol,
@@ -125,7 +126,9 @@ export const directVolatilityWeights = (
   )
 }
 
-export const calculatePerformanceMetrics = (
+export const directVolatilityWeights = Pipeable.dual(3, directVolatilityWeightsDataFirst)
+
+const calculatePerformanceMetricsDataFirst = (
   equity: readonly number[],
   turnover: number,
   totalFees: number,
@@ -238,7 +241,9 @@ export const calculatePerformanceMetrics = (
   )
 }
 
-export const calculateExactPerformanceMetrics = (
+export const calculatePerformanceMetrics = Pipeable.dual(4, calculatePerformanceMetricsDataFirst)
+
+const calculateExactPerformanceMetricsDataFirst = (
   equityMicros: readonly bigint[],
   turnoverMicros: bigint,
   totalFeesMicros: bigint,
@@ -274,7 +279,9 @@ export const calculateExactPerformanceMetrics = (
   )
 }
 
-export const buildVerdict = (
+export const calculateExactPerformanceMetrics = Pipeable.dual(7, calculateExactPerformanceMetricsDataFirst)
+
+const buildVerdictDataFirst = (
   strategy: PerformanceMetrics,
   buyAndHold: PerformanceMetrics,
   directVolTiming: PerformanceMetrics,
@@ -331,3 +338,5 @@ export const buildVerdict = (
   ]
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
+
+export const buildVerdict = Pipeable.dual(5, buildVerdictDataFirst)

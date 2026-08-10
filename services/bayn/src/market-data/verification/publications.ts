@@ -5,8 +5,9 @@ import type { SignalManifestRow, SignalSessionRow, SnapshotRows } from '../rows'
 import { publicationSnapshotRequest, verifyFinalizedCalendar } from './calendar'
 import type { MarketDataVerificationError } from './errors'
 import { fail } from './shared'
+import { Pipeable } from '../../pipeable'
 
-export const verifyFinalizedPublication = (
+const verifyFinalizedPublicationDataFirst = (
   rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
   input: FinalizedPublicationRequest,
   contract: MarketDataContract,
@@ -26,6 +27,8 @@ export const verifyFinalizedPublication = (
         publicationSnapshotRequest(manifests[0], input, contract, observedAt),
       )
 }
+
+export const verifyFinalizedPublication = Pipeable.dual(4, verifyFinalizedPublicationDataFirst)
 
 export const selectPublicationManifest = (
   manifests: readonly SignalManifestRow[],
@@ -70,7 +73,7 @@ export const verifyBoundFinalizedPublication = (
     ),
   )
 
-export const selectCyclePublicationManifests = (
+const selectCyclePublicationManifestsDataFirst = (
   manifests: readonly SignalManifestRow[],
   maximum: number,
 ): Result.Result<readonly SignalManifestRow[], MarketDataVerificationError> => {
@@ -97,7 +100,9 @@ export const selectCyclePublicationManifests = (
       : Result.succeed(ordered)
 }
 
-export const verifyCyclePublications = (
+export const selectCyclePublicationManifests = Pipeable.dual(2, selectCyclePublicationManifestsDataFirst)
+
+const verifyCyclePublicationsDataFirst = (
   manifests: readonly SignalManifestRow[],
   sessions: readonly SignalSessionRow[],
   contract: MarketDataContract,
@@ -134,3 +139,5 @@ export const verifyCyclePublications = (
         ),
       )
 }
+
+export const verifyCyclePublications = Pipeable.dual(4, verifyCyclePublicationsDataFirst)

@@ -8,6 +8,7 @@ import {
 import { statisticsFailure, type QualificationStatisticsFailure } from './failure'
 import type { PowerAnalysis, QualificationStatisticsPolicy } from './model'
 import { roundStatistic } from './numerical-methods'
+import { Pipeable } from '../pipeable'
 
 const Z_ONE_SIDED_95 = 1.6448536269514722
 const Z_POWER_80 = 0.8416212335729143
@@ -17,7 +18,7 @@ const finitePowerStatistic = (value: number): Result.Result<number, Qualificatio
     ? Result.succeed(value)
     : statisticsFailure({ _tag: 'QualificationStatisticNotFinite', operation: 'power', value })
 
-export const calculateQualificationPower = (
+const calculateQualificationPowerDataFirst = (
   policy: QualificationStatisticsPolicy,
   availableCompleteRebalanceBlocks: number,
   availableCompleteSessions: number,
@@ -67,3 +68,5 @@ export const calculateQualificationPower = (
       )
     }),
   )
+
+export const calculateQualificationPower = Pipeable.dual(3, calculateQualificationPowerDataFirst)

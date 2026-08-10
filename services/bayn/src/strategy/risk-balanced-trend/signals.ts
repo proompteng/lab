@@ -4,6 +4,7 @@ import { TRADING_DAYS, requiredRecordValue, roundWeight, sampleStandardDeviation
 import type { Protocol, SymbolSignal } from '../../types'
 import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import { dailyReturns, fail, finite } from './shared'
+import { Pipeable } from '../../pipeable'
 
 export interface PreparedSignal {
   readonly signal: Omit<SymbolSignal, 'uncappedWeight' | 'cappedWeight' | 'targetWeight'>
@@ -67,7 +68,7 @@ const scoreSignal = (
   )
 }
 
-export const prepareSignal = (
+const prepareSignalDataFirst = (
   symbol: string,
   closes: Readonly<Record<string, readonly number[]>>,
   historyLength: number,
@@ -156,7 +157,9 @@ export const prepareSignal = (
   )
 }
 
-export const finalizeSignals = (
+export const prepareSignal = Pipeable.dual(4, prepareSignalDataFirst)
+
+const finalizeSignalsDataFirst = (
   prepared: readonly PreparedSignal[],
   uncappedWeights: Readonly<Record<string, number>>,
   cappedWeights: Readonly<Record<string, number>>,
@@ -177,3 +180,5 @@ export const finalizeSignals = (
       ),
     ),
   )
+
+export const finalizeSignals = Pipeable.dual(4, finalizeSignalsDataFirst)

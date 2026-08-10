@@ -5,11 +5,12 @@ import { makeEvaluationIdentity, selectEvaluationWindow } from '../../simulation
 import type { InputManifest, IsoDate, Protocol } from '../../types'
 import type { QualificationPrecommit, RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import { requiredHistory } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const fail = <A = never>(failure: RiskBalancedTrendFailure): Result.Result<A, RiskBalancedTrendFailure> =>
   Result.fail(failure)
 
-export const prepareRiskBalancedTrendQualification = (
+const prepareRiskBalancedTrendQualificationDataFirst = (
   sessionDates: readonly IsoDate[],
   inputManifest: InputManifest,
   protocol: Protocol,
@@ -66,3 +67,5 @@ export const prepareRiskBalancedTrendQualification = (
       ),
     ),
   )
+
+export const prepareRiskBalancedTrendQualification = Pipeable.dual(4, prepareRiskBalancedTrendQualificationDataFirst)

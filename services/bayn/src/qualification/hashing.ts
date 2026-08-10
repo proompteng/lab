@@ -2,13 +2,16 @@ import { pipe, Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import type { QualificationConstructionFailure } from './failure'
+import { Pipeable } from '../pipeable'
 
-export const canonicalHashMatches = (expected: string, value: unknown): boolean => {
+const canonicalHashMatchesDataFirst = (expected: string, value: unknown): boolean => {
   const result = canonicalHashV1Result(value)
   return Result.isSuccess(result) && result.success === expected
 }
 
-export const hashQualificationMaterial = (
+export const canonicalHashMatches = Pipeable.dual(2, canonicalHashMatchesDataFirst)
+
+const hashQualificationMaterialDataFirst = (
   operation: Extract<
     QualificationConstructionFailure,
     { readonly _tag: 'QualificationCanonicalizationFailed' }
@@ -25,3 +28,5 @@ export const hashQualificationMaterial = (
       }),
     ),
   )
+
+export const hashQualificationMaterial = Pipeable.dual(2, hashQualificationMaterialDataFirst)

@@ -4,6 +4,7 @@ import { calculateSessionFees, type FeeBreakdown, type FeeInput } from '../execu
 import type { FeeEvent, SimulationTrace } from '../types'
 import type { EvidenceMismatchProblem, FailedComputation, SimulationReconciliationIssue, Validation } from './model'
 import { fail, failIssues, unsigned, validateCanonicalIdentity, type ValidatedFill } from './validation'
+import { Pipeable } from '../pipeable'
 
 export interface ValidatedFee {
   readonly kind: 'fee'
@@ -32,7 +33,7 @@ const feeSchedule = (
   )
 }
 
-export const validateFee = (
+const validateFeeDataFirst = (
   runId: string,
   fee: FeeEvent,
   sessionFills: readonly ValidatedFill[],
@@ -105,3 +106,5 @@ export const validateFee = (
     ? failIssues(identity.failure)
     : Result.succeed({ kind: 'fee', event: fee, totalMicros: total.success })
 }
+
+export const validateFee = Pipeable.dual(5, validateFeeDataFirst)

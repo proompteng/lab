@@ -14,6 +14,7 @@ import {
   calculateSelectedBenchmarkWalkForwardComparison,
   type QualificationSelectedBenchmarkWalkForwardComparison,
 } from './walk-forward'
+import { Pipeable } from '../pipeable'
 
 export interface QualificationSelectedBenchmarkComparisonAnalysis {
   readonly schemaVersion: 'bayn.selected-benchmark-comparison-analysis.v1'
@@ -26,7 +27,7 @@ export interface QualificationSelectedBenchmarkComparisonAnalysis {
   readonly analysisHash: string
 }
 
-export const analyzeSelectedBenchmarkComparison = (
+const analyzeSelectedBenchmarkComparisonDataFirst = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
@@ -65,7 +66,9 @@ export const analyzeSelectedBenchmarkComparison = (
     ),
   )
 
-export const analyzeSelectedBenchmarkComparisonInput = (
+export const analyzeSelectedBenchmarkComparison = Pipeable.dual(3, analyzeSelectedBenchmarkComparisonDataFirst)
+
+const analyzeSelectedBenchmarkComparisonInputDataFirst = (
   series: unknown,
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
@@ -75,3 +78,8 @@ export const analyzeSelectedBenchmarkComparisonInput = (
     Result.mapError(qualificationStatisticsSchemaFailure('series')),
     Result.flatMap((decoded) => analyzeSelectedBenchmarkComparison(decoded, policy, priorTrialCount)),
   )
+
+export const analyzeSelectedBenchmarkComparisonInput = Pipeable.dual(
+  3,
+  analyzeSelectedBenchmarkComparisonInputDataFirst,
+)

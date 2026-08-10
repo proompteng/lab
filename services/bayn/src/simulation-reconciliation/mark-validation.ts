@@ -3,8 +3,9 @@ import { pipe, Result } from 'effect'
 import type { CashChange, CashYieldEvent, DailyPositionMark, FeeEvent, FillEvent } from '../types'
 import type { EvidenceMismatchProblem, SimulationReconciliationIssue, Validation } from './model'
 import { fail, failIssues, signed, validateCanonicalIdentity } from './validation'
+import { Pipeable } from '../pipeable'
 
-export const validateCashChange = (
+const validateCashChangeDataFirst = (
   runId: string,
   change: CashChange,
   event: FillEvent | FeeEvent | CashYieldEvent,
@@ -57,6 +58,8 @@ export const validateCashChange = (
     { runId, kind: 'cash-change', ...payload },
   )
 }
+
+export const validateCashChange = Pipeable.dual(5, validateCashChangeDataFirst)
 
 const validateMark = (mark: DailyPositionMark, previous: DailyPositionMark | undefined): Validation<void> => {
   if (previous !== undefined && previous.sessionDate >= mark.sessionDate) {

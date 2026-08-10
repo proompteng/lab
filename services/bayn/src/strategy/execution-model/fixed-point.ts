@@ -3,6 +3,7 @@ import { Result, pipe } from 'effect'
 import type { ExecutionModel } from '../../execution-model-contract'
 import { roundUnsignedHalfUp } from '../../unsigned-round-half-up'
 import { MICROS, WEIGHT_SCALE, type ExecutionModelFailure } from './model'
+import { Pipeable } from '../../pipeable'
 
 export type ExecutionResult<A> = Result.Result<A, ExecutionModelFailure>
 
@@ -31,7 +32,7 @@ export const scaledNumber = (value: number, field: string, scale = Number(MICROS
     : Result.succeed(BigInt(rounded))
 }
 
-export const integerNumber = (
+const integerNumberDataFirst = (
   value: number,
   field: string,
   minimum: number,
@@ -41,7 +42,9 @@ export const integerNumber = (
     ? Result.succeed(BigInt(value))
     : fail({ _tag: 'InvalidIntegerNumber', field, value, minimum, maximum })
 
-export const ceilDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
+export const integerNumber = Pipeable.dual(4, integerNumberDataFirst)
+
+const ceilDivDataFirst = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
   if (numerator < 0n || denominator <= 0n) {
     return fail({
       _tag: 'InvalidCeilingDivision',
@@ -54,10 +57,14 @@ export const ceilDiv = (numerator: bigint, denominator: bigint): ExecutionResult
   return Result.succeed(numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n)
 }
 
-export const roundDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> =>
+export const ceilDiv = Pipeable.dual(2, ceilDivDataFirst)
+
+const roundDivDataFirst = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> =>
   roundUnsignedHalfUp(numerator, denominator)
 
-export const quantizeDown = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+export const roundDiv = Pipeable.dual(2, roundDivDataFirst)
+
+const quantizeDownDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
   value < 0n || increment <= 0n
     ? fail({
         _tag: 'InvalidQuantization',
@@ -69,17 +76,23 @@ export const quantizeDown = (value: bigint, increment: bigint): ExecutionResult<
       })
     : Result.succeed((value / increment) * increment)
 
-export const quantizeUp = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+export const quantizeDown = Pipeable.dual(2, quantizeDownDataFirst)
+
+const quantizeUpDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
   pipe(
     ceilDiv(value, increment),
     Result.map((quotient) => quotient * increment),
   )
 
-export const quantizeNearest = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+export const quantizeUp = Pipeable.dual(2, quantizeUpDataFirst)
+
+const quantizeNearestDataFirst = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
   pipe(
     roundDiv(value, increment),
     Result.map((quotient) => quotient * increment),
   )
+
+export const quantizeNearest = Pipeable.dual(2, quantizeNearestDataFirst)
 
 export const numberToMicros = (value: number, field = 'value'): ExecutionResult<bigint> => {
   const scale = Number(MICROS)
@@ -97,7 +110,7 @@ export const numberToMicros = (value: number, field = 'value'): ExecutionResult<
 
 export const microsToNumber = (value: bigint): number => Number(value) / Number(MICROS)
 
-export const referencePriceMicros = (price: number, model: ExecutionModel): ExecutionResult<bigint> => {
+const referencePriceMicrosDataFirst = (price: number, model: ExecutionModel): ExecutionResult<bigint> => {
   if (!Number.isFinite(price) || price <= 0) {
     return fail({ _tag: 'InvalidReferencePrice', price, reason: 'not-positive' })
   }
@@ -115,10 +128,14 @@ export const referencePriceMicros = (price: number, model: ExecutionModel): Exec
   )
 }
 
-export const notionalMicros = (quantityMicros: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
+export const referencePriceMicros = Pipeable.dual(2, referencePriceMicrosDataFirst)
+
+const notionalMicrosDataFirst = (quantityMicros: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
   roundDiv(quantityMicros * priceMicros, MICROS)
 
-export const desiredQuantityMicros = (
+export const notionalMicros = Pipeable.dual(2, notionalMicrosDataFirst)
+
+const desiredQuantityMicrosDataFirst = (
   equityMicros: bigint,
   weight: number,
   priceMicros: bigint,
@@ -155,3 +172,5 @@ export const desiredQuantityMicros = (
     }),
   )
 }
+
+export const desiredQuantityMicros = Pipeable.dual(4, desiredQuantityMicrosDataFirst)

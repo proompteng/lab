@@ -32,6 +32,7 @@ import type {
   ForwardPerformanceMarketVolumeRequest,
   ForwardPerformanceReceipt,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export type ForwardPerformanceProgramCause =
   | CanonicalJsonFailure
@@ -229,7 +230,7 @@ const projectForwardPerformanceMarketVolumeEvidence = (
   )
 }
 
-export const makeForwardPerformanceMarketVolumeEvidence = (
+const makeForwardPerformanceMarketVolumeEvidenceDataFirst = (
   request: ForwardPerformanceMarketVolumeRequest,
   rows: ForwardPerformanceMarketSnapshotRows,
   evaluationStart: IsoDate,
@@ -239,6 +240,11 @@ export const makeForwardPerformanceMarketVolumeEvidence = (
     ? Result.succeed(undefined)
     : projectForwardPerformanceMarketVolumeEvidence(request, verified, evaluationStart)
 }
+
+export const makeForwardPerformanceMarketVolumeEvidence = Pipeable.dual(
+  3,
+  makeForwardPerformanceMarketVolumeEvidenceDataFirst,
+)
 
 const requestGroupKey = (request: ForwardPerformanceMarketVolumeRequest): string =>
   JSON.stringify([
@@ -271,7 +277,7 @@ const groupMarketVolumeRequests = (
     .map(([, group]) => group)
 }
 
-export const readForwardPerformanceMarketVolumeWithClient = (
+const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<
@@ -397,6 +403,11 @@ export const readForwardPerformanceMarketVolumeWithClient = (
   )
 }
 
+export const readForwardPerformanceMarketVolumeWithClient = Pipeable.dual(
+  2,
+  readForwardPerformanceMarketVolumeWithClientDataFirst,
+)
+
 export function readForwardPerformanceMarketVolume(
   config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
@@ -423,7 +434,7 @@ export function readForwardPerformanceMarketVolume(
 const canonicalUnsigned = (value: string): bigint | undefined =>
   /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
 
-export const bindForwardPerformanceTerminalReferencePrices = (
+const bindForwardPerformanceTerminalReferencePricesDataFirst = (
   executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
   marketVolumeEvidence: readonly ForwardPerformanceMarketVolumeEvidence[],
 ): Result.Result<readonly ForwardPerformanceExecutionEvidence[], CanonicalJsonFailure> => {
@@ -481,6 +492,11 @@ export const bindForwardPerformanceTerminalReferencePrices = (
     }),
   )
 }
+
+export const bindForwardPerformanceTerminalReferencePrices = Pipeable.dual(
+  2,
+  bindForwardPerformanceTerminalReferencePricesDataFirst,
+)
 
 const programError = (
   operation: ForwardPerformanceProgramError['operation'],

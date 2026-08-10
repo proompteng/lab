@@ -5,6 +5,7 @@ import { canonicalHashV1Result } from '../hash'
 import { ContractVersion, type DailyBar, type InputManifest, type IsoDate, type Protocol } from '../types'
 import type { AlignedSession, EvaluationIdentity, EvaluationWindow, SimulationFailure } from './model'
 import { optionalRecordValue } from './record'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
@@ -53,7 +54,7 @@ const groupedBars = (bars: readonly DailyBar[]): readonly (readonly DailyBar[])[
   return Chunk.toReadonlyArray(groups).map(Chunk.toReadonlyArray)
 }
 
-export const canonicalHashResult = (
+const canonicalHashResultDataFirst = (
   operation: CanonicalOperation,
   material: unknown,
 ): Result.Result<string, SimulationFailure> =>
@@ -62,7 +63,9 @@ export const canonicalHashResult = (
     Result.mapError((cause): SimulationFailure => ({ _tag: 'CanonicalizationFailed', operation, cause })),
   )
 
-export const requiredSession = (
+export const canonicalHashResult = Pipeable.dual(2, canonicalHashResultDataFirst)
+
+const requiredSessionDataFirst = (
   sessions: readonly AlignedSession[],
   index: number,
   operation: SessionOperation,
@@ -72,6 +75,8 @@ export const requiredSession = (
     ? fail({ _tag: 'MissingSession', operation, index, sessionCount: sessions.length })
     : Result.succeed(session)
 }
+
+export const requiredSession = Pipeable.dual(3, requiredSessionDataFirst)
 
 export const requiredRecordValue = <A>(
   values: Readonly<Record<string, A>>,
@@ -121,7 +126,7 @@ const buildAlignedSession = (
   })
 }
 
-export const alignBars = (
+const alignBarsDataFirst = (
   bars: readonly DailyBar[],
   universe: readonly string[],
   inputManifest: InputManifest,
@@ -181,7 +186,9 @@ export const alignBars = (
   return sessions
 }
 
-export const isMonthEnd = (
+export const alignBars = Pipeable.dual(3, alignBarsDataFirst)
+
+const isMonthEndDataFirst = (
   sessionDates: readonly IsoDate[],
   index: number,
 ): Result.Result<boolean, SimulationFailure> => {
@@ -198,6 +205,8 @@ export const isMonthEnd = (
   return Result.succeed(next !== undefined && current.slice(0, 7) !== next.slice(0, 7))
 }
 
+export const isMonthEnd = Pipeable.dual(2, isMonthEndDataFirst)
+
 const qualificationCalendarFailure = (
   sessionDates: readonly IsoDate[],
   inputManifest: InputManifest,
@@ -211,7 +220,7 @@ const qualificationCalendarFailure = (
   observedLast: sessionDates.at(-1) ?? null,
 })
 
-export const selectEvaluationWindow = (
+const selectEvaluationWindowDataFirst = (
   sessionDates: readonly IsoDate[],
   inputManifest: InputManifest,
   requiredHistorySessions: number,
@@ -283,6 +292,8 @@ export const selectEvaluationWindow = (
   }
   return Result.succeed({ signalIndices, startIndex, evaluationEndExclusive: boundedEnd })
 }
+
+export const selectEvaluationWindow = Pipeable.dual(4, selectEvaluationWindowDataFirst)
 
 export const makeEvaluationIdentity = (
   inputManifest: InputManifest,

@@ -36,6 +36,7 @@ import type {
   HealthProbeResults,
   ProbeResult,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const probeFailureMessage = <E>(cause: Cause.Cause<E>, fallback: string): string => {
   const errors = Cause.prettyErrors(cause).map((error) => error.message)
@@ -139,7 +140,7 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
     }),
   )
 
-export const ensureSignalIdentity = (
+const ensureSignalIdentityDataFirst = (
   snapshot: FinalizedSnapshotProvenance,
   evidence: RuntimeEvidence | null,
 ): Effect.Effect<void, OperationalError> =>
@@ -155,7 +156,9 @@ export const ensureSignalIdentity = (
       }),
   )
 
-export const ensureDurableEvidence = (
+export const ensureSignalIdentity = Pipeable.dual(2, ensureSignalIdentityDataFirst)
+
+const ensureDurableEvidenceDataFirst = (
   recovered: RecoveredEvaluationEvidence | null,
   qualification: QualificationRecord | null,
   evidence: RuntimeEvidence | null,
@@ -171,6 +174,8 @@ export const ensureDurableEvidence = (
         cause: failure,
       }),
   )
+
+export const ensureDurableEvidence = Pipeable.dual(3, ensureDurableEvidenceDataFirst)
 
 const sampleAutonomousCycleFiber = (fiber: Fiber.Fiber<void, never> | undefined): AutonomousCycleFiberObservation => {
   if (fiber === undefined) return { _tag: 'NotProvided' }

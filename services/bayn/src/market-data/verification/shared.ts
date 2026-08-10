@@ -3,6 +3,7 @@ import { Result } from 'effect'
 import type { EvaluationBounds } from '../../contracts'
 import { canonicalHashV1Result } from '../../hash'
 import type { BoundField, MarketDataVerificationError } from './errors'
+import { Pipeable } from '../../pipeable'
 
 export const database = 'signal' as const
 export const tables = {
@@ -14,10 +15,12 @@ export const tables = {
 export const fail = <A>(error: MarketDataVerificationError): Result.Result<A, MarketDataVerificationError> =>
   Result.fail(error)
 
-export const requireCondition = (
+const requireConditionDataFirst = (
   condition: boolean,
   error: MarketDataVerificationError,
 ): Result.Result<void, MarketDataVerificationError> => (condition ? Result.succeed(undefined) : fail(error))
+
+export const requireCondition = Pipeable.dual(2, requireConditionDataFirst)
 
 export const requireValue = <A>(
   value: A | null | undefined,
@@ -29,7 +32,7 @@ export const validateAll = (
   validations: ReadonlyArray<Result.Result<void, MarketDataVerificationError>>,
 ): Result.Result<void, MarketDataVerificationError> => Result.map(Result.all(validations), () => undefined)
 
-export const canonicalHashResult = (
+const canonicalHashResultDataFirst = (
   target: Extract<MarketDataVerificationError, { readonly _tag: 'CanonicalizationFailed' }>['target'],
   snapshotId: string,
   value: unknown,
@@ -44,7 +47,9 @@ export const canonicalHashResult = (
     }),
   )
 
-export const decodeSignalCount = (
+export const canonicalHashResult = Pipeable.dual(3, canonicalHashResultDataFirst)
+
+const decodeSignalCountDataFirst = (
   value: string | number,
   field: Extract<MarketDataVerificationError, { readonly _tag: 'CountInvalid' }>['field'],
 ): Result.Result<number, MarketDataVerificationError> => {
@@ -53,6 +58,8 @@ export const decodeSignalCount = (
     ? Result.succeed(parsed)
     : fail({ _tag: 'CountInvalid', field, value })
 }
+
+export const decodeSignalCount = Pipeable.dual(2, decodeSignalCountDataFirst)
 
 export const canonicalUniverse = (
   universe: readonly string[],
@@ -75,7 +82,7 @@ export const toUtcInstant = (value: string): string => `${value.replace(' ', 'T'
 
 const boundFields: readonly BoundField[] = ['dataStart', 'dataEnd', 'lookbackStart', 'evaluationStart', 'evaluationEnd']
 
-export const validateBoundSessions = (
+const validateBoundSessionsDataFirst = (
   sessions: ReadonlySet<string>,
   bounds: EvaluationBounds,
 ): Result.Result<void, MarketDataVerificationError> =>
@@ -88,3 +95,5 @@ export const validateBoundSessions = (
       }),
     ),
   )
+
+export const validateBoundSessions = Pipeable.dual(2, validateBoundSessionsDataFirst)

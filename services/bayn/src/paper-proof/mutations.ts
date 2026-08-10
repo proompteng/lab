@@ -39,6 +39,7 @@ import type {
   PaperProofRecoveryRequired,
   PreparedPaperProofIntent,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export interface PaperProofSubmitDependencies extends PaperProofRestrictionDependencies {
   readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<void, Error>
@@ -248,7 +249,7 @@ const runExistingCancel = (
     return receipt
   })
 
-export const runPaperProofSubmit = (
+const runPaperProofSubmitDataFirst = (
   context: PaperProofOperationContext<'SUBMIT'>,
   dependencies: PaperProofSubmitDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
@@ -277,7 +278,9 @@ export const runPaperProofSubmit = (
       : yield* runExistingSubmit(context, dependencies, prepared, before, admission.event, existingMarker)
   })
 
-export const runPaperProofCancel = (
+export const runPaperProofSubmit = Pipeable.dual(2, runPaperProofSubmitDataFirst)
+
+const runPaperProofCancelDataFirst = (
   context: PaperProofOperationContext<'CANCEL'>,
   dependencies: PaperProofCancelDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
@@ -319,3 +322,5 @@ export const runPaperProofCancel = (
     }
     return receipt
   })
+
+export const runPaperProofCancel = Pipeable.dual(2, runPaperProofCancelDataFirst)

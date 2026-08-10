@@ -5,6 +5,7 @@ import { ExecutionSessionBindingSchema, type ExecutionSessionBinding } from '../
 import { strictParseOptions } from '../schemas'
 import type { InputManifest, Protocol } from '../types'
 import type { RiskBalancedTrendFailure } from './model'
+import { Pipeable } from '../pipeable'
 
 const decodeManifestResult = Schema.decodeUnknownResult(InputManifestArtifactSchema, strictParseOptions)
 const decodeCycleBindingResult = Schema.decodeUnknownResult(ExecutionSessionBindingSchema, strictParseOptions)
@@ -18,7 +19,7 @@ export const decodeCurrentDecisionCycleBinding = (
     : Result.succeed(decoded.success)
 }
 
-export const parseMatchingManifest = (
+const parseMatchingManifestDataFirst = (
   input: unknown,
   protocol: Protocol,
 ): Result.Result<InputManifest, RiskBalancedTrendFailure> => {
@@ -64,3 +65,5 @@ export const parseMatchingManifest = (
   }
   return Result.succeed(manifest)
 }
+
+export const parseMatchingManifest = Pipeable.dual(2, parseMatchingManifestDataFirst)

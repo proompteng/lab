@@ -5,6 +5,7 @@ import {
   qualificationStatisticsMinimumBootstrapSamples,
   type QualificationStatisticsPolicy,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export const qualificationStatisticsPolicySchemaVersion = 'bayn.qualification-statistics-policy.v1' as const
 export const qualificationPolicyMaximumCandidateOrdinal = 25
@@ -153,7 +154,7 @@ export interface QualificationOrdinalTailCapacity {
   readonly minimumTailSamples: number
 }
 
-export const qualificationTailCapacityForOrdinal = (
+const qualificationTailCapacityForOrdinalDataFirst = (
   policy: QualificationStatisticsPolicy,
   candidateOrdinal: number,
 ): QualificationOrdinalTailCapacity => {
@@ -165,3 +166,5 @@ export const qualificationTailCapacityForOrdinal = (
     minimumTailSamples: policy.confidence.minimumTailSamples,
   }
 }
+
+export const qualificationTailCapacityForOrdinal = Pipeable.dual(2, qualificationTailCapacityForOrdinalDataFirst)

@@ -3,6 +3,7 @@ import { Result, pipe } from 'effect'
 import { TRADING_DAYS, mean, requiredRecordValue } from '../../simulation'
 import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import { fail, finite } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const covariance = (
   left: readonly number[],
@@ -73,7 +74,7 @@ const portfolioVarianceRow = (
     ),
   )
 
-export const annualizedPortfolioVolatility = (
+const annualizedPortfolioVolatilityDataFirst = (
   weights: Readonly<Record<string, number>>,
   returns: Readonly<Record<string, readonly number[]>>,
 ): Result.Result<number, RiskBalancedTrendFailure> => {
@@ -95,3 +96,5 @@ export const annualizedPortfolioVolatility = (
     }),
   )
 }
+
+export const annualizedPortfolioVolatility = Pipeable.dual(2, annualizedPortfolioVolatilityDataFirst)

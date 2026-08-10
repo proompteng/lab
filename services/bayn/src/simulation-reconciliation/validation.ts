@@ -16,6 +16,7 @@ import {
   type UnsignedIntegerEvidence,
   type Validation,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export const failIssues = <A = never>(issues: readonly SimulationReconciliationIssue[]): Validation<A> =>
   Result.fail(issues)
@@ -60,15 +61,19 @@ const orderUnsigned = (order: SimulatedOrder, field: OrderIntegerField): Validat
 const fillUnsigned = (fill: FillEvent, field: FillIntegerField): Validation<bigint> =>
   unsigned({ kind: 'fill', fillId: fill.id, field, value: fill[field] })
 
-export const markUnsigned = (mark: DailyPositionMark, field: MarkIntegerField): Validation<bigint> =>
+const markUnsignedDataFirst = (mark: DailyPositionMark, field: MarkIntegerField): Validation<bigint> =>
   unsigned({ kind: 'daily-mark', sessionDate: mark.sessionDate, field, value: mark[field] })
 
-export const positionUnsigned = (
+export const markUnsigned = Pipeable.dual(2, markUnsignedDataFirst)
+
+const positionUnsignedDataFirst = (
   mark: DailyPositionMark,
   position: DailyPositionMark['positions'][number],
   field: PositionIntegerField,
 ): Validation<bigint> =>
   unsigned({ kind: 'position', sessionDate: mark.sessionDate, symbol: position.symbol, field, value: position[field] })
+
+export const positionUnsigned = Pipeable.dual(3, positionUnsignedDataFirst)
 
 export const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 
@@ -100,7 +105,10 @@ const invalidCanonicalIdentity = (
 const validateIdentityFormat = (evidence: IdentityEvidence): Validation<void> =>
   /^[0-9a-f]{64}$/.test(evidence.id) ? Result.succeed(undefined) : invalidIdentityFormat(evidence)
 
-export const validateCanonicalIdentity = (evidence: CanonicalIdentityEvidence, material: unknown): Validation<void> => {
+const validateCanonicalIdentityDataFirst = (
+  evidence: CanonicalIdentityEvidence,
+  material: unknown,
+): Validation<void> => {
   const expectedResult = Result.mapError(
     canonicalHashV1Result(material),
     (cause): readonly SimulationReconciliationIssue[] => [
@@ -119,6 +127,8 @@ export const validateCanonicalIdentity = (evidence: CanonicalIdentityEvidence, m
         expected: expectedResult.success,
       })
 }
+
+export const validateCanonicalIdentity = Pipeable.dual(2, validateCanonicalIdentityDataFirst)
 
 type IndexedIdentity = CanonicalIdentityEvidence
 
@@ -166,13 +176,15 @@ export const groupValuesBy = <A>(
   return grouped
 }
 
-export const validateDecisionIdentity = (runId: string, decision: DecisionEvent): Validation<void> => {
+const validateDecisionIdentityDataFirst = (runId: string, decision: DecisionEvent): Validation<void> => {
   const { id: _, kind: __, ...payload } = decision
   return validateCanonicalIdentity(
     { kind: 'decision', id: decision.id, signalDate: decision.signalDate },
     { runId, kind: 'decision', ...payload },
   )
 }
+
+export const validateDecisionIdentity = Pipeable.dual(2, validateDecisionIdentityDataFirst)
 
 const fillBindingIssue = (
   fill: FillEvent,
@@ -335,7 +347,7 @@ const invalidOrder = (
     },
   })
 
-export const validateOrder = (
+const validateOrderDataFirst = (
   runId: string,
   order: SimulatedOrder,
   fill: FillEvent | undefined,
@@ -401,3 +413,5 @@ export const validateOrder = (
     ? Result.succeed(undefined)
     : validateFill(runId, fill, order, filled.success, simulation, costMultiplierMicros)
 }
+
+export const validateOrder = Pipeable.dual(6, validateOrderDataFirst)

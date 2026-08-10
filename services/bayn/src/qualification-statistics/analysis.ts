@@ -21,6 +21,7 @@ import { isCanonicalOrder } from './ordering'
 import { calculateQualificationPower } from './power'
 import { buildCompleteBlocks } from './series'
 import { calculateWalkForward } from './walk-forward'
+import { Pipeable } from '../pipeable'
 
 export interface QualificationBoundTrialHistory {
   readonly candidateOrdinal: number
@@ -120,7 +121,7 @@ export const analyzeQualificationInput = (
     ),
   )
 
-export const analyzeQualificationAtOrdinal = (
+const analyzeQualificationAtOrdinalDataFirst = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
   history: QualificationBoundTrialHistory,
@@ -142,9 +143,13 @@ export const analyzeQualificationAtOrdinal = (
   })
 }
 
-export const analyzeQualification = (
+export const analyzeQualificationAtOrdinal = Pipeable.dual(3, analyzeQualificationAtOrdinalDataFirst)
+
+const analyzeQualificationDataFirst = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
   analyzeQualificationInput({ series, policy, priorTrialRunIds })
+
+export const analyzeQualification = Pipeable.dual(3, analyzeQualificationDataFirst)

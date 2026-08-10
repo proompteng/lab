@@ -1,6 +1,7 @@
 import { pipe, Result } from 'effect'
 
 import { statisticsFailure, type QualificationStatisticsFailure } from './failure'
+import { Pipeable } from '../pipeable'
 
 export const roundStatistic = (value: number): Result.Result<number, QualificationStatisticsFailure> =>
   Number.isFinite(value)
@@ -17,17 +18,21 @@ export const sampleStandardDeviation = (values: readonly number[]): number => {
   return Math.sqrt(Math.max(0, variance))
 }
 
-export const annualizedSharpe = (returns: readonly number[], annualizationSessions: number): number => {
+const annualizedSharpeDataFirst = (returns: readonly number[], annualizationSessions: number): number => {
   const volatility = sampleStandardDeviation(returns)
   return volatility === 0 ? 0 : (mean(returns) / volatility) * Math.sqrt(annualizationSessions)
 }
 
-export const nearestRankLowerQuantile = (values: readonly number[], probability: number): number => {
+export const annualizedSharpe = Pipeable.dual(2, annualizedSharpeDataFirst)
+
+const nearestRankLowerQuantileDataFirst = (values: readonly number[], probability: number): number => {
   if (values.length === 0) return 0
   const sorted = [...values].sort((left, right) => left - right)
   const rank = Math.max(1, Math.ceil(probability * sorted.length))
   return sorted.at(rank - 1) ?? 0
 }
+
+export const nearestRankLowerQuantile = Pipeable.dual(2, nearestRankLowerQuantileDataFirst)
 
 export const compoundedReturn = (returns: readonly number[]): number =>
   returns.reduce((growth, value) => growth * (1 + value), 1) - 1

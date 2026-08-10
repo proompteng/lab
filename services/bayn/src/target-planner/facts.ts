@@ -14,10 +14,13 @@ import {
   type TargetPlannerFailure,
   type TargetPlannerInput,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const WEIGHT_SUM_TOLERANCE = 1e-12
 
-export const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+const compareTextDataFirst = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
+export const compareText = Pipeable.dual(2, compareTextDataFirst)
 
 const isStrictlySorted = (values: readonly string[]): boolean =>
   values.every((value, index) => {
@@ -109,7 +112,10 @@ export const deriveTargetPlannerHashes = (
     ),
   })
 
-export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: TargetPlannerHashes): TargetPlannerFacts => {
+const parseTargetPlannerFactsDataFirst = (
+  input: TargetPlannerInput,
+  hashes: TargetPlannerHashes,
+): TargetPlannerFacts => {
   const targetSymbols = Object.keys(input.targetWeights).sort(compareText)
   const priceSymbols = Object.keys(input.referencePrices.priceMicros).sort(compareText)
   const prices = new Map(
@@ -150,6 +156,8 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
     availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
   }
 }
+
+export const parseTargetPlannerFacts = Pipeable.dual(2, parseTargetPlannerFactsDataFirst)
 
 const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
   const { input, priceSymbols, targetSymbols } = facts
@@ -222,8 +230,10 @@ const brokerStateIsCurrent = (facts: TargetPlannerFacts): boolean => {
   )
 }
 
-export const referenceNotional = (quantityMicros: bigint, priceMicros: bigint): bigint =>
+const referenceNotionalDataFirst = (quantityMicros: bigint, priceMicros: bigint): bigint =>
   (quantityMicros * priceMicros + 1_000_000n - 1n) / 1_000_000n
+
+export const referenceNotional = Pipeable.dual(2, referenceNotionalDataFirst)
 
 export const derivePlannedTargetFacts = (
   facts: TargetPlannerFacts,

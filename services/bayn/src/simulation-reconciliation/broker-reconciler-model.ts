@@ -22,6 +22,7 @@ import type { BrokerSnapshot, ReconciliationReport } from '../db/reconciliation'
 import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'
 import type { ReconciledBrokerState, ReconciliationRiskContext } from '../reconciliation'
+import { Pipeable } from '../pipeable'
 
 export const maximumRows = 10_000
 export const ordersPageSize = 500
@@ -126,13 +127,17 @@ export class ReconciliationError extends Data.TaggedError('ReconciliationError')
 
 export type ReconciliationPassError = BrokerReadError | ExecutionStoreError | ReconciliationError | WriterFenceError
 
-export const paginationFailure = (reason: PaginationFailureReason, message: string): ReconciliationError =>
+const paginationFailureDataFirst = (reason: PaginationFailureReason, message: string): ReconciliationError =>
   new ReconciliationError({ operation: 'pagination', message, failure: { _tag: 'Pagination', reason } })
 
-export const snapshotFailure = (reason: SnapshotFailureReason, message: string): ReconciliationError =>
+export const paginationFailure = Pipeable.dual(2, paginationFailureDataFirst)
+
+const snapshotFailureDataFirst = (reason: SnapshotFailureReason, message: string): ReconciliationError =>
   new ReconciliationError({ operation: 'snapshot', message, failure: { _tag: 'Snapshot', reason } })
 
-export const historyHashFailure = (side: HistorySnapshotSide, error: HistoryHashFailure): ReconciliationError =>
+export const snapshotFailure = Pipeable.dual(2, snapshotFailureDataFirst)
+
+const historyHashFailureDataFirst = (side: HistorySnapshotSide, error: HistoryHashFailure): ReconciliationError =>
   new ReconciliationError({
     operation: 'snapshot',
     message:
@@ -143,12 +148,16 @@ export const historyHashFailure = (side: HistorySnapshotSide, error: HistoryHash
     failure: { _tag: 'HistoryHash', side, error },
   })
 
-export const validationFailure = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
+export const historyHashFailure = Pipeable.dual(2, historyHashFailureDataFirst)
+
+const validationFailureDataFirst = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
   new ReconciliationError({
     operation: 'normalization',
     message: detail,
     failure: { _tag: 'Validation', reason, detail },
   })
+
+export const validationFailure = Pipeable.dual(2, validationFailureDataFirst)
 
 const normalizationFailure = (
   stage: NormalizationStage,
@@ -177,10 +186,14 @@ export const mapObservationFailure = <A>(
     Result.mapError((error) => normalizationFailure(stage, identity, error)),
   )
 
-export const normalizeTimestamp = (
+const normalizeTimestampDataFirst = (
   stage: Extract<NormalizationStage, 'order-timestamp' | 'fill-ordering'>,
   identity: string,
   value: string,
 ): Result.Result<string, ReconciliationError> => mapObservationFailure(stage, identity, sourceTimestamp(value))
 
-export const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+export const normalizeTimestamp = Pipeable.dual(3, normalizeTimestampDataFirst)
+
+const compareTextDataFirst = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
+export const compareText = Pipeable.dual(2, compareTextDataFirst)

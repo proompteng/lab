@@ -30,6 +30,7 @@ import type {
   StartupCompletion,
   StartupDecisionFailure,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const canonicalStartupHash = (
   context: StartupCanonicalizationContext,
@@ -130,7 +131,7 @@ const provenanceFromStored = (
   return Result.succeed(provenance)
 }
 
-export const decidePinnedQualification = (
+const decidePinnedQualificationDataFirst = (
   config: RuntimeConfig,
   runId: string,
   facts: PinnedQualificationFacts,
@@ -216,7 +217,9 @@ export const decidePinnedQualification = (
   })
 }
 
-export const decidePinnedRecovery = (
+export const decidePinnedQualification = Pipeable.dual(3, decidePinnedQualificationDataFirst)
+
+const decidePinnedRecoveryDataFirst = (
   decision: PinnedQualificationDecision,
   recovered: Option.Option<RecoveredEvaluationEvidence>,
 ): Result.Result<StartupCompletion, StartupDecisionFailure> => {
@@ -245,7 +248,9 @@ export const decidePinnedRecovery = (
   })
 }
 
-export const prepareQualificationLock = (
+export const decidePinnedRecovery = Pipeable.dual(2, decidePinnedRecoveryDataFirst)
+
+const prepareQualificationLockDataFirst = (
   strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   inspection: MarketDataInspection,
@@ -261,7 +266,9 @@ export const prepareQualificationLock = (
     }),
   )
 
-export const decideQualificationPath = (
+export const prepareQualificationLock = Pipeable.dual(4, prepareQualificationLockDataFirst)
+
+const decideQualificationPathDataFirst = (
   expectedLock: QualificationLock,
   opened: QualificationOpen,
 ): Result.Result<QualificationPath, StartupDecisionFailure> => {
@@ -301,6 +308,8 @@ export const decideQualificationPath = (
     result: opened.result,
   })
 }
+
+export const decideQualificationPath = Pipeable.dual(2, decideQualificationPathDataFirst)
 
 interface RecoveryExpectation {
   readonly phase: 'pinned' | 'terminal'
@@ -364,7 +373,7 @@ const validateRecoveredEvaluation = (
   return Result.isFailure(verdictBinding) ? Result.fail(verdictBinding.failure) : Result.succeed(evidence)
 }
 
-export const decideTerminalRecovery = (
+const decideTerminalRecoveryDataFirst = (
   provenance: RuntimeProvenance,
   path: Extract<QualificationPath, { readonly _tag: 'RecoverTerminal' }>,
   recovered: Option.Option<RecoveredEvaluationEvidence>,
@@ -404,7 +413,9 @@ export const decideTerminalRecovery = (
   })
 }
 
-export const evaluateLockedSnapshot = (
+export const decideTerminalRecovery = Pipeable.dual(3, decideTerminalRecoveryDataFirst)
+
+const evaluateLockedSnapshotDataFirst = (
   strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   inspection: MarketDataInspection,
@@ -463,6 +474,8 @@ export const evaluateLockedSnapshot = (
   return Result.succeed(evaluationResult.success)
 }
 
+export const evaluateLockedSnapshot = Pipeable.dual(5, evaluateLockedSnapshotDataFirst)
+
 const qualificationPipelineFailure = (
   strategyName: string,
   cause: QualificationPipelineFailure,
@@ -488,7 +501,7 @@ const qualificationPipelineFailure = (
   }
 }
 
-export const qualifyEvaluation = (
+const qualifyEvaluationDataFirst = (
   strategy: StrategyRuntimeInput,
   lock: QualificationLock,
   evaluation: EvaluationResult,
@@ -519,7 +532,9 @@ export const qualifyEvaluation = (
     : Result.succeed({ evaluation, reconciliation, qualification: qualification.success.result })
 }
 
-export const evaluatedCompletion = (
+export const qualifyEvaluation = Pipeable.dual(4, qualifyEvaluationDataFirst)
+
+const evaluatedCompletionDataFirst = (
   provenance: RuntimeProvenance,
   evidence: EvaluationEvidence,
   persistence: PersistenceReceipt,
@@ -535,3 +550,5 @@ export const evaluatedCompletion = (
   },
   markedEquityDifferenceMicros: evidence.evaluation.markedEquityReconciliation.differenceMicros,
 })
+
+export const evaluatedCompletion = Pipeable.dual(3, evaluatedCompletionDataFirst)

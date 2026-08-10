@@ -5,13 +5,14 @@ import { strictParseOptions } from '../schemas'
 import type { QualificationConstructionFailure } from './failure'
 import { hashQualificationMaterial } from './hashing'
 import { QualificationPolicyDocumentSchema, type QualificationPolicyDocument } from './model'
+import { Pipeable } from '../pipeable'
 
 const decodeQualificationPolicyDocument = Schema.decodeUnknownResult(
   QualificationPolicyDocumentSchema,
   strictParseOptions,
 )
 
-export const makeQualificationPolicyDocument = (
+const makeQualificationPolicyDocumentDataFirst = (
   schemaVersion: string,
   content: unknown,
 ): Result.Result<QualificationPolicyDocument, QualificationConstructionFailure> =>
@@ -30,6 +31,8 @@ export const makeQualificationPolicyDocument = (
       ),
     ),
   )
+
+export const makeQualificationPolicyDocument = Pipeable.dual(2, makeQualificationPolicyDocumentDataFirst)
 
 export const defaultQualificationStatisticsPolicyDocument = makeQualificationPolicyDocument(
   defaultQualificationStatisticsPolicy.schemaVersion,

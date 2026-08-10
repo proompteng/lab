@@ -11,6 +11,7 @@ import {
   type QualificationLock,
   type QualificationResult,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const decodeQualificationResult = Schema.decodeUnknownResult(QualificationResultSchema, strictParseOptions)
 const QualificationPolicyBindingSchema = Schema.Struct({
@@ -102,9 +103,11 @@ const constructQualificationResult = (
   )
 }
 
-export const makeQualificationResult = (
+const makeQualificationResultDataFirst = (
   lock: QualificationLock,
   evaluationVerdict: EconomicVerdict,
   analysis: QualificationAnalysis,
 ): Result.Result<QualificationResult, QualificationConstructionFailure> =>
   constructQualificationResult({ lock, evaluationVerdict, analysis })
+
+export const makeQualificationResult = Pipeable.dual(3, makeQualificationResultDataFirst)

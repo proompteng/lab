@@ -26,6 +26,7 @@ import {
   type PaperProofRuntimeBinding,
   type PaperProofSourcePlan,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const malformedCommandContainmentIoTimeoutMs = 5_000
 const malformedCommandContainmentTotalTimeoutMs = 20_000
@@ -145,7 +146,7 @@ const withRecoveryFinalizer = <A>(
     ),
   )
 
-export const containMalformedPaperProofCommand = (
+const containMalformedPaperProofCommandDataFirst = (
   operation: PaperProofCommand['operation'] | 'GATE',
   accountId: string,
   dependencies: PaperProofContainmentDependencies,
@@ -173,6 +174,8 @@ export const containMalformedPaperProofCommand = (
         ),
     }),
   )
+
+export const containMalformedPaperProofCommand = Pipeable.dual(4, containMalformedPaperProofCommandDataFirst)
 
 const commandTimeout = (message: string): Effect.Effect<never, PaperProofError> =>
   Effect.fail(
@@ -268,7 +271,7 @@ const runValidatedPaperProof = (
   }
 }
 
-export const runPaperProof = (
+const runPaperProofDataFirst = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> => {
@@ -314,3 +317,5 @@ export const runPaperProof = (
     ),
   )
 }
+
+export const runPaperProof = Pipeable.dual(2, runPaperProofDataFirst)
