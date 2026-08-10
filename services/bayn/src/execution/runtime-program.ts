@@ -196,7 +196,7 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
         yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
         yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
+        yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
         transmissionStarted = true
         return yield* transmit
       }),

@@ -420,7 +420,7 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
-  test('revalidates the PAPER lease after broker refresh and before transmission', async () => {
+  test('revalidates the execution window after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
     const sandboxAuthority = Result.getOrThrow(
       makeExecutionAuthority({
@@ -440,7 +440,7 @@ describe('same-code execution program composition', () => {
     let instantReads = 0
     let posts = 0
     const testDependencies: ExecutionProgramDependencies = {
-      ...dependencies('paper-lease-expiry-during-refresh'),
+      ...dependencies('execution-window-expiry-during-refresh'),
       intentStore: {
         read: () => Effect.succeed(Option.some(fixture.stored)),
       } as unknown as ExecutionProgramDependencies['intentStore'],
@@ -457,8 +457,8 @@ describe('same-code execution program composition', () => {
           observedAt: brokerObservedAt,
         }),
       currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
-      paperEpisodeEntryExpiresAt: expiresAt,
-      isPaperEpisodeCloseIntent: () => Effect.succeed(false),
+      entrySubmitExpiresAt: expiresAt,
+      isCloseOnlyIntent: () => Effect.succeed(false),
     }
 
     const exit = await Effect.runPromise(
@@ -472,7 +472,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(exit)).toBe('PaperEpisodeExpired')
+    expect(finalAuthorizationFailureTag(exit)).toBe('ExecutionWindowExpired')
     expect(instantReads).toBe(3)
     expect(posts).toBe(0)
   })
