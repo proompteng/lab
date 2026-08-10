@@ -9,7 +9,7 @@ export type ExecutionResult<A> = Result.Result<A, ExecutionModelFailure>
 
 export const fail = <A>(failure: ExecutionModelFailure): ExecutionResult<A> => Result.fail(failure)
 
-export const ensureUnsigned = (value: string, field: string, minimum = 0n): ExecutionResult<bigint> => {
+const ensureUnsignedDataFirst = (value: string, field: string, minimum = 0n): ExecutionResult<bigint> => {
   if (!/^[0-9]+$/.test(value)) {
     return fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum })
   }
@@ -17,7 +17,12 @@ export const ensureUnsigned = (value: string, field: string, minimum = 0n): Exec
   return parsed < minimum ? fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum }) : Result.succeed(parsed)
 }
 
-export const scaledNumber = (value: number, field: string, scale = Number(MICROS)): ExecutionResult<bigint> => {
+export const ensureUnsigned = Pipeable.by<
+  (field: string, minimum?: bigint) => (value: string) => ExecutionResult<bigint>,
+  typeof ensureUnsignedDataFirst
+>((arguments_) => typeof arguments_[1] === 'string', ensureUnsignedDataFirst)
+
+const scaledNumberDataFirst = (value: number, field: string, scale = Number(MICROS)): ExecutionResult<bigint> => {
   if (!Number.isFinite(value)) {
     return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
   }
@@ -31,6 +36,11 @@ export const scaledNumber = (value: number, field: string, scale = Number(MICROS
     ? fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'precision-exceeded' })
     : Result.succeed(BigInt(rounded))
 }
+
+export const scaledNumber = Pipeable.by<
+  (field: string, scale?: number) => (value: number) => ReturnType<typeof scaledNumberDataFirst>,
+  typeof scaledNumberDataFirst
+>((arguments_) => typeof arguments_[0] === 'number', scaledNumberDataFirst)
 
 const integerNumberDataFirst = (
   value: number,
@@ -94,7 +104,7 @@ const quantizeNearestDataFirst = (value: bigint, increment: bigint): ExecutionRe
 
 export const quantizeNearest = Pipeable.dual(2, quantizeNearestDataFirst)
 
-export const numberToMicros = (value: number, field = 'value'): ExecutionResult<bigint> => {
+const numberToMicrosDataFirst = (value: number, field = 'value'): ExecutionResult<bigint> => {
   const scale = Number(MICROS)
   if (!Number.isFinite(value)) {
     return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
@@ -107,6 +117,11 @@ export const numberToMicros = (value: number, field = 'value'): ExecutionResult<
     ? Result.succeed(BigInt(scaled))
     : fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'precision-exceeded' })
 }
+
+export const numberToMicros = Pipeable.by<
+  (field?: string) => (value: number) => ReturnType<typeof numberToMicrosDataFirst>,
+  typeof numberToMicrosDataFirst
+>((arguments_) => typeof arguments_[0] === 'number', numberToMicrosDataFirst)
 
 export const microsToNumber = (value: bigint): number => Number(value) / Number(MICROS)
 

@@ -215,7 +215,7 @@ const riskBalancedTrendContextAtSignalDataFirst = (
 
 export const riskBalancedTrendContextAtSignal = Pipeable.dual(3, riskBalancedTrendContextAtSignalDataFirst)
 
-export const decisionFromAlignedSessions = (
+const decisionFromAlignedSessionsDataFirst = (
   sessions: readonly AlignedSession[],
   signalIndex: number,
   protocol: Protocol,
@@ -225,3 +225,12 @@ export const decisionFromAlignedSessions = (
     riskBalancedTrendContextAtSignal(sessions, signalIndex, protocol),
     Result.flatMap((context) => definition.decide(context)),
   )
+
+export const decisionFromAlignedSessions = Pipeable.by<
+  (
+    signalIndex: number,
+    protocol: Protocol,
+    definition?: RiskBalancedTrendStrategyDefinition,
+  ) => (sessions: readonly AlignedSession[]) => ReturnType<typeof decisionFromAlignedSessionsDataFirst>,
+  typeof decisionFromAlignedSessionsDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), decisionFromAlignedSessionsDataFirst)

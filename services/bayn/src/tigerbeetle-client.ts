@@ -243,7 +243,7 @@ const resolveReplicaEndpoint = (
         Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaEndpoint(endpoint, addresses))),
       )
 
-export const resolveReplicaAddresses = (
+const resolveReplicaAddressesDataFirst = (
   configuredAddresses: readonly string[],
   resolveHostname: ResolveHostname = lookupIpv4,
 ): Effect.Effect<string[], OperationalError> =>
@@ -255,6 +255,13 @@ export const resolveReplicaAddresses = (
     ),
     Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaAddresses(addresses))),
   )
+
+export const resolveReplicaAddresses = Pipeable.by<
+  (
+    resolveHostname?: ResolveHostname,
+  ) => (configuredAddresses: readonly string[]) => ReturnType<typeof resolveReplicaAddressesDataFirst>,
+  typeof resolveReplicaAddressesDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), resolveReplicaAddressesDataFirst)
 
 export interface JournalDependencies {
   readonly createClient: (options: ClientInitArgs) => TigerBeetleClient

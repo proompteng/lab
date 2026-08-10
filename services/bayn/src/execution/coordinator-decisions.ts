@@ -202,7 +202,7 @@ const nextInstantDataFirst = (
 
 export const nextInstant = Pipeable.dual(3, nextInstantDataFirst)
 
-export const encodeOrder = (
+const encodeOrderDataFirst = (
   operation: MutationOperation,
   intent: Intent,
   message = 'intent cannot be represented as an Alpaca paper order',
@@ -225,6 +225,11 @@ export const encodeOrder = (
       ),
     ),
   )
+
+export const encodeOrder = Pipeable.by<
+  (intent: Intent, message?: string) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
+  typeof encodeOrderDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', encodeOrderDataFirst)
 
 const validateSubmitRiskDecision = (
   stored: StoredIntent,
@@ -249,12 +254,23 @@ const validateSubmitRiskDecision = (
   )
 }
 
-export const validateActiveSubmitRiskDecision = (
+const validateActiveSubmitRiskDecisionDataFirst = (
   stored: StoredIntent,
   currentTimeMillis: number,
   operationLabel = 'submission',
 ): Result.Result<StoredIntent, ExecutionDecisionFailure> =>
   validateSubmitRiskDecision(stored, currentTimeMillis, operationLabel, IntentState.Approved)
+
+export const validateActiveSubmitRiskDecision = Pipeable.by<
+  (
+    currentTimeMillis: number,
+    operationLabel?: string,
+  ) => (stored: StoredIntent) => ReturnType<typeof validateActiveSubmitRiskDecisionDataFirst>,
+  typeof validateActiveSubmitRiskDecisionDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
+  validateActiveSubmitRiskDecisionDataFirst,
+)
 
 const validateStartedSubmitRiskDecisionDataFirst = (
   stored: StoredIntent,

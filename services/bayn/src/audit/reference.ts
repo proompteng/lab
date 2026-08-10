@@ -35,6 +35,7 @@ import type {
   Target,
 } from './reference/model'
 import { replay } from './reference/replay'
+import { Pipeable } from '../pipeable'
 
 export type { ReferenceEvaluation, ReferenceEvaluationFailure } from './reference/model'
 export { restrictReferenceBuyFill } from './reference/replay'
@@ -325,7 +326,7 @@ const stripReplayWork = (replay: ReplayWithWork): Replay => ({
   trace: replay.trace,
 })
 
-export const evaluateReference = (
+const evaluateReferenceDataFirst = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
   protocol: Protocol,
@@ -346,7 +347,18 @@ export const evaluateReference = (
     })),
   )
 
-export const measureReferenceEvaluationWork = (
+export const evaluateReference = Pipeable.by<
+  (
+    manifest: InputManifest,
+    protocol: Protocol,
+    provenance: RuntimeProvenance,
+    closeAtEnd?: boolean,
+    application?: StrategyApplication<any, any, any>,
+  ) => (bars: readonly DailyBar[]) => ReturnType<typeof evaluateReferenceDataFirst>,
+  typeof evaluateReferenceDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), evaluateReferenceDataFirst)
+
+const measureReferenceEvaluationWorkDataFirst = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
   protocol: Protocol,
@@ -363,3 +375,14 @@ export const measureReferenceEvaluationWork = (
       doubleCostStrategy: reference.doubleCostStrategy.work,
     })),
   )
+
+export const measureReferenceEvaluationWork = Pipeable.by<
+  (
+    manifest: InputManifest,
+    protocol: Protocol,
+    provenance: RuntimeProvenance,
+    closeAtEnd?: boolean,
+    application?: StrategyApplication<any, any, any>,
+  ) => (bars: readonly DailyBar[]) => ReturnType<typeof measureReferenceEvaluationWorkDataFirst>,
+  typeof measureReferenceEvaluationWorkDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), measureReferenceEvaluationWorkDataFirst)

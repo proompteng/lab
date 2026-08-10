@@ -170,7 +170,7 @@ export interface LedgerBalances {
   readonly transfersById: ReadonlyMap<bigint, LedgerTransferRecord>
 }
 
-export const reconcileBalances = (
+const reconcileBalancesDataFirst = (
   operation: 'check-run' | 'reconcile' | 'verify-account',
   accounts: readonly LedgerAccountRecord[],
   transfers: readonly LedgerTransferRecord[],
@@ -262,7 +262,16 @@ export const reconcileBalances = (
   return Result.succeed({ accountsById, transfersById })
 }
 
-export const reconcileLedgerPlan = (
+export const reconcileBalances = Pipeable.by<
+  (
+    accounts: readonly LedgerAccountRecord[],
+    transfers: readonly LedgerTransferRecord[],
+    runId?: string,
+  ) => (operation: 'check-run' | 'reconcile' | 'verify-account') => ReturnType<typeof reconcileBalancesDataFirst>,
+  typeof reconcileBalancesDataFirst
+>((arguments_) => typeof arguments_[0] === 'string', reconcileBalancesDataFirst)
+
+const reconcileLedgerPlanDataFirst = (
   plan: LedgerPlan,
   actualAccounts: readonly LedgerAccountRecord[],
   actualTransfers: readonly LedgerTransferRecord[],
@@ -272,3 +281,12 @@ export const reconcileLedgerPlan = (
     yield* verifyLedgerPlanRecords(operation, 'account', 'transfer', plan, actualAccounts, actualTransfers)
     yield* reconcileBalances(operation, actualAccounts, actualTransfers)
   })
+
+export const reconcileLedgerPlan = Pipeable.by<
+  (
+    actualAccounts: readonly LedgerAccountRecord[],
+    actualTransfers: readonly LedgerTransferRecord[],
+    operation?: 'reconcile' | 'verify-account',
+  ) => (plan: LedgerPlan) => ReturnType<typeof reconcileLedgerPlanDataFirst>,
+  typeof reconcileLedgerPlanDataFirst
+>((arguments_) => !Array.isArray(arguments_[0]), reconcileLedgerPlanDataFirst)

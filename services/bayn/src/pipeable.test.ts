@@ -27,4 +27,16 @@ describe('pipeable functions', () => {
     expect(pair(42, 'paper')).toEqual([42, 'paper'])
     expect(pair('paper')(42)).toEqual([42, 'paper'])
   })
+
+  test('supports an explicit optional-argument discriminator', () => {
+    const repeatDataFirst = (self: string, count = 1): string => self.repeat(count)
+    const repeat = Pipeable.by<(count?: number) => (self: string) => string, typeof repeatDataFirst>(
+      (arguments_) => typeof arguments_[0] === 'string',
+      repeatDataFirst,
+    )
+
+    expect(repeat('bayn')).toBe('bayn')
+    expect(repeat('bayn', 2)).toBe('baynbayn')
+    expect(repeat(2)('bayn')).toBe('baynbayn')
+  })
 })

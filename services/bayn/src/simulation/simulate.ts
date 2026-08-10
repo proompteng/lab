@@ -10,6 +10,7 @@ import type { AlignedSession, SimulationDecision, SimulationFailure, SimulationI
 import { rebalanceSession } from './rebalance'
 import { initialState, type SessionOpeningSnapshot, type SimulationState } from './state'
 import { closeSession } from './valuation'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
@@ -247,7 +248,7 @@ const runSimulation = (
     Result.succeed(state),
   )
 
-export const simulate = (
+const simulateDataFirst = (
   sessions: readonly AlignedSession[],
   targets: readonly SimulationTarget[],
   startIndex: number,
@@ -288,3 +289,16 @@ export const simulate = (
     Result.flatMap((state) => completeSimulation(state, protocol, costMultiplierMicros, recordEvents)),
   )
 }
+
+export const simulate = Pipeable.by<
+  (
+    targets: readonly SimulationTarget[],
+    startIndex: number,
+    protocol: SimulationProtocol,
+    costMultiplierMicros: bigint,
+    runId: string,
+    recordEvents: boolean,
+    terminalCloseTarget?: (target: SimulationTarget, executionIndex: number) => SimulationTarget,
+  ) => (sessions: readonly AlignedSession[]) => ReturnType<typeof simulateDataFirst>,
+  typeof simulateDataFirst
+>((arguments_) => Array.isArray(arguments_[1]), simulateDataFirst)

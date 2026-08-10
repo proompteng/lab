@@ -178,7 +178,7 @@ export type PreparedMutationIntentAdmissionFailure = {
   readonly message: string
 }
 
-export const decidePreparedMutationIntentAdmission = (
+const decidePreparedMutationIntentAdmissionDataFirst = (
   prepared: PreparedMutationIntentDecision,
   effectiveAuthority: Authority,
   observedAt: string,
@@ -233,6 +233,22 @@ export const decidePreparedMutationIntentAdmission = (
   }
   return Result.succeed(undefined)
 }
+
+export const decidePreparedMutationIntentAdmission = Pipeable.by<
+  (
+    effectiveAuthority: Authority,
+    observedAt: string,
+    expiresAt: string,
+    unknownMutationCount: number,
+    reconciliationStatus?: ReconciliationStatus,
+    accountingExact?: boolean,
+    unknownOrderCount?: number,
+  ) => (prepared: PreparedMutationIntentDecision) => ReturnType<typeof decidePreparedMutationIntentAdmissionDataFirst>,
+  typeof decidePreparedMutationIntentAdmissionDataFirst
+>(
+  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
+  decidePreparedMutationIntentAdmissionDataFirst,
+)
 
 export const decidePreparedCloseIntentAdmission = (
   intent: Pick<Intent, 'side'>,

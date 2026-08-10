@@ -14,6 +14,7 @@ import type {
   RiskBalancedTrendFailure,
 } from '../../risk-balanced-trend/model'
 import { decodeCurrentDecisionCycleBinding } from '../../risk-balanced-trend/schema'
+import { Pipeable } from '../../pipeable'
 
 const fail = <A = never>(failure: RiskBalancedTrendFailure): Result.Result<A, RiskBalancedTrendFailure> =>
   Result.fail(failure)
@@ -35,7 +36,7 @@ const terminalPrices = (
     Result.map((prices) => Object.fromEntries(prices)),
   )
 
-export const compileCurrentRiskBalancedTrendDecision = (
+const compileCurrentRiskBalancedTrendDecisionDataFirst = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: Protocol,
@@ -92,3 +93,13 @@ export const compileCurrentRiskBalancedTrendDecision = (
       ),
     ),
   )
+
+export const compileCurrentRiskBalancedTrendDecision = Pipeable.by<
+  (
+    inputManifest: InputManifest,
+    protocol: Protocol,
+    cycleBinding: CurrentDecisionCycleBinding,
+    definition?: RiskBalancedTrendStrategyDefinition,
+  ) => (bars: readonly DailyBar[]) => ReturnType<typeof compileCurrentRiskBalancedTrendDecisionDataFirst>,
+  typeof compileCurrentRiskBalancedTrendDecisionDataFirst
+>((arguments_) => Array.isArray(arguments_[0]), compileCurrentRiskBalancedTrendDecisionDataFirst)

@@ -38,6 +38,7 @@ import {
   replayQuantityFor,
   restrictReferenceBuyFill,
 } from './replay-calculations'
+import { Pipeable } from '../../pipeable'
 
 export { restrictReferenceBuyFill } from './replay-calculations'
 
@@ -59,7 +60,7 @@ const hasOpenPosition = (positions: ReadonlyMap<string, Position>): boolean =>
 
 const isFlatTarget = (target: Target): boolean => Object.values(target.weights).every((weight) => weight === 0)
 
-export const replay = (
+const replayDataFirst = (
   sessions: readonly Session[],
   targets: readonly Target[],
   startIndex: number,
@@ -635,3 +636,16 @@ export const replay = (
     work: { sessionsProcessed: daily.length, positionStateCopies, positionWrites },
   })
 }
+
+export const replay = Pipeable.by<
+  (
+    targets: readonly Target[],
+    startIndex: number,
+    protocol: SimulationProtocol,
+    costMultiplierMicros: bigint,
+    runId: string,
+    retainTrace: boolean,
+    closeAtEnd?: boolean,
+  ) => (sessions: readonly Session[]) => ReturnType<typeof replayDataFirst>,
+  typeof replayDataFirst
+>((arguments_) => Array.isArray(arguments_[1]), replayDataFirst)
