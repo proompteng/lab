@@ -5,6 +5,7 @@ import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalRe
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest, IsoDate } from '../../types'
 import type { CycleStoreDecisionFailure } from './decision-contract'
+import { Pipeable } from '../../pipeable'
 
 export {
   attachCycleDecisionStoreEvidence,
@@ -167,11 +168,13 @@ export const runCycleStore = <A, E, R>(
     }),
   )
 
-export const failCycleStore = (
+const failCycleStoreDataFirst = (
   operation: CycleStoreError['operation'],
   failure: CycleStoreError['failure'],
   message: string,
 ): Effect.Effect<never, CycleStoreError> => Effect.fail(cycleStoreError(operation, failure, message))
+
+export const failCycleStore = Pipeable.dual(3, failCycleStoreDataFirst)
 
 export const liftCycleDecision = <A>(
   operation: CycleStoreError['operation'],
@@ -181,7 +184,7 @@ export const liftCycleDecision = <A>(
     Effect.mapError(({ failure, message }) => cycleStoreError(operation, failure, message)),
   )
 
-export const exactlyOneCycle = (
+const exactlyOneCycleDataFirst = (
   operation: CycleStoreError['operation'],
   rows: readonly AutonomousCycle[],
 ): Effect.Effect<AutonomousCycle, CycleStoreError> => {
@@ -195,3 +198,5 @@ export const exactlyOneCycle = (
   }
   return Effect.succeed(cycle)
 }
+
+export const exactlyOneCycle = Pipeable.dual(2, exactlyOneCycleDataFirst)

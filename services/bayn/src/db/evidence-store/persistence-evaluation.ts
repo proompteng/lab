@@ -6,6 +6,7 @@ import type { DecisionEvent } from '../../types'
 import type { PersistEvaluationInput } from './model'
 import { persistenceCanonicalHash, persistenceMismatch } from './persistence-failures'
 import type { PersistencePlanFailure, ValidatedPersistenceEvaluation } from './persistence-model'
+import { Pipeable } from '../../pipeable'
 
 const makeProtocolHash = (input: PersistEvaluationInput): Result.Result<string, PersistencePlanFailure> =>
   Result.mapError(
@@ -42,7 +43,7 @@ const makeExpectedRunId = (input: PersistEvaluationInput): Result.Result<string,
     (identity) => identity.runId,
   )
 
-export const validatePersistenceEvaluation = (
+const validatePersistenceEvaluationDataFirst = (
   input: PersistEvaluationInput,
   inputManifestSchemaVersion: string,
 ): Result.Result<ValidatedPersistenceEvaluation, PersistencePlanFailure> =>
@@ -281,3 +282,5 @@ export const validatePersistenceEvaluation = (
 
     return { protocolHash, snapshotId }
   })
+
+export const validatePersistenceEvaluation = Pipeable.dual(2, validatePersistenceEvaluationDataFirst)

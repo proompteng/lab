@@ -10,8 +10,9 @@ import type {
   StoredPersistenceReferences,
   StoredProtocolReference,
 } from './persistence-model'
+import { Pipeable } from '../../pipeable'
 
-export const validateProtocolReference = (
+const validateProtocolReferenceDataFirst = (
   input: {
     readonly protocolHash: string
     readonly provenance: RuntimeProvenance
@@ -57,7 +58,9 @@ export const validateProtocolReference = (
     }
   })
 
-export const validatePersistenceReceipt = (
+export const validateProtocolReference = Pipeable.dual(2, validateProtocolReferenceDataFirst)
+
+const validatePersistenceReceiptDataFirst = (
   plan: PersistencePlan,
   references: StoredPersistenceReferences,
   deduplicated: boolean,
@@ -251,3 +254,5 @@ export const validatePersistenceReceipt = (
       gateCount: row.gate_count,
     }
   })
+
+export const validatePersistenceReceipt = Pipeable.dual(3, validatePersistenceReceiptDataFirst)

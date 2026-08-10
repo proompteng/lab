@@ -13,6 +13,7 @@ import {
 } from './model'
 import type { CycleQueries } from './queries'
 import { decodeMutationRows } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export interface CycleMutationPrimitives {
   readonly readLocked: (
@@ -35,7 +36,10 @@ export interface CycleMutationPrimitives {
   readonly lockAuthoritySlot: (candidate: AutonomousCycle) => Effect.Effect<string, CycleStoreInternalError>
 }
 
-export const makeCycleMutationPrimitives = (sql: PgClient.PgClient, queries: CycleQueries): CycleMutationPrimitives => {
+const makeCycleMutationPrimitivesDataFirst = (
+  sql: PgClient.PgClient,
+  queries: CycleQueries,
+): CycleMutationPrimitives => {
   const readLocked: CycleMutationPrimitives['readLocked'] = (operation, cycleId) =>
     queries.selectCycle(cycleId, true).pipe(Effect.flatMap((rows) => exactlyOneCycle(operation, rows)))
 
@@ -154,3 +158,5 @@ export const makeCycleMutationPrimitives = (sql: PgClient.PgClient, queries: Cyc
 
   return { readLocked, requireApplied, blockCycle, insertCycle, lockAuthoritySlot }
 }
+
+export const makeCycleMutationPrimitives = Pipeable.dual(2, makeCycleMutationPrimitivesDataFirst)

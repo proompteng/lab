@@ -21,6 +21,7 @@ import type {
   ExecutionPrepareGenerationField,
   ExecutionPrepareRuntimeField,
 } from './failure'
+import { Pipeable } from '../pipeable'
 
 export interface PrevalidatedExecutionPrepareInput {
   readonly request: ExecutionPrepareProofPlanRequest
@@ -203,7 +204,7 @@ const validateRuntimeAgainstProof = (
     : runtimeMismatch('riskPolicyHash')
 }
 
-export const validateExecutionPrepareInput = (
+const validateExecutionPrepareInputDataFirst = (
   candidate: unknown,
   runtimeCandidate: unknown,
 ): Result.Result<PrevalidatedExecutionPrepareInput, ExecutionPrepareFailure> => {
@@ -233,7 +234,9 @@ export const validateExecutionPrepareInput = (
   return Result.succeed({ request, runtime })
 }
 
-export const authenticateExecutionPrepareDiscovery = (
+export const validateExecutionPrepareInput = Pipeable.dual(2, validateExecutionPrepareInputDataFirst)
+
+const authenticateExecutionPrepareDiscoveryDataFirst = (
   input: PrevalidatedExecutionPrepareInput,
   trustedReceipt: ExecutionCandidateDiscoveryReceipt,
 ): Result.Result<ValidatedExecutionPrepareInput, ExecutionPrepareFailure> => {
@@ -263,6 +266,8 @@ export const authenticateExecutionPrepareDiscovery = (
     },
   })
 }
+
+export const authenticateExecutionPrepareDiscovery = Pipeable.dual(2, authenticateExecutionPrepareDiscoveryDataFirst)
 
 const equalGenerationBinding = (
   generation: CapitalGrantGeneration,
@@ -319,7 +324,7 @@ const equalGenerationBinding = (
     : generationMismatch('reconciliationContentHash')
 }
 
-export const makeExecutionPrepareReceipt = (
+const makeExecutionPrepareReceiptDataFirst = (
   input: ValidatedExecutionPrepareInput,
   generation: CapitalGrantGeneration,
 ): Result.Result<ExecutionPrepareReceipt, ExecutionPrepareFailure> => {
@@ -367,3 +372,5 @@ export const makeExecutionPrepareReceipt = (
     Result.mapError((cause): ExecutionPrepareFailure => ({ _tag: 'ExecutionPrepareReceiptInvalid', cause })),
   )
 }
+
+export const makeExecutionPrepareReceipt = Pipeable.dual(2, makeExecutionPrepareReceiptDataFirst)

@@ -31,6 +31,7 @@ import {
   type SubmitRecoveryWriteDecision,
 } from './model'
 import { MutationStoreError as MutationStoreErrorValue } from './model'
+import { Pipeable } from '../../pipeable'
 
 const decodeStartInputResult = Schema.decodeUnknownResult(StartInputSchema, strictParseOptions)
 const decodeOutcomeInputResult = Schema.decodeUnknownResult(OutcomeInputSchema, strictParseOptions)
@@ -78,7 +79,7 @@ const canonicalHashResult = (
     }),
   )
 
-export const mutationIdResult = (
+const mutationIdResultDataFirst = (
   intentId: string,
   operation: MutationOperation,
 ): Result.Result<string, MutationCanonicalizationFailure> =>
@@ -86,6 +87,8 @@ export const mutationIdResult = (
     { _tag: 'MutationIdentity', intentId, operation },
     { schemaVersion: 'bayn.paper-mutation.v1', intentId, operation },
   )
+
+export const mutationIdResult = Pipeable.dual(2, mutationIdResultDataFirst)
 
 const mutationEventResult = (
   event: Omit<MutationEvent, 'eventId' | 'schemaVersion'>,
@@ -143,7 +146,7 @@ export const storeError = (
 export const startStoreOperationFor = (operation: MutationOperation): StartStoreOperation =>
   operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
 
-export const canonicalizationStoreError = (
+const canonicalizationStoreErrorDataFirst = (
   operation: MutationStoreError['operation'],
   failure: MutationCanonicalizationFailure,
 ): MutationStoreError =>
@@ -158,7 +161,9 @@ export const canonicalizationStoreError = (
     canonicalizationFailure: failure,
   })
 
-export const canonicalMutationId = (
+export const canonicalizationStoreError = Pipeable.dual(2, canonicalizationStoreErrorDataFirst)
+
+const canonicalMutationIdDataFirst = (
   storeOperation: MutationStoreError['operation'],
   intentId: string,
   operation: MutationOperation,
@@ -167,13 +172,17 @@ export const canonicalMutationId = (
     canonicalizationStoreError(storeOperation, failure),
   )
 
-export const makeEventResult = (
+export const canonicalMutationId = Pipeable.dual(3, canonicalMutationIdDataFirst)
+
+const makeEventResultDataFirst = (
   storeOperation: MutationStoreError['operation'],
   event: Omit<MutationEvent, 'eventId' | 'schemaVersion'>,
 ): Result.Result<MutationEvent, MutationStoreError> =>
   Result.mapError(mutationEventResult(event), (failure) => canonicalizationStoreError(storeOperation, failure))
 
-export const decideMutationStartReplay = (
+export const makeEventResult = Pipeable.dual(2, makeEventResultDataFirst)
+
+const decideMutationStartReplayDataFirst = (
   operation: MutationOperation,
   input: MutationStartInput,
   existing: MutationEvent | undefined,
@@ -197,6 +206,8 @@ export const decideMutationStartReplay = (
     receipt: { event: existing, started: false },
   })
 }
+
+export const decideMutationStartReplay = Pipeable.dual(3, decideMutationStartReplayDataFirst)
 
 export const decideMutationAuthority = (
   operation: MutationOperation,
@@ -275,7 +286,7 @@ export const decideMutationContainment = (unresolved: boolean | undefined): Resu
     ? Result.succeed(undefined)
     : Result.fail(storeError('begin-submit', 'invariant', 'another broker mutation has an unresolved outcome'))
 
-export const decideMutationStart = (
+const decideMutationStartDataFirst = (
   operation: MutationOperation,
   input: MutationStartInput,
   authority: MutationAuthorityBinding,
@@ -368,6 +379,8 @@ export const decideMutationStart = (
     }),
   )
 }
+
+export const decideMutationStart = Pipeable.dual(5, decideMutationStartDataFirst)
 
 export const decideMutationOutcomeDefinition = (definition: MutationOutcomeDefinition): MutationOutcomeFacts => {
   switch (definition._tag) {
@@ -642,7 +655,7 @@ const decideMutationEventContract = (
       )
 }
 
-export const decideMutationOutcome = (
+const decideMutationOutcomeDataFirst = (
   input: MutationOutcomeInput,
   definition: MutationOutcomeDefinition,
   previous: MutationEvent | undefined,
@@ -720,7 +733,9 @@ export const decideMutationOutcome = (
   })
 }
 
-export const decideCancelFirst = (
+export const decideMutationOutcome = Pipeable.dual(4, decideMutationOutcomeDataFirst)
+
+const decideCancelFirstDataFirst = (
   decision: MutationCancelFirstDecision,
   cancellation: MutationEvent | undefined,
 ): Result.Result<void, MutationStoreError> =>
@@ -730,7 +745,9 @@ export const decideCancelFirst = (
       )
     : Result.succeed(undefined)
 
-export const decideMutationAppend = (
+export const decideCancelFirst = Pipeable.dual(2, decideCancelFirstDataFirst)
+
+const decideMutationAppendDataFirst = (
   storeOperation: MutationStoreError['operation'],
   event: MutationEvent,
   appendedEventIds: readonly string[],
@@ -748,6 +765,8 @@ export const decideMutationAppend = (
         ),
       )
 
+export const decideMutationAppend = Pipeable.dual(4, decideMutationAppendDataFirst)
+
 export const decideSubmitStartWrite = (
   transitionedIntentIds: readonly string[],
 ): Result.Result<void, MutationStoreError> =>
@@ -755,7 +774,7 @@ export const decideSubmitStartWrite = (
     ? Result.succeed(undefined)
     : Result.fail(storeError('begin-submit', 'conflict', 'approved intent transition lost its race'))
 
-export const decideMutationOutcomeWrite = (
+const decideMutationOutcomeWriteDataFirst = (
   storeOperation: OutcomeStoreOperation,
   transitionedIntentIds: readonly string[],
 ): Result.Result<void, MutationStoreError> =>
@@ -763,7 +782,9 @@ export const decideMutationOutcomeWrite = (
     ? Result.succeed(undefined)
     : Result.fail(storeError(storeOperation, 'conflict', 'intent mutation outcome lost its race'))
 
-export const decideSubmitRecoveryWrite = (
+export const decideMutationOutcomeWrite = Pipeable.dual(2, decideMutationOutcomeWriteDataFirst)
+
+const decideSubmitRecoveryWriteDataFirst = (
   storeOperation: OutcomeStoreOperation,
   recoveredIntentIds: readonly string[],
   transition: Extract<MutationIntentTransition, { readonly _tag: 'RecoverSubmit' }>,
@@ -778,7 +799,9 @@ export const decideSubmitRecoveryWrite = (
   return Result.fail(storeError(storeOperation, 'conflict', 'unknown intent recovery lost its race'))
 }
 
-export const decideAcknowledgedRecovery = (
+export const decideSubmitRecoveryWrite = Pipeable.dual(3, decideSubmitRecoveryWriteDataFirst)
+
+const decideAcknowledgedRecoveryDataFirst = (
   storeOperation: OutcomeStoreOperation,
   acknowledged: boolean | undefined,
 ): Result.Result<void, MutationStoreError> =>
@@ -786,7 +809,9 @@ export const decideAcknowledgedRecovery = (
     ? Result.succeed(undefined)
     : Result.fail(storeError(storeOperation, 'conflict', 'submit recovery requires an unresolved durable intent'))
 
-export const decideRecoveredOutcomeWrite = (
+export const decideAcknowledgedRecovery = Pipeable.dual(2, decideAcknowledgedRecoveryDataFirst)
+
+const decideRecoveredOutcomeWriteDataFirst = (
   storeOperation: OutcomeStoreOperation,
   transitionedIntentIds: readonly string[],
   acknowledgedTerminal: boolean,
@@ -803,7 +828,9 @@ export const decideRecoveredOutcomeWrite = (
         ),
       )
 
-export const decideCancelRecoveryState = (
+export const decideRecoveredOutcomeWrite = Pipeable.dual(3, decideRecoveredOutcomeWriteDataFirst)
+
+const decideCancelRecoveryStateDataFirst = (
   storeOperation: OutcomeStoreOperation,
   recoveredIntentIds: readonly string[],
 ): Result.Result<IntentState.Acknowledged | IntentState.Recovered, MutationStoreError> => {
@@ -812,7 +839,9 @@ export const decideCancelRecoveryState = (
   return Result.fail(storeError(storeOperation, 'conflict', 'intent mutation outcome lost its race'))
 }
 
-export const decodeStartInput = (
+export const decideCancelRecoveryState = Pipeable.dual(2, decideCancelRecoveryStateDataFirst)
+
+const decodeStartInputDataFirst = (
   operation: MutationOperation,
   input: unknown,
 ): Result.Result<MutationStartInput, MutationStoreError> =>
@@ -820,7 +849,9 @@ export const decodeStartInput = (
     storeError(startStoreOperationFor(operation), 'decode', 'invalid mutation start', cause),
   )
 
-export const decodeOutcomeInput = (
+export const decodeStartInput = Pipeable.dual(2, decodeStartInputDataFirst)
+
+const decodeOutcomeInputDataFirst = (
   storeOperation: OutcomeStoreOperation,
   input: {
     readonly intentId: string
@@ -842,3 +873,5 @@ export const decodeOutcomeInput = (
     (cause) => storeError(storeOperation, 'decode', 'invalid mutation outcome', cause),
   )
 }
+
+export const decodeOutcomeInput = Pipeable.dual(2, decodeOutcomeInputDataFirst)

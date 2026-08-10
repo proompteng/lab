@@ -5,6 +5,7 @@ import type { SqlError } from 'effect/unstable/sql/SqlError'
 import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
 import { strictParseOptions } from '../schemas'
 import type { InputManifest } from '../types'
+import { Pipeable } from '../pipeable'
 
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const SnapshotReferenceRowSchema = Schema.Struct({
@@ -81,7 +82,7 @@ const manifestHash = (
     }),
   )
 
-export const validateSnapshotReference = (
+const validateSnapshotReferenceDataFirst = (
   inputManifest: InputManifest,
   rows: readonly SnapshotReferenceRow[],
 ): Result.Result<void, SnapshotReferenceIssue> =>
@@ -128,6 +129,8 @@ export const validateSnapshotReference = (
     }
   })
 
+export const validateSnapshotReference = Pipeable.dual(2, validateSnapshotReferenceDataFirst)
+
 const renderFact = (value: unknown): string => {
   if (value === null) return 'null'
   switch (typeof value) {
@@ -159,7 +162,7 @@ export const renderSnapshotReferenceIssue = (issue: SnapshotReferenceIssue): str
   }
 }
 
-export const ensureSnapshotReference = (
+const ensureSnapshotReferenceDataFirst = (
   sql: PgClient.PgClient,
   inputManifest: InputManifest,
 ): Effect.Effect<void, SnapshotReferenceIssue | SqlError | Schema.SchemaError> =>
@@ -218,3 +221,5 @@ export const ensureSnapshotReference = (
     const rows = yield* Effect.fromResult(decodeSnapshotReferenceRows(rawRows))
     yield* Effect.fromResult(validateSnapshotReference(inputManifest, rows))
   })
+
+export const ensureSnapshotReference = Pipeable.dual(2, ensureSnapshotReferenceDataFirst)

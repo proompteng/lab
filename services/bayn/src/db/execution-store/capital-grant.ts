@@ -52,6 +52,7 @@ import {
   type ActivationEvidenceRow,
   type ActivationReconciliationRow,
 } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export interface CapitalGrantInterpreter {
   readonly prepareCapitalGrant: (
@@ -69,7 +70,7 @@ interface ResearchPaperRuntimeBinding {
   readonly configuredSourceGenerationHash: string
 }
 
-export const makeCapitalGrantInterpreter = (
+const makeCapitalGrantInterpreterDataFirst = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   config: ExecutionStoreRuntimeConfig,
@@ -618,3 +619,5 @@ export const makeCapitalGrantInterpreter = (
 
   return { prepareCapitalGrant, activateCapitalGrant, activateResearchCapitalGrant }
 }
+
+export const makeCapitalGrantInterpreter = Pipeable.dual(4, makeCapitalGrantInterpreterDataFirst)

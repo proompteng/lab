@@ -18,6 +18,7 @@ import {
 } from './qualification'
 import type { QualificationStatements } from './qualification-statements'
 import type { EvidenceReferencePrograms } from './reference-programs'
+import { Pipeable } from '../../pipeable'
 
 export interface QualificationPrograms {
   readonly listPriorTrials: EvidenceStoreService['listPriorTrials']
@@ -25,7 +26,7 @@ export interface QualificationPrograms {
   readonly readQualification: EvidenceStoreService['readQualification']
 }
 
-export const makeQualificationPrograms = (
+const makeQualificationProgramsDataFirst = (
   sql: PgClient.PgClient,
   statements: QualificationStatements,
   references: EvidenceReferencePrograms,
@@ -138,3 +139,5 @@ export const makeQualificationPrograms = (
 
   return { listPriorTrials, openQualification, readQualification }
 }
+
+export const makeQualificationPrograms = Pipeable.dual(3, makeQualificationProgramsDataFirst)

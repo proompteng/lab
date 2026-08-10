@@ -18,6 +18,7 @@ import {
   type ValidatedPaperCandidateSnapshot,
 } from './model'
 import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
+import { Pipeable } from '../pipeable'
 
 export const validateIdentity = (
   input: ExecutionCandidateDiscoveryIdentity,
@@ -347,7 +348,7 @@ const assembleBinding = (
   },
 })
 
-export const validateSnapshotForIdentity = (
+const validateSnapshotForIdentityDataFirst = (
   identity: ExecutionCandidateDiscoveryIdentity,
   snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
@@ -411,7 +412,9 @@ export const validateSnapshotForIdentity = (
     ),
   )
 
-export const validateExecutionCandidateDiscoverySnapshot = (
+export const validateSnapshotForIdentity = Pipeable.dual(3, validateSnapshotForIdentityDataFirst)
+
+const validateExecutionCandidateDiscoverySnapshotDataFirst = (
   identity: ExecutionCandidateDiscoveryIdentity,
   snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
@@ -420,3 +423,8 @@ export const validateExecutionCandidateDiscoverySnapshot = (
     validateIdentity(identity),
     Result.flatMap((validatedIdentity) => validateSnapshotForIdentity(validatedIdentity, snapshot, now)),
   )
+
+export const validateExecutionCandidateDiscoverySnapshot = Pipeable.dual(
+  3,
+  validateExecutionCandidateDiscoverySnapshotDataFirst,
+)

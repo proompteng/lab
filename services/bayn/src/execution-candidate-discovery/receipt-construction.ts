@@ -23,6 +23,7 @@ import {
 } from './model'
 import { assetEligibility, normalizedReadEvidence } from './broker-observation-validation'
 import { canonicalHashResult, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
+import { Pipeable } from '../pipeable'
 
 const accountFacts = (account: Account): typeof AccountFactsSchema.Type => ({
   id: account.id,
@@ -183,7 +184,7 @@ const decodeReceipt = (
     ),
   )
 
-export const makeExecutionCandidateDiscoveryReceipt = (
+const makeExecutionCandidateDiscoveryReceiptDataFirst = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
   observations: ValidatedPaperCandidateObservations,
 ): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> => {
@@ -268,3 +269,5 @@ export const makeExecutionCandidateDiscoveryReceipt = (
     ),
   )
 }
+
+export const makeExecutionCandidateDiscoveryReceipt = Pipeable.dual(2, makeExecutionCandidateDiscoveryReceiptDataFirst)

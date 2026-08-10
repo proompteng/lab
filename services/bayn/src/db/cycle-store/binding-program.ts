@@ -28,6 +28,7 @@ import {
 import type { CycleMutationPrimitives } from './mutations'
 import type { CycleQueries } from './queries'
 import { decodeDecisionInput, decodeSnapshotInput } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export interface CycleBindingPrograms {
   readonly bindSnapshot: CycleStoreShape['bindSnapshot']
@@ -104,7 +105,7 @@ const upgradeDecisionDocumentConstraints = (sql: PgClient.PgClient): Effect.Effe
     $migration$
   `.pipe(Effect.asVoid)
 
-export const makeCycleBindingPrograms = (
+const makeCycleBindingProgramsDataFirst = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
@@ -270,3 +271,5 @@ export const makeCycleBindingPrograms = (
 
   return { bindSnapshot, bindDecision }
 }
+
+export const makeCycleBindingPrograms = Pipeable.dual(3, makeCycleBindingProgramsDataFirst)

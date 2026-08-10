@@ -30,6 +30,7 @@ import { IntentStore, type IntentStoreError, type StoredIntent } from './intents
 import { MutationStore, type MutationEvent } from './mutations'
 import { WriterFence } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { Pipeable } from '../pipeable'
 
 export enum ExecutionFailure {
   IntentNotFound = 'INTENT_NOT_FOUND',
@@ -357,12 +358,14 @@ const runCancel = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-export const cancel = (intentId: string, consistencyDelayMs: number) =>
+const cancelDataFirst = (intentId: string, consistencyDelayMs: number) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
     fence: WriterFence,
   }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
+
+export const cancel = Pipeable.dual(2, cancelDataFirst)
 
 const markInterruptedStart = (mutations: MutationStore['Service'], event: MutationEvent, occurredAt: string) =>
   Match.value(decideInterruptedStart(event, occurredAt)).pipe(
@@ -464,8 +467,10 @@ const runRecovery = (services: RecoveryServices, intentId: string, operation: Mu
     ),
   )
 
-export const recover = (intentId: string, operation: MutationOperation) =>
+const recoverDataFirst = (intentId: string, operation: MutationOperation) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerRead,
   }).pipe(Effect.flatMap((services) => runRecovery(services, intentId, operation)))
+
+export const recover = Pipeable.dual(2, recoverDataFirst)

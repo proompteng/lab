@@ -14,6 +14,7 @@ import { databaseError, persistencePlanDatabaseError, type DatabaseError } from 
 import type { EvidenceStatements } from './evidence-statements'
 import type { PersistencePlan } from './persistence-model'
 import { validatePersistenceReceipt, validateProtocolReference } from './persistence-receipt'
+import { Pipeable } from '../../pipeable'
 
 export interface EvidenceReferencePrograms {
   readonly ensureProtocolReference: (input: {
@@ -33,7 +34,7 @@ export interface EvidenceReferencePrograms {
   ) => Effect.Effect<Option.Option<StoredEvidenceRows>, Cause.NoSuchElementError | Schema.SchemaError | SqlError>
 }
 
-export const makeEvidenceReferencePrograms = (
+const makeEvidenceReferenceProgramsDataFirst = (
   sql: PgClient.PgClient,
   statements: EvidenceStatements,
 ): EvidenceReferencePrograms => {
@@ -99,3 +100,5 @@ export const makeEvidenceReferencePrograms = (
 
   return { ensureProtocolReference, ensureSnapshotReference, readReceipt, loadStoredRows }
 }
+
+export const makeEvidenceReferencePrograms = Pipeable.dual(2, makeEvidenceReferenceProgramsDataFirst)

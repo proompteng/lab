@@ -5,6 +5,7 @@ import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../
 import { ReconciliationStoreError } from '../reconciliation'
 import { ExecutionStoreError } from './contract'
 import type { ExecutionStoreDecisionFailure } from './decisions'
+import { Pipeable } from '../../pipeable'
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -21,11 +22,13 @@ export const executionStoreError = (
     cause,
   })
 
-export const failExecutionStore = (
+const failExecutionStoreDataFirst = (
   operation: ExecutionStoreError['operation'],
   failure: ExecutionStoreError['failure'],
   message: string,
 ): Effect.Effect<never, ExecutionStoreError> => Effect.fail(executionStoreError(operation, failure, message))
+
+export const failExecutionStore = Pipeable.dual(3, failExecutionStoreDataFirst)
 
 export const runExecutionOperation = <A, E, R>(
   operation: ExecutionStoreError['operation'],

@@ -45,6 +45,7 @@ import {
   type ReconciliationRiskContext,
 } from '../reconciliation'
 import { strictParseOptions, type IsoDate } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -406,7 +407,7 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
-export const verifyAccountingReceipts = (
+const verifyAccountingReceiptsDataFirst = (
   transactions: readonly AccountingTransaction[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
@@ -448,6 +449,8 @@ export const verifyAccountingReceipts = (
     }
     return { exactReceipts, plans: planned.map(({ plan }) => plan) }
   })
+
+export const verifyAccountingReceipts = Pipeable.dual(3, verifyAccountingReceiptsDataFirst)
 
 export const compareOpeningCash = (input: {
   readonly accountId: string
@@ -520,7 +523,7 @@ export const compareOpeningCash = (input: {
     return { accountingHash: accountingHashValue, comparison }
   })
 
-export const ageDiscrepancies = (
+const ageDiscrepanciesDataFirst = (
   comparison: ReconciliationComparison,
   previous: readonly Discrepancy[],
   reconciledAt: string,
@@ -559,6 +562,8 @@ export const ageDiscrepancies = (
     status: discrepancies.length === 0 ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy,
   })
 }
+
+export const ageDiscrepancies = Pipeable.dual(3, ageDiscrepanciesDataFirst)
 
 export const makeReconciliationIdentity = (input: {
   readonly accountId: string
@@ -617,7 +622,7 @@ export const decideReconciliation = (input: {
     return yield* makeReconciliationIdentity({ ...input, aged })
   })
 
-export const validateReconciliationReadback = (
+const validateReconciliationReadbackDataFirst = (
   reconciliation: Reconciliation,
   storedContentHash: string,
 ): Result.Result<void, ReconciliationAlgebraFailure> =>
@@ -629,6 +634,8 @@ export const validateReconciliationReadback = (
         expectedContentHash: reconciliation.contentHash,
         storedContentHash,
       })
+
+export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
 
 const timestamp = (
   field: 'authority_observed_at' | 'authority_updated_at',
@@ -646,7 +653,7 @@ const riskMaterial = (row: RiskContextRow, unknownMutationCount: number) => ({
   peakEquityMicros: row.peak_equity_micros,
 })
 
-export const riskContextFromRow = (
+const riskContextFromRowDataFirst = (
   row: RiskContextRow,
   unknownMutationCount: number,
 ): Result.Result<ReconciliationRiskContext, ReconciliationAlgebraFailure> =>
@@ -736,6 +743,8 @@ export const riskContextFromRow = (
       authorityObservedAt,
     }
   })
+
+export const riskContextFromRow = Pipeable.dual(2, riskContextFromRowDataFirst)
 
 interface ReconciliationAlgebraFailureDetails {
   readonly failure: 'decode' | 'invariant'

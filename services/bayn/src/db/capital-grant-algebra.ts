@@ -20,6 +20,7 @@ import {
   type ResearchCapitalGrantProofBinding,
 } from '../execution/contracts'
 import type { QualificationLock, QualificationResult } from '../qualification'
+import { Pipeable } from '../pipeable'
 
 export interface AuthorityGenerationHistoryFacts {
   readonly generationHash: string
@@ -334,7 +335,7 @@ export const nextAuthorityVersion = (current: {
       })
 }
 
-export const decideObserveGeneration = (
+const decideObserveGenerationDataFirst = (
   input: ObserveGenerationRequest,
   current: AuthorityState | undefined,
 ): Result.Result<ObserveGenerationDecision, CapitalGrantAlgebraFailure> => {
@@ -368,7 +369,9 @@ export const decideObserveGeneration = (
   )
 }
 
-export const validateAuthorityObservation = (
+export const decideObserveGeneration = Pipeable.dual(2, decideObserveGenerationDataFirst)
+
+const validateAuthorityObservationDataFirst = (
   current: AuthorityState,
   observedAt: Date,
 ): Result.Result<void, CapitalGrantAlgebraFailure> => {
@@ -382,6 +385,8 @@ export const validateAuthorityObservation = (
         observedAt,
       })
 }
+
+export const validateAuthorityObservation = Pipeable.dual(2, validateAuthorityObservationDataFirst)
 
 export const validateCurrentGenerationHistory = <History extends AuthorityGenerationHistoryFacts>(
   current: AuthorityState,
@@ -429,13 +434,15 @@ export const validateCurrentGenerationHistory = <History extends AuthorityGenera
   return Result.succeed(history)
 }
 
-export const requireUnusedAuthorityGeneration = (
+const requireUnusedAuthorityGenerationDataFirst = (
   generationHash: string,
   existing: AuthorityGenerationHistoryFacts | undefined,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
   existing === undefined ? Result.succeed(undefined) : fail({ _tag: 'AuthorityGenerationAlreadyUsed', generationHash })
 
-export const bindPaperGenerationRuntime = (
+export const requireUnusedAuthorityGeneration = Pipeable.dual(2, requireUnusedAuthorityGenerationDataFirst)
+
+const bindPaperGenerationRuntimeDataFirst = (
   facts: PaperGenerationRuntimeFacts,
   expectedMaximum: Authority,
   operation: 'PREPARE' | 'activation',
@@ -461,6 +468,8 @@ export const bindPaperGenerationRuntime = (
   })
 }
 
+export const bindPaperGenerationRuntime = Pipeable.dual(3, bindPaperGenerationRuntimeDataFirst)
+
 export const validatePaperSourceAuthority = (
   current: AuthorityState,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -473,7 +482,7 @@ export const validatePaperSourceAuthority = (
         effective: current.effective,
       })
 
-export const validatePaperPrepareGeneration = (
+const validatePaperPrepareGenerationDataFirst = (
   current: AuthorityState,
   binding: PaperGenerationRuntimeBinding,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -484,6 +493,8 @@ export const validatePaperPrepareGeneration = (
         currentGenerationHash: current.generationHash,
         configuredGenerationHash: binding.configuredGenerationHash,
       })
+
+export const validatePaperPrepareGeneration = Pipeable.dual(2, validatePaperPrepareGenerationDataFirst)
 
 const readQualificationEvidenceVerificationFacts = (
   evidence: PaperGenerationEvidenceFacts,
@@ -541,7 +552,7 @@ const qualificationEvidenceHash = (
     }),
   )
 
-export const validatePaperGenerationEvidence = (
+const validatePaperGenerationEvidenceDataFirst = (
   evidence: PaperGenerationEvidenceFacts | undefined,
   binding: PaperGenerationRuntimeBinding,
   build: AuthorityBuildFacts,
@@ -613,7 +624,9 @@ export const validatePaperGenerationEvidence = (
   })
 }
 
-export const validateLatestExactReconciliation = (
+export const validatePaperGenerationEvidence = Pipeable.dual(3, validatePaperGenerationEvidenceDataFirst)
+
+const validateLatestExactReconciliationDataFirst = (
   reconciliation: ExactReconciliationFacts | undefined,
   accountId: string,
 ): Result.Result<ExactReconciliationFacts, CapitalGrantAlgebraFailure> => {
@@ -633,7 +646,9 @@ export const validateLatestExactReconciliation = (
   return Result.succeed(reconciliation)
 }
 
-export const validateMutationCoverage = (
+export const validateLatestExactReconciliation = Pipeable.dual(2, validateLatestExactReconciliationDataFirst)
+
+const validateMutationCoverageDataFirst = (
   baseline: MutationBaselineFacts,
   reconciliation: ExactReconciliationFacts,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -646,6 +661,8 @@ export const validateMutationCoverage = (
         latestMutationAt: baseline.latestMutationAt,
         reconciledAt: reconciliation.reconciledAt,
       })
+
+export const validateMutationCoverage = Pipeable.dual(2, validateMutationCoverageDataFirst)
 
 const readCapitalGrantGenerationMaterial = (input: {
   readonly current: AuthorityState
@@ -783,7 +800,7 @@ export const deriveResearchCapitalGrantGeneration = (input: {
     Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
   )
 
-export const validateResearchPaperGenerationReplay = (
+const validateResearchPaperGenerationReplayDataFirst = (
   stored: ResearchCapitalGrantGeneration,
   proof: ResearchCapitalGrantProofBinding,
   expectedPreviousGenerationHash: string,
@@ -809,7 +826,9 @@ export const validateResearchPaperGenerationReplay = (
         expectedPreviousGenerationHash,
       })
 
-export const validatePaperGenerationFreshness = (
+export const validateResearchPaperGenerationReplay = Pipeable.dual(3, validateResearchPaperGenerationReplayDataFirst)
+
+const validatePaperGenerationFreshnessDataFirst = (
   reconciliation: ExactReconciliationFacts,
   observedAt: Date,
   staleThresholdMs: number,
@@ -824,7 +843,9 @@ export const validatePaperGenerationFreshness = (
         staleThresholdMs,
       })
 
-export const decidePaperActivation = (
+export const validatePaperGenerationFreshness = Pipeable.dual(3, validatePaperGenerationFreshnessDataFirst)
+
+const decidePaperActivationDataFirst = (
   current: AuthorityState,
   binding: Pick<PaperGenerationRuntimeBinding, 'configuredGenerationHash'>,
 ): Result.Result<PaperActivationDecision, CapitalGrantAlgebraFailure> => {
@@ -847,7 +868,9 @@ export const decidePaperActivation = (
       })
 }
 
-export const validatePaperGenerationReplay = (
+export const decidePaperActivation = Pipeable.dual(2, decidePaperActivationDataFirst)
+
+const validatePaperGenerationReplayDataFirst = (
   stored: CapitalGrantGeneration,
   binding: PaperGenerationRuntimeBinding,
   proof: CapitalGrantProofBinding,
@@ -870,7 +893,9 @@ export const validatePaperGenerationReplay = (
         qualificationRunId: binding.qualificationRunId,
       })
 
-export const validateDerivedPaperGeneration = (
+export const validatePaperGenerationReplay = Pipeable.dual(4, validatePaperGenerationReplayDataFirst)
+
+const validateDerivedPaperGenerationDataFirst = (
   generation: CapitalGrantGeneration,
   binding: PaperGenerationRuntimeBinding,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -881,6 +906,8 @@ export const validateDerivedPaperGeneration = (
         derivedGenerationHash: generation.generationHash,
         configuredGenerationHash: binding.configuredGenerationHash,
       })
+
+export const validateDerivedPaperGeneration = Pipeable.dual(2, validateDerivedPaperGenerationDataFirst)
 
 export const paperActivationEffectiveAuthority = (kill: KillState): Authority =>
   kill === KillState.Active ? Authority.Observe : Authority.Paper
