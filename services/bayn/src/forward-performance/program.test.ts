@@ -116,7 +116,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
               firstObservedAt: '2026-07-20T21:01:00.000Z',
               lastObservedAt: '2026-07-20T21:01:00.000Z',
             },
-            ...(fixture.extraReconciliationDiscrepancy
+            ...(fixture.extraReconciliationDiscrepancy === true
               ? [
                   {
                     discrepancyId: hash('2'),

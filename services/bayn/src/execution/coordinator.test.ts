@@ -1514,7 +1514,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         })
       }
       const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-      if (options.notFoundOnce && lookupCalls === 1) {
+      if (options.notFoundOnce === true && lookupCalls === 1) {
         return yield* new BrokerReadError({
           operation: 'order-by-client-id',
           kind: BrokerReadErrorKind.NotFound,
@@ -1555,10 +1555,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
-      if (options.crashAfterSubmit) return Effect.die(new Error('injected crash after send'))
+      if (options.crashAfterSubmit === true) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
       const hash = canonicalHashV1(encodedRequest(submitted))
-      if (options.unknownSubmit) {
+      if (options.unknownSubmit === true) {
         return Effect.fail(
           new BrokerMutationError({
             operation: MutationOperation.Submit,
@@ -1580,7 +1580,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const fenceCheck = Effect.suspend(() => {
-    if (!options.lostFence && !(options.lostFenceAfterSubmit && latest.has(MutationOperation.Submit))) {
+    if (
+      options.lostFence !== true &&
+      !(options.lostFenceAfterSubmit === true && latest.has(MutationOperation.Submit))
+    ) {
       return Effect.void
     }
     return Effect.fail(

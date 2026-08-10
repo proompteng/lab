@@ -156,30 +156,28 @@ const producerRows = {
 const makeFixture = (): {
   readonly rows: SnapshotRows
   readonly request: SnapshotRequest
-} => {
-  return {
-    rows: producerRows,
-    request: {
-      snapshotId,
-      publicationAsOf: '2025-01-03',
-      calendarVersion: 'alpaca-us-equity-calendar-v1',
-      universeId: 'cross-asset-taa-v1',
-      universeSymbolHash,
-      universe: symbols,
-      historyStart: '2025-01-02',
+} => ({
+  rows: producerRows,
+  request: {
+    snapshotId,
+    publicationAsOf: '2025-01-03',
+    calendarVersion: 'alpaca-us-equity-calendar-v1',
+    universeId: 'cross-asset-taa-v1',
+    universeSymbolHash,
+    universe: symbols,
+    historyStart: '2025-01-02',
+    evaluationStart: '2025-01-03',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2025-01-02',
+      dataEnd: '2025-01-03',
+      lookbackStart: '2025-01-02',
       evaluationStart: '2025-01-03',
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: '2025-01-02',
-        dataEnd: '2025-01-03',
-        lookbackStart: '2025-01-02',
-        evaluationStart: '2025-01-03',
-        evaluationEnd: '2025-01-03',
-      },
-      observedAt: '2025-01-04T02:00:00.000Z',
+      evaluationEnd: '2025-01-03',
     },
-  }
-}
+    observedAt: '2025-01-04T02:00:00.000Z',
+  },
+})
 
 const makePublicationRevision = (
   fixture: ReturnType<typeof makeFixture>,
@@ -1047,7 +1045,7 @@ describe('finalized Signal snapshot reader', () => {
           signalSessionDate: '2025-01-03',
           signalCalendarVersion: fixture.request.calendarVersion,
         })
-      }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer()))),
     )
 
     expect(result.bars).toHaveLength(fixture.rows.bars.length)

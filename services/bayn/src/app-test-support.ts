@@ -22,6 +22,7 @@ import type { RuntimeState } from './runtime-state'
 import { makeRiskBalancedTrendApplication } from './strategy'
 import { prepareRiskBalancedTrendQualificationLock } from './strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { Pipeable } from './pipeable'
 
 export const provenance = makeTestProvenance()
 export const historicalRunId = '9'.repeat(64)
@@ -113,7 +114,7 @@ export const successfulJournal: JournalService = {
     }),
 }
 
-export const marketDataService = (
+const marketDataServiceDataFirst = (
   load: MarketDataService['load'],
   inspectedSnapshot = makeSnapshot(),
 ): MarketDataService => ({
@@ -319,14 +320,19 @@ export const pinnedStore = (): EvidenceStoreService => ({
     }),
 })
 
-export const fetchJson = async (port: number, path: string, method = 'GET') => {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { method })
-  return {
-    status: response.status,
-    allow: response.headers.get('allow'),
-    body: (await response.json()) as Record<string, unknown>,
-  }
-}
+export const marketDataService = Pipeable.by<
+  (inspectedSnapshot: ReturnType<typeof makeSnapshot>) => (load: MarketDataService['load']) => MarketDataService,
+  typeof marketDataServiceDataFirst
+>(
+  (arguments_) =>
+    !(
+      typeof arguments_[0] === 'object' &&
+      arguments_[0] !== null &&
+      'bars' in arguments_[0] &&
+      'manifest' in arguments_[0]
+    ),
+  marketDataServiceDataFirst,
+)
 
 export const readyState = (): RuntimeState => {
   const evaluation = fixtureEvaluation

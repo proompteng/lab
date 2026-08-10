@@ -4,21 +4,21 @@ import { Effect, Fiber, Option, Result, Schema, Semaphore } from 'effect'
 
 describe('Effect beta.102 runtime compatibility', () => {
   test('keeps deeply nested JSON validation stack safe', () => {
-    let nested: unknown = null
+    let nested: Schema.Json = null
     for (let index = 0; index < 25_000; index += 1) nested = [nested]
 
-    expect(Result.isSuccess(Schema.decodeUnknownResult(Schema.Json)(nested))).toBe(true)
+    expect(Result.isSuccess(Schema.decodeResult(Schema.Json)(nested))).toBe(true)
   })
 
   test('decodes and encodes valid dates while rejecting invalid dates', () => {
     const date = new Date('2026-07-27T12:34:56.789Z')
 
-    expect(Schema.decodeUnknownResult(Schema.Date)(date)).toEqual(Result.succeed(date))
+    expect(Schema.decodeResult(Schema.Date)(date)).toEqual(Result.succeed(date))
     expect(Schema.encodeUnknownResult(Schema.Date)(date)).toEqual(Result.succeed(date))
-    expect(Result.isFailure(Schema.decodeUnknownResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
-    expect(Result.isFailure(Schema.encodeUnknownResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
-    expect(Result.isFailure(Schema.decodeUnknownResult(Schema.DateFromString)('not-a-date'))).toBe(true)
-    expect(Result.isFailure(Schema.decodeUnknownResult(Schema.DateFromMillis)(8_640_000_000_000_001))).toBe(true)
+    expect(Result.isFailure(Schema.decodeResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
+    expect(Result.isFailure(Schema.encodeResult(Schema.Date)(new Date(Number.NaN)))).toBe(true)
+    expect(Result.isFailure(Schema.decodeResult(Schema.DateFromString)('not-a-date'))).toBe(true)
+    expect(Result.isFailure(Schema.decodeResult(Schema.DateFromMillis)(8_640_000_000_000_001))).toBe(true)
   })
 
   test('recovers permits after interrupted semaphore waiters', async () => {

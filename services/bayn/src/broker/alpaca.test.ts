@@ -1502,8 +1502,7 @@ describe('Alpaca paper reads', () => {
 
     const services = await Effect.runPromise(
       Effect.all({ session: BrokerSession, read: BrokerRead }).pipe(
-        Effect.provide(testLayer),
-        Effect.provide(TestClock.layer()),
+        Effect.provide(Layer.merge(testLayer, TestClock.layer())),
       ),
     )
 

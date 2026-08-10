@@ -771,8 +771,8 @@ const mutationPaperActivation = () =>
     mutationReconciliationId,
     mutationReconciliationContentHash,
   )
-const planForGeneration = (input: IntentPlan, generationHash: string) => {
-  return planPaperIntent(input, {
+const planForGeneration = (input: IntentPlan, generationHash: string) =>
+  planPaperIntent(input, {
     authority: {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash,
@@ -783,7 +783,6 @@ const planForGeneration = (input: IntentPlan, generationHash: string) => {
       updatedAt: '2026-07-22T10:00:00.000Z',
     },
   })
-}
 const plan = (input: IntentPlan) => planForGeneration(input, mutationPaperActivation().generationHash)
 
 const proofBinding = (activation: CapitalGrantGeneration) => ({
@@ -2309,29 +2308,33 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             ),
             { startImmediately: true },
           )
-          const mutationPid = yield* Effect.gen(function* () {
-            type WaitingMutation = { pid: number; query: string }
-            let activities: readonly WaitingMutation[] = []
-            for (let attempt = 0; attempt < 200; attempt += 1) {
-              activities = yield* Effect.promise(() =>
-                runtime.runPromise(
-                  Effect.gen(function* () {
-                    const sql = yield* PgClient.PgClient
-                    return yield* sql<WaitingMutation>`
+          type WaitingMutation = { pid: number; query: string }
+          let activities: readonly WaitingMutation[] = []
+          let mutationPid: number | undefined
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            activities = yield* Effect.promise(() =>
+              runtime.runPromise(
+                Effect.gen(function* () {
+                  const sql = yield* PgClient.PgClient
+                  return yield* sql<WaitingMutation>`
                       SELECT pid::integer, query
                       FROM pg_stat_activity
                       WHERE pid = ${backendPid}
                         AND datname = current_database()
                         AND wait_event_type = 'Lock'
                     `
-                  }),
-                ),
-              )
-              if (activities[0] !== undefined) return activities[0].pid
-              yield* Effect.sleep(Duration.millis(10))
+                }),
+              ),
+            )
+            if (activities[0] !== undefined) {
+              mutationPid = activities[0].pid
+              break
             }
+            yield* Effect.sleep(Duration.millis(10))
+          }
+          if (mutationPid === undefined) {
             return yield* Effect.fail(`mutation did not wait on the table lock: ${JSON.stringify(activities)}`)
-          })
+          }
           const terminated = yield* Effect.promise(() =>
             runtime.runPromise(
               Effect.gen(function* () {
@@ -4356,20 +4359,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             `),
             { startImmediately: true },
           )
-          const lockWait = yield* Effect.gen(function* () {
-            type LockActivity = {
-              query: string
-              started_before_expiry: boolean
-              state: string
-              wait_event_type: string | null
-            }
-            let activities: readonly LockActivity[] = []
-            for (let attempt = 0; attempt < 200; attempt += 1) {
-              activities = yield* Effect.promise(() =>
-                observerRuntime.runPromise(
-                  Effect.gen(function* () {
-                    const observerSql = yield* PgClient.PgClient
-                    return yield* observerSql<LockActivity>`
+          type LockActivity = {
+            query: string
+            started_before_expiry: boolean
+            state: string
+            wait_event_type: string | null
+          }
+          let activities: readonly LockActivity[] = []
+          let lockWait: { readonly waiting: true; readonly started_before_expiry: boolean } | undefined
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            activities = yield* Effect.promise(() =>
+              observerRuntime.runPromise(
+                Effect.gen(function* () {
+                  const observerSql = yield* PgClient.PgClient
+                  return yield* observerSql<LockActivity>`
                       SELECT
                         activity.query,
                         activity.state,
@@ -4380,19 +4383,21 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                         AND activity.usename = current_user
                         AND activity.datname = current_database()
                     `
-                  }),
-                ),
-              )
-              const observed = activities.find(
-                (row) => row.wait_event_type === 'Lock' && row.query.toUpperCase().includes('UPDATE INTENTS'),
-              )
-              if (observed !== undefined) {
-                return { waiting: true, started_before_expiry: observed.started_before_expiry }
-              }
-              yield* Effect.sleep(Duration.millis(10))
+                }),
+              ),
+            )
+            const observed = activities.find(
+              (row) => row.wait_event_type === 'Lock' && row.query.toUpperCase().includes('UPDATE INTENTS'),
+            )
+            if (observed !== undefined) {
+              lockWait = { waiting: true, started_before_expiry: observed.started_before_expiry }
+              break
             }
+            yield* Effect.sleep(Duration.millis(10))
+          }
+          if (lockWait === undefined) {
             return yield* Effect.fail(`update is not waiting on the lock: ${JSON.stringify(activities)}`)
-          })
+          }
           yield* Effect.promise(() =>
             observerRuntime.runPromise(
               Effect.gen(function* () {

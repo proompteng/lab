@@ -138,10 +138,9 @@ describe('qualification lock', () => {
     ).toBe(true)
 
     const lock = successOf(makeQualificationLock(material))
-    expect(() =>
-      Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, universeId: 'equity-infrastructure-v1' }),
-    ).toThrow()
-    expect(() => Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
+    const invalidUniverseLock: unknown = { ...lock, universeId: 'equity-infrastructure-v1' }
+    expect(() => Schema.decodeUnknownSync(QualificationLockSchema)(invalidUniverseLock)).toThrow()
+    expect(() => Schema.decodeSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
   })
 })
 

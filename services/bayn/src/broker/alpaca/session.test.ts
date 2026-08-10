@@ -136,7 +136,7 @@ describe('Alpaca broker session acquisition retry', () => {
         expect(accountRequests).toBe(2)
         yield* TestClock.adjust(1_000)
         return yield* Fiber.join(fiber)
-      }).pipe(Effect.provide(Logger.layer([logger])), Effect.provide(TestClock.layer())),
+      }).pipe(Effect.provide(Layer.merge(Logger.layer([logger]), TestClock.layer()))),
     )
 
     expect(services.session.read).toBe(services.read)

@@ -164,7 +164,7 @@ const request = (port: number, path: string, method = 'GET') =>
     try: async (signal) => {
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal })
       const contentType = response.headers.get('content-type')
-      const body = contentType?.includes('application/json') ? await response.json() : await response.text()
+      const body = contentType?.includes('application/json') === true ? await response.json() : await response.text()
       return {
         status: response.status,
         allow: response.headers.get('allow'),
