@@ -930,7 +930,7 @@ export const prepareOrRecoverResearchPaperActivation = (
         paperActivationOperationalError('research PAPER durable authority does not match this episode', cause),
       ),
     )
-    if (buildContinuation !== null && decision._tag !== 'Resume') {
+    if (buildContinuation !== null && decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
       return yield* paperActivationOperationalError(
         'research PAPER build continuation requires the exact active generation',
       )
@@ -957,20 +957,27 @@ export const prepareOrRecoverResearchPaperActivation = (
         )
       }
     }
-    if (decision._tag !== 'Resume') {
+    if (decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
       yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
       return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle)
     }
     const generation =
       currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
     if (buildContinuation !== null) {
-      yield* Effect.logInfo('Bayn PAPER build continuation resumed the active generation').pipe(
+      const restricted = decision._tag === 'ResumeRestricted'
+      yield* Effect.logInfo(
+        restricted
+          ? 'Bayn PAPER build continuation resumed a restricted active generation for recovery'
+          : 'Bayn PAPER build continuation resumed the active generation',
+      ).pipe(
         Effect.annotateLogs({
           service: 'bayn',
+          activationMode: restricted ? 'RECOVERY_ONLY' : 'ACTIVE',
           continuationHash: buildContinuation.continuationHash,
           generationHash: generation.generationHash,
           sourceRevision: plan.config.build.sourceRevision,
           imageDigest: plan.config.build.imageDigest,
+          ...(restricted ? { authorityReason: authority.reason ?? 'unknown' } : {}),
         }),
       )
     }

@@ -168,6 +168,17 @@ describe('paper episode decisions', () => {
     expect(
       decidePaperEpisodeAuthority({
         ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decidePaperEpisodeAuthority({
+        ...common,
         generationHash: 'c'.repeat(64),
         maximum: 'PAPER',
         effective: 'PAPER',

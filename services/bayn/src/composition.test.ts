@@ -409,6 +409,46 @@ describe('Bayn PAPER startup recovery boundary', () => {
       message: ['Bayn PAPER build continuation resumed the active generation'],
       annotations: {
         service: 'bayn',
+        activationMode: 'ACTIVE',
+        continuationHash: researchBuildContinuation.continuationHash,
+        generationHash: continuationGeneration.generationHash,
+        sourceRevision: continuationBuild.sourceRevision,
+        imageDigest: continuationBuild.imageDigest,
+      },
+    })
+  })
+
+  test('resumes an exact failure-restricted generation for recovery without rearming or activating', async () => {
+    const authorityReason =
+      'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_MISSED_SUBMISSION_DEADLINE'
+    const authority: AuthorityState = {
+      ...continuationAuthority,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: authorityReason,
+    }
+    const logs: Array<{ readonly message: unknown; readonly annotations: Record<string, unknown> }> = []
+    const logger = Logger.make<unknown, void>((entry) => {
+      logs.push({
+        message: entry.message,
+        annotations: { ...entry.fiber.getRef(References.CurrentLogAnnotations) },
+      })
+    })
+
+    const generation = await Effect.runPromise(
+      resumeBuildContinuation(
+        researchBuildContinuation,
+        continuationAuthorityStore(continuationGeneration, authority),
+      ).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+
+    expect(generation).toEqual(continuationGeneration)
+    expect(logs).toContainEqual({
+      message: ['Bayn PAPER build continuation resumed a restricted active generation for recovery'],
+      annotations: {
+        service: 'bayn',
+        activationMode: 'RECOVERY_ONLY',
+        authorityReason,
         continuationHash: researchBuildContinuation.continuationHash,
         generationHash: continuationGeneration.generationHash,
         sourceRevision: continuationBuild.sourceRevision,
