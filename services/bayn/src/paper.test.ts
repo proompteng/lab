@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Result } from 'effect'
+import { Effect, Exit, Result, Schema } from 'effect'
 
 import {
   AccountStatus,
@@ -46,7 +46,7 @@ const i128Max = '170141183460469231731687303715884105727'
 const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGenerationResult>[0]) =>
   Result.getOrThrow(makeCapitalGrantGenerationResult(input))
 
-const expectFailure = async (effect: Effect.Effect<unknown, unknown>): Promise<void> => {
+const expectFailure = async <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   expect(Exit.isFailure(await Effect.runPromiseExit(effect))).toBe(true)
 }
 
@@ -157,7 +157,7 @@ const intent = {
 describe('paper contracts', () => {
   test('strictly decodes every broker payload and tagged event', async () => {
     const contracts: ReadonlyArray<{
-      decode: (value: unknown) => Effect.Effect<unknown, unknown>
+      decode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>
       value: Record<string, unknown>
     }> = [
       { decode: decodeAccountSnapshot, value: account },

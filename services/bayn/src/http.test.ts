@@ -2,7 +2,7 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Schema } from 'effect'
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
@@ -124,9 +124,13 @@ interface TestServer {
   readonly state: Ref.Ref<RuntimeState>
 }
 
-const withHttpServer = (
+class TestHttpRequestError extends Data.TaggedError('TestHttpRequestError')<{
+  readonly cause: unknown
+}> {}
+
+const withHttpServer = <E>(
   options: TestServerOptions,
-  use: (server: TestServer) => Effect.Effect<void, unknown>,
+  use: (server: TestServer) => Effect.Effect<void, E>,
 ): Promise<void> => {
   const serverConfig = {
     cycleStallThresholdMs: config.cycleStallThresholdMs,
@@ -173,7 +177,7 @@ const request = (port: number, path: string, method = 'GET') =>
         body,
       }
     },
-    catch: (cause) => cause,
+    catch: (cause) => new TestHttpRequestError({ cause }),
   })
 
 const connectSocket = (port: number): Effect.Effect<Socket> =>

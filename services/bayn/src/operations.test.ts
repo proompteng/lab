@@ -126,7 +126,7 @@ describe('Bayn SQL dependency acquisition', () => {
   })
 
   test('keeps unverified and non-PostgreSQL unknown connect errors terminal', async () => {
-    const countAttempts = (failure: unknown) => {
+    const countAttempts = <E>(failure: E) => {
       let attempts = 0
       return Effect.scoped(
         Effect.gen(function* () {

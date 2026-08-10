@@ -14,7 +14,7 @@ import {
 } from './contracts'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
-const expectFailure = async (effect: Effect.Effect<unknown, unknown>): Promise<void> => {
+const expectFailure = async <A, E>(effect: Effect.Effect<A, E>): Promise<void> => {
   expect(Exit.isFailure(await Effect.runPromiseExit(effect))).toBe(true)
 }
 
