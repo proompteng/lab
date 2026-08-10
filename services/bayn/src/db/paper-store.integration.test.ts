@@ -31,6 +31,7 @@ import {
   type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../execution/contracts'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 import {
   defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
@@ -90,7 +91,7 @@ const ExecutionStore = Effect.gen(function* () {
   }
 })
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const accountId = 'paper-account-1'

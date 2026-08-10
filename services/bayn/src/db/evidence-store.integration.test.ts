@@ -103,6 +103,7 @@ import {
   ValuationStore,
 } from './execution-store'
 import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './live-capital-grant'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 
 const ExecutionStore = Effect.gen(function* () {
   const events = yield* BrokerEventStore
@@ -123,7 +124,7 @@ const ExecutionStore = Effect.gen(function* () {
   }
 })
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'

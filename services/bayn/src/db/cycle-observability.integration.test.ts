@@ -22,8 +22,9 @@ import { CycleStore, CycleStoreLive } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const qualificationRunId = 'a'.repeat(64)

@@ -78,6 +78,7 @@ import {
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
+import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
 import {
   DataFeed,
   DataSource,
@@ -93,7 +94,7 @@ import { PostgresClientLive } from '../evidence-store'
 import { migrationLoader } from '../migrations'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -144,7 +145,7 @@ interface PostgresProcessRestartEvidence {
 }
 
 const restartGithubPostgres18Process = async (): Promise<PostgresProcessRestartEvidence | undefined> => {
-  if (process.env['GITHUB_ACTIONS'] !== 'true') return undefined
+  if (!isGithubActions) return undefined
 
   const url = new URL(testUrl)
   const port = url.port.length === 0 ? '5432' : url.port
@@ -4570,7 +4571,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       await firstRuntime.dispose()
 
       const processRestart = await restartGithubPostgres18Process()
-      if (process.env['GITHUB_ACTIONS'] === 'true') {
+      if (isGithubActions) {
         expect(processRestart).toMatchObject({
           containerId: expect.any(String),
           image: expect.stringMatching(/^postgres:18(?:-|$)/),

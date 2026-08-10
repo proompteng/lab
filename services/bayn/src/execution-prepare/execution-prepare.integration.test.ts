@@ -31,6 +31,7 @@ import {
   type QualificationSeries,
 } from '../qualification-statistics'
 import { fixtureProtocol } from '../test-fixtures'
+import { baynTestPostgresUrl } from '../test-environment.test-support'
 import type { ExecutionPrepareProofPlanRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { ExecutionPrepareStoreLive } from './live'
 import { prepareExecution } from './program'
@@ -38,7 +39,7 @@ import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
 
 type ExecutionPrepareRequest = ExecutionPrepareProofPlanRequest
 
-const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
+const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const accountId = 'execution-prepare-account'
