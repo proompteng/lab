@@ -6,6 +6,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
+  Data,
   Deferred,
   Duration,
   Effect,
@@ -117,6 +118,8 @@ import {
 } from './execution-store'
 import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './live-capital-grant'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+
+class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
 
 const ExecutionStore = Effect.gen(function* () {
   const events = yield* BrokerEventStore
@@ -6279,7 +6282,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `.pipe(
           Effect.timeoutOrElse({
             duration: '2 seconds',
-            orElse: () => Effect.fail(new Error('PostgreSQL pool did not recover')),
+            orElse: () => Effect.fail(new TestFailure({ message: 'PostgreSQL pool did not recover' })),
           }),
         )
       }),

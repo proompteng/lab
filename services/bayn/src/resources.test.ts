@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -27,6 +27,8 @@ import {
   validateResolvedReplicaEndpoint,
   type ReplicaAddressValidationError,
 } from './tigerbeetle-client'
+
+class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
 
 const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: StrategyRuntime) =>
   Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore }).pipe(
@@ -496,7 +498,7 @@ describe('Bayn resource lifecycle', () => {
           yield* journal.checkRun({ runId: 'a'.repeat(64), accountCount: 0, transferCount: 0, exact: true }).pipe(
             Effect.timeoutOrElse({
               duration: 250,
-              orElse: () => Effect.fail(new Error('paired TigerBeetle queries were serialized')),
+              orElse: () => Effect.fail(new TestFailure({ message: 'paired TigerBeetle queries were serialized' })),
             }),
           )
         }).pipe(
