@@ -297,7 +297,12 @@ const decodeTargetPlanSemanticResult = Schema.decodeUnknownResult(TargetPlanResu
 export const decodeTargetPlanResult = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> =>
   Result.flatMap(
     Result.mapError(decodeTargetPlanSemanticResult(input), (cause) =>
-      decodePlannerOutputFailure('contract', 'target-plan output failed its durable contract', {}, cause),
+      decodePlannerOutputFailure({
+        reason: 'contract',
+        message: 'target-plan output failed its durable contract',
+        facts: {},
+        cause,
+      }),
     ),
     (decoded) => {
       const { outputHash, ...material } = decoded
@@ -305,24 +310,28 @@ export const decodeTargetPlanResult = (input: unknown): Result.Result<TargetPlan
         pipe(
           canonicalHashV1Result(material),
           Result.mapError((cause) =>
-            canonicalizePlannerOutputFailure(
-              'hash',
-              'target-plan output material is not canonicalizable',
-              { inputHash: decoded.inputHash, path: ['outputHash'], status: decoded.status },
+            canonicalizePlannerOutputFailure({
+              reason: 'hash',
+              message: 'target-plan output material is not canonicalizable',
+              facts: { inputHash: decoded.inputHash, path: ['outputHash'], status: decoded.status },
               cause,
-            ),
+            }),
           ),
         ),
         (expectedHash) =>
           expectedHash === outputHash
             ? Result.succeed(decoded)
             : Result.fail(
-                decodePlannerOutputFailure('hash', 'target-plan output hash does not match its canonical material', {
-                  expectedHash,
-                  inputHash: decoded.inputHash,
-                  observedHash: outputHash,
-                  path: ['outputHash'],
-                  status: decoded.status,
+                decodePlannerOutputFailure({
+                  reason: 'hash',
+                  message: 'target-plan output hash does not match its canonical material',
+                  facts: {
+                    expectedHash,
+                    inputHash: decoded.inputHash,
+                    observedHash: outputHash,
+                    path: ['outputHash'],
+                    status: decoded.status,
+                  },
                 }),
               ),
       )

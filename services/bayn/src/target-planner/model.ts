@@ -186,48 +186,34 @@ type TargetPlannerReasonFor<Operation extends TargetPlannerIssue['operation']> =
   { readonly operation: Operation }
 >['reason']
 
+interface TargetPlannerFailureInput<Operation extends TargetPlannerIssue['operation']> {
+  readonly reason: TargetPlannerReasonFor<Operation>
+  readonly message: string
+  readonly facts?: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
+
 const failure = <Operation extends TargetPlannerIssue['operation']>(
   operation: Operation,
-  reason: TargetPlannerReasonFor<Operation>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => new TargetPlannerFailureClass({ operation, reason, message, facts, cause } as never)
+  input: TargetPlannerFailureInput<Operation>,
+): TargetPlannerFailure => new TargetPlannerFailureClass({ operation, ...input, facts: input.facts ?? {} } as never)
 
 export const canonicalizePlannerInputFailure = (
-  reason: TargetPlannerReasonFor<'canonicalize-input'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => failure('canonicalize-input', reason, message, facts, cause)
+  input: TargetPlannerFailureInput<'canonicalize-input'>,
+): TargetPlannerFailure => failure('canonicalize-input', input)
 
 export const canonicalizePlannerOutputFailure = (
-  reason: TargetPlannerReasonFor<'canonicalize-output'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => failure('canonicalize-output', reason, message, facts, cause)
+  input: TargetPlannerFailureInput<'canonicalize-output'>,
+): TargetPlannerFailure => failure('canonicalize-output', input)
 
-export const decodePlannerInputFailure = (
-  reason: TargetPlannerReasonFor<'decode-input'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => failure('decode-input', reason, message, facts, cause)
+export const decodePlannerInputFailure = (input: TargetPlannerFailureInput<'decode-input'>): TargetPlannerFailure =>
+  failure('decode-input', input)
 
-export const decodePlannerOutputFailure = (
-  reason: TargetPlannerReasonFor<'decode-output'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => failure('decode-output', reason, message, facts, cause)
+export const decodePlannerOutputFailure = (input: TargetPlannerFailureInput<'decode-output'>): TargetPlannerFailure =>
+  failure('decode-output', input)
 
-export const deriveTargetsFailure = (
-  reason: TargetPlannerReasonFor<'derive-targets'>,
-  message: string,
-  facts: Readonly<Record<string, unknown>> = {},
-  cause?: unknown,
-): TargetPlannerFailure => failure('derive-targets', reason, message, facts, cause)
+export const deriveTargetsFailure = (input: TargetPlannerFailureInput<'derive-targets'>): TargetPlannerFailure =>
+  failure('derive-targets', input)
 
 export const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,

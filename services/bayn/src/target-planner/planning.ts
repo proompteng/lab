@@ -148,12 +148,12 @@ export const finalizeTargetPlan = (material: OutputMaterial): Result.Result<Targ
     pipe(
       canonicalHashV1Result(material),
       Result.mapError((cause) =>
-        canonicalizePlannerOutputFailure(
-          'hash',
-          'target-plan output material is not canonicalizable',
-          { inputHash: material.inputHash, status: material.status },
+        canonicalizePlannerOutputFailure({
+          reason: 'hash',
+          message: 'target-plan output material is not canonicalizable',
+          facts: { inputHash: material.inputHash, status: material.status },
           cause,
-        ),
+        }),
       ),
     ),
     (outputHash) => decodeTargetPlanResult({ ...material, outputHash }),

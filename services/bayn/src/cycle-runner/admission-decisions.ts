@@ -117,22 +117,37 @@ export const selectCycleCalendarCandidate = Pipeable.generic<
 >(5, selectCycleCalendarCandidateDataFirst)
 
 export const publicationFailureError = (cause: CyclePublicationFailure): CycleRunnerError =>
-  runnerError('inspect-publication', 'contract', 'bounded cycle publication discovery is invalid', cause)
+  runnerError({
+    operation: 'inspect-publication',
+    failure: 'contract',
+    message: 'bounded cycle publication discovery is invalid',
+    cause,
+  })
 
 export const calendarQueryFailureError = (cause: CycleCalendarQueryFailure): CycleRunnerError =>
-  runnerError('market-calendar', 'contract', 'cycle calendar query construction failed', cause)
+  runnerError({
+    operation: 'market-calendar',
+    failure: 'contract',
+    message: 'cycle calendar query construction failed',
+    cause,
+  })
 
 export const calendarCandidateFailureError = (cause: CycleCalendarCandidateFailure): CycleRunnerError => {
   switch (cause._tag) {
     case 'CycleExecutionSessionUnavailable':
-      return runnerError(
-        'select-session',
-        'calendar-unavailable',
-        `broker calendar has no trading session after ${cause.signalSessionDate}`,
+      return runnerError({
+        operation: 'select-session',
+        failure: 'calendar-unavailable',
+        message: `broker calendar has no trading session after ${cause.signalSessionDate}`,
         cause,
-      )
+      })
     case 'CycleDraftConstructionFailed':
-      return runnerError('build-cycle', 'contract', 'autonomous cycle draft construction failed', cause)
+      return runnerError({
+        operation: 'build-cycle',
+        failure: 'contract',
+        message: 'autonomous cycle draft construction failed',
+        cause,
+      })
   }
 }
 
@@ -155,11 +170,11 @@ export const selectDiscoveredPublications = (
   const [firstPublication, ...remainingPublications] = discovery.publications
   if (firstPublication === undefined) {
     return Result.fail(
-      runnerError(
-        'inspect-publication',
-        'contract',
-        'FINALIZED cycle publication discovery must contain a publication',
-      ),
+      runnerError({
+        operation: 'inspect-publication',
+        failure: 'contract',
+        message: 'FINALIZED cycle publication discovery must contain a publication',
+      }),
     )
   }
   return pipe(

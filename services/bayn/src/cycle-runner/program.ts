@@ -48,21 +48,21 @@ const bindDiscoveredPublication = (
 ): Effect.Effect<CycleBindingResult, CycleRunnerError, CycleStore> =>
   bindFinalizedCyclePublication(cycle, inspection, observedAt).pipe(
     Effect.mapError((cause: CycleReadinessError) =>
-      runnerError(
-        'bind-publication',
-        cause.failure === 'store' ? 'store' : 'contract',
-        'exact finalized Signal publication binding failed',
+      runnerError({
+        operation: 'bind-publication',
+        failure: cause.failure === 'store' ? 'store' : 'contract',
+        message: 'exact finalized Signal publication binding failed',
         cause,
-      ),
+      }),
     ),
     Effect.flatMap((readiness) =>
       readiness.outcome === 'WAITING'
         ? Effect.fail(
-            runnerError(
-              'bind-publication',
-              'contract',
-              'discovered finalized Signal publication unexpectedly remained waiting',
-            ),
+            runnerError({
+              operation: 'bind-publication',
+              failure: 'contract',
+              message: 'discovered finalized Signal publication unexpectedly remained waiting',
+            }),
           )
         : Effect.succeed(readiness),
     ),
@@ -81,7 +81,12 @@ const readCycleAuthoritySlot = <R>(
       signalSessionDate,
     }),
     Effect.mapError((cause) =>
-      runnerError('read-authority-slot', 'store', 'durable autonomous cycle authority-slot read failed', cause),
+      runnerError({
+        operation: 'read-authority-slot',
+        failure: 'store',
+        message: 'durable autonomous cycle authority-slot read failed',
+        cause,
+      }),
     ),
     Effect.map((existing) => ({ publication, existing: Option.getOrUndefined(existing) })),
   )
@@ -160,7 +165,12 @@ const acquireCycleCandidate = (
           pipe(
             store.acquire(material.draft, acquiredAt),
             Effect.mapError((cause) =>
-              runnerError('acquire-cycle', 'store', 'durable autonomous cycle acquisition failed', cause),
+              runnerError({
+                operation: 'acquire-cycle',
+                failure: 'store',
+                message: 'durable autonomous cycle acquisition failed',
+                cause,
+              }),
             ),
           ),
         ),
@@ -219,7 +229,12 @@ const readCycleCalendar = <R>(
         BrokerRead,
         Effect.flatMap((broker) => broker.marketCalendar(query)),
         Effect.mapError((cause) =>
-          runnerError('market-calendar', 'calendar-read', 'authoritative broker calendar read failed', cause),
+          runnerError({
+            operation: 'market-calendar',
+            failure: 'calendar-read',
+            message: 'authoritative broker calendar read failed',
+            cause,
+          }),
         ),
       ),
     ),
@@ -267,7 +282,12 @@ export const discoverAutonomousCyclePass = <R>(
     MarketData,
     Effect.flatMap((marketData) => marketData.inspectCyclePublications),
     Effect.mapError((cause: OperationalError) =>
-      runnerError('inspect-publication', 'market-data', 'bounded finalized Signal publication discovery failed', cause),
+      runnerError({
+        operation: 'inspect-publication',
+        failure: 'market-data',
+        message: 'bounded finalized Signal publication discovery failed',
+        cause,
+      }),
     ),
     Effect.flatMap((discovery) =>
       pipe(
@@ -290,7 +310,12 @@ export const discoverAutonomousCyclePass = <R>(
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
     Effect.mapError((cause) =>
-      runnerError('recover-cycle', 'contract', 'autonomous cycle recovery state is invalid', cause),
+      runnerError({
+        operation: 'recover-cycle',
+        failure: 'contract',
+        message: 'autonomous cycle recovery state is invalid',
+        cause,
+      }),
     ),
   )
 
@@ -307,7 +332,12 @@ const recoverCycle = <R>(
         CycleStore,
         Effect.flatMap((store) => store.block(selection.cycleId, selection.reason, selection.observedAt)),
         Effect.mapError((cause) =>
-          runnerError('recover-cycle', 'store', 'unfinished autonomous cycle blocking failed', cause),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'store',
+            message: 'unfinished autonomous cycle blocking failed',
+            cause,
+          }),
         ),
         Effect.map(
           (blocked): CycleRunResult => ({
@@ -321,7 +351,12 @@ const recoverCycle = <R>(
     case 'READ_PUBLICATION':
       return runCyclePublicationReadiness(selection.cycle).pipe(
         Effect.mapError((cause: CycleReadinessError) =>
-          runnerError('recover-cycle', readinessFailure(cause), 'unfinished cycle publication recovery failed', cause),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: readinessFailure(cause),
+            message: 'unfinished cycle publication recovery failed',
+            cause,
+          }),
         ),
         Effect.flatMap((readiness) =>
           chooseRecovery({
@@ -347,7 +382,12 @@ const recoverCycle = <R>(
         CycleStore,
         Effect.flatMap((store) => store.activate(selection.cycleId, selection.observedAt)),
         Effect.mapError((cause) =>
-          runnerError('recover-cycle', 'store', 'snapshot-bound cycle activation failed', cause),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'store',
+            message: 'snapshot-bound cycle activation failed',
+            cause,
+          }),
         ),
         Effect.map(
           (activation): CycleRunResult => ({
@@ -367,7 +407,9 @@ const recoverCycle = <R>(
       })
     case 'BUILD_DECISION':
       return context.buildDecision(selection.cycle).pipe(
-        Effect.mapError((cause) => runnerError('build-decision', cause.failure, cause.message, cause)),
+        Effect.mapError((cause) =>
+          runnerError({ operation: 'build-decision', failure: cause.failure, message: cause.message, cause }),
+        ),
         Effect.flatMap((document) =>
           pipe(
             currentIsoTime,
@@ -378,7 +420,12 @@ const recoverCycle = <R>(
                   store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt),
                 ),
                 Effect.mapError((cause) =>
-                  runnerError('recover-cycle', 'store', 'durable shadow decision binding failed', cause),
+                  runnerError({
+                    operation: 'recover-cycle',
+                    failure: 'store',
+                    message: 'durable shadow decision binding failed',
+                    cause,
+                  }),
                 ),
                 Effect.map(
                   (binding): CycleRunResult => ({
@@ -397,7 +444,14 @@ const recoverCycle = <R>(
       return pipe(
         CycleStore,
         Effect.flatMap((store) => store.readDecisionDocument(selection.cycle.identity.cycleId)),
-        Effect.mapError((cause) => runnerError('recover-cycle', 'store', 'durable shadow decision read failed', cause)),
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'store',
+            message: 'durable shadow decision read failed',
+            cause,
+          }),
+        ),
         Effect.flatMap((document) =>
           pipe(
             currentIsoTime,
@@ -422,7 +476,12 @@ const recoverCycle = <R>(
         CycleStore,
         Effect.flatMap((store) => store.finish(selection.cycleId, selection.state, selection.observedAt)),
         Effect.mapError((cause) =>
-          runnerError('recover-cycle', 'store', 'shadow cycle terminal transition failed', cause),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'store',
+            message: 'shadow cycle terminal transition failed',
+            cause,
+          }),
         ),
         Effect.flatMap((finished) => Effect.fromResult(finishRecoveryResult(selection, finished.cycle))),
       )
@@ -441,7 +500,12 @@ export const runAutonomousCyclePass = <R>(
       }),
     ),
     Effect.mapError((cause) =>
-      runnerError('read-oldest-unfinished', 'store', 'oldest unfinished autonomous cycle read failed', cause),
+      runnerError({
+        operation: 'read-oldest-unfinished',
+        failure: 'store',
+        message: 'oldest unfinished autonomous cycle read failed',
+        cause,
+      }),
     ),
     Effect.flatMap((unfinished) =>
       pipe(
@@ -477,20 +541,20 @@ const continueAutonomousCyclePass = <R>(
       const progressKey = cycleProgressKey(continuation.cycle)
       if (progressKey === previousProgressKey) {
         return Effect.fail(
-          runnerError(
-            'recover-cycle',
-            'contract',
-            `autonomous cycle pass repeated ${continuation.progress} without durable progress`,
-          ),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'contract',
+            message: `autonomous cycle pass repeated ${continuation.progress} without durable progress`,
+          }),
         )
       }
       if (completedProgress.has(continuation.progress)) {
         return Effect.fail(
-          runnerError(
-            'recover-cycle',
-            'contract',
-            `autonomous cycle pass repeated ${continuation.progress} after durable progress`,
-          ),
+          runnerError({
+            operation: 'recover-cycle',
+            failure: 'contract',
+            message: `autonomous cycle pass repeated ${continuation.progress} after durable progress`,
+          }),
         )
       }
       return continueAutonomousCyclePass(context, new Set([...completedProgress, continuation.progress]), progressKey)
