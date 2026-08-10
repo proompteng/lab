@@ -2,7 +2,7 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
@@ -1599,7 +1599,7 @@ describe('Bayn HTTP probes', () => {
             expect(body.broker).not.toHaveProperty('read')
             expect(body.broker).not.toHaveProperty('expectedAccountId')
             expect(body.broker).not.toHaveProperty('accountId')
-            expect(JSON.stringify(response.body)).not.toContain('paper-account-1')
+            expect(Schema.encodeSync(Schema.UnknownFromJsonString)(response.body)).not.toContain('paper-account-1')
             expect(Object.values(body.broker).some((value) => typeof value === 'function')).toBe(false)
           }),
         ),

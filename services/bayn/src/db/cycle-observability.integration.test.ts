@@ -139,7 +139,7 @@ const seedSafetyState = (reconciledAt = '2026-03-06T21:00:00.000Z') =>
       ${reconciliationHash},
       ${'1'.repeat(64)},
       'EXACT',
-      ${sql.json(JSON.stringify([]))},
+      ${sql.json([])},
       ${reconciledAt}
     )
   `
@@ -616,7 +616,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             ${reconciliationHash},
             ${'2'.repeat(64)},
             'EXACT',
-            ${sql.json(JSON.stringify([]))},
+            ${sql.json([])},
             ${'2026-03-06T21:00:00.000Z'}
           )
         `

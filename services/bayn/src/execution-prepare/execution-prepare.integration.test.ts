@@ -294,8 +294,8 @@ const seedQualification = (fixture: QualificationFixture) =>
       INSERT INTO gate_outcomes (run_id, ordinal, gate_name, passed, actual, required, content_hash)
       VALUES (
         ${result.runId}, 0, 'execution_prepare_fixture', ${result.evaluationVerdict.gates[0].passed},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].actual))},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].required))},
+        ${sql.json(result.evaluationVerdict.gates[0].actual)},
+        ${sql.json(result.evaluationVerdict.gates[0].required)},
         ${hash(`${result.runId}-gate`)}
       )
     `
@@ -372,7 +372,7 @@ const seedReconciliation = (fixture: ReconciliationFixture) =>
       ) VALUES (
         ${fixture.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
         ${expectedHash}, ${observedHash}, ${fixture.contentHash}, ${fixture.exact ? 'EXACT' : 'DISCREPANCY'},
-        ${sql.json(JSON.stringify(discrepancies))},
+        ${sql.json(discrepancies)},
         clock_timestamp() - (${fixture.ageMs} * interval '1 millisecond')
       )
     `

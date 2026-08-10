@@ -4,7 +4,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import {
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect'
 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
@@ -945,7 +958,7 @@ const activateAuditedCapitalGrant = async () => {
           ) VALUES (
             ${mutationReconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
             ${accountStateHash}, ${accountStateHash}, ${mutationReconciliationContentHash},
-            'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+            'EXACT', ${sql.json([])}, clock_timestamp()
           )
         `
         yield* store.ensureAuthorityGeneration({
@@ -1059,7 +1072,7 @@ const rotateAuditedCapitalGrant = (
           ) VALUES (
             ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
             ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
-            'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+            'EXACT', ${sql.json([])}, clock_timestamp()
           )
         `
         const activated = yield* store.activateCapitalGrant(proofBinding(paperGeneration))
@@ -2334,7 +2347,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             yield* Effect.sleep(Duration.millis(10))
           }
           if (mutationPid === undefined) {
-            return yield* Effect.fail(`mutation did not wait on the table lock: ${JSON.stringify(activities)}`)
+            return yield* Effect.fail(
+              `mutation did not wait on the table lock: ${Schema.encodeSync(Schema.UnknownFromJsonString)(activities)}`,
+            )
           }
           const terminated = yield* Effect.promise(() =>
             runtime.runPromise(
@@ -3201,7 +3216,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             ) VALUES (
               ${reconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
               ${accountStateHash}, ${accountStateHash}, ${reconciliationContentHash},
-              'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+              'EXACT', ${sql.json([])}, clock_timestamp()
             )
             RETURNING reconciled_at
           `
@@ -4397,7 +4412,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             yield* Effect.sleep(Duration.millis(10))
           }
           if (lockWait === undefined) {
-            return yield* Effect.fail(`update is not waiting on the lock: ${JSON.stringify(activities)}`)
+            return yield* Effect.fail(
+              `update is not waiting on the lock: ${Schema.encodeSync(Schema.UnknownFromJsonString)(activities)}`,
+            )
           }
           yield* Effect.promise(() =>
             observerRuntime.runPromise(

@@ -1428,7 +1428,7 @@ const insertReconciliation = (result: ReconciliationPassResult) =>
         ${reconciliation.observedHash},
         ${reconciliation.contentHash},
         ${reconciliation.status},
-        ${sql.json(JSON.stringify(reconciliation.discrepancies))},
+        ${sql.json(reconciliation.discrepancies)},
         ${reconciliation.reconciledAt}
       )
     `

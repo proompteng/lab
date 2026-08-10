@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Undici } from '@effect/platform-node'
-import { Effect, Fiber, Layer, Redacted, Result } from 'effect'
+import { Effect, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
@@ -205,7 +205,7 @@ describe('Alpaca paper reads', () => {
         url = target.toString()
         key = request.headers['apca-api-key-id'] ?? ''
         secret = request.headers['apca-api-secret-key'] ?? ''
-        inspected = JSON.stringify(request)
+        inspected = Schema.encodeSync(Schema.UnknownFromJsonString)(request.toJSON())
         return jsonResponse(request, accountResponse)
       }),
     )

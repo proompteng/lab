@@ -491,8 +491,8 @@ const seedQualificationEvidence = (fixture: QualificationFixture) =>
       ) VALUES (
         ${result.runId}, 0, 'paper_activation_fixture',
         ${result.evaluationVerdict.gates[0].passed},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].actual))},
-        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].required))},
+        ${sql.json(result.evaluationVerdict.gates[0].actual)},
+        ${sql.json(result.evaluationVerdict.gates[0].required)},
         ${hash(`${result.runId}-gate`)}
       )
     `
@@ -538,7 +538,7 @@ const seedExactReconciliation = (fixture: ReconciliationFixture, reconciliationA
         content_hash, status, discrepancies, reconciled_at
       ) VALUES (
         ${fixture.reconciliationId}, 'bayn.paper-reconciliation.v1', ${reconciliationAccountId},
-        ${stateHash}, ${stateHash}, ${fixture.contentHash}, 'EXACT', ${sql.json(JSON.stringify([]))},
+        ${stateHash}, ${stateHash}, ${fixture.contentHash}, 'EXACT', ${sql.json([])},
         clock_timestamp() - (${fixture.databaseAgeMs} * interval '1 millisecond')
       )
     `
@@ -1155,7 +1155,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
-              'EXACT', ${sql.json(JSON.stringify([]))}, ${reconciliationTime.reconciled_at.toISOString()}
+              'EXACT', ${sql.json([])}, ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
           const recovered = yield* store.ensureAuthorityGeneration({
@@ -1276,7 +1276,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('legacy-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('legacy-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('legacy-observe-recovery-content')}, 'EXACT', ${sql.json([])},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -1388,7 +1388,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('untrusted-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('untrusted-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('untrusted-observe-recovery-content')}, 'EXACT', ${sql.json([])},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -1467,7 +1467,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('observe-recovery-identity-reconciliation')}, 'bayn.paper-reconciliation.v1',
               ${changedIdentity.accountId}, ${reconciliationStateHash}, ${reconciliationStateHash},
-              ${hash('observe-recovery-identity-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${hash('observe-recovery-identity-content')}, 'EXACT', ${sql.json([])},
               ${reconciliationTime.reconciled_at.toISOString()}
             )
           `
@@ -3552,7 +3552,7 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES (
               ${hash('later-discrepancy')}, 'bayn.paper-reconciliation.v1', ${accountId},
               ${hash('expected-state')}, ${hash('observed-state')}, ${hash('later-discrepancy-content')},
-              'DISCREPANCY', ${sql.json(JSON.stringify([{ discrepancyId: hash('discrepancy') }]))},
+              'DISCREPANCY', ${sql.json([{ discrepancyId: hash('discrepancy') }])},
               clock_timestamp()
             )
           `
