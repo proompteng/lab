@@ -169,11 +169,14 @@ export interface FailLedgerValidationInput extends Omit<LedgerValidationErrorInp
   readonly detail: string
 }
 
-export const failLedgerValidation = (input: FailLedgerValidationInput): Result.Result<never, LedgerValidationError> =>
+export const failLedgerValidation = ({
+  detail,
+  ...input
+}: FailLedgerValidationInput): Result.Result<never, LedgerValidationError> =>
   Result.fail(
     ledgerValidationError({
       ...input,
-      message: `TigerBeetle ${input.operation} failed: ${input.detail}`,
+      message: `TigerBeetle ${input.operation} failed: ${detail}`,
     }),
   )
 
