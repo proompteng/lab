@@ -96,6 +96,7 @@ import type { DecisionPlan } from './types'
 import {
   appendPendingMutationOrder,
   countOpenPositions,
+  decidePendingMutationObservation,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
@@ -110,6 +111,7 @@ import {
   projectWorstCasePendingMutationPosition,
   type BoundMutationCycleOutcome,
   type MutationIntentExecutionResult,
+  type PendingMutationObservationDecision,
   type PaperCycleIntentTerminalEvidence,
   type PaperCycleReconciliationEvidence,
   type PaperCycleCompletionDecision,
@@ -137,6 +139,7 @@ import { Pipeable } from './pipeable'
 export {
   appendPendingMutationOrder,
   countOpenPositions,
+  decidePendingMutationObservation,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
@@ -154,6 +157,7 @@ export {
 export type {
   MutationIntentExecutionResult,
   MutationIntentSettlementDecision,
+  PendingMutationObservationDecision,
   PaperCycleCompletionDecision,
   PaperCycleIntentTerminalEvidence,
   PaperCycleReconciliationEvidence,
@@ -1215,6 +1219,27 @@ type PaperExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
   | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
 
+type PaperMutationLogContext = {
+  readonly cycleId: string
+  readonly intentId: string
+  readonly mutationAction: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
+  readonly mutationPhase: 'CLOSE' | 'ENTRY'
+}
+
+type PostMutationReconciliation = {
+  readonly _tag: 'PostMutationReconciliation'
+  readonly cycle: AutonomousCycle
+  readonly delayMs: number
+  readonly logContext: PaperMutationLogContext
+  readonly observedAt: string
+}
+
+type BoundPaperCycleExecutionOutcome = BoundMutationCycleOutcome | PostMutationReconciliation
+type RecoveryFirstCyclePassResult = CycleRunResult | PostMutationReconciliation
+
+const isPostMutationReconciliation = (result: RecoveryFirstCyclePassResult): result is PostMutationReconciliation =>
+  '_tag' in result && result._tag === 'PostMutationReconciliation'
+
 export const paperMutationSubmissionAllowed = (input: {
   readonly capability: PaperExecutionCapability['_tag']
   readonly closeOnly: boolean
@@ -1591,7 +1616,7 @@ const executeBoundPaperCycle = (
   document: PaperDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   capability: PaperExecutionCapability,
-): Effect.Effect<BoundMutationCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<BoundPaperCycleExecutionOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
     const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, document, reconcile)
@@ -1639,28 +1664,82 @@ const executeBoundPaperCycle = (
           return step
       }
     }
-    const executed = yield* capability._tag === 'Mutation'
-      ? executeMutationIntent(
-          capability.executionProgram,
-          step.intentId,
-          step.action,
-          step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        )
-      : executeMutationIntentWithExecutor({
-          executor: { recover: recoverMutation },
-          intentId: step.intentId,
-          action: step.action,
-          submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        })
+    const logContext: PaperMutationLogContext = {
+      cycleId: cycle.identity.cycleId,
+      intentId: step.intentId,
+      mutationAction: step.action,
+      mutationPhase: closeOnly ? 'CLOSE' : 'ENTRY',
+    }
+    yield* Effect.logInfo('PAPER mutation selected').pipe(Effect.annotateLogs(logContext))
+    const execute =
+      capability._tag === 'Mutation'
+        ? executeMutationIntent(
+            capability.executionProgram,
+            step.intentId,
+            step.action,
+            step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+          )
+        : executeMutationIntentWithExecutor({
+            executor: { recover: recoverMutation },
+            intentId: step.intentId,
+            action: step.action,
+            submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+          })
+    const executed = yield* execute.pipe(
+      Effect.tapError((error) =>
+        Effect.logError('PAPER mutation failed').pipe(Effect.annotateLogs({ ...logContext, failure: error.failure })),
+      ),
+    )
+    yield* Effect.logInfo('PAPER mutation settled').pipe(
+      Effect.annotateLogs({
+        ...logContext,
+        mutationOperation: executed.operation,
+        mutationAdvanced: executed.mutationAdvanced,
+        settlement: executed.settlement.outcome,
+      }),
+    )
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
         `bound PAPER cycle ${cycle.identity.cycleId}`,
         `intent ${step.intentId} submit settled ${executed.settlement.outcome}`,
       )
     }
-    const delayMs = mutationIntentReconciliationDelayMs(executed)
-    if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs))
+    if (executed.mutationAdvanced)
+      return {
+        _tag: 'PostMutationReconciliation',
+        cycle,
+        delayMs: mutationIntentReconciliationDelayMs(executed),
+        logContext,
+        observedAt: step.observedAt,
+      }
     return { _tag: 'Wait' as const, observedAt: step.observedAt }
+  })
+
+const completePostMutationReconciliation = (
+  pending: PostMutationReconciliation,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, ObserveDecisionRuntime> =>
+  Effect.gen(function* () {
+    if (pending.delayMs > 0) yield* Effect.sleep(Duration.millis(pending.delayMs))
+    const reconciled = yield* reconcile.pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({ message: 'post-mutation reconciliation failed', cause, failure: 'operational' }),
+      ),
+    )
+    yield* Effect.logInfo('PAPER mutation reconciled').pipe(
+      Effect.annotateLogs({
+        ...pending.logContext,
+        accountingExact: reconciled.report.metrics.accountingExact,
+        discrepancyCount: reconciled.report.reconciliation.discrepancies.length,
+        reconciliationStatus: reconciled.report.reconciliation.status,
+      }),
+    )
+    return {
+      outcome: 'RECOVERED' as const,
+      action: 'WAITING' as const,
+      observedAt: pending.observedAt,
+      cycle: pending.cycle,
+    }
   })
 
 const readUnfinishedMutationCycle = (
@@ -1764,6 +1843,18 @@ const interpretBoundMutationCycleOutcome = (
   }
 }
 
+const interpretBoundPaperCycleExecutionOutcome = (
+  input: ObserveAutonomousCycleInput,
+  outcome: BoundPaperCycleExecutionOutcome,
+  cycle: AutonomousCycle,
+  context: CycleRunContext<ObserveDecisionRuntime>,
+): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, CycleStore | ObserveDecisionRuntime> => {
+  if (outcome._tag === 'PostMutationReconciliation') {
+    return Effect.succeed<RecoveryFirstCyclePassResult>(outcome)
+  }
+  return interpretBoundMutationCycleOutcome(input, outcome, cycle, context)
+}
+
 const recoverBoundMutationCycle = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -1772,13 +1863,13 @@ const recoverBoundMutationCycle = (
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   capability: PaperExecutionCapability,
-): Effect.Effect<CycleRunResult, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readBoundMutationDocument(cycle).pipe(
     Effect.flatMap((document) =>
       document.mode === 'OBSERVE'
         ? runAutonomousCyclePass(context)
         : executeBoundPaperCycle(input, preparation, policy, cycle, document, reconcile, capability).pipe(
-            Effect.flatMap((outcome) => interpretBoundMutationCycleOutcome(input, outcome, cycle, context)),
+            Effect.flatMap((outcome) => interpretBoundPaperCycleExecutionOutcome(input, outcome, cycle, context)),
           ),
     ),
   )
@@ -1790,7 +1881,7 @@ const runRecoveryFirstCyclePass = (
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   capability: PaperExecutionCapability,
-): Effect.Effect<CycleRunResult, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readUnfinishedMutationCycle(context).pipe(
     Effect.flatMap((unfinished) => {
       if (mutationBound(unfinished)) {
@@ -2064,10 +2155,14 @@ const recoveryFirstCycleLoop = (
             executionPolicy: preparation.executionPolicy,
             buildDecision: (cycle) => buildDecision(cycle, reconcile),
           }
-          return yield* runMutationPassWithinTimeout(
+          const result = yield* runMutationPassWithinTimeout(
             runRecoveryFirstCyclePass(input, preparation, policy, context, reconcile, capability),
             cyclePassTimeoutMs,
           )
+          if (isPostMutationReconciliation(result)) {
+            return yield* completePostMutationReconciliation(result, reconcile)
+          }
+          return result
         }).pipe(
           Effect.matchEffect({
             onFailure: (error) =>

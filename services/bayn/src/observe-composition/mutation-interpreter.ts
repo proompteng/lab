@@ -139,7 +139,12 @@ export const executeMutationIntentWithExecutor = <E, R>(
         failure: 'operational',
       })
     }
-    return { settlement, consistencyDelayMs: event.consistencyDelayMs, operation }
+    return {
+      settlement,
+      consistencyDelayMs: event.consistencyDelayMs,
+      operation,
+      mutationAdvanced: existing?.eventId !== event.eventId,
+    }
   })
 }
 

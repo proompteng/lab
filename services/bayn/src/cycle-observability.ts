@@ -290,6 +290,9 @@ export interface ReconciliationObservation {
 
 export interface MutationObservation {
   readonly eventCount: number
+  readonly recoveryFoundCount: number
+  readonly approvedIntentCount: number
+  readonly acknowledgedIntentCount: number
   readonly unresolvedCount: number
   readonly oldestUnresolvedAt: string | null
   readonly latestOccurredAt: string | null
@@ -386,6 +389,9 @@ const initialProjection = (): CycleOperationsProjection => ({
   reconciliation: null,
   mutations: {
     eventCount: 0,
+    recoveryFoundCount: 0,
+    approvedIntentCount: 0,
+    acknowledgedIntentCount: 0,
     unresolvedCount: 0,
     oldestUnresolvedAt: null,
     latestOccurredAt: null,

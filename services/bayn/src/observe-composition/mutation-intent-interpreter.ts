@@ -25,6 +25,7 @@ import {
   decidePaperCycleCompletion,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
+  decidePendingMutationObservation,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
@@ -365,6 +366,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     const recoveryObservedAt = yield* dependencies.now
+    let pendingRecovery: { readonly intentId: string; readonly event: MutationEvent } | undefined
     for (const prepared of preparedIntents) {
       const existing = prepared.stored
       if (existing === undefined) continue
@@ -384,9 +386,22 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             }
           : { _tag: 'Wait', observedAt: recoveryObservedAt }
       }
+      if (recovery._tag === 'ObservePending' && pendingRecovery === undefined) {
+        pendingRecovery = { intentId: prepared.intent.intentId, event: recovery.event }
+      }
     }
 
     if (generationIsSuperseded) {
+      if (pendingRecovery !== undefined) {
+        return mutationRecoveryIsDue(pendingRecovery.event, recoveryObservedAt)
+          ? {
+              _tag: 'Execute',
+              action: 'RECOVER_SUBMIT',
+              intentId: pendingRecovery.intentId,
+              observedAt: recoveryObservedAt,
+            }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+      }
       return {
         _tag: 'Block',
         reason: CycleTerminalReason.ProvenanceMismatch,
@@ -394,7 +409,20 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    yield* Effect.fromResult(validateCurrentMutationPolicy(policy, document))
+    const policyValidation = validateCurrentMutationPolicy(policy, document)
+    if (Result.isFailure(policyValidation)) {
+      if (pendingRecovery !== undefined) {
+        return mutationRecoveryIsDue(pendingRecovery.event, recoveryObservedAt)
+          ? {
+              _tag: 'Execute',
+              action: 'RECOVER_SUBMIT',
+              intentId: pendingRecovery.intentId,
+              observedAt: recoveryObservedAt,
+            }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+      }
+      return yield* policyValidation.failure
+    }
 
     const uncommittedIntents = preparedIntents.filter((prepared) => prepared.stored === undefined)
     if (!allowSubmit && uncommittedIntents.length > 0) {
@@ -475,6 +503,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
+    let pendingIntentFound = false
     let unsuccessfulIntentFound = false
     const hasFilledIntent = paperCycleHasFilledIntent({
       intents: preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
@@ -524,7 +553,16 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             continue
           }
           break
-        case 'Pending':
+        case 'Pending': {
+          const observation = yield* Effect.fromResult(
+            decidePendingMutationObservation(decision.order, facts.reconciliation.brokerState.orders),
+          ).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+          )
+          if (observation._tag === 'StableOpen') {
+            pendingIntentFound = true
+            continue
+          }
           return latest !== undefined && mutationRecoveryIsDue(latest, facts.evaluatedAt)
             ? {
                 _tag: 'Execute',
@@ -533,6 +571,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
                 observedAt: facts.evaluatedAt,
               }
             : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+        }
         case 'Recover':
           return latest !== undefined && mutationRecoveryIsDue(latest, facts.evaluatedAt)
             ? {
@@ -595,6 +634,8 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         }
       }
     }
+
+    if (pendingIntentFound) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
 
     if (unsuccessfulIntentFound) {
       const recoveryDeadline =

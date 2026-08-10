@@ -316,6 +316,15 @@ describe('Bayn HTTP pure decisions', () => {
   test('projects realized PAPER capability from the actual prepared generation', () => {
     const realized = {
       ...readyState(),
+      cycle: {
+        ...readyState().cycle,
+        mutations: {
+          ...readyState().cycle.mutations,
+          recoveryFoundCount: 185,
+          approvedIntentCount: 3,
+          acknowledgedIntentCount: 1,
+        },
+      },
       paperActivation: {
         _tag: 'Realized' as const,
         requestHash: 'a'.repeat(64),
@@ -346,6 +355,9 @@ describe('Bayn HTTP pure decisions', () => {
     )
     expect(metrics).toContain('bayn_broker_orders_enabled 1')
     expect(metrics).toContain('bayn_capital_promotion_enabled 1')
+    expect(metrics).toContain('bayn_mutation_recovery_found_events_total 185')
+    expect(metrics).toContain('bayn_intents{state="approved"} 3')
+    expect(metrics).toContain('bayn_intents{state="acknowledged"} 1')
   })
 
   test('covers every readiness decision branch without mutating runtime facts', () => {
@@ -1810,6 +1822,8 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
     expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
     expect(metrics).not.toContain('bayn_mutation_events_total ')
+    expect(metrics).not.toContain('bayn_mutation_recovery_found_events_total ')
+    expect(metrics).not.toContain('bayn_intents{')
     expect(metrics).not.toContain('bayn_unresolved_mutations ')
     expect(metrics).not.toContain('bayn_reconciliation_available ')
     expect(metrics).not.toContain('bayn_authority_coherent ')

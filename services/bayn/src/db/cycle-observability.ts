@@ -90,6 +90,9 @@ const ProjectionRowSchema = Schema.Struct({
   reconciled_at: NullableDate,
   reconciliation_covers_latest_mutation: Schema.NullOr(Schema.Boolean),
   mutation_event_count: NonNegativeIntegerSchema,
+  mutation_recovery_found_count: NonNegativeIntegerSchema,
+  approved_intent_count: NonNegativeIntegerSchema,
+  acknowledged_intent_count: NonNegativeIntegerSchema,
   unresolved_mutation_count: NonNegativeIntegerSchema,
   oldest_unresolved_mutation_at: NullableDate,
   latest_mutation_at: NullableDate,
@@ -244,6 +247,9 @@ export const projectCycleObservabilityRow = (
       reconciliation,
       mutations: {
         eventCount: row.mutation_event_count,
+        recoveryFoundCount: row.mutation_recovery_found_count,
+        approvedIntentCount: row.approved_intent_count,
+        acknowledgedIntentCount: row.acknowledged_intent_count,
         unresolvedCount: row.unresolved_mutation_count,
         oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
         latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
@@ -307,13 +313,17 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY reconciled_at DESC, reconciliation_id DESC
             LIMIT 1
           ),
+          account_intents AS (
+            SELECT intent_id, state
+            FROM intents
+            WHERE account_id = (SELECT account_id FROM selected_account)
+          ),
           account_mutation_events AS (
             SELECT
               events.*,
               intents.state
             FROM mutation_events AS events
-            JOIN intents ON intents.intent_id = events.intent_id
-            WHERE intents.account_id = (SELECT account_id FROM selected_account)
+            JOIN account_intents AS intents ON intents.intent_id = events.intent_id
           ),
           latest_mutations AS (
             SELECT DISTINCT ON (events.mutation_id)
@@ -412,6 +422,21 @@ const makeCycleObservability = Effect.gen(function* () {
               ELSE reconciliation.reconciled_at > (SELECT max(occurred_at) FROM account_mutation_events)
             END AS reconciliation_covers_latest_mutation,
             (SELECT count(*)::integer FROM account_mutation_events) AS mutation_event_count,
+            (
+              SELECT count(*)::integer
+              FROM account_mutation_events
+              WHERE event_type = 'RECOVERY_FOUND'
+            ) AS mutation_recovery_found_count,
+            (
+              SELECT count(*)::integer
+              FROM account_intents
+              WHERE state = 'APPROVED'
+            ) AS approved_intent_count,
+            (
+              SELECT count(*)::integer
+              FROM account_intents
+              WHERE state = 'ACKNOWLEDGED'
+            ) AS acknowledged_intent_count,
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,
             (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at,
             (SELECT max(occurred_at) FROM account_mutation_events) AS latest_mutation_at

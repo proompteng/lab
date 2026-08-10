@@ -1,11 +1,12 @@
 import { Result } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
 import {
   Authority,
   IntentState,
   OrderStatus,
+  OrderType,
   ReconciliationStatus,
   TerminalOutcome,
   type Intent,
@@ -124,32 +125,44 @@ const decidePreparedMutationIntentDataFirst = (
   if (latest === undefined) return Result.succeed({ _tag: 'Submit' })
   switch (latest.eventType) {
     case MutationEventType.SubmitAccepted:
-    case MutationEventType.RecoveryFound:
-      return latest.brokerOrderId === undefined
-        ? Result.fail({
-            _tag: 'PreparedMutationIntentDecisionFailure',
-            intentId: intent.intentId,
-            eventType: latest.eventType,
-            message: 'accepted nonterminal submit lacks a durable broker order identity',
-          })
-        : Result.succeed({
-            _tag: 'Pending',
-            order: {
-              schemaVersion: 'bayn.paper-order.v1',
-              accountId: intent.accountId,
-              brokerOrderId: latest.brokerOrderId,
-              clientOrderId: intent.clientOrderId,
-              intentId: intent.intentId,
-              symbol: intent.symbol,
-              side: intent.side,
-              orderType: intent.orderType,
-              timeInForce: intent.timeInForce,
-              quantityMicros: intent.quantityMicros,
-              filledQuantityMicros: '0',
-              status: OrderStatus.New,
-              observedAt: latest.occurredAt,
-            },
-          })
+    case MutationEventType.RecoveryFound: {
+      if (latest.brokerOrderId === undefined) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: 'accepted nonterminal submit lacks a durable broker order identity',
+        })
+      }
+      const priceBoundary = orderPriceBoundaryMicros(intent)
+      if (Result.isFailure(priceBoundary)) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: `accepted submit has no valid immutable broker price boundary: ${priceBoundary.failure.message}`,
+        })
+      }
+      return Result.succeed({
+        _tag: 'Pending',
+        order: {
+          schemaVersion: 'bayn.paper-order.v1',
+          accountId: intent.accountId,
+          brokerOrderId: latest.brokerOrderId,
+          clientOrderId: intent.clientOrderId,
+          intentId: intent.intentId,
+          symbol: intent.symbol,
+          side: intent.side,
+          orderType: OrderType.Limit,
+          timeInForce: intent.timeInForce,
+          quantityMicros: intent.quantityMicros,
+          filledQuantityMicros: '0',
+          limitPriceMicros: priceBoundary.success.toString(),
+          status: OrderStatus.New,
+          observedAt: latest.occurredAt,
+        },
+      })
+    }
     case MutationEventType.SubmitRejected:
     case MutationEventType.SubmitDenied:
       return Result.fail({
@@ -170,6 +183,59 @@ const decidePreparedMutationIntentDataFirst = (
 }
 
 export const decidePreparedMutationIntent = Pipeable.dual(2, decidePreparedMutationIntentDataFirst)
+
+export type PendingMutationObservationDecision =
+  | { readonly _tag: 'StableOpen'; readonly order: Order }
+  | { readonly _tag: 'Recover'; readonly reason: 'missing' | 'terminal'; readonly order?: Order }
+
+const terminalOrderStatuses = new Set<OrderStatus>([
+  OrderStatus.Filled,
+  OrderStatus.Canceled,
+  OrderStatus.Expired,
+  OrderStatus.Rejected,
+])
+
+const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean =>
+  observed.accountId === expected.accountId &&
+  observed.brokerOrderId === expected.brokerOrderId &&
+  observed.clientOrderId === expected.clientOrderId &&
+  (observed.intentId === undefined || observed.intentId === expected.intentId) &&
+  observed.symbol === expected.symbol &&
+  observed.side === expected.side &&
+  observed.orderType === expected.orderType &&
+  observed.timeInForce === expected.timeInForce &&
+  observed.quantityMicros === expected.quantityMicros &&
+  observed.limitPriceMicros === expected.limitPriceMicros
+
+const decidePendingMutationObservationDataFirst = (
+  expected: Order,
+  observedOrders: readonly Order[],
+): Result.Result<PendingMutationObservationDecision, PreparedMutationIntentDecisionFailure> => {
+  const candidates = observedOrders.filter(
+    (order) => order.brokerOrderId === expected.brokerOrderId || order.clientOrderId === expected.clientOrderId,
+  )
+  if (candidates.length === 0) return Result.succeed({ _tag: 'Recover', reason: 'missing' })
+  if (candidates.length !== 1) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentDecisionFailure',
+      intentId: expected.intentId ?? '<missing>',
+      message: 'reconciliation returned multiple orders for one acknowledged PAPER intent',
+    })
+  }
+  const observed = candidates[0]
+  if (observed === undefined || !pendingOrderIdentityMatches(expected, observed)) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentDecisionFailure',
+      intentId: expected.intentId ?? '<missing>',
+      message: 'reconciled broker order conflicts with the acknowledged PAPER intent identity',
+    })
+  }
+  return terminalOrderStatuses.has(observed.status)
+    ? Result.succeed({ _tag: 'Recover', reason: 'terminal', order: observed })
+    : Result.succeed({ _tag: 'StableOpen', order: observed })
+}
+
+export const decidePendingMutationObservation = Pipeable.dual(2, decidePendingMutationObservationDataFirst)
 
 export type PreparedMutationIntentAdmissionFailure = {
   readonly _tag: 'PreparedMutationIntentAdmissionFailure'
@@ -400,6 +466,7 @@ export const decidePaperCycleCompletion = Pipeable.dual(3, decidePaperCycleCompl
 
 export type PreparedMutationRecoveryDecision =
   | { readonly _tag: 'NoRecovery' }
+  | { readonly _tag: 'ObservePending'; readonly event: MutationEvent }
   | {
       readonly _tag: 'Recover'
       readonly operation: MutationOperation
@@ -453,6 +520,20 @@ const decidePreparedMutationRecoveryDataFirst = (
       eventType: latestSubmit.eventType,
       message: 'terminal submit event does not match the nonterminal durable intent state',
     })
+  }
+  if (
+    intent.state !== IntentState.Terminal &&
+    (latestSubmit.eventType === MutationEventType.SubmitAccepted ||
+      latestSubmit.eventType === MutationEventType.RecoveryFound)
+  ) {
+    return latestSubmit.brokerOrderId === undefined
+      ? Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latestSubmit.eventType,
+          message: 'accepted nonterminal submit lacks a durable broker order identity',
+        })
+      : Result.succeed({ _tag: 'ObservePending', event: latestSubmit })
   }
   return Result.succeed({ _tag: 'Recover', operation: MutationOperation.Submit, event: latestSubmit })
 }
@@ -538,7 +619,8 @@ export interface MutationIntentExecutionResult {
   readonly settlement: Extract<MutationIntentSettlementDecision, { readonly _tag: 'Settled' }>
   readonly consistencyDelayMs: number
   readonly operation: MutationOperation
+  readonly mutationAdvanced: boolean
 }
 
 export const mutationIntentReconciliationDelayMs = (result: MutationIntentExecutionResult): number =>
-  result.settlement.outcome === 'accepted' ? result.consistencyDelayMs : 0
+  result.mutationAdvanced && result.settlement.outcome === 'accepted' ? result.consistencyDelayMs : 0
