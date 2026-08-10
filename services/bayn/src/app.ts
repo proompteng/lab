@@ -167,11 +167,11 @@ const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRunt
 
 const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
   runtime._tag === 'Brokerless'
-    ? initialState()
-    : initialState(
-        runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
-        true,
-      )
+    ? initialState({})
+    : initialState({
+        broker: runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
+        autonomousCycleLoopConfigured: true,
+      })
 
 const resolveRuntimeAfterStartup = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,

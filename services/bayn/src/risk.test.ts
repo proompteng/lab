@@ -342,7 +342,7 @@ const evaluateSuccess = (
   policy: Policy,
   proposedPositions?: State['positions'],
 ): Evaluation => {
-  const result = evaluate(intent, state, policy, proposedPositions)
+  const result = evaluate({ intent, state, policy, proposedPositions })
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
@@ -921,11 +921,11 @@ describe('bounded paper risk', () => {
     expect(rotated.input.inputHash).not.toBe(baseline.input.inputHash)
     expect(rotated.gates.find((gate) => gate.name === 'reconciliation')?.passed).toBe(true)
     const failures = [
-      evaluate(makeIntent(), rotatedState, makePolicy()),
-      evaluate(makeReferenceIntent(), baselineState, makePolicy()),
-      evaluate(
-        makeReferenceIntent(),
-        makeState({
+      evaluate({ intent: makeIntent(), state: rotatedState, policy: makePolicy() }),
+      evaluate({ intent: makeReferenceIntent(), state: baselineState, policy: makePolicy() }),
+      evaluate({
+        intent: makeReferenceIntent(),
+        state: makeState({
           authority: {
             ...baselineState.authority,
             effective: Authority.Observe,
@@ -933,19 +933,19 @@ describe('bounded paper risk', () => {
             reason: 'operator kill',
           },
         }),
-        makePolicy(),
-      ),
-      evaluate(
-        makeIntent(),
-        makeState({
+        policy: makePolicy(),
+      }),
+      evaluate({
+        intent: makeIntent(),
+        state: makeState({
           authority: {
             ...baselineState.authority,
             maximum: Authority.Observe,
             effective: Authority.Observe,
           },
         }),
-        makePolicy(),
-      ),
+        policy: makePolicy(),
+      }),
     ] as const
     expect(failures.map((result) => (Result.isFailure(result) ? result.failure.reason : null))).toEqual([
       'authority-generation',
@@ -966,10 +966,13 @@ describe('bounded paper risk', () => {
 
   test('returns closed tagged failures for malformed exported inputs', () => {
     const cases = [
-      ['intent', evaluate({}, makeState(), makePolicy())],
-      ['state', evaluate(makeIntent(), {}, makePolicy())],
-      ['policy', evaluate(makeIntent(), makeState(), {})],
-      ['positions', evaluate(makeIntent(), makeState(), makePolicy(), [{}])],
+      ['intent', evaluate({ intent: {}, state: makeState(), policy: makePolicy() })],
+      ['state', evaluate({ intent: makeIntent(), state: {}, policy: makePolicy() })],
+      ['policy', evaluate({ intent: makeIntent(), state: makeState(), policy: {} })],
+      [
+        'positions',
+        evaluate({ intent: makeIntent(), state: makeState(), policy: makePolicy(), proposedPositions: [{}] }),
+      ],
     ] as const
 
     for (const [reason, result] of cases) {
@@ -1008,7 +1011,7 @@ describe('bounded paper risk', () => {
     ]
 
     for (const proposedPositions of cases) {
-      const result = evaluate(makeIntent(), state, makePolicy(), proposedPositions)
+      const result = evaluate({ intent: makeIntent(), state, policy: makePolicy(), proposedPositions })
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result)) {
         expect(result.failure).toMatchObject({
@@ -1028,7 +1031,12 @@ describe('bounded paper risk', () => {
     const proposedPositions = state.positions.map((position) =>
       position.symbol === 'AMD' ? { ...position, marketValueMicros: '0' } : position,
     )
-    const result = evaluate(makeIntent(), state, makePolicy({ maxGrossExposureMicros: '250000000' }), proposedPositions)
+    const result = evaluate({
+      intent: makeIntent(),
+      state,
+      policy: makePolicy({ maxGrossExposureMicros: '250000000' }),
+      proposedPositions,
+    })
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {

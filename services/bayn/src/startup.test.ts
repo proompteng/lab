@@ -749,7 +749,7 @@ describe('Bayn startup lifecycle', () => {
         forbiddenCalls += 1
         throw new Error(message)
       })
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
@@ -882,7 +882,7 @@ describe('Bayn startup lifecycle', () => {
           })
         }),
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
@@ -944,7 +944,7 @@ describe('Bayn startup lifecycle', () => {
     ]
 
     for (const testCase of cases) {
-      const state = await Effect.runPromise(Ref.make(initialState()))
+      const state = await Effect.runPromise(Ref.make(initialState({})))
       await Effect.runPromise(
         initialize(testCase.config, state, testCase.strategy).pipe(
           Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
@@ -961,7 +961,7 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('converts malformed persisted canonical material to a terminal failure without a defect', async () => {
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const exit = await Effect.runPromiseExit(
       initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
@@ -1020,7 +1020,7 @@ describe('Bayn startup lifecycle', () => {
         return Effect.die(new Error('recovered startup must not persist'))
       },
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(config, state, fixtureRuntime).pipe(
@@ -1064,7 +1064,7 @@ describe('Bayn startup lifecycle', () => {
         return Effect.die(new Error('unrelated terminal qualification must not be persisted'))
       },
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(config, state, fixtureRuntime).pipe(
@@ -1107,7 +1107,7 @@ describe('Bayn startup lifecycle', () => {
         return Effect.die(new Error('incomplete qualification must not persist'))
       },
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(config, state, fixtureRuntime).pipe(
@@ -1153,7 +1153,7 @@ describe('Bayn startup lifecycle', () => {
         return Effect.die(new Error('corrupt recovery must not journal'))
       },
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(config, state, fixtureRuntime).pipe(
@@ -1177,7 +1177,7 @@ describe('Bayn startup lifecycle', () => {
   test('evaluates through the provided StrategyDefinition and shared runner', async () => {
     let calls = 0
     const snapshot = makeSnapshot()
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const strategy: StrategyRuntime = {
       definition: {
         ...fixtureRuntime.definition,
@@ -1203,7 +1203,7 @@ describe('Bayn startup lifecycle', () => {
 
   test('records durable evaluation and reconciliation before health opens readiness', async () => {
     const snapshot = makeSnapshot()
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const marketData = marketDataService(Effect.succeed(snapshot))
 
     await Effect.runPromise(
@@ -1275,7 +1275,7 @@ describe('Bayn startup lifecycle', () => {
           }
         }),
     }
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       initialize(config, state, fixtureRuntime).pipe(
@@ -1298,7 +1298,7 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('rejects an underpowered calendar before opening a qualification lock', async () => {
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const shortSnapshot = makeSnapshot(700)
     const marketData = marketDataService(Effect.succeed(shortSnapshot), shortSnapshot)
 
@@ -1318,7 +1318,7 @@ describe('Bayn startup lifecycle', () => {
 
   test('interrupts a stalled dependency and returns a retryable startup failure', async () => {
     let interrupted = false
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const marketData = marketDataService(
       Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
     )
@@ -1403,7 +1403,7 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('returns a retryable startup failure when durable evidence cannot be committed', async () => {
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const unavailable: EvidenceStoreService = {
       check: Effect.void,
       read: () => Effect.succeed(Option.none()),
@@ -1436,7 +1436,7 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('keeps PostgreSQL authentication failures observable as terminal startup failures', async () => {
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
     const authentication = new SqlError({
       reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'persist' }),
     })

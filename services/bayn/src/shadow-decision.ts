@@ -421,7 +421,12 @@ const reduceShadowDelta = (
     (cause) => error('contract', 'cumulative shadow risk state is invalid', cause),
   )
   if (Result.isFailure(state)) return Result.fail(state.failure)
-  const evaluation = evaluate(intent.success, state.success, context.input.policy, accumulator.projectedPositions)
+  const evaluation = evaluate({
+    intent: intent.success,
+    state: state.success,
+    policy: context.input.policy,
+    proposedPositions: accumulator.projectedPositions,
+  })
   if (Result.isFailure(evaluation)) {
     return Result.fail(error('risk', 'shadow target risk evaluation failed', evaluation.failure))
   }
