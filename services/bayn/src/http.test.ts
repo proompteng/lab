@@ -7,6 +7,7 @@ import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result,
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientRequest, HttpMethod, HttpServer } from 'effect/unstable/http'
 
+import { provideTestLayer } from './effect-test-support'
 import {
   config,
   historicalEvidence,
@@ -995,7 +996,7 @@ describe('Bayn HTTP pure decisions', () => {
         yield* TestClock.adjust(1_000)
         const error = yield* Fiber.join(failureFiber)
         return { error, finalizations: yield* Ref.get(finalizations) }
-      }).pipe(Effect.provide(TestClock.layer())),
+      }).pipe(provideTestLayer(TestClock.layer())),
     )
     expect(timeout).toMatchObject({
       error: {

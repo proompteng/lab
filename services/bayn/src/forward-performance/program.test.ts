@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { DateTime, Effect, Layer, Redacted, Result } from 'effect'
+import { DateTime, Effect, Redacted, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
@@ -460,7 +460,7 @@ describe('forward performance read program', () => {
 
     const evidence = await Effect.runPromise(
       readForwardPerformanceMarketVolumeWithClient(marketReaderConfig, [marketVolumeRequest]).pipe(
-        Effect.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)),
+        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
       ),
     )
 
@@ -625,7 +625,7 @@ describe('forward performance read program', () => {
     }
 
     const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provide(Layer.succeed(PgClient.PgClient, sql)))),
+      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(observation.statements.length).toBeGreaterThan(8)
@@ -816,7 +816,7 @@ describe('forward performance read program', () => {
     }
 
     const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provide(Layer.succeed(PgClient.PgClient, sql)))),
+      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
@@ -998,7 +998,7 @@ describe('forward performance read program', () => {
     }
 
     const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provide(Layer.succeed(PgClient.PgClient, sql)))),
+      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')

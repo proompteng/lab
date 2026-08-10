@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import { Data, Effect, Exit, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { provideTestLayer } from '../effect-test-support'
+
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { BrokerProvider } from '../broker/connection'
 import { BrokerEnvironment } from '../broker/identity'
@@ -523,7 +525,7 @@ const runWithTestClock = <A, E>(effect: Effect.Effect<A, E>, advanceMs: number):
       yield* Effect.yieldNow
       yield* TestClock.adjust(advanceMs)
       return yield* Fiber.join(fiber)
-    }).pipe(Effect.provide(TestClock.layer())),
+    }).pipe(provideTestLayer(TestClock.layer())),
   )
 
 describe('bounded PAPER proof command', () => {

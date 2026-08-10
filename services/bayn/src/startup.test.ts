@@ -6,6 +6,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Cause, Effect, Exit, Layer, Option, Ref, Result } from 'effect'
 import { AuthenticationError, SqlError } from 'effect/unstable/sql/SqlError'
 
+import { provideTestLayer } from './effect-test-support'
 import {
   provenance,
   config,
@@ -1345,7 +1346,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(CycleObservability, cycleObservability),
-        Effect.provide(HttpServerLive(config)),
+        provideTestLayer(HttpServerLive(config)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -1379,7 +1380,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(CycleObservability, cycleObservability),
-        Effect.provide(HttpServerLive(config)),
+        provideTestLayer(HttpServerLive(config)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>

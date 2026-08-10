@@ -21,6 +21,7 @@ import {
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
+import { provideTestLayer } from './effect-test-support'
 import { baynTestPostgresUrl } from './test-environment.test-support'
 
 import {
@@ -447,7 +448,7 @@ const program = (
     Effect.provideService(CycleObservability, observability),
     Effect.provideService(CycleStore, cycleStore),
     Effect.provideService(BrokerRead, read),
-    Effect.provide(TestClock.layer()),
+    provideTestLayer(TestClock.layer()),
   )
 }
 
@@ -1206,7 +1207,7 @@ describePostgres('paper candidate discovery PostgreSQL transaction', () => {
             Effect.provideService(CycleStore, cycleStore),
             Effect.provideService(BrokerRead, broker(state)),
           )
-        }).pipe(Effect.provide(TestClock.layer())),
+        }).pipe(provideTestLayer(TestClock.layer())),
       )
     } finally {
       await runtime.dispose()

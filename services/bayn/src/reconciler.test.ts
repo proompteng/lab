@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result } from 'effect'
 import { TestClock } from 'effect/testing'
+
+import { provideTestLayer } from './effect-test-support'
 import { utcInstantFromEpochMillis } from './time'
 
 import {
@@ -457,7 +459,7 @@ describe('paper reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    const result = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.provide(TestClock.layer())))
+    const result = await Effect.runPromise(provide(read, makeStore(control)).pipe(provideTestLayer(TestClock.layer())))
 
     expect(orderCutoffs).toEqual(['1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.100Z'])
     expect(fillCutoffs).toEqual(orderCutoffs)

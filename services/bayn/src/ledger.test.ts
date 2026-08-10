@@ -6,6 +6,7 @@ import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer 
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
 import type { RuntimeConfig } from './config'
+import { provideTestLayer } from './effect-test-support'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { OrderSide, type Fill } from './paper'
 import {
@@ -176,16 +177,14 @@ const makeLedgerClient = () => {
 }
 
 const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      return yield* use(yield* Journal)
-    }).pipe(
-      Effect.provide(
-        JournalLive(journalConfig, {
-          createClient: () => client,
-          resolveReplicaAddresses: () => Effect.succeed(['3000']),
-        }),
-      ),
+  Effect.gen(function* () {
+    return yield* use(yield* Journal)
+  }).pipe(
+    provideTestLayer(
+      JournalLive(journalConfig, {
+        createClient: () => client,
+        resolveReplicaAddresses: () => Effect.succeed(['3000']),
+      }),
     ),
   )
 
@@ -1053,16 +1052,14 @@ describe('TigerBeetle simulation journal', () => {
         exact: true,
       })
     const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          return yield* body(yield* Journal)
-        }).pipe(
-          Effect.provide(
-            JournalLive(config, {
-              createClient: () => client,
-              resolveReplicaAddresses: () => Effect.succeed(['3000']),
-            }),
-          ),
+      Effect.gen(function* () {
+        return yield* body(yield* Journal)
+      }).pipe(
+        provideTestLayer(
+          JournalLive(config, {
+            createClient: () => client,
+            resolveReplicaAddresses: () => Effect.succeed(['3000']),
+          }),
         ),
       )
 

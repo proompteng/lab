@@ -4,6 +4,7 @@ import { Deferred, Effect, Fiber, Redacted, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
+import { provideTestLayer } from '../effect-test-support'
 import { canonicalHashV1 } from '../hash'
 import {
   BrokerAccess,
@@ -509,7 +510,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     const receipt = await Effect.runPromise(program)
     expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:02.000Z')
@@ -638,7 +639,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provide(TestClock.layer()),
+      provideTestLayer(TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -697,7 +698,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provide(TestClock.layer()),
+      provideTestLayer(TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -816,7 +817,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(Effect.provide(TestClock.layer()))
+    ).pipe(provideTestLayer(TestClock.layer()))
 
     const failure = await Effect.runPromise(program)
     expect(failure).toMatchObject({

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Cause, Effect, Logger, References } from 'effect'
 
+import { provideTestLayer } from '../effect-test-support'
+
 import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
@@ -151,7 +153,7 @@ describe('simulation reconciliation persistence logging', () => {
 
     const result = await Effect.runPromise(
       persistStableSnapshot(store, fence, snapshot, Effect.succeed(observedAt)).pipe(
-        Effect.provide(Logger.layer([logger])),
+        provideTestLayer(Logger.layer([logger])),
       ),
     )
 
