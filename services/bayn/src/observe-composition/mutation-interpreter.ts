@@ -8,6 +8,7 @@ import { WriterFence } from '../execution/writer-fence'
 import { CycleRunnerError } from '../cycle-runner'
 import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
+import { Pipeable } from '../pipeable'
 
 export type PaperMutationExecutor<E, R> = {
   readonly submit?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
@@ -28,7 +29,7 @@ export const mutationRunnerError = (
     cause,
   })
 
-export const restrictMutationAuthority = (
+const restrictMutationAuthorityDataFirst = (
   subject: string,
   reason: string,
 ): Effect.Effect<void, CycleRunnerError, AuthorityRestrictionStore | WriterFence> =>
@@ -48,6 +49,8 @@ export const restrictMutationAuthority = (
         ),
       )
   })
+
+export const restrictMutationAuthority = Pipeable.dual(2, restrictMutationAuthorityDataFirst)
 
 export const restrictMutationLoopFailure = (
   error: CycleRunnerError,

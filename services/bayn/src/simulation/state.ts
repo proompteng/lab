@@ -13,6 +13,7 @@ import type {
 } from '../types'
 import type { SimulationFailure } from './model'
 import { optionalRecordValue } from './record'
+import { Pipeable } from '../pipeable'
 
 export interface Position {
   readonly quantityMicros: bigint
@@ -69,7 +70,7 @@ export interface TradeCandidate {
 
 const zeroPosition: Position = { quantityMicros: 0n, costBasisMicros: 0n }
 
-export const positionFor = (
+const positionForDataFirst = (
   positions: Readonly<Record<string, Position>>,
   symbol: string,
 ): Result.Result<Position, SimulationFailure> =>
@@ -78,11 +79,15 @@ export const positionFor = (
     Result.map(Option.getOrElse(() => zeroPosition)),
   )
 
-export const updatePosition = (
+export const positionFor = Pipeable.dual(2, positionForDataFirst)
+
+const updatePositionDataFirst = (
   positions: Readonly<Record<string, Position>>,
   symbol: string,
   position: Position,
 ): Readonly<Record<string, Position>> => ({ ...positions, [symbol]: position })
+
+export const updatePosition = Pipeable.dual(3, updatePositionDataFirst)
 
 export const initialState = (initialCapitalMicros: bigint): SimulationState => ({
   initialCapitalMicros,

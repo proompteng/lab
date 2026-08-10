@@ -20,16 +20,19 @@ import {
 import type { AlignedSession, PreparedOrder, SimulationFailure, SimulationInput, SimulationTarget } from './model'
 import { canonicalHashResult } from './inputs'
 import type { PreparedFill, SimulationState } from './state'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
-export const parseMicros = (
+const parseMicrosDataFirst = (
   value: string,
   field: Extract<SimulationFailure, { readonly _tag: 'InvalidMicrosString' }>['field'],
 ): Result.Result<bigint, SimulationFailure> =>
   /^[0-9]+$/.test(value) ? Result.succeed(BigInt(value)) : fail({ _tag: 'InvalidMicrosString', field, value })
 
-export const makeDecision = (
+export const parseMicros = Pipeable.dual(2, parseMicrosDataFirst)
+
+const makeDecisionDataFirst = (
   runId: string,
   target: SimulationTarget,
   signalDate: IsoDate,
@@ -46,6 +49,8 @@ export const makeDecision = (
     Result.map((id) => ({ kind: 'decision' as const, id, ...payload })),
   )
 }
+
+export const makeDecision = Pipeable.dual(4, makeDecisionDataFirst)
 
 export const makeOrder = (
   runId: string,
@@ -96,7 +101,7 @@ export const makeOrder = (
     }),
   )
 
-export const limitOrderFillToBuyingPower = (
+const limitOrderFillToBuyingPowerDataFirst = (
   runId: string,
   order: PreparedOrder,
   filledQuantityMicros: bigint,
@@ -128,7 +133,9 @@ export const limitOrderFillToBuyingPower = (
   )
 }
 
-export const makeFill = (
+export const limitOrderFillToBuyingPower = Pipeable.dual(3, limitOrderFillToBuyingPowerDataFirst)
+
+const makeFillDataFirst = (
   runId: string,
   decision: DecisionEvent,
   order: PreparedOrder,
@@ -159,7 +166,9 @@ export const makeFill = (
   )
 }
 
-export const makeCashChange = (
+export const makeFill = Pipeable.dual(5, makeFillDataFirst)
+
+const makeCashChangeDataFirst = (
   runId: string,
   source:
     | Pick<FillEvent | FeeEvent, 'kind' | 'id' | 'sessionDate'>
@@ -180,7 +189,9 @@ export const makeCashChange = (
   )
 }
 
-export const makeFeeEvent = (
+export const makeCashChange = Pipeable.dual(4, makeCashChangeDataFirst)
+
+const makeFeeEventDataFirst = (
   runId: string,
   sessionDate: IsoDate,
   fees: FeeBreakdown,
@@ -199,6 +210,8 @@ export const makeFeeEvent = (
   )
 }
 
+export const makeFeeEvent = Pipeable.dual(3, makeFeeEventDataFirst)
+
 const makeCashYieldEvent = (
   runId: string,
   sessionDate: IsoDate,
@@ -213,7 +226,7 @@ const makeCashYieldEvent = (
   )
 }
 
-export const appendFillEvidence = (
+const appendFillEvidenceDataFirst = (
   state: SimulationState,
   fill: PreparedFill,
   amountMicros: bigint,
@@ -231,10 +244,14 @@ export const appendFillEvidence = (
       )
     : Result.succeed(state)
 
-export const appendOrder = (state: SimulationState, order: PreparedOrder, recordEvents: boolean): SimulationState =>
+export const appendFillEvidence = Pipeable.dual(5, appendFillEvidenceDataFirst)
+
+const appendOrderDataFirst = (state: SimulationState, order: PreparedOrder, recordEvents: boolean): SimulationState =>
   recordEvents ? { ...state, orders: Chunk.append(state.orders, order.event) } : state
 
-export const recordDecision = (
+export const appendOrder = Pipeable.dual(3, appendOrderDataFirst)
+
+const recordDecisionDataFirst = (
   state: SimulationState,
   target: SimulationTarget,
   decision: DecisionEvent,
@@ -276,7 +293,9 @@ export const recordDecision = (
   )
 }
 
-export const accrueSessionCash = (
+export const recordDecision = Pipeable.dual(4, recordDecisionDataFirst)
+
+const accrueSessionCashDataFirst = (
   state: SimulationState,
   session: AlignedSession,
   input: SimulationInput,
@@ -324,3 +343,5 @@ export const accrueSessionCash = (
     ),
   )
 }
+
+export const accrueSessionCash = Pipeable.dual(3, accrueSessionCashDataFirst)

@@ -11,6 +11,7 @@ import type {
 import { annualizedSharpe, mean, nearestRankLowerQuantile, roundStatistic } from './numerical-methods'
 import { qualificationTailCapacityForOrdinal } from './policy'
 import type { CompleteBlockWork } from './series'
+import { Pipeable } from '../pipeable'
 
 export const qualificationSelectedBenchmarkRule = {
   schemaVersion: 'bayn.qualification-selected-benchmark-rule.v1',
@@ -39,7 +40,7 @@ export const selectQualificationBenchmarkFromCashAdjustedSharpes = (
     ? { name: 'direct-volatility-timing', sharpe: sharpes.directVolatilityTiming }
     : { name: qualificationSelectedBenchmarkRule.tieBreak, sharpe: sharpes.buyAndHold }
 
-export const selectQualificationBenchmark = (
+const selectQualificationBenchmarkDataFirst = (
   observations: readonly QualificationObservation[],
   annualizationSessions: number,
 ): QualificationSelectedBenchmarkDecision => {
@@ -56,6 +57,8 @@ export const selectQualificationBenchmark = (
     directVolatilityTiming: directVolatility,
   })
 }
+
+export const selectQualificationBenchmark = Pipeable.dual(2, selectQualificationBenchmarkDataFirst)
 
 export interface QualificationSelectedBenchmarkBootstrapComparison {
   readonly schemaVersion: 'bayn.selected-benchmark-bootstrap-comparison.v1'
@@ -161,7 +164,7 @@ const sampleBlocks = (
       })),
     )
 
-export const runQualificationBootstrap = (
+const runQualificationBootstrapDataFirst = (
   series: QualificationSeries,
   blocks: readonly CompleteBlockWork[],
   policy: QualificationStatisticsPolicy,
@@ -277,7 +280,9 @@ export const runQualificationBootstrap = (
   )
 }
 
-export const runSelectedBenchmarkBootstrapComparison = (
+export const runQualificationBootstrap = Pipeable.dual(4, runQualificationBootstrapDataFirst)
+
+const runSelectedBenchmarkBootstrapComparisonDataFirst = (
   series: QualificationSeries,
   blocks: readonly CompleteBlockWork[],
   policy: QualificationStatisticsPolicy,
@@ -392,3 +397,8 @@ export const runSelectedBenchmarkBootstrapComparison = (
     }),
   )
 }
+
+export const runSelectedBenchmarkBootstrapComparison = Pipeable.dual(
+  4,
+  runSelectedBenchmarkBootstrapComparisonDataFirst,
+)

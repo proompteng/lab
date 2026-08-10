@@ -8,6 +8,7 @@ import { quantizeWeights, redistributeWithCap } from './allocation'
 import { annualizedPortfolioVolatility } from './risk'
 import { finalizeSignals, prepareSignal, type PreparedSignal } from './signals'
 import { fail, requiredHistory, WEIGHT_SCALE } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const assembleDecision = (
   signalDate: IsoDate,
@@ -123,7 +124,7 @@ const assembleDecision = (
   )
 }
 
-export const makeRiskBalancedTrendDecision = (
+const makeRiskBalancedTrendDecisionDataFirst = (
   signalDate: IsoDate,
   sessionDates: readonly IsoDate[],
   closes: Readonly<Record<string, readonly number[]>>,
@@ -159,6 +160,8 @@ export const makeRiskBalancedTrendDecision = (
   )
 }
 
+export const makeRiskBalancedTrendDecision = Pipeable.dual(4, makeRiskBalancedTrendDecisionDataFirst)
+
 export interface RiskBalancedTrendMarketContext {
   readonly signalDate: IsoDate
   readonly sessionDates: readonly IsoDate[]
@@ -180,7 +183,7 @@ export const makeRiskBalancedTrendDefinition = (protocol: Protocol): RiskBalance
     makeRiskBalancedTrendDecision(market.signalDate, market.sessionDates, market.closes, protocol),
 })
 
-export const riskBalancedTrendContextAtSignal = (
+const riskBalancedTrendContextAtSignalDataFirst = (
   sessions: readonly AlignedSession[],
   signalIndex: number,
   protocol: Protocol,
@@ -209,6 +212,8 @@ export const riskBalancedTrendContextAtSignal = (
       )
     }),
   )
+
+export const riskBalancedTrendContextAtSignal = Pipeable.dual(3, riskBalancedTrendContextAtSignalDataFirst)
 
 export const decisionFromAlignedSessions = (
   sessions: readonly AlignedSession[],

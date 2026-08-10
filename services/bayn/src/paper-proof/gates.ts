@@ -5,6 +5,7 @@ import { BrokerEnvironment } from '../broker/identity'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { PaperProofCommand, PaperProofRuntimeBinding, PaperProofSourcePlan } from './model'
 import { PaperProofError, protectedEntryToken } from './model'
+import { Pipeable } from '../pipeable'
 
 export const paperProofContainmentIoCount = 3
 
@@ -26,7 +27,7 @@ const sameStrategy = (left: PaperProofSourcePlan['strategy'], right: PaperProofR
 export const hasPaperProofMutationAuthority = (runtime: PaperProofRuntimeBinding): boolean =>
   runtime.brokerAccess === BrokerAccess.Mutation || runtime.capitalAuthority === CapitalAuthorityKind.Sandbox
 
-export const validatePaperProofEntry = (
+const validatePaperProofEntryDataFirst = (
   command: PaperProofCommand,
   source: PaperProofSourcePlan,
   runtime: PaperProofRuntimeBinding,
@@ -92,3 +93,5 @@ export const validatePaperProofEntry = (
   }
   return mismatch('SUBMIT, CANCEL, and RECOVER require explicit sandbox mutation authority')
 }
+
+export const validatePaperProofEntry = Pipeable.dual(4, validatePaperProofEntryDataFirst)

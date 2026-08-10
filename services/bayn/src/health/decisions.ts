@@ -37,8 +37,9 @@ import type {
   ProbeResult,
   SignalIdentityFailure,
 } from './model'
+import { Pipeable } from '../pipeable'
 
-export const validateSignalIdentity = (
+const validateSignalIdentityDataFirst = (
   snapshot: FinalizedSnapshotProvenance,
   evidence: RuntimeEvidence | null,
 ): Result.Result<void, SignalIdentityFailure> => {
@@ -61,6 +62,8 @@ export const validateSignalIdentity = (
   }
   return Result.succeed(undefined)
 }
+
+export const validateSignalIdentity = Pipeable.dual(2, validateSignalIdentityDataFirst)
 
 export const renderSignalIdentityFailure = (failure: SignalIdentityFailure): string => {
   switch (failure._tag) {
@@ -94,7 +97,7 @@ const canonicalHashResult = (
     (cause): DurableEvidenceFailure => ({ _tag: 'CanonicalizationFailed', runId, material, cause }),
   )
 
-export const validateDurableEvidence = (
+const validateDurableEvidenceDataFirst = (
   recovered: RecoveredEvaluationEvidence | null,
   qualification: QualificationRecord | null,
   evidence: RuntimeEvidence | null,
@@ -149,6 +152,8 @@ export const validateDurableEvidence = (
   }
   return Result.succeed(undefined)
 }
+
+export const validateDurableEvidence = Pipeable.dual(3, validateDurableEvidenceDataFirst)
 
 export const renderDurableEvidenceFailure = (failure: DurableEvidenceFailure): string => {
   switch (failure._tag) {
@@ -363,7 +368,7 @@ const deriveNextRuntimeState = (
   return { ...current, status: 'DEGRADED', health, cycle, broker, error: failures.messages.join('; ') }
 }
 
-export const deriveHealthTransition = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
+const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
   const checkedAt = input.clock._tag === 'Available' ? input.clock.checkedAt : null
   const clockFailure = input.clock._tag === 'Unavailable' ? input.clock.failure : null
   const clockError =
@@ -397,6 +402,8 @@ export const deriveHealthTransition = (current: RuntimeState, input: HealthTrans
     clockFailure,
   }
 }
+
+export const deriveHealthTransition = Pipeable.dual(2, deriveHealthTransitionDataFirst)
 
 const runtimeStatusLogDecision = (transition: HealthTransition): HealthLogDecision | null => {
   if (transition.next.status === transition.current.status) return null

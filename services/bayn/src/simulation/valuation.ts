@@ -5,10 +5,11 @@ import type { DailyBar, DailyPerformancePoint, DailyPositionMark, SimulationProt
 import type { AlignedSession, SimulationFailure, SimulationInput } from './model'
 import { requiredRecordValue } from './inputs'
 import { positionFor, type Position, type SessionOpeningSnapshot, type SimulationState } from './state'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
-export const referencePricesFor = (
+const referencePricesForDataFirst = (
   bars: Readonly<Record<string, DailyBar>>,
   protocol: SimulationProtocol,
   price: (bar: DailyBar) => number,
@@ -25,7 +26,9 @@ export const referencePricesFor = (
     Result.map((entries) => Object.fromEntries(entries)),
   )
 
-export const positionValueMicros = (
+export const referencePricesFor = Pipeable.dual(3, referencePricesForDataFirst)
+
+const positionValueMicrosDataFirst = (
   prices: Readonly<Record<string, bigint>>,
   positions: Readonly<Record<string, Position>>,
 ): Result.Result<bigint, SimulationFailure> =>
@@ -47,6 +50,8 @@ export const positionValueMicros = (
       ),
     Result.succeed(0n),
   )
+
+export const positionValueMicros = Pipeable.dual(2, positionValueMicrosDataFirst)
 
 const markedPositions = (
   session: AlignedSession,
@@ -78,7 +83,7 @@ const markedPositions = (
       }),
   )
 
-export const closeSession = (
+const closeSessionDataFirst = (
   state: SimulationState,
   session: AlignedSession,
   opening: SessionOpeningSnapshot,
@@ -143,3 +148,5 @@ export const closeSession = (
       ),
     ),
   )
+
+export const closeSession = Pipeable.dual(4, closeSessionDataFirst)

@@ -19,6 +19,7 @@ import {
   type PaperProofRecoveryStore,
   type PaperProofSourcePlan,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 export type PaperProofCommandFor<Operation extends PaperProofOperation> = Omit<PaperProofCommand, 'operation'> & {
   readonly operation: Operation
@@ -63,12 +64,14 @@ export const paperProofFailure = (
     cause,
   })
 
-export const timeoutFailure = (operation: PaperProofError['operation'], message: string): PaperProofError =>
+const timeoutFailureDataFirst = (operation: PaperProofError['operation'], message: string): PaperProofError =>
   new PaperProofError({
     operation,
     failure: 'timeout',
     message,
   })
+
+export const timeoutFailure = Pipeable.dual(2, timeoutFailureDataFirst)
 
 export const lift = <A>(
   operation: PaperProofError['operation'],
@@ -93,7 +96,7 @@ export const liftBounded = <A>(
     }),
   )
 
-export const validateReconciliationAccount = (
+const validateReconciliationAccountDataFirst = (
   expectedAccountId: string,
   reconciliation: PaperProofReconciliation,
 ): Result.Result<PaperProofReconciliation, PaperProofError> =>
@@ -107,6 +110,8 @@ export const validateReconciliationAccount = (
           'invariant',
         ),
       )
+
+export const validateReconciliationAccount = Pipeable.dual(2, validateReconciliationAccountDataFirst)
 
 export const validateExactReconciliation = (
   reconciliation: PaperProofReconciliation,
@@ -122,7 +127,7 @@ export const validateExactReconciliation = (
         ),
       )
 
-export const observeReconciliation = (
+const observeReconciliationDataFirst = (
   accountId: string,
   reconcile: Effect.Effect<PaperProofReconciliation, Error>,
 ): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
@@ -130,7 +135,9 @@ export const observeReconciliation = (
     Effect.flatMap((result) => Effect.fromResult(validateReconciliationAccount(accountId, result))),
   )
 
-export const reconcileExact = (
+export const observeReconciliation = Pipeable.dual(2, observeReconciliationDataFirst)
+
+const reconcileExactDataFirst = (
   accountId: string,
   reconcile: Effect.Effect<PaperProofReconciliation, Error>,
 ): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
@@ -138,7 +145,9 @@ export const reconcileExact = (
     Effect.flatMap((result) => Effect.fromResult(validateExactReconciliation(result))),
   )
 
-export const restrictPaperProof = (
+export const reconcileExact = Pipeable.dual(2, reconcileExactDataFirst)
+
+const restrictPaperProofDataFirst = (
   dependencies: PaperProofRestrictionDependencies,
   reason: string,
 ): Effect.Effect<void, PaperProofError> =>
@@ -152,7 +161,9 @@ export const restrictPaperProof = (
     ),
   )
 
-export const makePaperProofReceipt = (
+export const restrictPaperProof = Pipeable.dual(2, restrictPaperProofDataFirst)
+
+const makePaperProofReceiptDataFirst = (
   context: PaperProofOperationContext,
   completedAt: string,
   input: PaperProofReceiptFields,
@@ -166,7 +177,9 @@ export const makePaperProofReceipt = (
   ...input,
 })
 
-export const completePaperProofReceipt = (
+export const makePaperProofReceipt = Pipeable.dual(3, makePaperProofReceiptDataFirst)
+
+const completePaperProofReceiptDataFirst = (
   context: PaperProofOperationContext,
   currentUtcInstant: Effect.Effect<string, Error>,
   input: PaperProofReceiptFields,
@@ -174,6 +187,8 @@ export const completePaperProofReceipt = (
   lift(context.command.operation, 'paper proof completion clock failed', currentUtcInstant).pipe(
     Effect.map((completedAt) => makePaperProofReceipt(context, completedAt, input)),
   )
+
+export const completePaperProofReceipt = Pipeable.dual(3, completePaperProofReceiptDataFirst)
 
 export const isSuccessfulSubmit = (event: MutationEvent): boolean =>
   event.operation === MutationOperation.Submit &&
@@ -188,8 +203,10 @@ export const isTerminalSubmit = (event: MutationEvent): boolean =>
 export const isRecoveredCancellation = (event: MutationEvent): boolean =>
   event.operation === MutationOperation.Cancel && event.eventType === MutationEventType.RecoveryFound
 
-export const isCancellationSettled = (event: MutationEvent, intent: PaperProofIntentSnapshot): boolean =>
+const isCancellationSettledDataFirst = (event: MutationEvent, intent: PaperProofIntentSnapshot): boolean =>
   isRecoveredCancellation(event) && intent.state === IntentState.Terminal && intent.terminalOutcome !== undefined
+
+export const isCancellationSettled = Pipeable.dual(2, isCancellationSettledDataFirst)
 
 export type SubmitAdmission =
   | {
@@ -200,7 +217,7 @@ export type SubmitAdmission =
       readonly event: MutationEvent
     }
 
-export const decideSubmitAdmission = (
+const decideSubmitAdmissionDataFirst = (
   cancellation: MutationEvent | undefined,
   existing: MutationEvent | undefined,
 ): Result.Result<SubmitAdmission, PaperProofError> => {
@@ -219,6 +236,8 @@ export const decideSubmitAdmission = (
     : Result.succeed({ _tag: 'Existing', event: existing })
 }
 
+export const decideSubmitAdmission = Pipeable.dual(2, decideSubmitAdmissionDataFirst)
+
 export type CancellationAdmission =
   | {
       readonly _tag: 'Existing'
@@ -228,7 +247,7 @@ export type CancellationAdmission =
       readonly _tag: 'New'
     }
 
-export const decideCancellationAdmission = (
+const decideCancellationAdmissionDataFirst = (
   existing: MutationEvent | undefined,
   submitted: MutationEvent | undefined,
   intent: PaperProofIntentSnapshot | undefined,
@@ -260,7 +279,9 @@ export const decideCancellationAdmission = (
   return Result.succeed({ _tag: 'New' })
 }
 
-export const sameMutationEvent = (left: MutationEvent, right: MutationEvent): boolean =>
+export const decideCancellationAdmission = Pipeable.dual(3, decideCancellationAdmissionDataFirst)
+
+const sameMutationEventDataFirst = (left: MutationEvent, right: MutationEvent): boolean =>
   left.schemaVersion === right.schemaVersion &&
   left.eventId === right.eventId &&
   left.mutationId === right.mutationId &&
@@ -276,6 +297,8 @@ export const sameMutationEvent = (left: MutationEvent, right: MutationEvent): bo
   left.responseContentHash === right.responseContentHash &&
   left.occurredAt === right.occurredAt
 
+export const sameMutationEvent = Pipeable.dual(2, sameMutationEventDataFirst)
+
 export interface DurableMutationState {
   readonly submit?: MutationEvent
   readonly cancel?: MutationEvent
@@ -284,12 +307,14 @@ export interface DurableMutationState {
 export const markerMutationOperation = (operation: PaperProofMutationOperation): MutationOperation =>
   operation === 'CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit
 
-export const mutationForOperation = (
+const mutationForOperationDataFirst = (
   state: DurableMutationState,
   operation: PaperProofMutationOperation,
 ): MutationEvent | undefined => (operation === 'CANCEL' ? state.cancel : state.submit)
 
-export const selectRecoveryOperation = (
+export const mutationForOperation = Pipeable.dual(2, mutationForOperationDataFirst)
+
+const selectRecoveryOperationDataFirst = (
   state: DurableMutationState,
   required: PaperProofRecoveryRequired | undefined,
 ): PaperProofMutationOperation | undefined => {
@@ -298,7 +323,9 @@ export const selectRecoveryOperation = (
   return state.submit === undefined ? undefined : 'SUBMIT'
 }
 
-export const decideRecoverySelection = (
+export const selectRecoveryOperation = Pipeable.dual(2, selectRecoveryOperationDataFirst)
+
+const decideRecoverySelectionDataFirst = (
   state: DurableMutationState,
   required: PaperProofRecoveryRequired | undefined,
 ): Result.Result<
@@ -329,7 +356,9 @@ export const decideRecoverySelection = (
     : Result.succeed({ operation, recorded })
 }
 
-export const completionMatchesAuthoritativeMutation = (
+export const decideRecoverySelection = Pipeable.dual(2, decideRecoverySelectionDataFirst)
+
+const completionMatchesAuthoritativeMutationDataFirst = (
   state: DurableMutationState,
   completion: PaperProofRecoveryCompletion,
 ): boolean => {
@@ -338,7 +367,9 @@ export const completionMatchesAuthoritativeMutation = (
   return latest !== undefined && sameMutationEvent(latest, completion.mutation)
 }
 
-export const validateCompletionMutationIdentity = (
+export const completionMatchesAuthoritativeMutation = Pipeable.dual(2, completionMatchesAuthoritativeMutationDataFirst)
+
+const validateCompletionMutationIdentityDataFirst = (
   context: PaperProofOperationContext,
   completion: PaperProofRecoveryCompletion,
 ): Result.Result<void, PaperProofError> => {
@@ -356,7 +387,9 @@ export const validateCompletionMutationIdentity = (
       )
 }
 
-export const recoveryIdentityMatches = (
+export const validateCompletionMutationIdentity = Pipeable.dual(2, validateCompletionMutationIdentityDataFirst)
+
+const recoveryIdentityMatchesDataFirst = (
   context: PaperProofOperationContext,
   value: Pick<PaperProofRecoveryRequired, 'intentId' | 'proofPlanHash' | 'qualificationRunId'>,
 ): boolean =>
@@ -364,12 +397,14 @@ export const recoveryIdentityMatches = (
   value.proofPlanHash === context.command.proofPlanHash &&
   value.qualificationRunId === context.command.qualificationRunId
 
+export const recoveryIdentityMatches = Pipeable.dual(2, recoveryIdentityMatchesDataFirst)
+
 export interface PaperProofRecoveryMarkerDependencies {
   readonly recovery: Pick<PaperProofRecoveryStore, 'load' | 'markRequired'>
   readonly currentUtcInstant: Effect.Effect<string, Error>
 }
 
-export const ensureRecoveryMarkerCompatible = (
+const ensureRecoveryMarkerCompatibleDataFirst = (
   context: PaperProofOperationContext,
   dependencies: PaperProofRecoveryMarkerDependencies,
   operation: PaperProofMutationOperation,
@@ -406,7 +441,9 @@ export const ensureRecoveryMarkerCompatible = (
     }),
   )
 
-export const makeRecoveryRequired = (
+export const ensureRecoveryMarkerCompatible = Pipeable.dual(3, ensureRecoveryMarkerCompatibleDataFirst)
+
+const makeRecoveryRequiredDataFirst = (
   context: PaperProofOperationContext,
   operation: PaperProofMutationOperation,
   reason: string,
@@ -421,7 +458,9 @@ export const makeRecoveryRequired = (
   requiredAt,
 })
 
-export const markRecoveryRequired = (
+export const makeRecoveryRequired = Pipeable.dual(4, makeRecoveryRequiredDataFirst)
+
+const markRecoveryRequiredDataFirst = (
   context: PaperProofOperationContext,
   dependencies: PaperProofRecoveryMarkerDependencies,
   operation: PaperProofMutationOperation,
@@ -448,7 +487,9 @@ export const markRecoveryRequired = (
     }),
   )
 
-export const loadRecoveryRequired = (
+export const markRecoveryRequired = Pipeable.dual(4, markRecoveryRequiredDataFirst)
+
+const loadRecoveryRequiredDataFirst = (
   context: PaperProofOperationContext,
   recovery: Pick<PaperProofRecoveryStore, 'load'>,
 ): Effect.Effect<PaperProofRecoveryRequired | undefined, PaperProofError> =>
@@ -472,7 +513,9 @@ export const loadRecoveryRequired = (
     ),
   )
 
-export const loadRecoveryCompletion = (
+export const loadRecoveryRequired = Pipeable.dual(2, loadRecoveryRequiredDataFirst)
+
+const loadRecoveryCompletionDataFirst = (
   context: PaperProofOperationContext,
   recovery: Pick<PaperProofRecoveryStore, 'loadCompletion'>,
 ): Effect.Effect<PaperProofRecoveryCompletion | undefined, PaperProofError> =>
@@ -497,7 +540,9 @@ export const loadRecoveryCompletion = (
     }),
   )
 
-export const readPaperProofIntent = (
+export const loadRecoveryCompletion = Pipeable.dual(2, loadRecoveryCompletionDataFirst)
+
+const readPaperProofIntentDataFirst = (
   context: PaperProofOperationContext,
   operation: PaperProofError['operation'],
   readIntent: (intentId: string) => Effect.Effect<PaperProofIntentSnapshot | undefined, Error>,
@@ -510,7 +555,9 @@ export const readPaperProofIntent = (
     ),
   )
 
-export const readPaperProofMutation = (
+export const readPaperProofIntent = Pipeable.dual(3, readPaperProofIntentDataFirst)
+
+const readPaperProofMutationDataFirst = (
   context: PaperProofOperationContext,
   operation: PaperProofError['operation'],
   mutations: PaperProofMutationStore,
@@ -522,7 +569,9 @@ export const readPaperProofMutation = (
     mutations.latest(context.sourcePlan.intentId, mutationOperation),
   )
 
-export const readDurableMutationState = (
+export const readPaperProofMutation = Pipeable.dual(4, readPaperProofMutationDataFirst)
+
+const readDurableMutationStateDataFirst = (
   context: PaperProofOperationContext,
   operation: PaperProofError['operation'],
   mutations: PaperProofMutationStore,
@@ -536,7 +585,9 @@ export const readDurableMutationState = (
     }
   })
 
-export const recoverMutationLookup = (
+export const readDurableMutationState = Pipeable.dual(3, readDurableMutationStateDataFirst)
+
+const recoverMutationLookupDataFirst = (
   context: PaperProofOperationContext,
   operation: MutationOperation,
   recover: () => Effect.Effect<MutationEvent, Error>,
@@ -545,7 +596,9 @@ export const recoverMutationLookup = (
     Effect.andThen(lift('RECOVER', `paper proof lookup-only ${operation.toLowerCase()} recovery failed`, recover())),
   )
 
-export const makeRecoveryCompletion = (
+export const recoverMutationLookup = Pipeable.dual(3, recoverMutationLookupDataFirst)
+
+const makeRecoveryCompletionDataFirst = (
   context: PaperProofOperationContext,
   operation: PaperProofMutationOperation,
   receipt: PaperProofReceipt,
@@ -572,7 +625,9 @@ export const makeRecoveryCompletion = (
         completedAt: receipt.completedAt,
       })
 
-export const completeRecovery = (
+export const makeRecoveryCompletion = Pipeable.dual(3, makeRecoveryCompletionDataFirst)
+
+const completeRecoveryDataFirst = (
   context: PaperProofOperationContext,
   recovery: Pick<PaperProofRecoveryStore, 'complete'>,
   latestCancellation: (() => Effect.Effect<MutationEvent | undefined, Error>) | undefined,
@@ -613,7 +668,9 @@ export const completeRecovery = (
     )
   })
 
-export const persistRecoveryCompletion = (
+export const completeRecovery = Pipeable.dual(4, completeRecoveryDataFirst)
+
+const persistRecoveryCompletionDataFirst = (
   context: PaperProofOperationContext,
   dependencies: {
     readonly recovery: Pick<PaperProofRecoveryStore, 'complete'>
@@ -628,7 +685,9 @@ export const persistRecoveryCompletion = (
     ),
   )
 
-export const makeReceiptFromCompletion = (
+export const persistRecoveryCompletion = Pipeable.dual(4, persistRecoveryCompletionDataFirst)
+
+const makeReceiptFromCompletionDataFirst = (
   context: PaperProofOperationContext,
   completion: PaperProofRecoveryCompletion,
 ): PaperProofReceipt => ({
@@ -644,3 +703,5 @@ export const makeReceiptFromCompletion = (
   recoveryRequired: false,
   completedAt: completion.completedAt,
 })
+
+export const makeReceiptFromCompletion = Pipeable.dual(2, makeReceiptFromCompletionDataFirst)

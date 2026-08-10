@@ -6,6 +6,7 @@ import type { EvidenceMismatchProblem, SimulationReconciliationIssue, Validation
 import type { PreparedReconciliation } from './preparation'
 import { applyEvent, type ReconstructionState } from './reconstruction-events'
 import { absolute, fail, failIssues, markUnsigned, positionUnsigned } from './validation'
+import { Pipeable } from '../pipeable'
 
 interface MarkBaselines {
   readonly turnoverMicros: bigint
@@ -271,7 +272,7 @@ const reconcileDailyMark = (
   })
 }
 
-export const reconcileAllMarks = (
+const reconcileAllMarksDataFirst = (
   prepared: PreparedReconciliation,
   initial: ReconstructionState,
 ): Validation<ReconstructionState> =>
@@ -283,3 +284,5 @@ export const reconcileAllMarks = (
       ),
     Result.succeed(initial),
   )
+
+export const reconcileAllMarks = Pipeable.dual(2, reconcileAllMarksDataFirst)

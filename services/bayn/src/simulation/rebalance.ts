@@ -35,6 +35,7 @@ import {
   type TradeCandidate,
 } from './state'
 import { positionValueMicros, referencePricesFor } from './valuation'
+import { Pipeable } from '../pipeable'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
@@ -624,7 +625,7 @@ const executeRebalanceOrders = (context: RebalanceOrders): Result.Result<Simulat
   )
 }
 
-export const rebalanceSession = (
+const rebalanceSessionDataFirst = (
   state: SimulationState,
   session: AlignedSession,
   target: SimulationTarget,
@@ -637,3 +638,5 @@ export const rebalanceSession = (
     Result.flatMap(planRebalanceOrders),
     Result.flatMap(executeRebalanceOrders),
   )
+
+export const rebalanceSession = Pipeable.dual(5, rebalanceSessionDataFirst)

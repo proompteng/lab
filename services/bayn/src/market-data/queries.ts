@@ -2,12 +2,13 @@ import type { ClickhouseClient } from '@effect/sql-clickhouse'
 
 import type { RuntimeConfig } from '../config'
 import type { FinalizedPublicationRequest, MarketDataContract, SnapshotPublicationRequest } from './model'
+import { Pipeable } from '../pipeable'
 
 // A 21-calendar-day catch-up interval contains at most 15 weekday publications. One extra bounded row keeps the
 // MarketData seam complete while the runner clamps by calendar date before its single broker-calendar read.
 export const cyclePublicationCandidateLimit = 16
 
-export const makeMarketDataQueries = (
+const makeMarketDataQueriesDataFirst = (
   sql: ClickhouseClient.ClickhouseClient,
   config: Pick<RuntimeConfig, 'clickhouse'>,
   contract: MarketDataContract,
@@ -240,3 +241,5 @@ export const makeMarketDataQueries = (
     loadSnapshotPublicationManifest,
   }
 }
+
+export const makeMarketDataQueries = Pipeable.dual(3, makeMarketDataQueriesDataFirst)

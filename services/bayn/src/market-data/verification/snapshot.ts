@@ -6,6 +6,7 @@ import { PublicationSchema, type DailyBar } from '../../types'
 import { verifyCalendar } from './calendar'
 import type { BarField, MarketDataVerificationError } from './errors'
 import { canonicalHashResult, fail, requireCondition, validateAll, withoutSnapshot } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const decimalNumber = (
   row: SignalBarRow,
@@ -128,7 +129,7 @@ const validateBar = (
     }),
   ])
 
-export const verifyFinalizedSnapshot = (
+const verifyFinalizedSnapshotDataFirst = (
   rows: SnapshotRows,
   request: SnapshotRequest,
 ): Result.Result<MarketDataSnapshot, MarketDataVerificationError> =>
@@ -211,3 +212,5 @@ export const verifyFinalizedSnapshot = (
       )
     }),
   )
+
+export const verifyFinalizedSnapshot = Pipeable.dual(2, verifyFinalizedSnapshotDataFirst)

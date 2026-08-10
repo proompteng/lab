@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import type { QualificationLock, QualificationResult } from './model'
+import { Pipeable } from '../pipeable'
 
 export type QualificationTerminalState =
   | { readonly state: 'PREREGISTERED'; readonly lock: QualificationLock }
@@ -27,7 +28,7 @@ export type QualificationTerminalConflict =
       readonly attemptedResultHash: string
     }
 
-export const decideQualificationTerminal = (
+const decideQualificationTerminalDataFirst = (
   current: QualificationTerminalState,
   attempted: QualificationResult,
 ): Result.Result<QualificationTerminalDecision, QualificationTerminalConflict> => {
@@ -56,3 +57,5 @@ export const decideQualificationTerminal = (
         attemptedResultHash: attempted.resultHash,
       })
 }
+
+export const decideQualificationTerminal = Pipeable.dual(2, decideQualificationTerminalDataFirst)

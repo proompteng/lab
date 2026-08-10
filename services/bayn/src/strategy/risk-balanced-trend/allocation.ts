@@ -2,6 +2,7 @@ import { Result, pipe } from 'effect'
 
 import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import { compareKeys, fail, WEIGHT_SCALE } from './shared'
+import { Pipeable } from '../../pipeable'
 
 interface ScoredSymbol {
   readonly symbol: string
@@ -50,7 +51,7 @@ const allocateWeights = (
   })
 }
 
-export const redistributeWithCap = (
+const redistributeWithCapDataFirst = (
   scores: Readonly<Record<string, number>>,
   maximumWeight: number,
 ): Result.Result<Readonly<Record<string, number>>, RiskBalancedTrendFailure> => {
@@ -63,6 +64,8 @@ export const redistributeWithCap = (
     remaining: candidates.filter(({ score }) => score > 0),
   })
 }
+
+export const redistributeWithCap = Pipeable.dual(2, redistributeWithCapDataFirst)
 
 interface QuantizedUnits {
   readonly units: Readonly<Record<string, number>>
@@ -129,7 +132,7 @@ const removeExcessUnits = (
       })
 }
 
-export const quantizeWeights = (
+const quantizeWeightsDataFirst = (
   weights: Readonly<Record<string, number>>,
   maximumSymbolWeight: number,
 ): Result.Result<Readonly<Record<string, number>>, RiskBalancedTrendFailure> =>
@@ -137,3 +140,5 @@ export const quantizeWeights = (
     quantizedUnits(weights, Math.floor(maximumSymbolWeight * WEIGHT_SCALE + Number.EPSILON)),
     Result.flatMap(removeExcessUnits),
   )
+
+export const quantizeWeights = Pipeable.dual(2, quantizeWeightsDataFirst)

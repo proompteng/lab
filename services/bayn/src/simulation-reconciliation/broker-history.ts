@@ -25,6 +25,7 @@ import {
   type ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
+import { Pipeable } from '../pipeable'
 
 interface OrderPaginationState {
   readonly rows: readonly Observed<BrokerOrder>[]
@@ -68,7 +69,7 @@ const initialOrderPaginationState = (): OrderPaginationState => ({
 
 const initialFillPaginationState = (): FillPaginationState => ({ rows: [], ids: HashSet.empty(), cursor: undefined })
 
-export const decideOrderPage = (
+const decideOrderPageDataFirst = (
   state: OrderPaginationState,
   limit: number,
   page: ReadResult<readonly BrokerOrder[]>,
@@ -161,7 +162,9 @@ export const decideOrderPage = (
   })
 }
 
-export const decideFillPage = (
+export const decideOrderPage = Pipeable.dual(3, decideOrderPageDataFirst)
+
+const decideFillPageDataFirst = (
   state: FillPaginationState,
   pageSize: number,
   page: ReadResult<{ readonly items: readonly FillActivity[]; readonly nextPageToken?: string }>,
@@ -196,6 +199,8 @@ export const decideFillPage = (
     state: { rows, ids: pageResult.success.ids, cursor: next },
   })
 }
+
+export const decideFillPage = Pipeable.dual(3, decideFillPageDataFirst)
 
 const readOrderPages = (
   read: BrokerReadShape,
@@ -277,7 +282,7 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
     ),
   )
 
-export const decideStableHistory = (
+const decideStableHistoryDataFirst = (
   before: BrokerHistory,
   after: BrokerHistory,
 ): Result.Result<BrokerHistory, ReconciliationError> =>
@@ -295,7 +300,9 @@ export const decideStableHistory = (
       : yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
   })
 
-export const readStableBrokerSnapshot = (
+export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst)
+
+const readStableBrokerSnapshotDataFirst = (
   read: BrokerReadShape,
   now: Effect.Effect<string>,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
@@ -308,3 +315,5 @@ export const readStableBrokerSnapshot = (
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
   })
+
+export const readStableBrokerSnapshot = Pipeable.dual(2, readStableBrokerSnapshotDataFirst)

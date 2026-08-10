@@ -29,6 +29,7 @@ import type {
   StartupDecisionFailure,
 } from './model'
 import { renderStartupDecisionFailure } from './presentation'
+import { Pipeable } from '../pipeable'
 
 const failStartupState = (current: RuntimeState, error: OperationalError): RuntimeState => ({
   ...current,
@@ -359,7 +360,7 @@ const evaluateAndJournal = (
     Effect.withLogSpan('startup'),
   )
 
-export const runStartup = (
+const runStartupDataFirst = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   strategy: StrategyRuntime,
@@ -369,3 +370,5 @@ export const runStartup = (
     ? evaluateAndJournal(config, state, strategy, dependencies)
     : recoverPinnedQualification(config, config.qualificationRunId, state, dependencies.evidenceStore)
   ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))
+
+export const runStartup = Pipeable.dual(4, runStartupDataFirst)

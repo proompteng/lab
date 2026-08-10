@@ -15,6 +15,7 @@ import {
   type ExecutionResult,
 } from './fixed-point'
 import { BPS, MICROS, PPM, type ExecutionModelFailure } from './model'
+import { Pipeable } from '../../pipeable'
 
 const impactedDelta = (
   referencePriceMicros: bigint,
@@ -36,7 +37,7 @@ export interface FillTerms {
   readonly slippageCostMicros: bigint
 }
 
-export const makeFillTerms = (
+const makeFillTermsDataFirst = (
   side: 'buy' | 'sell',
   quantityMicros: bigint,
   referencePrice: bigint,
@@ -118,6 +119,8 @@ export const makeFillTerms = (
     }),
   )
 }
+
+export const makeFillTerms = Pipeable.dual(5, makeFillTermsDataFirst)
 
 export interface OrderOutcome {
   readonly requestedQuantityMicros: bigint

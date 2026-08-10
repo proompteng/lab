@@ -16,6 +16,7 @@ import {
   validateBoundSessions,
   withoutSnapshot,
 } from './shared'
+import { Pipeable } from '../../pipeable'
 
 export interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
@@ -72,7 +73,7 @@ const validateSession = (
     }),
   ])
 
-export const verifyCalendar = (
+const verifyCalendarDataFirst = (
   sessions: readonly SignalSessionRow[],
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
@@ -186,7 +187,9 @@ export const verifyCalendar = (
     }),
   )
 
-export const verifyFinalizedCalendar = (
+export const verifyCalendar = Pipeable.dual(3, verifyCalendarDataFirst)
+
+const verifyFinalizedCalendarDataFirst = (
   rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
   request: SnapshotRequest,
 ): Result.Result<MarketDataInspection, MarketDataVerificationError> =>
@@ -209,7 +212,9 @@ export const verifyFinalizedCalendar = (
     }),
   )
 
-export const publicationSnapshotRequest = (
+export const verifyFinalizedCalendar = Pipeable.dual(2, verifyFinalizedCalendarDataFirst)
+
+const publicationSnapshotRequestDataFirst = (
   manifest: SignalManifestRow,
   input: FinalizedPublicationRequest,
   contract: MarketDataContract,
@@ -233,3 +238,5 @@ export const publicationSnapshotRequest = (
   historyStart: contract.historyStart,
   evaluationStart: contract.evaluationStart,
 })
+
+export const publicationSnapshotRequest = Pipeable.dual(4, publicationSnapshotRequestDataFirst)

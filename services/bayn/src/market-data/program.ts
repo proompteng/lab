@@ -27,8 +27,9 @@ import {
 } from './model'
 import { cyclePublicationCandidateLimit, makeMarketDataQueries } from './queries'
 import { decodeSnapshotRows, type SignalManifestRow } from './rows'
+import { Pipeable } from '../pipeable'
 
-export const makeMarketData = (
+const makeMarketDataDataFirst = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
@@ -318,8 +319,12 @@ export const makeMarketData = (
     }),
   )
 
-export const MarketDataLive = (
+export const makeMarketData = Pipeable.dual(2, makeMarketDataDataFirst)
+
+const MarketDataLiveDataFirst = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
   Layer.effect(MarketData, makeMarketData(config, contract))
+
+export const MarketDataLive = Pipeable.dual(2, MarketDataLiveDataFirst)

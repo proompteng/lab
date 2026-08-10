@@ -15,6 +15,7 @@ import {
   type LedgerPlanFailureDetail,
   type LedgerTransferRecord,
 } from './model'
+import { Pipeable } from '../pipeable'
 
 const makeAccount = (
   runId: string,
@@ -89,7 +90,7 @@ const requireNonNegative = (
 ): Result.Result<bigint, LedgerPlanFailureDetail> =>
   value < 0n ? failLedgerPlan({ kind: 'negative-amount', field, value, eventId }) : Result.succeed(value)
 
-export const planDecodedLedgerInput = (
+const planDecodedLedgerInputDataFirst = (
   input: DecodedLedgerInput,
   ledger: number,
 ): Result.Result<EvaluationLedgerPlan, LedgerPlanFailureDetail> =>
@@ -298,3 +299,5 @@ export const planDecodedLedgerInput = (
       transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
     }
   })
+
+export const planDecodedLedgerInput = Pipeable.dual(2, planDecodedLedgerInputDataFirst)

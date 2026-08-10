@@ -2,8 +2,9 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { isMarketDataVerificationError, renderMarketDataVerificationError } from '../market-data-verification'
+import { Pipeable } from '../pipeable'
 
-export const marketDataOperationError = (
+const marketDataOperationErrorDataFirst = (
   operation: 'check' | 'inspect' | 'inspect-publication' | 'load',
   message: string,
   cause: unknown,
@@ -24,3 +25,5 @@ export const marketDataOperationError = (
   }
   return retryableOperationalError('market-data', operation, message, cause)
 }
+
+export const marketDataOperationError = Pipeable.dual(3, marketDataOperationErrorDataFirst)

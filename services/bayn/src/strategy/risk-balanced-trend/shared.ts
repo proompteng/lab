@@ -2,11 +2,14 @@ import { Result } from 'effect'
 
 import type { Protocol } from '../../types'
 import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
+import { Pipeable } from '../../pipeable'
 
 export const WEIGHT_SCALE = 1_000_000_000_000
 
-export const compareKeys = ([left]: readonly [string, unknown], [right]: readonly [string, unknown]): number =>
+const compareKeysDataFirst = ([left]: readonly [string, unknown], [right]: readonly [string, unknown]): number =>
   left < right ? -1 : left > right ? 1 : 0
+
+export const compareKeys = Pipeable.dual(2, compareKeysDataFirst)
 
 export const fail = <A = never>(failure: RiskBalancedTrendFailure): Result.Result<A, RiskBalancedTrendFailure> =>
   Result.fail(failure)
@@ -24,7 +27,7 @@ export const finite = (
       ? fail({ _tag: 'InvalidRiskBalancedTrendNumber', operation, value, symbol, reason: 'negative' })
       : Result.succeed(value)
 
-export const dailyReturns = (
+const dailyReturnsDataFirst = (
   closes: readonly number[],
   count: number,
   symbol: string,
@@ -52,3 +55,5 @@ export const dailyReturns = (
     }),
   )
 }
+
+export const dailyReturns = Pipeable.dual(3, dailyReturnsDataFirst)

@@ -6,6 +6,7 @@ import { validateCashChange } from './mark-validation'
 import type { FailedComputation, SimulationReconciliationIssue, Validation } from './model'
 import type { PreparedFee, PreparedFill, PreparedMonetaryEvent, PreparedReconciliation } from './preparation'
 import { fail, failIssues, unsigned, validateCanonicalIdentity } from './validation'
+import { Pipeable } from '../pipeable'
 
 export interface ReconstructionState {
   readonly cashMicros: bigint
@@ -157,7 +158,7 @@ const updateQuantities = (
   )
 }
 
-export const applyEvent = (
+const applyEventDataFirst = (
   prepared: PreparedReconciliation,
   state: ReconstructionState,
   preparedEvent: PreparedMonetaryEvent,
@@ -197,3 +198,5 @@ export const applyEvent = (
     cumulativeCashYieldMicros: state.cumulativeCashYieldMicros + transition.success.cashYieldMicros,
   })
 }
+
+export const applyEvent = Pipeable.dual(3, applyEventDataFirst)

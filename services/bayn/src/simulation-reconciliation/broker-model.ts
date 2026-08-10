@@ -15,6 +15,7 @@ import {
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { IsoDate } from '../schemas'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
+import { Pipeable } from '../pipeable'
 
 export interface IntentExpectation {
   readonly intentId: string
@@ -238,7 +239,7 @@ export const canonicalHash = (
 export const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const canonicalIntegerPattern = /^(?:0|-?[1-9][0-9]*)$/
 
-export const integer = (
+const integerDataFirst = (
   source: ReconciliationIntegerSource,
   identity: string,
   value: string,
@@ -247,7 +248,9 @@ export const integer = (
     ? Result.succeed(BigInt(value))
     : fail({ _tag: 'InvalidInteger', source, identity, value })
 
-export const roundMicrosProduct = (
+export const integer = Pipeable.dual(3, integerDataFirst)
+
+const roundMicrosProductDataFirst = (
   symbol: string,
   quantityMicros: string,
   averageEntryPriceMicros: string,
@@ -273,6 +276,8 @@ export const roundMicrosProduct = (
     ),
   )
 
+export const roundMicrosProduct = Pipeable.dual(3, roundMicrosProductDataFirst)
+
 export const reconciledStateHash = (state: ReconciledStateMaterial): ReconciliationDecision<string> =>
   pipe(
     canonicalHash('broker-state-hash', {
@@ -292,7 +297,7 @@ export const reconciledStateHash = (state: ReconciledStateMaterial): Reconciliat
     ),
   )
 
-export const instant = (
+const instantDataFirst = (
   field: ReconciliationInstantField,
   identity: string,
   value: string,
@@ -302,6 +307,8 @@ export const instant = (
     ? Result.succeed(milliseconds)
     : fail({ _tag: 'InvalidInstant', field, identity, value })
 }
+
+export const instant = Pipeable.dual(3, instantDataFirst)
 
 export const indexUnique = <A>(
   values: readonly A[],
@@ -349,7 +356,7 @@ const discrepancy = (
         ),
       )
 
-export const compareValue = (
+const compareValueDataFirst = (
   accountId: string,
   kind: DiscrepancyKind,
   identity: string,
@@ -362,6 +369,8 @@ export const compareValue = (
         discrepancy(accountId, kind, identity, expected, observed),
         Result.map((value) => [value]),
       )
+
+export const compareValue = Pipeable.dual(5, compareValueDataFirst)
 
 export const renderReconciliationDecisionError = (error: ReconciliationDecisionError): string => {
   switch (error._tag) {

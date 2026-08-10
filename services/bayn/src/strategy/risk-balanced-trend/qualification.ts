@@ -18,6 +18,7 @@ import {
 import { prepareRiskBalancedTrendQualification } from './qualification-precommit'
 import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import type { EvaluationResult, InputManifest, IsoDate, Protocol } from '../../types'
+import { Pipeable } from '../../pipeable'
 
 export type RiskBalancedTrendStrategyPrepareLockFailure = RiskBalancedTrendFailure | QualificationConstructionFailure
 
@@ -26,7 +27,7 @@ export type RiskBalancedTrendQualificationFailure = QualificationConstructionFai
 const universeRationale =
   'The precommitted five-sleeve cross-asset universe uses broad commodities (DBC), developed ex-US equities (EFA), intermediate US Treasuries (IEF), US equities (SPY), and US real estate (VNQ); symbols were fixed without inspecting candidate prices or returns.'
 
-export const prepareRiskBalancedTrendQualificationLock = (
+const prepareRiskBalancedTrendQualificationLockDataFirst = (
   manifest: InputManifest,
   sessionDates: readonly IsoDate[],
   priorTrialRunIds: readonly string[],
@@ -89,7 +90,12 @@ export const prepareRiskBalancedTrendQualificationLock = (
     }),
   )
 
-export const analyzeRiskBalancedTrendEvaluation = (
+export const prepareRiskBalancedTrendQualificationLock = Pipeable.dual(
+  5,
+  prepareRiskBalancedTrendQualificationLockDataFirst,
+)
+
+const analyzeRiskBalancedTrendEvaluationDataFirst = (
   evaluation: EvaluationResult,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
@@ -97,3 +103,5 @@ export const analyzeRiskBalancedTrendEvaluation = (
     prepareQualificationSeries(evaluation),
     Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, priorTrialRunIds)),
   )
+
+export const analyzeRiskBalancedTrendEvaluation = Pipeable.dual(2, analyzeRiskBalancedTrendEvaluationDataFirst)

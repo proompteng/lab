@@ -23,6 +23,7 @@ import {
   type ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
+import { Pipeable } from '../pipeable'
 
 const indexBindings = (
   bindings: readonly IntentBinding[],
@@ -143,7 +144,7 @@ const normalizePositions = (
 ): Result.Result<PositionSnapshotInput, ReconciliationError> =>
   mapObservationFailure('positions', accountId, positionSnapshot(accountId, positions))
 
-export const normalizeSnapshot = (
+const normalizeSnapshotDataFirst = (
   snapshot: StableBrokerSnapshot,
   bindings: readonly IntentBinding[],
 ): Result.Result<NormalizedBrokerSnapshot, ReconciliationError> =>
@@ -156,6 +157,8 @@ export const normalizeSnapshot = (
     return { account, positions, orderEvents: Chunk.toReadonlyArray(orders.events), fillEvents }
   })
 
+export const normalizeSnapshot = Pipeable.dual(2, normalizeSnapshotDataFirst)
+
 export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Result<void, ReconciliationError> =>
   hasAccountBaseline
     ? Result.succeed(undefined)
@@ -166,7 +169,7 @@ export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Resul
         ),
       )
 
-export const prepareNormalizedSnapshot = (store: ReconciliationPersistence, snapshot: StableBrokerSnapshot) =>
+const prepareNormalizedSnapshotDataFirst = (store: ReconciliationPersistence, snapshot: StableBrokerSnapshot) =>
   Effect.gen(function* () {
     const bindings = yield* store.reconciliation.bindings(snapshot.account.value.id)
     if (snapshot.history.fills.length > 0) {
@@ -175,3 +178,5 @@ export const prepareNormalizedSnapshot = (store: ReconciliationPersistence, snap
     }
     return yield* Effect.fromResult(normalizeSnapshot(snapshot, bindings))
   })
+
+export const prepareNormalizedSnapshot = Pipeable.dual(2, prepareNormalizedSnapshotDataFirst)

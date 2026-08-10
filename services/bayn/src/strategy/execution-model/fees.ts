@@ -3,6 +3,7 @@ import { Result, pipe } from 'effect'
 import type { ExecutionModel } from '../../execution-model-contract'
 import { ceilDiv, ensureUnsigned, fail, scaledNumber, type ExecutionResult } from './fixed-point'
 import { BPS, MICROS } from './model'
+import { Pipeable } from '../../pipeable'
 
 export interface FeeInput {
   readonly side: 'buy' | 'sell'
@@ -26,7 +27,7 @@ const roundedFee = (numerator: bigint, denominator: bigint, increment: bigint): 
         Result.map((quotient) => quotient * increment),
       )
 
-export const calculateSessionFees = (
+const calculateSessionFeesDataFirst = (
   fills: readonly FeeInput[],
   model: ExecutionModel,
   costMultiplierMicros: bigint,
@@ -79,3 +80,5 @@ export const calculateSessionFees = (
     }),
   )
 }
+
+export const calculateSessionFees = Pipeable.dual(3, calculateSessionFeesDataFirst)

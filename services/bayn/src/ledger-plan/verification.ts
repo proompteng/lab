@@ -8,8 +8,9 @@ import {
   type LedgerValidationError,
   type LedgerValidationOperation,
 } from './model'
+import { Pipeable } from '../pipeable'
 
-export const accountMetadataMatches = (actual: LedgerAccountRecord, expected: LedgerAccountRecord): boolean =>
+const accountMetadataMatchesDataFirst = (actual: LedgerAccountRecord, expected: LedgerAccountRecord): boolean =>
   actual.id === expected.id &&
   actual.user_data_128 === expected.user_data_128 &&
   actual.user_data_64 === expected.user_data_64 &&
@@ -19,7 +20,9 @@ export const accountMetadataMatches = (actual: LedgerAccountRecord, expected: Le
   actual.code === expected.code &&
   actual.flags === expected.flags
 
-export const transferMetadataMatches = (actual: LedgerTransferRecord, expected: LedgerTransferRecord): boolean =>
+export const accountMetadataMatches = Pipeable.dual(2, accountMetadataMatchesDataFirst)
+
+const transferMetadataMatchesDataFirst = (actual: LedgerTransferRecord, expected: LedgerTransferRecord): boolean =>
   actual.id === expected.id &&
   actual.debit_account_id === expected.debit_account_id &&
   actual.credit_account_id === expected.credit_account_id &&
@@ -32,6 +35,8 @@ export const transferMetadataMatches = (actual: LedgerTransferRecord, expected: 
   actual.ledger === expected.ledger &&
   actual.code === expected.code &&
   actual.flags === expected.flags
+
+export const transferMetadataMatches = Pipeable.dual(2, transferMetadataMatchesDataFirst)
 
 const duplicateRecordId = <Record extends { readonly id: bigint }>(records: readonly Record[]): bigint | undefined => {
   const ids = new Set<bigint>()
@@ -81,7 +86,7 @@ const verifyUniqueExact = <Record extends { readonly id: bigint }>(
   return Result.succeed(undefined)
 }
 
-export const verifyExactAccounts = (
+const verifyExactAccountsDataFirst = (
   operation: LedgerValidationOperation,
   kind: string,
   actual: readonly LedgerAccountRecord[],
@@ -89,7 +94,9 @@ export const verifyExactAccounts = (
 ): Result.Result<void, LedgerValidationError> =>
   verifyUniqueExact(operation, kind, actual, expected, accountMetadataMatches)
 
-export const verifyExactTransfers = (
+export const verifyExactAccounts = Pipeable.dual(4, verifyExactAccountsDataFirst)
+
+const verifyExactTransfersDataFirst = (
   operation: LedgerValidationOperation,
   kind: string,
   actual: readonly LedgerTransferRecord[],
@@ -97,7 +104,9 @@ export const verifyExactTransfers = (
 ): Result.Result<void, LedgerValidationError> =>
   verifyUniqueExact(operation, kind, actual, expected, transferMetadataMatches)
 
-export const verifyLedgerPlanRecords = (
+export const verifyExactTransfers = Pipeable.dual(4, verifyExactTransfersDataFirst)
+
+const verifyLedgerPlanRecordsDataFirst = (
   operation: LedgerValidationOperation,
   accountKind: string,
   transferKind: string,
@@ -110,7 +119,9 @@ export const verifyLedgerPlanRecords = (
     yield* verifyExactTransfers(operation, transferKind, actualTransfers, plan.transfers)
   })
 
-export const preflightTransfers = (
+export const verifyLedgerPlanRecords = Pipeable.dual(6, verifyLedgerPlanRecordsDataFirst)
+
+const preflightTransfersDataFirst = (
   expected: readonly LedgerTransferRecord[],
   existing: readonly LedgerTransferRecord[],
 ): Result.Result<readonly LedgerTransferRecord[], LedgerValidationError> => {
@@ -151,6 +162,8 @@ export const preflightTransfers = (
   }
   return Result.succeed(expected.filter((transfer) => !existingIds.has(transfer.id)))
 }
+
+export const preflightTransfers = Pipeable.dual(2, preflightTransfersDataFirst)
 
 export interface LedgerBalances {
   readonly accountsById: ReadonlyMap<bigint, LedgerAccountRecord>

@@ -10,6 +10,7 @@ import {
 } from './operations'
 import { proofBinding } from './model'
 import type { PaperProofError, PaperProofReceipt, PaperProofReconciliation } from './model'
+import { Pipeable } from '../pipeable'
 
 export interface PaperProofPrepareDependencies {
   readonly prepareCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<CapitalGrantGeneration, Error>
@@ -17,7 +18,7 @@ export interface PaperProofPrepareDependencies {
   readonly currentUtcInstant: Effect.Effect<string, Error>
 }
 
-export const runPaperProofPrepare = (
+const runPaperProofPrepareDataFirst = (
   context: PaperProofOperationContext<'PREPARE'>,
   dependencies: PaperProofPrepareDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
@@ -36,3 +37,5 @@ export const runPaperProofPrepare = (
     }
     return yield* completePaperProofReceipt(context, dependencies.currentUtcInstant, input)
   })
+
+export const runPaperProofPrepare = Pipeable.dual(2, runPaperProofPrepareDataFirst)

@@ -2,6 +2,7 @@ import { Data, Result } from 'effect'
 
 import { renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
 import type { EvaluationEvent, ReconciliationResult } from '../types'
+import { Pipeable } from '../pipeable'
 
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
@@ -299,7 +300,7 @@ const ledgerPlanCause = (failure: LedgerPlanFailureDetail): unknown => {
   }
 }
 
-export const makeLedgerPlanFailure = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
+const makeLedgerPlanFailureDataFirst = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
   Object.assign(
     ledgerValidationError(
       'build-plan',
@@ -310,6 +311,8 @@ export const makeLedgerPlanFailure = (ledger: number, detail: LedgerPlanFailureD
     ),
     { kind: detail.kind, detail },
   ) as LedgerPlanFailure
+
+export const makeLedgerPlanFailure = Pipeable.dual(2, makeLedgerPlanFailureDataFirst)
 
 export const failLedgerPlan = (failure: LedgerPlanFailureDetail): Result.Result<never, LedgerPlanFailureDetail> =>
   Result.fail(failure)

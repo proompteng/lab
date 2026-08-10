@@ -4,8 +4,9 @@ import type { ExecutionModel } from '../../execution-model-contract'
 import type { IsoDate } from '../../schemas'
 import { ensureUnsigned, fail, quantizeDown, roundDiv, scaledNumber, type ExecutionResult } from './fixed-point'
 import { BPS, MICROS, PPM } from './model'
+import { Pipeable } from '../../pipeable'
 
-export const accrueCashYield = (
+const accrueCashYieldDataFirst = (
   cashMicros: bigint,
   elapsedDays: number,
   model: ExecutionModel,
@@ -22,7 +23,9 @@ export const accrueCashYield = (
   )
 }
 
-export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): ExecutionResult<number> => {
+export const accrueCashYield = Pipeable.dual(3, accrueCashYieldDataFirst)
+
+const elapsedCalendarDaysDataFirst = (from: IsoDate, to: IsoDate): ExecutionResult<number> => {
   const fromTime = Date.parse(`${from}T00:00:00Z`)
   const toTime = Date.parse(`${to}T00:00:00Z`)
   return !Number.isFinite(fromTime) || !Number.isFinite(toTime) || toTime < fromTime
@@ -30,7 +33,9 @@ export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): ExecutionResult
     : Result.succeed((toTime - fromTime) / 86_400_000)
 }
 
-export const saleCostBasisMicros = (
+export const elapsedCalendarDays = Pipeable.dual(2, elapsedCalendarDaysDataFirst)
+
+const saleCostBasisMicrosDataFirst = (
   positionCostBasisMicros: bigint,
   soldQuantityMicros: bigint,
   positionQuantityMicros: bigint,
@@ -56,7 +61,9 @@ export const saleCostBasisMicros = (
   return roundDiv(positionCostBasisMicros * soldQuantityMicros, positionQuantityMicros)
 }
 
-export const scaleQuantityMicros = (
+export const saleCostBasisMicros = Pipeable.dual(3, saleCostBasisMicrosDataFirst)
+
+const scaleQuantityMicrosDataFirst = (
   quantityMicros: bigint,
   scalePpm: bigint,
   model: ExecutionModel,
@@ -75,3 +82,5 @@ export const scaleQuantityMicros = (
     Result.flatMap((increment) => quantizeDown((quantityMicros * scalePpm) / PPM, increment)),
   )
 }
+
+export const scaleQuantityMicros = Pipeable.dual(3, scaleQuantityMicrosDataFirst)
