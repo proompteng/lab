@@ -87,7 +87,9 @@ export interface CycleStoreShape {
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
 }
 
-export class CycleStore extends Context.Service<CycleStore, CycleStoreShape>()('bayn/CycleStore') {}
+export class CycleStore extends Context.Service<CycleStore, CycleStoreShape>()(
+  '@proompteng/bayn/db/cycle-store/model/CycleStore',
+) {}
 
 export type CycleStoreInternalError = CycleStoreError | Schema.SchemaError | SqlError
 

@@ -81,14 +81,13 @@ const readSnapshotTransaction = (
   ExecutionCandidateDiscoverySnapshot,
   CycleObservabilityError | CycleStoreError | ExecutionCandidateDiscoveryError
 > =>
-  pipe(
-    Effect.Do,
-    Effect.bind('projection', () => observability.read(identity.qualificationRunId, identity.accountId)),
-    Effect.bind('last', ({ projection }) => Effect.fromResult(selectCompletedCycle(projection))),
-    Effect.bind('cycle', ({ last }) => readCycle(store, last.cycleId)),
-    Effect.bind('document', ({ last }) => readDecisionDocument(store, last.cycleId)),
-    Effect.map(({ cycle, document, projection }) => ({ cycle, document, projection })),
-  )
+  Effect.gen(function* () {
+    const projection = yield* observability.read(identity.qualificationRunId, identity.accountId)
+    const last = yield* Effect.fromResult(selectCompletedCycle(projection))
+    const cycle = yield* readCycle(store, last.cycleId)
+    const document = yield* readDecisionDocument(store, last.cycleId)
+    return { cycle, document, projection }
+  })
 
 const readDiscoverySnapshot = (
   identity: ExecutionCandidateDiscoveryIdentity,
@@ -185,25 +184,16 @@ const readAssets = (
 const observeBroker = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
 ): Effect.Effect<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError, BrokerRead> =>
-  pipe(
-    BrokerRead,
-    Effect.flatMap((broker) =>
-      pipe(
-        Effect.Do,
-        Effect.bind('account', () => readAccount(broker, validatedSnapshot.identity)),
-        Effect.bind('accountConfiguration', ({ account }) => readAccountConfiguration(broker, account)),
-        Effect.bind('assets', ({ accountConfiguration }) =>
-          readAssets(broker, validatedSnapshot.snapshot, accountConfiguration),
-        ),
-        Effect.bind('capturedAtMs', () => Clock.currentTimeMillis),
-        Effect.flatMap(({ account, accountConfiguration, assets, capturedAtMs }) =>
-          Effect.fromResult(
-            assembleValidatedObservations(validatedSnapshot, account, accountConfiguration, assets, capturedAtMs),
-          ),
-        ),
-      ),
-    ),
-  )
+  Effect.gen(function* () {
+    const broker = yield* BrokerRead
+    const account = yield* readAccount(broker, validatedSnapshot.identity)
+    const accountConfiguration = yield* readAccountConfiguration(broker, account)
+    const assets = yield* readAssets(broker, validatedSnapshot.snapshot, accountConfiguration)
+    const capturedAtMs = yield* Clock.currentTimeMillis
+    return yield* Effect.fromResult(
+      assembleValidatedObservations(validatedSnapshot, account, accountConfiguration, assets, capturedAtMs),
+    )
+  })
 
 export const discoverPaperCandidates = (
   candidateIdentity: ExecutionCandidateDiscoveryIdentity,
@@ -212,21 +202,11 @@ export const discoverPaperCandidates = (
   ExecutionCandidateDiscoveryError,
   PgClient.PgClient | CycleObservability | CycleStore | BrokerRead
 > =>
-  pipe(
-    validateIdentity(candidateIdentity),
-    Effect.fromResult,
-    Effect.flatMap((identity) =>
-      pipe(
-        Effect.Do,
-        Effect.bind('snapshot', () => readDiscoverySnapshot(identity)),
-        Effect.bind('startedAt', () => Clock.currentTimeMillis),
-        Effect.bind('validatedSnapshot', ({ snapshot, startedAt }) =>
-          Effect.fromResult(validateSnapshotForIdentity(identity, snapshot, startedAt)),
-        ),
-        Effect.bind('observations', ({ validatedSnapshot }) => observeBroker(validatedSnapshot)),
-        Effect.flatMap(({ observations, validatedSnapshot }) =>
-          Effect.fromResult(makeExecutionCandidateDiscoveryReceipt(validatedSnapshot, observations)),
-        ),
-      ),
-    ),
-  )
+  Effect.gen(function* () {
+    const identity = yield* Effect.fromResult(validateIdentity(candidateIdentity))
+    const snapshot = yield* readDiscoverySnapshot(identity)
+    const startedAt = yield* Clock.currentTimeMillis
+    const validatedSnapshot = yield* Effect.fromResult(validateSnapshotForIdentity(identity, snapshot, startedAt))
+    const observations = yield* observeBroker(validatedSnapshot)
+    return yield* Effect.fromResult(makeExecutionCandidateDiscoveryReceipt(validatedSnapshot, observations))
+  })

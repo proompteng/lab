@@ -62,7 +62,9 @@ export interface BrokerMutationShape {
   readonly orderByClientId?: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
 }
 
-export class BrokerMutation extends Context.Service<BrokerMutation, BrokerMutationShape>()('bayn/BrokerMutation') {}
+export class BrokerMutation extends Context.Service<BrokerMutation, BrokerMutationShape>()(
+  '@proompteng/bayn/broker/alpaca-mutations/model/BrokerMutation',
+) {}
 
 const stringFact = (cause: object, name: string): string | undefined => {
   const value = name in cause ? cause[name as keyof typeof cause] : undefined

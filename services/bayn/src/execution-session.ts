@@ -10,6 +10,7 @@ import {
 import { canonicalHashV1Result } from './hash'
 import { ExecutionModelV2Schema, type ExecutionModel } from './protocol'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
+import { utcInstantFromEpochMillis } from './time'
 
 const CalendarIdentitySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
@@ -265,9 +266,9 @@ const deriveSubmissionWindow = (
 ): Result.Result<Omit<ExecutionSessionWindow, 'executionSession'>, ExecutionSessionBindingFailure> => {
   const submissionOpenAt =
     signal.finalizedAt >= planningBrokerState.observedAt ? signal.finalizedAt : planningBrokerState.observedAt
-  const submissionCutoffAt = new Date(
+  const submissionCutoffAt = utcInstantFromEpochMillis(
     Date.parse(executionSession.openAt) - submissionCutoffLeadMinutes * 60_000,
-  ).toISOString()
+  )
   if (submissionOpenAt >= submissionCutoffAt || submissionCutoffAt >= executionSession.openAt) {
     return Result.fail(
       deriveWindowFailure(

@@ -314,7 +314,9 @@ describe('MutationStore decision algebra', () => {
     const binding = resultSuccess(decideMutationAuthority(MutationOperation.Submit, decisionAuthority))
 
     expect(
-      resultSuccess(decideFinalSubmitAuthorization(binding, decisionIntent(IntentState.IoStarted))),
+      resultSuccess(
+        decideFinalSubmitAuthorization({ authority: binding, intent: decisionIntent(IntentState.IoStarted) }),
+      ),
     ).toBeUndefined()
     for (const snapshot of [
       undefined,
@@ -322,7 +324,7 @@ describe('MutationStore decision algebra', () => {
       { ...decisionIntent(IntentState.IoStarted), authorityGenerationHash: '9'.repeat(64) },
       { ...decisionIntent(IntentState.IoStarted), generationAccountId: 'another-account' },
     ]) {
-      expect(resultFailure(decideFinalSubmitAuthorization(binding, snapshot))).toMatchObject({
+      expect(resultFailure(decideFinalSubmitAuthorization({ authority: binding, intent: snapshot }))).toMatchObject({
         operation: 'begin-submit',
       })
     }
@@ -351,7 +353,13 @@ describe('MutationStore decision algebra', () => {
       ),
     ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
     expect(
-      resultFailure(decideFinalSubmitAuthorization(closeBinding, decisionIntent(IntentState.IoStarted), true)),
+      resultFailure(
+        decideFinalSubmitAuthorization({
+          authority: closeBinding,
+          intent: decisionIntent(IntentState.IoStarted),
+          closeOnly: true,
+        }),
+      ),
     ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
   })
 

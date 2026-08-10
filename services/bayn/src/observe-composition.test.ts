@@ -693,17 +693,17 @@ const prepareStoredPaperStep = async (
   return Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(observedAt))
-      return yield* prepareNextMutationIntent(
+      return yield* prepareNextMutationIntent({
         input,
         preparation,
         policy,
-        fixture.boundCycle,
+        cycle: fixture.boundCycle,
         document,
-        Effect.succeed(
+        reconcile: Effect.succeed(
           reconciliationResultAt(observedAt, unknownMutationCount, 0, reconciledPositions, reconciledOrders),
         ),
         allowSubmit,
-      )
+      })
     }).pipe(
       Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
       Effect.provideService(MarketData, marketData([])),
@@ -991,15 +991,17 @@ describe('OBSERVE runtime composition', () => {
     const waiting = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* prepareNextMutationIntent(
-          fixture.input,
-          fixture.preparation,
-          fixture.policy,
-          fixture.boundCycle,
-          fixture.document,
-          Effect.die(new Error('OBSERVE recovery-only execution must not reconcile before refusing fresh submit')),
-          false,
-        )
+        return yield* prepareNextMutationIntent({
+          input: fixture.input,
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          document: fixture.document,
+          reconcile: Effect.die(
+            new Error('OBSERVE recovery-only execution must not reconcile before refusing fresh submit'),
+          ),
+          allowSubmit: false,
+        })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(MarketData, marketData([])),
@@ -1599,14 +1601,14 @@ describe('OBSERVE runtime composition', () => {
     const step = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(riskExpiresAt))
-        return yield* prepareNextMutationIntent(
-          fixture.input,
-          fixture.preparation,
-          fixture.policy,
-          fixture.boundCycle,
-          fixture.document,
-          Effect.die(new Error('pre-commit expiry must not reconcile or read the broker')),
-        )
+        return yield* prepareNextMutationIntent({
+          input: fixture.input,
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          document: fixture.document,
+          reconcile: Effect.die(new Error('pre-commit expiry must not reconcile or read the broker')),
+        })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(MarketData, marketData([])),
@@ -1661,14 +1663,14 @@ describe('OBSERVE runtime composition', () => {
     const step = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* prepareNextMutationIntent(
-          { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) },
-          fixture.preparation,
-          fixture.policy,
-          fixture.boundCycle,
-          fixture.document,
-          Effect.die(new Error('superseded PAPER generation must not reconcile or read the broker')),
-        )
+        return yield* prepareNextMutationIntent({
+          input: { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) },
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          document: fixture.document,
+          reconcile: Effect.die(new Error('superseded PAPER generation must not reconcile or read the broker')),
+        })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(MarketData, marketData([])),
@@ -1916,14 +1918,16 @@ describe('OBSERVE runtime composition', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* Effect.flip(
-          prepareNextMutationIntent(
-            fixture.input,
-            fixture.preparation,
-            driftedPolicy,
-            fixture.boundCycle,
-            fixture.document,
-            Effect.die(new Error('policy drift must fail before reconciliation, broker reads, or fresh submission')),
-          ),
+          prepareNextMutationIntent({
+            input: fixture.input,
+            preparation: fixture.preparation,
+            policy: driftedPolicy,
+            cycle: fixture.boundCycle,
+            document: fixture.document,
+            reconcile: Effect.die(
+              new Error('policy drift must fail before reconciliation, broker reads, or fresh submission'),
+            ),
+          }),
         )
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -2029,17 +2033,17 @@ describe('OBSERVE runtime composition', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
         return yield* Effect.flip(
-          prepareNextMutationIntent(
-            fixture.input,
-            driftedPreparation,
-            fixture.policy,
-            fixture.boundCycle,
-            fixture.document,
-            Effect.sync(() => {
+          prepareNextMutationIntent({
+            input: fixture.input,
+            preparation: driftedPreparation,
+            policy: fixture.policy,
+            cycle: fixture.boundCycle,
+            document: fixture.document,
+            reconcile: Effect.sync(() => {
               reconciliations += 1
               return reconciliationResultAt(observedAt)
             }),
-          ),
+          }),
         )
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -2174,15 +2178,15 @@ describe('OBSERVE runtime composition', () => {
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
-          return yield* buildClosingPaperCycleDecision(
-            fixture.input,
-            fixture.preparation,
-            fixture.policy,
-            fixture.boundCycle,
+          return yield* buildClosingPaperCycleDecision({
+            input: fixture.input,
+            preparation: fixture.preparation,
+            policy: fixture.policy,
+            cycle: fixture.boundCycle,
             entryDocument,
-            Effect.succeed(currentReconciliation),
+            reconcile: Effect.succeed(currentReconciliation),
             closeExpiresAt,
-          )
+          })
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
           Effect.provideService(MarketData, marketData([])),
@@ -2233,19 +2237,19 @@ describe('OBSERVE runtime composition', () => {
     const admission = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* prepareNextMutationIntent(
-          {
+        return yield* prepareNextMutationIntent({
+          input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
             paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
             paperEpisodeExpiresAt: closeExpiresAt,
           },
-          fixture.preparation,
-          fixture.policy,
-          fixture.boundCycle,
-          close,
-          Effect.succeed(currentReconciliation),
-        )
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          document: close,
+          reconcile: Effect.succeed(currentReconciliation),
+        })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(MarketData, marketData([])),
@@ -2355,15 +2359,15 @@ describe('OBSERVE runtime composition', () => {
     const close = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* buildClosingPaperCycleDecision(
-          fixture.input,
-          fixture.preparation,
-          fixture.policy,
-          fixture.boundCycle,
-          fixture.document,
-          Effect.succeed(currentReconciliation),
+        return yield* buildClosingPaperCycleDecision({
+          input: fixture.input,
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          entryDocument: fixture.document,
+          reconcile: Effect.succeed(currentReconciliation),
           closeExpiresAt,
-        )
+        })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(MarketData, marketData([])),
@@ -2591,7 +2595,7 @@ describe('OBSERVE runtime composition', () => {
     expect(step).toEqual({ _tag: 'Wait', observedAt })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
-    expect(paperCycleHasFilledIntent([record.intent], [partialOrder])).toBe(true)
+    expect(paperCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
     const closeExpiresAt = new Date(Date.parse(cutoffAt) + 60_000).toISOString()
     const closeRestrictions: string[] = []

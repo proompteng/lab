@@ -116,7 +116,12 @@ export interface RuntimeState {
 
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
-export const initialState = (broker?: BrokerConfiguration, autonomousCycleLoopConfigured = false): RuntimeState => ({
+export interface InitialRuntimeStateInput {
+  readonly broker?: BrokerConfiguration | undefined
+  readonly autonomousCycleLoopConfigured?: boolean
+}
+
+export const initialState = (input: InitialRuntimeStateInput): RuntimeState => ({
   status: 'STARTING',
   evidence: null,
   health: {
@@ -133,19 +138,19 @@ export const initialState = (broker?: BrokerConfiguration, autonomousCycleLoopCo
   },
   cycle: unknownCycleOperationsStatus(),
   autonomousCycleLoop: {
-    configured: autonomousCycleLoopConfigured,
+    configured: input.autonomousCycleLoopConfigured ?? false,
     startedAt: null,
     lastPass: null,
   },
   paperActivation: { _tag: 'NotConfigured' },
   broker:
-    broker === undefined
+    input.broker === undefined
       ? null
       : {
           configured: true,
-          expectedAccountId: broker.expectedAccountId,
-          executionEligible: broker.executionEligible,
-          executionDisabledReason: broker.executionDisabledReason,
+          expectedAccountId: input.broker.expectedAccountId,
+          executionEligible: input.broker.executionEligible,
+          executionDisabledReason: input.broker.executionDisabledReason,
           accountId: null,
           accountBound: null,
           readAvailable: null,

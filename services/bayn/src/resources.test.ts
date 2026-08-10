@@ -574,7 +574,7 @@ describe('Bayn resource lifecycle', () => {
     const marketData = marketDataService(
       Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
     )
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     const exit = await Effect.runPromiseExit(
       Effect.scoped(
@@ -603,7 +603,7 @@ describe('Bayn resource lifecycle', () => {
         }),
       ),
     )
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -628,7 +628,7 @@ describe('Bayn resource lifecycle', () => {
     const marketData = marketDataService(
       Effect.fail(marketDataOperationError('load', 'failed to load finalized Signal snapshot', authorization)),
     )
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -661,7 +661,7 @@ describe('Bayn resource lifecycle', () => {
       },
     })
     const marketData = marketDataService(Effect.succeed(makeSnapshot()))
-    const state = await Effect.runPromise(Ref.make(initialState()))
+    const state = await Effect.runPromise(Ref.make(initialState({})))
 
     const exit = await Effect.runPromiseExit(
       Effect.scoped(

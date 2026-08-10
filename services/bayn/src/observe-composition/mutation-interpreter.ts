@@ -62,14 +62,19 @@ export const restrictMutationLoopFailure = (
 const submitDoesNotRequireRecovery = (eventType: MutationEvent['eventType']): boolean =>
   eventType === MutationEventType.SubmitRejected || eventType === MutationEventType.SubmitDenied
 
+export interface ExecuteMutationIntentInput<E, R> {
+  readonly executor: PaperMutationExecutor<E, R>
+  readonly intentId: string
+  readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
+  readonly submitExpiresAt?: string | undefined
+  readonly now?: Effect.Effect<string, never, R>
+}
+
 export const executeMutationIntentWithExecutor = <E, R>(
-  executor: PaperMutationExecutor<E, R>,
-  intentId: string,
-  action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
-  submitExpiresAt?: string,
-  now: Effect.Effect<string, never, R> = currentUtcInstant,
-): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore | R> =>
-  Effect.gen(function* () {
+  input: ExecuteMutationIntentInput<E, R>,
+): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore | R> => {
+  const { executor, intentId, action, submitExpiresAt, now = currentUtcInstant } = input
+  return Effect.gen(function* () {
     const store = yield* MutationStore
     const operation = action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit
     const existing = yield* store.latest(intentId, operation).pipe(
@@ -136,6 +141,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     }
     return { settlement, consistencyDelayMs: event.consistencyDelayMs, operation }
   })
+}
 
 const executeMutationIntentDataFirst = (
   executionProgram: ExecutionProgram,
@@ -143,16 +149,16 @@ const executeMutationIntentDataFirst = (
   action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
-  executeMutationIntentWithExecutor(
-    {
+  executeMutationIntentWithExecutor({
+    executor: {
       submit: executionProgram.submit,
       recover: executionProgram.recover,
     },
     intentId,
     action,
     submitExpiresAt,
-    currentUtcInstant,
-  )
+    now: currentUtcInstant,
+  })
 
 export const executeMutationIntent = Pipeable.by<
   (

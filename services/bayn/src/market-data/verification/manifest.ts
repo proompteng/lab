@@ -222,7 +222,7 @@ const verifyManifestDataFirst = (
             sessionsContentHash: manifest.sessions_content_hash,
           } as const
           return pipe(
-            Schema.decodeUnknownResult(
+            Schema.decodeResult(
               FinalizedSnapshotProvenanceSchema,
               strictParseOptions,
             )({

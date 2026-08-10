@@ -117,27 +117,29 @@ export interface AuthorityRestrictionStoreShape {
 }
 
 export class BrokerEventStore extends Context.Service<BrokerEventStore, BrokerEventStoreShape>()(
-  'bayn/BrokerEventStore',
+  '@proompteng/bayn/db/execution-store/contract/BrokerEventStore',
 ) {}
 export class FillAccountingStore extends Context.Service<FillAccountingStore, FillAccountingStoreShape>()(
-  'bayn/FillAccountingStore',
+  '@proompteng/bayn/db/execution-store/contract/FillAccountingStore',
 ) {}
-export class ValuationStore extends Context.Service<ValuationStore, ValuationStoreShape>()('bayn/ValuationStore') {}
+export class ValuationStore extends Context.Service<ValuationStore, ValuationStoreShape>()(
+  '@proompteng/bayn/db/execution-store/contract/ValuationStore',
+) {}
 export class ReconciliationStore extends Context.Service<ReconciliationStore, ReconciliationStoreShape>()(
-  'bayn/ReconciliationStore',
+  '@proompteng/bayn/db/execution-store/contract/ReconciliationStore',
 ) {}
 export class AuthorityGenerationStore extends Context.Service<
   AuthorityGenerationStore,
   AuthorityGenerationStoreShape
->()('bayn/AuthorityGenerationStore') {}
+>()('@proompteng/bayn/db/execution-store/contract/AuthorityGenerationStore') {}
 export class CapitalGrantLifecycleStore extends Context.Service<
   CapitalGrantLifecycleStore,
   CapitalGrantLifecycleStoreShape
->()('bayn/CapitalGrantLifecycleStore') {}
+>()('@proompteng/bayn/db/execution-store/contract/CapitalGrantLifecycleStore') {}
 export class AuthorityRestrictionStore extends Context.Service<
   AuthorityRestrictionStore,
   AuthorityRestrictionStoreShape
->()('bayn/AuthorityRestrictionStore') {}
+>()('@proompteng/bayn/db/execution-store/contract/AuthorityRestrictionStore') {}
 
 export interface ReconciliationPersistence {
   readonly events: BrokerEventStoreShape

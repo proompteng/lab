@@ -1,4 +1,4 @@
-import { HashSet, pipe, Result } from 'effect'
+import { DateTime, HashSet, Option, pipe, Result } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../broker/alpaca'
 import {
@@ -73,21 +73,21 @@ const shiftIsoDate = (date: string, days: number): Result.Result<string, IsoDate
   const failure = (cause: IsoDateShiftCause): Result.Result<never, IsoDateShiftFailure> =>
     Result.fail({ _tag: 'IsoDateShiftOutOfRange', date, days, cause })
   if (!Number.isSafeInteger(days)) return failure({ _tag: 'IsoDateOffsetInvalid', date, days })
-  const inputDate = new Date(`${date}T00:00:00.000Z`)
-  const inputEpochMillis = inputDate.getTime()
-  if (!Number.isFinite(inputEpochMillis)) {
+  const inputEpochMillis = Date.parse(`${date}T00:00:00.000Z`)
+  const inputDate = DateTime.make(inputEpochMillis)
+  if (Option.isNone(inputDate)) {
     return failure({ _tag: 'IsoDateInputInvalid', date, epochMillis: inputEpochMillis })
   }
-  const input = inputDate.toISOString()
+  const input = DateTime.formatIso(inputDate.value)
   if (input !== `${date}T00:00:00.000Z`) {
     return failure({ _tag: 'IsoDateInputNotCanonical', date, normalized: input })
   }
   const shiftedEpochMillis = inputEpochMillis + days * millisecondsPerDay
-  const shiftedDateValue = new Date(shiftedEpochMillis)
-  if (!Number.isFinite(shiftedDateValue.getTime())) {
+  const shiftedDateValue = DateTime.make(shiftedEpochMillis)
+  if (Option.isNone(shiftedDateValue)) {
     return failure({ _tag: 'IsoDateShiftEpochOutOfRange', date, days, epochMillis: shiftedEpochMillis })
   }
-  const shifted = shiftedDateValue.toISOString()
+  const shifted = DateTime.formatIso(shiftedDateValue.value)
   const shiftedDate = shifted.slice(0, 10)
   return /^\d{4}-\d{2}-\d{2}$/.test(shiftedDate) && shifted === `${shiftedDate}T00:00:00.000Z`
     ? Result.succeed(shiftedDate)

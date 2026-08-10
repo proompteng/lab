@@ -59,7 +59,7 @@ export interface JournalService {
   readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, JournalError>
 }
 
-export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
+export class Journal extends Context.Service<Journal, JournalService>()('@proompteng/bayn/ledger/Journal') {}
 
 const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>) =>
   Effect.fromResult(decision).pipe(Effect.mapError((validation) => new JournalValidationError(validation)))

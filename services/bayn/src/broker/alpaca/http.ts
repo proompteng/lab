@@ -74,7 +74,7 @@ import { Pipeable } from '../../pipeable'
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
 export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
-  'bayn/AlpacaHttpClient',
+  '@proompteng/bayn/broker/alpaca/http/AlpacaHttpClient',
 ) {}
 
 const decodeInput = <A>(

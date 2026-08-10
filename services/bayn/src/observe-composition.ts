@@ -82,7 +82,7 @@ import type {
   ObserveShadowDecisionDocument,
   PaperDecisionDocument,
 } from './shadow-decision-contract'
-import { currentUtcInstant } from './time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import {
   planTargets,
   type SignalSessionReferencePrices,
@@ -979,17 +979,22 @@ const recoverPaperExecutionSession = (
   )
 }
 
+export interface BuildClosingPaperCycleDecisionInput {
+  readonly input: ObserveAutonomousCycleInput
+  readonly preparation: ObserveStartupPreparation
+  readonly policy: Policy
+  readonly cycle: AutonomousCycle
+  readonly entryDocument: PaperDecisionDocument
+  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
+  readonly closeExpiresAt: string
+  readonly replanGenerationHash?: string
+}
+
 export const buildClosingPaperCycleDecision = (
-  input: ObserveAutonomousCycleInput,
-  preparation: ObserveStartupPreparation,
-  policy: Policy,
-  cycle: AutonomousCycle,
-  entryDocument: PaperDecisionDocument,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  closeExpiresAt: string,
-  replanGenerationHash?: string,
-): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> =>
-  Effect.gen(function* () {
+  request: BuildClosingPaperCycleDecisionInput,
+): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> => {
+  const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
+  return Effect.gen(function* () {
     const reconciliation = yield* reconcile.pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER close reconciliation failed', cause })),
     )
@@ -1080,6 +1085,7 @@ export const buildClosingPaperCycleDecision = (
       }),
     )
   })
+}
 
 const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
@@ -1105,15 +1111,15 @@ export type ObserveAutonomousCycleInput = {
 export const paperEpisodeCloseGraceMs = 15 * 60_000
 
 export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
-  new Date(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs).toISOString()
+  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs)
 
 /** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
 export const paperEpisodeReceiptFinalizationGraceMs = 15 * 60_000
 
 export const paperEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
-  new Date(
+  utcInstantFromEpochMillis(
     Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt)) + paperEpisodeReceiptFinalizationGraceMs,
-  ).toISOString()
+  )
 
 type ObserveDecisionRuntime =
   | BrokerRead
@@ -1366,7 +1372,7 @@ const ensurePaperCycleClosure = (
       })
     }
     if (existing === undefined) {
-      const document = yield* buildClosingPaperCycleDecision(
+      const document = yield* buildClosingPaperCycleDecision({
         input,
         preparation,
         policy,
@@ -1374,7 +1380,7 @@ const ensurePaperCycleClosure = (
         entryDocument,
         reconcile,
         closeExpiresAt,
-      )
+      })
       if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
       const closure = yield* Effect.fromResult(
         makePaperCycleClosure({
@@ -1404,7 +1410,7 @@ const ensurePaperCycleClosure = (
     const active = latestReplan ?? existing
     if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
 
-    const document = yield* buildClosingPaperCycleDecision(
+    const document = yield* buildClosingPaperCycleDecision({
       input,
       preparation,
       policy,
@@ -1412,8 +1418,8 @@ const ensurePaperCycleClosure = (
       entryDocument,
       reconcile,
       closeExpiresAt,
-      active.contentHash,
-    )
+      replanGenerationHash: active.contentHash,
+    })
     if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
     const closure = yield* Effect.fromResult(
       makePaperCycleClosure({
@@ -1548,20 +1554,34 @@ const readCloseMutationPreparationFacts = (
     }
   })
 
+export interface PrepareNextMutationIntentInput {
+  readonly input: ObserveAutonomousCycleInput
+  readonly preparation: ObserveStartupPreparation
+  readonly policy: Policy
+  readonly cycle: AutonomousCycle
+  readonly document: PaperDecisionDocument
+  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
+  readonly allowSubmit?: boolean
+}
+
 export const prepareNextMutationIntent = (
-  input: ObserveAutonomousCycleInput,
-  preparation: ObserveStartupPreparation,
-  policy: Policy,
-  cycle: AutonomousCycle,
-  document: PaperDecisionDocument,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  allowSubmit = true,
+  request: PrepareNextMutationIntentInput,
 ): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, ObserveDecisionRuntime | IntentStore | MutationStore> =>
-  prepareMutationIntent(input, preparation, policy, cycle, document, reconcile, allowSubmit, {
-    now: currentUtcInstant,
-    readFacts: input.mutationPhase === 'CLOSE' ? readCloseMutationPreparationFacts : readMutationPreparationFacts,
-    restrictAuthority: restrictMutationAuthority,
-  })
+  prepareMutationIntent(
+    request.input,
+    request.preparation,
+    request.policy,
+    request.cycle,
+    request.document,
+    request.reconcile,
+    request.allowSubmit ?? true,
+    {
+      now: currentUtcInstant,
+      readFacts:
+        request.input.mutationPhase === 'CLOSE' ? readCloseMutationPreparationFacts : readMutationPreparationFacts,
+      restrictAuthority: restrictMutationAuthority,
+    },
+  )
 
 const executeBoundPaperCycle = (
   input: ObserveAutonomousCycleInput,
@@ -1581,14 +1601,14 @@ const executeBoundPaperCycle = (
       ...(closeOnly ? { mutationPhase: 'CLOSE' as const } : { mutationPhase: 'ENTRY' as const }),
     }
     const activeDocument = closeDocument ?? document
-    const step = yield* prepareNextMutationIntent(
-      phaseInput,
+    const step = yield* prepareNextMutationIntent({
+      input: phaseInput,
       preparation,
       policy,
       cycle,
-      activeDocument,
+      document: activeDocument,
       reconcile,
-      paperMutationSubmissionAllowed({
+      allowSubmit: paperMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
         ...(input.paperEpisodeCutoffAt === undefined ? {} : { paperEpisodeCutoffAt: input.paperEpisodeCutoffAt }),
@@ -1597,7 +1617,7 @@ const executeBoundPaperCycle = (
           : { paperEpisodeCloseSubmitCutoffAt: input.paperEpisodeCloseSubmitCutoffAt }),
         observedAt,
       }),
-    )
+    })
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryHasUnsuccessfulIntent =
@@ -1626,12 +1646,12 @@ const executeBoundPaperCycle = (
           step.action,
           step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
         )
-      : executeMutationIntentWithExecutor(
-          { recover: recoverMutation },
-          step.intentId,
-          step.action,
-          step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
-        )
+      : executeMutationIntentWithExecutor({
+          executor: { recover: recoverMutation },
+          intentId: step.intentId,
+          action: step.action,
+          submitExpiresAt: step.action === 'SUBMIT' ? step.submitExpiresAt : undefined,
+        })
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
         `bound PAPER cycle ${cycle.identity.cycleId}`,

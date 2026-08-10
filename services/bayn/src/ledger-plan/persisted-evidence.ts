@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1, stableU128, stableU64 } from '../hash'
+import { Pipeable } from '../pipeable'
 import type { ReconciliationResult } from '../types'
 import {
   AccountCode,
@@ -145,7 +146,7 @@ const verifyPersistedTransfer = (
  * Validates only invariants reconstructible from a persisted reconciliation receipt and TigerBeetle records.
  * Event-derived identities other than funding require the original expected plan and are verified separately.
  */
-export const validatePersistedRunEvidence = (
+const validatePersistedRunEvidenceDataFirst = (
   result: ReconciliationResult,
   ledger: number,
   accounts: readonly LedgerAccountRecord[],
@@ -222,3 +223,5 @@ export const validatePersistedRunEvidence = (
       })
     }
   })
+
+export const validatePersistedRunEvidence = Pipeable.dual(4, validatePersistedRunEvidenceDataFirst)

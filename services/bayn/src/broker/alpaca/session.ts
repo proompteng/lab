@@ -31,7 +31,9 @@ export interface BrokerSessionShape {
   readonly preflight: ReadPreflight
 }
 
-export class BrokerSession extends Context.Service<BrokerSession, BrokerSessionShape>()('bayn/BrokerSession') {}
+export class BrokerSession extends Context.Service<BrokerSession, BrokerSessionShape>()(
+  '@proompteng/bayn/broker/alpaca/session/BrokerSession',
+) {}
 
 const brokerSessionRetrySpacing = Duration.seconds(1)
 const brokerSessionRetrySpacingMs = 1_000

@@ -1,6 +1,6 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Data, Effect, Redacted, Result, Scope } from 'effect'
+import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
 
 import type { LoadedRuntimeConfig } from '../config'
 import { verifyAccountingReceipts } from '../db/reconciliation-algebra'
@@ -81,7 +81,7 @@ export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
   postgres: readForwardPerformancePostgres,
   ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
     readForwardPerformanceLedger(config, accountId, accountPlans, cashYieldEvidence, undefined, generationPlans),
-  marketVolume: readForwardPerformanceMarketVolume,
+  marketVolume: (config, requests) => readForwardPerformanceMarketVolume(config, requests),
 }
 
 const SIGNED_I128_MAX = (1n << 127n) - 1n
@@ -104,7 +104,8 @@ const finalizedInstant = (value: string): string | undefined => {
   const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:[.]([0-9]{3}))?$/.exec(value)
   if (match === null || match[1] === undefined || match[2] === undefined) return undefined
   const instant = `${match[1]}T${match[2]}.${match[3] ?? '000'}Z`
-  return Number.isFinite(Date.parse(instant)) && new Date(instant).toISOString() === instant ? instant : undefined
+  const dateTime = DateTime.make(instant)
+  return Option.isSome(dateTime) && DateTime.formatIso(dateTime.value) === instant ? instant : undefined
 }
 
 interface ForwardPerformanceMarketSnapshotRows {
@@ -408,10 +409,10 @@ export const readForwardPerformanceMarketVolumeWithClient = Pipeable.dual(
   readForwardPerformanceMarketVolumeWithClientDataFirst,
 )
 
-export function readForwardPerformanceMarketVolume(
+const readForwardPerformanceMarketVolumeDataFirst = (
   config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
-): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> {
+): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
   if (requests.length === 0) return Effect.succeed([])
   const client = ClickhouseClient.layer({
     url: config.clickhouse.url,
@@ -430,6 +431,8 @@ export function readForwardPerformanceMarketVolume(
     ),
   )
 }
+
+export const readForwardPerformanceMarketVolume = Pipeable.dual(2, readForwardPerformanceMarketVolumeDataFirst)
 
 const canonicalUnsigned = (value: string): bigint | undefined =>
   /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined

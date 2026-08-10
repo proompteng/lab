@@ -1,17 +1,17 @@
-import { Schema } from 'effect'
+import { DateTime, Option, Schema } from 'effect'
 
 export const strictParseOptions = { onExcessProperty: 'error' } as const
 
 const isIsoDate = (value: string): value is `${number}-${number}-${number}` => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00.000Z`)
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  const date = DateTime.make(`${value}T00:00:00.000Z`)
+  return Option.isSome(date) && DateTime.formatIsoDate(date.value) === value
 }
 
 const isUtcInstant = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false
-  const date = new Date(value)
-  return !Number.isNaN(date.getTime()) && date.toISOString() === value
+  const date = DateTime.make(value)
+  return Option.isSome(date) && DateTime.formatIso(date.value) === value
 }
 
 const isUtcOrderTimestamp = (value: string): boolean => {
@@ -19,8 +19,8 @@ const isUtcOrderTimestamp = (value: string): boolean => {
   if (match === null) return false
   const [, seconds, fractional] = match
   if (seconds === undefined || fractional === undefined) return false
-  const date = new Date(`${seconds}.${fractional.slice(0, 3)}Z`)
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === seconds
+  const date = DateTime.make(`${seconds}.${fractional.slice(0, 3)}Z`)
+  return Option.isSome(date) && DateTime.formatIso(date.value).slice(0, 19) === seconds
 }
 
 export const StrictNonEmptyStringSchema = Schema.String.check(

@@ -448,14 +448,19 @@ const allowedTerminalOutcomes: Readonly<Partial<Record<IntentState, readonly Ter
   ],
 }
 
-export const isIntentTransitionAllowed = (
-  from: IntentState,
-  to: IntentState,
-  terminalOutcome?: TerminalOutcome,
-): boolean => {
-  if (!allowedTransitions[from].includes(to)) return false
-  if (to !== IntentState.Terminal) return terminalOutcome === undefined
-  return terminalOutcome !== undefined && (allowedTerminalOutcomes[from]?.includes(terminalOutcome) ?? false)
+export interface IntentTransitionInput {
+  readonly from: IntentState
+  readonly to: IntentState
+  readonly terminalOutcome?: TerminalOutcome
+}
+
+export const isIntentTransitionAllowed = (input: IntentTransitionInput): boolean => {
+  if (!allowedTransitions[input.from].includes(input.to)) return false
+  if (input.to !== IntentState.Terminal) return input.terminalOutcome === undefined
+  return (
+    input.terminalOutcome !== undefined &&
+    (allowedTerminalOutcomes[input.from]?.includes(input.terminalOutcome) ?? false)
+  )
 }
 
 const RiskInputBase = Schema.Struct({

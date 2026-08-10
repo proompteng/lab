@@ -343,7 +343,7 @@ const brokerRuntimeState = (broker: BrokerProbe, startedAt = new Date().toISOStr
     startedAt,
     lastPass: { result: 'SUCCESS', observedAt: startedAt, outcome: 'NO_PUBLICATION' },
   },
-  broker: initialState(broker, true).broker,
+  broker: initialState({ broker, autonomousCycleLoopConfigured: true }).broker,
 })
 
 const emptyCycleProjection = (): CycleOperationsProjection => ({
@@ -853,7 +853,7 @@ describe('Bayn continuous health', () => {
     const checkedAt = '2026-07-20T00:00:00.000Z'
     const generationHash = 'd'.repeat(64)
     const initial: RuntimeState = {
-      ...initialState(),
+      ...initialState({}),
       paperActivation: {
         _tag: 'Realized',
         requestHash: 'c'.repeat(64),
@@ -1768,7 +1768,7 @@ describe('Bayn continuous health', () => {
         startedAt: null,
         lastPass: null,
       },
-      broker: initialState(broker).broker,
+      broker: initialState({ broker }).broker,
     }
     const state = await Effect.runPromise(Ref.make(initial))
 

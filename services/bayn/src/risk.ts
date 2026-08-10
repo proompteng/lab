@@ -39,6 +39,7 @@ import {
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { Pipeable } from './pipeable'
+import { utcInstantFromEpochMillis } from './time'
 
 const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
 const MAX_AGE_MS = 86_400_000
@@ -551,7 +552,7 @@ const divideUp = (numerator: bigint, denominator: bigint): bigint =>
 const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
   numerator < 0n ? -divideUp(-numerator, denominator) : divideUp(numerator, denominator)
 const instant = (value: string): number => Date.parse(value)
-const utc = (value: number): string => new Date(value).toISOString()
+const utc = utcInstantFromEpochMillis
 
 const makeGate = (
   name: Gate,
@@ -1235,8 +1236,8 @@ const evaluateDecoded = (
 ): Result.Result<Evaluation, RiskEvaluationFailure> =>
   Result.flatMap(validateAuthorityBinding(intent, state), () => {
     const facts = parseRiskFacts(intent, state, policy, proposedPositions)
-    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) => {
-      return Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
+    return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) =>
+      Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
         const gates = buildRiskGates(facts, metrics, reconciledHash)
         const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
         const outcome = reasonCodes.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
@@ -1248,30 +1249,32 @@ const evaluateDecoded = (
             ),
           ),
         )
-      })
-    })
+      }),
+    )
   })
 
-export const evaluate = (
-  intentInput: unknown,
-  stateInput: unknown,
-  policyInput: unknown,
-  proposedPositionsInput?: unknown,
-): Result.Result<Evaluation, RiskEvaluationFailure> => {
-  const intent = Result.mapError(decodeRiskIntentResult(intentInput), (cause) =>
+export interface RiskEvaluationInput {
+  readonly intent: unknown
+  readonly state: unknown
+  readonly policy: unknown
+  readonly proposedPositions?: unknown
+}
+
+export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, RiskEvaluationFailure> => {
+  const intent = Result.mapError(decodeRiskIntentResult(input.intent), (cause) =>
     decodeRiskInputFailure('intent', 'risk intent is invalid', {}, cause),
   )
   if (Result.isFailure(intent)) return Result.fail(intent.failure)
-  const state = Result.mapError(decodeRiskStateResult(stateInput), (cause) =>
+  const state = Result.mapError(decodeRiskStateResult(input.state), (cause) =>
     decodeRiskInputFailure('state', 'risk state is invalid', {}, cause),
   )
   if (Result.isFailure(state)) return Result.fail(state.failure)
-  const policy = Result.mapError(decodeRiskPolicyResult(policyInput), (cause) =>
+  const policy = Result.mapError(decodeRiskPolicyResult(input.policy), (cause) =>
     decodeRiskInputFailure('policy', 'risk policy is invalid', {}, cause),
   )
   if (Result.isFailure(policy)) return Result.fail(policy.failure)
   const proposedPositions = Result.mapError(
-    decodeProposedPositionsResult(proposedPositionsInput ?? state.success.positions),
+    decodeProposedPositionsResult(input.proposedPositions ?? state.success.positions),
     (cause) => decodeRiskInputFailure('positions', 'proposed risk positions are invalid', {}, cause),
   )
   if (Result.isFailure(proposedPositions)) return Result.fail(proposedPositions.failure)

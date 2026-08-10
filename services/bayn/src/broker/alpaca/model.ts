@@ -1,5 +1,5 @@
 import type { Undici } from '@effect/platform-node'
-import { Context, Effect, Schema, type Result } from 'effect'
+import { Context, DateTime, Effect, Option, Schema, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
 import {
@@ -45,28 +45,11 @@ const Decimal = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-
 const isUtcTimestamp = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
   if (match === null) return false
-  const components = match.slice(1, 7).map(Number)
-  if (components.length !== 6) return false
-  const [year, month, day, hour, minute, second] = components
-  if (
-    year === undefined ||
-    month === undefined ||
-    day === undefined ||
-    hour === undefined ||
-    minute === undefined ||
-    second === undefined
-  ) {
-    return false
-  }
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second))
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day &&
-    date.getUTCHours() === hour &&
-    date.getUTCMinutes() === minute &&
-    date.getUTCSeconds() === second
-  )
+  const year = match[1]
+  if (year === undefined || Number(year) < 100) return false
+  const seconds = value.slice(0, 19)
+  const date = DateTime.make(`${seconds}.000Z`)
+  return Option.isSome(date) && DateTime.formatIso(date.value).slice(0, 19) === seconds
 }
 const Timestamp = Schema.String.check(Schema.makeFilter(isUtcTimestamp, { expected: 'an RFC 3339 UTC timestamp' }))
 const ExternalClientOrderId = Schema.String.check(
@@ -401,7 +384,9 @@ export interface BrokerReadShape {
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
 }
 
-export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()('bayn/BrokerRead') {}
+export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()(
+  '@proompteng/bayn/broker/alpaca/model/BrokerRead',
+) {}
 
 export interface ReadPreflight {
   readonly provider: BrokerProvider

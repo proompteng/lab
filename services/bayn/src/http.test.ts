@@ -140,7 +140,7 @@ const withHttpServer = (
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const state = yield* Ref.make(options.state ?? initialState())
+        const state = yield* Ref.make(options.state ?? initialState({}))
         yield* serveHttp(
           serverConfig,
           state,
@@ -250,7 +250,7 @@ describe('Bayn HTTP pure decisions', () => {
   })
 
   test('decides historical evidence, fallback, and status responses from immutable values', () => {
-    const initial = initialState()
+    const initial = initialState({})
     expect(historicalEvidenceResponseDecision(Option.some(historicalEvidence))).toEqual({
       _tag: 'Json',
       status: 200,
@@ -454,7 +454,7 @@ describe('Bayn HTTP pure decisions', () => {
       },
       {
         name: 'initial unknown dependencies',
-        state: initialState(),
+        state: initialState({}),
         ready: false,
         status: 503,
         failedDependencies: ['postgresql', 'signal', 'tigerBeetle', 'evidence', 'cycle', 'cycleRunner'],
@@ -477,7 +477,7 @@ describe('Bayn HTTP pure decisions', () => {
   })
 
   test('covers every public status projection branch from immutable facts', () => {
-    const initial = initialState()
+    const initial = initialState({})
     const healthy = readyState()
     const checkedAt = healthy.health.checkedAt
     const observedAt = checkedAt ?? '2026-07-20T00:00:00.000Z'
@@ -1007,7 +1007,7 @@ describe('Bayn HTTP pure decisions', () => {
 
 describe('Bayn HTTP probes', () => {
   test('serves every route from the current runtime state and closes its socket', async () => {
-    const initial = initialState()
+    const initial = initialState({})
     let port = 0
     await withHttpServer({ state: initial }, (server) => {
       port = server.port
@@ -1577,7 +1577,7 @@ describe('Bayn HTTP probes', () => {
       executionEligible: false,
       executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
     }
-    const runtimeState = initialState(broker)
+    const runtimeState = initialState({ broker })
     expect(runtimeState.broker).not.toHaveProperty('read')
     expect(Object.values(runtimeState.broker ?? {}).some((value) => typeof value === 'function')).toBe(false)
 
@@ -1771,7 +1771,7 @@ describe('Bayn HTTP probes', () => {
   })
 
   test('does not synthesize durable cycle, mutation, reconciliation, or authority observations', () => {
-    const metrics = renderPrometheusMetrics(initialState(), config, provenance, 'embedded')
+    const metrics = renderPrometheusMetrics(initialState({}), config, provenance, 'embedded')
 
     expect(metrics).toContain('bayn_cycle_observation_available 0')
     expect(metrics).toContain('bayn_cycle_condition{condition="unknown"} 1')

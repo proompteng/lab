@@ -286,16 +286,17 @@ describe('paper contracts', () => {
       for (const to of Object.values(IntentState)) {
         if (to === IntentState.Terminal) {
           for (const outcome of Object.values(TerminalOutcome)) {
-            expect(isIntentTransitionAllowed(from, to, outcome), `${from}:${outcome}`).toBe(
+            expect(isIntentTransitionAllowed({ from, to, terminalOutcome: outcome }), `${from}:${outcome}`).toBe(
               allowedTerminal.has(`${from}:${outcome}`),
             )
           }
           continue
         }
-        expect(isIntentTransitionAllowed(from, to), `${from}:${to}`).toBe(allowed.has(`${from}:${to}`))
-        expect(isIntentTransitionAllowed(from, to, TerminalOutcome.Blocked), `${from}:${to}:unexpected outcome`).toBe(
-          false,
-        )
+        expect(isIntentTransitionAllowed({ from, to }), `${from}:${to}`).toBe(allowed.has(`${from}:${to}`))
+        expect(
+          isIntentTransitionAllowed({ from, to, terminalOutcome: TerminalOutcome.Blocked }),
+          `${from}:${to}:unexpected outcome`,
+        ).toBe(false)
       }
     }
   })

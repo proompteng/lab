@@ -83,8 +83,8 @@ const requiredRecordValueDataFirst = <A>(
   key: string,
   operation: RecordOperation,
   context: string,
-): Result.Result<A, SimulationFailure> => {
-  return pipe(
+): Result.Result<A, SimulationFailure> =>
+  pipe(
     optionalRecordValue(values, key, operation, context),
     Result.flatMap(
       Option.match({
@@ -93,7 +93,6 @@ const requiredRecordValueDataFirst = <A>(
       }),
     ),
   )
-}
 
 export const requiredRecordValue = Pipeable.generic<
   <A>(

@@ -298,10 +298,10 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const state = yield* Ref.make(
-          initialState(
-            { expectedAccountId: 'paper-account', executionEligible: true, executionDisabledReason: null },
-            true,
-          ),
+          initialState({
+            broker: { expectedAccountId: 'paper-account', executionEligible: true, executionDisabledReason: null },
+            autonomousCycleLoopConfigured: true,
+          }),
         )
         const finalized = yield* finalizePaperEpisode(
           state,

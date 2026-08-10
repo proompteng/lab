@@ -86,9 +86,6 @@ export interface MarketDataService {
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
-export type MarketData = {
-  readonly MarketData: unique symbol
-  readonly Service: MarketDataService
-}
-
-export const MarketData = Context.Service<MarketData, MarketDataService>('bayn/MarketData')
+export class MarketData extends Context.Service<MarketData, MarketDataService>()(
+  '@proompteng/bayn/market-data/model/MarketData',
+) {}

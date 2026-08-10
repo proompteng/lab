@@ -302,18 +302,24 @@ const normalizeCreateResult = (
 })
 
 const adaptTigerBeetleClient = (client: TigerBeetleNodeClient): TigerBeetleClient => ({
-  createAccounts: async (accounts) =>
-    (await client.createAccounts([...accounts])).map((result) =>
-      normalizeCreateResult(result, CreateAccountStatus.created, CreateAccountStatus.exists),
-    ),
-  createTransfers: async (transfers) =>
-    (await client.createTransfers([...transfers])).map((result) =>
-      normalizeCreateResult(result, CreateTransferStatus.created, CreateTransferStatus.exists),
-    ),
-  lookupAccounts: async (ids) => client.lookupAccounts([...ids]),
-  lookupTransfers: async (ids) => client.lookupTransfers([...ids]),
-  queryAccounts: async (filter) => client.queryAccounts(filter),
-  queryTransfers: async (filter) => client.queryTransfers(filter),
+  createAccounts: (accounts) =>
+    client
+      .createAccounts([...accounts])
+      .then((results) =>
+        results.map((result) => normalizeCreateResult(result, CreateAccountStatus.created, CreateAccountStatus.exists)),
+      ),
+  createTransfers: (transfers) =>
+    client
+      .createTransfers([...transfers])
+      .then((results) =>
+        results.map((result) =>
+          normalizeCreateResult(result, CreateTransferStatus.created, CreateTransferStatus.exists),
+        ),
+      ),
+  lookupAccounts: (ids) => client.lookupAccounts([...ids]),
+  lookupTransfers: (ids) => client.lookupTransfers([...ids]),
+  queryAccounts: (filter) => client.queryAccounts(filter),
+  queryTransfers: (filter) => client.queryTransfers(filter),
   destroy: () => client.destroy(),
 })
 

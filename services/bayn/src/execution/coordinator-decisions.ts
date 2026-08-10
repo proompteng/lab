@@ -491,8 +491,8 @@ const ensureRecoveryDelayDataFirst = (
   operation: MutationOperation,
   event: MutationEvent,
   currentMillis: number,
-): Result.Result<MutationEvent, ExecutionDecisionFailure> => {
-  return Result.flatMap(parseInstant(operation, 'occurred-at', event.occurredAt), (occurredAt) =>
+): Result.Result<MutationEvent, ExecutionDecisionFailure> =>
+  Result.flatMap(parseInstant(operation, 'occurred-at', event.occurredAt), (occurredAt) =>
     Result.flatMap(validateCurrentTime(operation, currentMillis), (now) => {
       const eligibleMillis = occurredAt + event.consistencyDelayMs
       return now >= eligibleMillis
@@ -506,7 +506,6 @@ const ensureRecoveryDelayDataFirst = (
           )
     }),
   )
-}
 
 export const ensureRecoveryDelay = Pipeable.dual(3, ensureRecoveryDelayDataFirst)
 

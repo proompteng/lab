@@ -235,7 +235,7 @@ export interface ForwardPerformanceReceiptStoreShape {
 export class ForwardPerformanceReceiptStore extends Context.Service<
   ForwardPerformanceReceiptStore,
   ForwardPerformanceReceiptStoreShape
->()('bayn/ForwardPerformanceReceiptStore') {}
+>()('@proompteng/bayn/db/forward-performance-receipt/ForwardPerformanceReceiptStore') {}
 
 const decodeEnvelopeResult = Schema.decodeUnknownResult(ForwardPerformanceReceiptEnvelopeSchema, strictParseOptions)
 

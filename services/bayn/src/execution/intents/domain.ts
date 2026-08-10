@@ -154,7 +154,7 @@ const paperIntentIdResult = (
     paperIdentityMaterial(input, authorityGenerationHash),
   )
 
-export const paperIntentIdForDecodedPlan = paperIntentIdResult
+export const paperIntentIdForDecodedPlan = Pipeable.dual(2, paperIntentIdResult)
 
 export const intentIdForPlan = referenceIntentIdResult
 
@@ -191,7 +191,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
   const intentId = referenceIntentIdResult(decoded)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
-    Schema.decodeUnknownResult(
+    Schema.decodeResult(
       ReferenceIntentSchema,
       strictParseOptions,
     )({
@@ -337,7 +337,9 @@ export interface IntentStoreService {
   readonly read: (intentId: string) => Effect.Effect<Option.Option<StoredIntent>, IntentStoreError>
 }
 
-export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()('bayn/IntentStore') {}
+export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()(
+  '@proompteng/bayn/execution/intents/domain/IntentStore',
+) {}
 
 const intentRowFields = {
   schema_version: Schema.Literal('bayn.paper-intent.v3'),
