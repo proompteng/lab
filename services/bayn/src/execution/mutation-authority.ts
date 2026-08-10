@@ -784,7 +784,7 @@ const validateLiveCapitalLimitsDataFirst = (
 export const validateLiveCapitalLimits = Pipeable.dual(6, validateLiveCapitalLimitsDataFirst)
 
 const mutationAuthorizationError = (message: string, cause: unknown) =>
-  invalidRequest(MutationOperation.Submit, message, cause)
+  invalidRequest({ operation: MutationOperation.Submit, message, cause })
 
 const refreshLiveBrokerSubmitSnapshotDataFirst = (
   authority: LiveMutationExecutionAuthority,

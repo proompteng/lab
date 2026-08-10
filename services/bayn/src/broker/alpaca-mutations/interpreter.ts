@@ -41,15 +41,14 @@ const withDeadline = <A, E>(
     Effect.mapError((cause) =>
       cause instanceof BrokerMutationError
         ? cause
-        : unknownOutcome(
+        : unknownOutcome({
             operation,
-            Cause.isTimeoutError(cause)
+            message: Cause.isTimeoutError(cause)
               ? `Alpaca ${operation.toLowerCase()} exceeded its ${timeoutMs}ms deadline`
               : `Alpaca ${operation.toLowerCase()} outcome is unknown because no valid response was available`,
             requestHash,
-            undefined,
             cause,
-          ),
+          }),
     ),
   )
 
@@ -60,13 +59,13 @@ const responseHeaders = (
 ): Effect.Effect<{ readonly 'x-request-id': string }, BrokerMutationError> =>
   decodeHeaders(response).pipe(
     Effect.mapError((cause) =>
-      unknownOutcome(
+      unknownOutcome({
         operation,
-        `Alpaca ${operation.toLowerCase()} response headers are invalid`,
+        message: `Alpaca ${operation.toLowerCase()} response headers are invalid`,
         requestHash,
-        { status: response.status },
+        evidence: { status: response.status },
         cause,
-      ),
+      }),
     ),
   )
 
@@ -77,13 +76,13 @@ const readSubmitBody = (
 ): Effect.Effect<unknown, BrokerMutationError> =>
   response.json.pipe(
     Effect.mapError((cause) =>
-      unknownOutcome(
-        MutationOperation.Submit,
-        'Alpaca submit response body is not valid JSON',
+      unknownOutcome({
+        operation: MutationOperation.Submit,
+        message: 'Alpaca submit response body is not valid JSON',
         requestHash,
-        { status: response.status, requestId: headers['x-request-id'] },
+        evidence: { status: response.status, requestId: headers['x-request-id'] },
         cause,
-      ),
+      }),
     ),
   )
 
@@ -96,13 +95,13 @@ const readCancelBody = (
     ? Effect.as(Effect.void, undefined)
     : response.text.pipe(
         Effect.mapError((cause) =>
-          unknownOutcome(
-            MutationOperation.Cancel,
-            'Alpaca cancel response body could not be read',
+          unknownOutcome({
+            operation: MutationOperation.Cancel,
+            message: 'Alpaca cancel response body could not be read',
             requestHash,
-            { status: response.status, requestId: headers['x-request-id'] },
+            evidence: { status: response.status, requestId: headers['x-request-id'] },
             cause,
-          ),
+          }),
         ),
       )
 
@@ -127,7 +126,7 @@ const makeMutationDataFirst = (
           prepared.request,
         ).pipe(
           Effect.mapError((cause) =>
-            invalidRequest(MutationOperation.Submit, 'order request cannot be encoded', cause),
+            invalidRequest({ operation: MutationOperation.Submit, message: 'order request cannot be encoded', cause }),
           ),
         )
         return yield* withDeadline(

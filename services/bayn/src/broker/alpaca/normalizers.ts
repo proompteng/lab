@@ -42,9 +42,13 @@ const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]
 
 const hashResult = (value: unknown, field: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.mapError(canonicalHashV1Result(value), (failure) =>
-    contractFailure('CANONICAL_HASH', `${field} cannot be canonically hashed: ${renderCanonicalJsonFailure(failure)}`, {
-      field,
-      actual: failure.path,
+    contractFailure({
+      reason: 'CANONICAL_HASH',
+      message: `${field} cannot be canonically hashed: ${renderCanonicalJsonFailure(failure)}`,
+      facts: {
+        field,
+        actual: failure.path,
+      },
     }),
   )
 
@@ -55,7 +59,11 @@ const decimalToMicrosResultDataFirst = (
 ): Result.Result<string, BrokerReadContractFailure> => {
   if (!decimalPattern.test(value)) {
     return Result.fail(
-      contractFailure('DECIMAL_FORMAT', `${name} is not a canonical decimal`, { field: name, actual: value }),
+      contractFailure({
+        reason: 'DECIMAL_FORMAT',
+        message: `${name} is not a canonical decimal`,
+        facts: { field: name, actual: value },
+      }),
     )
   }
   const negative = value.startsWith('-')
@@ -65,22 +73,36 @@ const decimalToMicrosResultDataFirst = (
   const fraction = separator === -1 ? '' : absolute.slice(separator + 1)
   if (fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
     return Result.fail(
-      contractFailure('DECIMAL_PRECISION', `${name} cannot be represented exactly as decimal micros`, {
-        field: name,
-        actual: value,
+      contractFailure({
+        reason: 'DECIMAL_PRECISION',
+        message: `${name} cannot be represented exactly as decimal micros`,
+        facts: {
+          field: name,
+          actual: value,
+        },
       }),
     )
   }
   const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6))
   const result = negative ? -micros : micros
   if (!signed && result < 0n) {
-    return Result.fail(contractFailure('DECIMAL_SIGN', `${name} must be non-negative`, { field: name, actual: value }))
+    return Result.fail(
+      contractFailure({
+        reason: 'DECIMAL_SIGN',
+        message: `${name} must be non-negative`,
+        facts: { field: name, actual: value },
+      }),
+    )
   }
   if (signed ? result < I128_MIN || result > I128_MAX : result > U128_MAX) {
     return Result.fail(
-      contractFailure('DECIMAL_RANGE', `${name} exceeds the decimal micros range`, {
-        field: name,
-        actual: value,
+      contractFailure({
+        reason: 'DECIMAL_RANGE',
+        message: `${name} exceeds the decimal micros range`,
+        facts: {
+          field: name,
+          actual: value,
+        },
       }),
     )
   }
@@ -92,7 +114,13 @@ export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataF
 const positiveMicrosResult = (value: string, name: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.flatMap(decimalToMicrosResult(value, false, name), (micros) =>
     micros === '0'
-      ? Result.fail(contractFailure('DECIMAL_ZERO', `${name} must be positive`, { field: name, actual: value }))
+      ? Result.fail(
+          contractFailure({
+            reason: 'DECIMAL_ZERO',
+            message: `${name} must be positive`,
+            facts: { field: name, actual: value },
+          }),
+        )
       : Result.succeed(micros),
   )
 
@@ -111,15 +139,25 @@ const positionMicrosResult = (
   Result.flatMap(decimalToMicrosResult(value, true, name), (decoded) => {
     const parsed = BigInt(decoded)
     if (parsed === 0n) {
-      return Result.fail(contractFailure('DECIMAL_ZERO', `${name} must be non-zero`, { field: name, actual: value }))
+      return Result.fail(
+        contractFailure({
+          reason: 'DECIMAL_ZERO',
+          message: `${name} must be non-zero`,
+          facts: { field: name, actual: value },
+        }),
+      )
     }
     const magnitude = parsed < 0n ? -parsed : parsed
     const normalized = side === PositionSide.Short ? -magnitude : magnitude
     return normalized < I128_MIN || normalized > I128_MAX
       ? Result.fail(
-          contractFailure('DECIMAL_RANGE', `${name} exceeds the decimal micros range`, {
-            field: name,
-            actual: value,
+          contractFailure({
+            reason: 'DECIMAL_RANGE',
+            message: `${name} exceeds the decimal micros range`,
+            facts: {
+              field: name,
+              actual: value,
+            },
           }),
         )
       : Result.succeed(normalized.toString())
@@ -132,10 +170,14 @@ const normalizeAccountResultDataFirst = (
 ): Result.Result<Account, BrokerReadContractFailure> => {
   if (raw.id !== expectedAccountId) {
     return Result.fail(
-      contractFailure('ACCOUNT_BINDING', `credential resolved account ${raw.id}, expected ${expectedAccountId}`, {
-        field: 'account.id',
-        expected: expectedAccountId,
-        actual: raw.id,
+      contractFailure({
+        reason: 'ACCOUNT_BINDING',
+        message: `credential resolved account ${raw.id}, expected ${expectedAccountId}`,
+        facts: {
+          field: 'account.id',
+          expected: expectedAccountId,
+          actual: raw.id,
+        },
       }),
     )
   }
@@ -187,10 +229,14 @@ const normalizePositionResultDataFirst = (
 ): Result.Result<Position, BrokerReadContractFailure> => {
   if (raw.asset_class !== AssetClass.UsEquity) {
     return Result.fail(
-      contractFailure('ASSET_CLASS', `unsupported position asset class ${raw.asset_class}`, {
-        field: 'position.asset_class',
-        expected: AssetClass.UsEquity,
-        actual: raw.asset_class,
+      contractFailure({
+        reason: 'ASSET_CLASS',
+        message: `unsupported position asset class ${raw.asset_class}`,
+        facts: {
+          field: 'position.asset_class',
+          expected: AssetClass.UsEquity,
+          actual: raw.asset_class,
+        },
       }),
     )
   }
@@ -236,10 +282,14 @@ const normalizeAssetResultDataFirst = (
 ): Result.Result<AssetObservation, BrokerReadContractFailure> => {
   if (raw.symbol !== requestedSymbol) {
     return Result.fail(
-      contractFailure('ASSET_BINDING', `asset lookup returned symbol ${raw.symbol}, expected ${requestedSymbol}`, {
-        field: 'asset.symbol',
-        expected: requestedSymbol,
-        actual: raw.symbol,
+      contractFailure({
+        reason: 'ASSET_BINDING',
+        message: `asset lookup returned symbol ${raw.symbol}, expected ${requestedSymbol}`,
+        facts: {
+          field: 'asset.symbol',
+          expected: requestedSymbol,
+          actual: raw.symbol,
+        },
       }),
     )
   }
@@ -273,34 +323,49 @@ const normalizeOrderResultDataFirst = (
 ): Result.Result<Order, BrokerReadContractFailure> => {
   if (raw.asset_class !== AssetClass.UsEquity) {
     return Result.fail(
-      contractFailure('ASSET_CLASS', `unsupported order asset class ${raw.asset_class}`, {
-        field: 'order.asset_class',
-        expected: AssetClass.UsEquity,
-        actual: raw.asset_class,
+      contractFailure({
+        reason: 'ASSET_CLASS',
+        message: `unsupported order asset class ${raw.asset_class}`,
+        facts: {
+          field: 'order.asset_class',
+          expected: AssetClass.UsEquity,
+          actual: raw.asset_class,
+        },
       }),
     )
   }
   const assetClass = raw.asset_class
   if ((raw.qty === null) === (raw.notional === null)) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'order must contain exactly one of qty or notional'))
+    return Result.fail(
+      contractFailure({ reason: 'ORDER_SHAPE', message: 'order must contain exactly one of qty or notional' }),
+    )
   }
   if (raw.order_type !== undefined && raw.order_type !== raw.type) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'deprecated order_type does not match type'))
+    return Result.fail(contractFailure({ reason: 'ORDER_SHAPE', message: 'deprecated order_type does not match type' }))
   }
   if (raw.order_class === OrderClass.MultiLeg) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'multi-leg orders are outside the Bayn equity contract'))
+    return Result.fail(
+      contractFailure({ reason: 'ORDER_SHAPE', message: 'multi-leg orders are outside the Bayn equity contract' }),
+    )
   }
   if (raw.type === OrderType.Limit && raw.limit_price === null) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'limit order is missing limit_price'))
+    return Result.fail(contractFailure({ reason: 'ORDER_SHAPE', message: 'limit order is missing limit_price' }))
   }
   if (raw.type === OrderType.Stop && raw.stop_price === null) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'stop order is missing stop_price'))
+    return Result.fail(contractFailure({ reason: 'ORDER_SHAPE', message: 'stop order is missing stop_price' }))
   }
   if (raw.type === OrderType.StopLimit && (raw.limit_price === null || raw.stop_price === null)) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'stop-limit order is missing limit_price or stop_price'))
+    return Result.fail(
+      contractFailure({ reason: 'ORDER_SHAPE', message: 'stop-limit order is missing limit_price or stop_price' }),
+    )
   }
   if (raw.type === OrderType.TrailingStop && (raw.trail_price === null) === (raw.trail_percent === null)) {
-    return Result.fail(contractFailure('ORDER_SHAPE', 'trailing-stop order must contain exactly one trailing offset'))
+    return Result.fail(
+      contractFailure({
+        reason: 'ORDER_SHAPE',
+        message: 'trailing-stop order must contain exactly one trailing offset',
+      }),
+    )
   }
 
   return Result.gen(function* () {
@@ -309,7 +374,9 @@ const normalizeOrderResultDataFirst = (
       raw.notional === null ? undefined : yield* positiveMicrosResult(raw.notional, 'order notional')
     const filledQuantityMicros = yield* decimalToMicrosResult(raw.filled_qty, false, 'filled quantity')
     if (quantityMicros !== undefined && BigInt(filledQuantityMicros) > BigInt(quantityMicros)) {
-      return yield* Result.fail(contractFailure('ORDER_SHAPE', 'filled quantity exceeds order quantity'))
+      return yield* Result.fail(
+        contractFailure({ reason: 'ORDER_SHAPE', message: 'filled quantity exceeds order quantity' }),
+      )
     }
     const filledAveragePriceMicros = yield* optionalMicrosResult(raw.filled_avg_price, false, 'filled average price')
     const limitPriceMicros = yield* optionalMicrosResult(raw.limit_price, false, 'limit price')
@@ -372,11 +439,11 @@ const normalizeFillActivityResultDataFirst = (
 ): Result.Result<FillActivity, BrokerReadContractFailure> => {
   if (raw.account_id !== undefined && raw.account_id !== accountId) {
     return Result.fail(
-      contractFailure(
-        'FILL_ACCOUNT_BINDING',
-        `fill activity resolved account ${raw.account_id}, expected ${accountId}`,
-        { field: 'fill.account_id', expected: accountId, actual: raw.account_id },
-      ),
+      contractFailure({
+        reason: 'FILL_ACCOUNT_BINDING',
+        message: `fill activity resolved account ${raw.account_id}, expected ${accountId}`,
+        facts: { field: 'fill.account_id', expected: accountId, actual: raw.account_id },
+      }),
     )
   }
   return Result.gen(function* () {
@@ -386,7 +453,10 @@ const normalizeFillActivityResultDataFirst = (
     const quantityMicros = yield* positiveMicrosResult(raw.qty, 'fill quantity')
     if (BigInt(cumulativeQuantityMicros) < BigInt(quantityMicros)) {
       return yield* Result.fail(
-        contractFailure('FILL_SHAPE', 'cumulative fill quantity is smaller than this fill quantity'),
+        contractFailure({
+          reason: 'FILL_SHAPE',
+          message: 'cumulative fill quantity is smaller than this fill quantity',
+        }),
       )
     }
     if (
@@ -394,7 +464,10 @@ const normalizeFillActivityResultDataFirst = (
       (raw.type === TradeActivityType.PartialFill && leavesQuantityMicros === '0')
     ) {
       return yield* Result.fail(
-        contractFailure('FILL_SHAPE', `fill activity type ${raw.type} is inconsistent with leaves quantity`),
+        contractFailure({
+          reason: 'FILL_SHAPE',
+          message: `fill activity type ${raw.type} is inconsistent with leaves quantity`,
+        }),
       )
     }
     return {
@@ -447,11 +520,11 @@ const marketCalendarInstantResult = (
   )
   return zoned._tag === 'None'
     ? Result.fail(
-        contractFailure(
-          'CALENDAR_INSTANT',
-          `market calendar ${field} is not a valid ${marketCalendarTimeZone} wall-clock instant`,
-          { field: `calendar.${field}`, actual: `${date} ${time}` },
-        ),
+        contractFailure({
+          reason: 'CALENDAR_INSTANT',
+          message: `market calendar ${field} is not a valid ${marketCalendarTimeZone} wall-clock instant`,
+          facts: { field: `calendar.${field}`, actual: `${date} ${time}` },
+        }),
       )
     : Result.succeed(DateTime.formatIso(zoned.value))
 }
@@ -465,11 +538,11 @@ const normalizeMarketCalendarResultDataFirst = (
       raw.map((session): Result.Result<MarketCalendarSession, BrokerReadContractFailure> => {
         if (session.date < query.start || session.date > query.end) {
           return Result.fail(
-            contractFailure(
-              'CALENDAR_RANGE',
-              `market calendar session ${session.date} is outside the requested range`,
-              { field: 'calendar.date', expected: `${query.start}..${query.end}`, actual: session.date },
-            ),
+            contractFailure({
+              reason: 'CALENDAR_RANGE',
+              message: `market calendar session ${session.date} is outside the requested range`,
+              facts: { field: 'calendar.date', expected: `${query.start}..${query.end}`, actual: session.date },
+            }),
           )
         }
         return Result.gen(function* () {
@@ -477,9 +550,13 @@ const normalizeMarketCalendarResultDataFirst = (
           const closeAt = yield* marketCalendarInstantResult(session.date, session.close, 'close')
           if (openAt >= closeAt) {
             return yield* Result.fail(
-              contractFailure('CALENDAR_HOURS', `market calendar session ${session.date} has invalid hours`, {
-                field: 'calendar.hours',
-                actual: `${openAt}..${closeAt}`,
+              contractFailure({
+                reason: 'CALENDAR_HOURS',
+                message: `market calendar session ${session.date} has invalid hours`,
+                facts: {
+                  field: 'calendar.hours',
+                  actual: `${openAt}..${closeAt}`,
+                },
               }),
             )
           }
@@ -491,7 +568,10 @@ const normalizeMarketCalendarResultDataFirst = (
     for (let index = 1; index < sessions.length; index += 1) {
       if (sessions[index - 1]?.date === sessions[index]?.date) {
         return yield* Result.fail(
-          contractFailure('CALENDAR_DUPLICATE', `market calendar contains duplicate session ${sessions[index]?.date}`),
+          contractFailure({
+            reason: 'CALENDAR_DUPLICATE',
+            message: `market calendar contains duplicate session ${sessions[index]?.date}`,
+          }),
         )
       }
     }

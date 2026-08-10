@@ -119,10 +119,14 @@ const responseEvidenceResultDataFirst = (
   const remaining = headers['x-ratelimit-remaining']
   if (limit !== undefined && remaining !== undefined && BigInt(remaining) > BigInt(limit)) {
     return Result.fail(
-      contractFailure('RATE_LIMIT', 'rate-limit remaining exceeds limit', {
-        field: 'x-ratelimit-remaining',
-        expected: `<=${limit}`,
-        actual: remaining,
+      contractFailure({
+        reason: 'RATE_LIMIT',
+        message: 'rate-limit remaining exceeds limit',
+        facts: {
+          field: 'x-ratelimit-remaining',
+          expected: `<=${limit}`,
+          actual: remaining,
+        },
       }),
     )
   }

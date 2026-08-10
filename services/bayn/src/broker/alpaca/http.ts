@@ -93,7 +93,12 @@ const normalizeRead = <A>(
   Effect.fromResult(result).pipe(
     Effect.map((value) => ({ value, evidence })),
     Effect.mapError((cause) =>
-      invalidResponse(operation, `Alpaca ${operation} response violates the Bayn read contract`, evidence, cause),
+      invalidResponse({
+        operation,
+        message: `Alpaca ${operation} response violates the Bayn read contract`,
+        evidence,
+        cause,
+      }),
     ),
   )
 
@@ -110,7 +115,8 @@ const makeProxyDispatcherDataFirst = (
       Effect.flatMap((url) =>
         Effect.try({
           try: () => dependencies.create(url),
-          catch: (cause) => configurationError('proxy', 'Alpaca proxy dispatcher acquisition failed', cause),
+          catch: (cause) =>
+            configurationError({ operation: 'proxy', message: 'Alpaca proxy dispatcher acquisition failed', cause }),
         }),
       ),
     ),
@@ -135,7 +141,7 @@ export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadEr
             : cause.reason === 'CREDENTIALS_FORBIDDEN'
               ? 'Alpaca proxy credentials must not be embedded in the URL'
               : 'Alpaca proxy URL must contain only an origin'
-      return configurationError('proxy', message, cause)
+      return configurationError({ operation: 'proxy', message, cause })
     }),
   )
 
@@ -151,7 +157,8 @@ const makeVerifiedProxyDispatcher = (
   Effect.acquireRelease(
     Effect.try({
       try: () => dependencies.create(new URL(proxyUrl)),
-      catch: (cause) => configurationError('proxy', 'Alpaca proxy dispatcher acquisition failed', cause),
+      catch: (cause) =>
+        configurationError({ operation: 'proxy', message: 'Alpaca proxy dispatcher acquisition failed', cause }),
     }),
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
@@ -360,40 +367,40 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           .pipe(Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)))
         const headers = yield* decodeResponseHeaders(response).pipe(
           Effect.mapError((cause) =>
-            invalidResponse(
+            invalidResponse({
               operation,
-              `Alpaca ${operation} response headers are invalid`,
-              { status: response.status },
+              message: `Alpaca ${operation} response headers are invalid`,
+              evidence: { status: response.status },
               cause,
-            ),
+            }),
           ),
         )
         const raw = yield* response.json.pipe(
           Effect.mapError((cause) =>
-            invalidResponse(
+            invalidResponse({
               operation,
-              `Alpaca ${operation} response body is not valid JSON`,
-              { status: response.status, requestId: headers['x-request-id'] },
+              message: `Alpaca ${operation} response body is not valid JSON`,
+              evidence: { status: response.status, requestId: headers['x-request-id'] },
               cause,
-            ),
+            }),
           ),
         )
         const contentHash = yield* Effect.fromResult(
           Result.mapError(canonicalHashV1Result(raw), (failure) =>
-            contractFailure(
-              'CANONICAL_HASH',
-              `Alpaca ${operation} response cannot be canonically hashed: ${renderCanonicalJsonFailure(failure)}`,
-              { field: 'response.body', actual: failure.path },
-            ),
+            contractFailure({
+              reason: 'CANONICAL_HASH',
+              message: `Alpaca ${operation} response cannot be canonically hashed: ${renderCanonicalJsonFailure(failure)}`,
+              facts: { field: 'response.body', actual: failure.path },
+            }),
           ),
         ).pipe(
           Effect.mapError((cause) =>
-            invalidResponse(
+            invalidResponse({
               operation,
-              `Alpaca ${operation} response cannot be canonically hashed`,
-              { status: response.status, requestId: headers['x-request-id'] },
+              message: `Alpaca ${operation} response cannot be canonically hashed`,
+              evidence: { status: response.status, requestId: headers['x-request-id'] },
               cause,
-            ),
+            }),
           ),
         )
         const observedAt = yield* currentUtcInstant
@@ -401,19 +408,19 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           responseEvidenceResult(headers, response.status, contentHash, observedAt),
         ).pipe(
           Effect.mapError((cause) =>
-            invalidResponse(
+            invalidResponse({
               operation,
-              `Alpaca ${operation} rate-limit metadata is invalid`,
-              { status: response.status, requestId: headers['x-request-id'], contentHash, observedAt },
+              message: `Alpaca ${operation} rate-limit metadata is invalid`,
+              evidence: { status: response.status, requestId: headers['x-request-id'], contentHash, observedAt },
               cause,
-            ),
+            }),
           ),
         )
 
         if (response.status < 200 || response.status >= 300) {
           const failure = yield* Effect.fromResult(decodeErrorResponse(raw)).pipe(
             Effect.mapError((cause) =>
-              invalidResponse(operation, `Alpaca ${operation} error response is invalid`, evidence, cause),
+              invalidResponse({ operation, message: `Alpaca ${operation} error response is invalid`, evidence, cause }),
             ),
           )
           return yield* statusError(
@@ -429,7 +436,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
         const value = yield* Effect.fromResult(decoder(raw)).pipe(
           Effect.mapError((cause) =>
-            invalidResponse(operation, `Alpaca ${operation} response body does not match its schema`, evidence, cause),
+            invalidResponse({
+              operation,
+              message: `Alpaca ${operation} response body does not match its schema`,
+              evidence,
+              cause,
+            }),
           ),
         )
         yield* Effect.annotateCurrentSpan({
@@ -596,12 +608,12 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               }
             }),
             Effect.mapError((cause) =>
-              invalidResponse(
-                'fill-activities',
-                'Alpaca fill-activities response violates the Bayn read contract',
-                result.evidence,
+              invalidResponse({
+                operation: 'fill-activities',
+                message: 'Alpaca fill-activities response violates the Bayn read contract',
+                evidence: result.evidence,
                 cause,
-              ),
+              }),
             ),
           ),
         ),

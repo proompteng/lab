@@ -154,13 +154,11 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
     .pipe(
       Effect.mapError((cause) =>
         transmissionStarted && cause instanceof WriterFenceError
-          ? unknownOutcome(
-              MutationOperation.Submit,
-              'final submit transaction failed after broker transmission began',
-              undefined,
-              undefined,
+          ? unknownOutcome({
+              operation: MutationOperation.Submit,
+              message: 'final submit transaction failed after broker transmission began',
               cause,
-            )
+            })
           : cause,
       ),
     )

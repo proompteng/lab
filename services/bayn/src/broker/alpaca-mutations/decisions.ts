@@ -190,7 +190,9 @@ export const authorizeMutationAccess = (
   authority: ExecutionAuthority,
 ): Result.Result<BrokerAccess.Mutation, BrokerMutationError> => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
-    return Result.fail(configurationError('Alpaca mutation capability requires explicit mutation broker access'))
+    return Result.fail(
+      configurationError({ message: 'Alpaca mutation capability requires explicit mutation broker access' }),
+    )
   }
   return Result.succeed(BrokerAccess.Mutation)
 }
@@ -208,16 +210,19 @@ const resolveMutationCapabilityDataFirst = (
     preflight.accountId !== connection.expectedAccountId
   ) {
     return Result.fail(
-      configurationError('Alpaca mutation capability requires an exact verified broker session binding', {
-        _tag: 'BrokerSessionBindingMismatch',
-        connectionProvider: connection.provider,
-        preflightProvider: preflight.provider,
-        connectionEnvironment: connection.environment,
-        preflightEnvironment: preflight.environment,
-        connectionBaseUrl: connection.baseUrl,
-        preflightBaseUrl: preflight.baseUrl,
-        connectionAccountId: connection.expectedAccountId,
-        preflightAccountId: preflight.accountId,
+      configurationError({
+        message: 'Alpaca mutation capability requires an exact verified broker session binding',
+        cause: {
+          _tag: 'BrokerSessionBindingMismatch',
+          connectionProvider: connection.provider,
+          preflightProvider: preflight.provider,
+          connectionEnvironment: connection.environment,
+          preflightEnvironment: preflight.environment,
+          connectionBaseUrl: connection.baseUrl,
+          preflightBaseUrl: preflight.baseUrl,
+          connectionAccountId: connection.expectedAccountId,
+          preflightAccountId: preflight.accountId,
+        },
       }),
     )
   }
@@ -225,10 +230,13 @@ const resolveMutationCapabilityDataFirst = (
     yield* authorizeMutationAccess(authority)
     if (authority.brokerIdentity.identityHash !== connection.identity.identityHash) {
       return yield* Result.fail(
-        configurationError('Alpaca mutation authority identity does not match the verified broker session', {
-          _tag: 'BrokerIdentityMismatch',
-          authorityIdentityHash: authority.brokerIdentity.identityHash,
-          connectionIdentityHash: connection.identity.identityHash,
+        configurationError({
+          message: 'Alpaca mutation authority identity does not match the verified broker session',
+          cause: {
+            _tag: 'BrokerIdentityMismatch',
+            authorityIdentityHash: authority.brokerIdentity.identityHash,
+            connectionIdentityHash: connection.identity.identityHash,
+          },
         }),
       )
     }
@@ -328,7 +336,11 @@ export const submitBody = (intent: Intent): Result.Result<OrderRequestBody, Orde
 
 const submitRequestHash = (body: OrderRequestBody): Result.Result<string, BrokerMutationError> =>
   Result.mapError(canonicalHashV1Result(body), (cause) =>
-    invalidRequest(MutationOperation.Submit, 'order request cannot be canonically hashed', cause),
+    invalidRequest({
+      operation: MutationOperation.Submit,
+      message: 'order request cannot be canonically hashed',
+      cause,
+    }),
   )
 
 const prepareSubmitDataFirst = (
@@ -337,17 +349,28 @@ const prepareSubmitDataFirst = (
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
   const decoded = decodeIntent(input)
   if (Result.isFailure(decoded)) {
-    return Result.fail(invalidRequest(MutationOperation.Submit, 'invalid order intent', decoded.failure))
+    return Result.fail(
+      invalidRequest({ operation: MutationOperation.Submit, message: 'invalid order intent', cause: decoded.failure }),
+    )
   }
   const intent = decoded.success
   if (intent.accountId !== expectedAccountId) {
     return Result.fail(
-      invalidRequest(MutationOperation.Submit, 'order intent account does not match the configured Alpaca account'),
+      invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'order intent account does not match the configured Alpaca account',
+      }),
     )
   }
   const body = submitBody(intent)
   if (Result.isFailure(body)) {
-    return Result.fail(invalidRequest(MutationOperation.Submit, 'order intent cannot be submitted', body.failure))
+    return Result.fail(
+      invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'order intent cannot be submitted',
+        cause: body.failure,
+      }),
+    )
   }
   return Result.map(submitRequestHash(body.success), (requestHash) => ({
     intent,
@@ -364,7 +387,13 @@ export const cancelRequestHash = (brokerOrderId: string): string =>
 export const prepareCancel = (input: unknown): Result.Result<PreparedCancel, BrokerMutationError> => {
   const decoded = decodeOrderId(input)
   if (Result.isFailure(decoded)) {
-    return Result.fail(invalidRequest(MutationOperation.Cancel, 'invalid Alpaca order ID', decoded.failure))
+    return Result.fail(
+      invalidRequest({
+        operation: MutationOperation.Cancel,
+        message: 'invalid Alpaca order ID',
+        cause: decoded.failure,
+      }),
+    )
   }
   const brokerOrderId = decoded.success
   return Result.mapError(
@@ -372,7 +401,12 @@ export const prepareCancel = (input: unknown): Result.Result<PreparedCancel, Bro
       brokerOrderId,
       requestHash,
     })),
-    (cause) => invalidRequest(MutationOperation.Cancel, 'cancel request cannot be canonically hashed', cause),
+    (cause) =>
+      invalidRequest({
+        operation: MutationOperation.Cancel,
+        message: 'cancel request cannot be canonically hashed',
+        cause,
+      }),
   )
 }
 
@@ -385,45 +419,50 @@ const responseEvidence = (
 
 const canonicalSubmitResponseHash = (facts: SubmitResponseFacts): Result.Result<string, BrokerMutationError> =>
   Result.mapError(canonicalHashV1Result(facts.body), (cause) =>
-    unknownOutcome(
-      MutationOperation.Submit,
-      'Alpaca submit response cannot be canonically hashed',
-      facts.requestHash,
-      { status: facts.status, requestId: facts.requestId },
+    unknownOutcome({
+      operation: MutationOperation.Submit,
+      message: 'Alpaca submit response cannot be canonically hashed',
+      requestHash: facts.requestHash,
+      evidence: { status: facts.status, requestId: facts.requestId },
       cause,
-    ),
+    }),
   )
 
 const canonicalCancelResponseHash = (facts: CancelResponseFacts): Result.Result<string, BrokerMutationError> => {
   if (facts.status === 204) {
     return Result.mapError(canonicalHashV1Result(null), (cause) =>
-      unknownOutcome(
-        MutationOperation.Cancel,
-        'Alpaca cancel response cannot be canonically hashed',
-        facts.requestHash,
-        { status: facts.status, requestId: facts.requestId },
+      unknownOutcome({
+        operation: MutationOperation.Cancel,
+        message: 'Alpaca cancel response cannot be canonically hashed',
+        requestHash: facts.requestHash,
+        evidence: { status: facts.status, requestId: facts.requestId },
         cause,
-      ),
+      }),
     )
   }
   if (facts.body === undefined) {
     return Result.fail(
-      unknownOutcome(MutationOperation.Cancel, 'Alpaca cancel response body is missing', facts.requestHash, {
-        status: facts.status,
-        requestId: facts.requestId,
+      unknownOutcome({
+        operation: MutationOperation.Cancel,
+        message: 'Alpaca cancel response body is missing',
+        requestHash: facts.requestHash,
+        evidence: {
+          status: facts.status,
+          requestId: facts.requestId,
+        },
       }),
     )
   }
   const decoded = decodeJsonResponseBody(facts.body)
   const material = Result.isSuccess(decoded) ? decoded.success : facts.body
   return Result.mapError(canonicalHashV1Result(material), (cause) =>
-    unknownOutcome(
-      MutationOperation.Cancel,
-      'Alpaca cancel response cannot be canonically hashed',
-      facts.requestHash,
-      { status: facts.status, requestId: facts.requestId },
+    unknownOutcome({
+      operation: MutationOperation.Cancel,
+      message: 'Alpaca cancel response cannot be canonically hashed',
+      requestHash: facts.requestHash,
+      evidence: { status: facts.status, requestId: facts.requestId },
       cause,
-    ),
+    }),
   )
 }
 
@@ -433,13 +472,13 @@ const normalizeAcceptedOrder = (
   evidence: MutationEvidence,
 ): Result.Result<Order, BrokerMutationError> =>
   Result.mapError(normalizeOrderResult(raw, facts.intent.accountId, facts.observedAt), (cause) =>
-    unknownOutcome(
-      MutationOperation.Submit,
-      'Alpaca submit response violates the order contract',
-      facts.requestHash,
+    unknownOutcome({
+      operation: MutationOperation.Submit,
+      message: 'Alpaca submit response violates the order contract',
+      requestHash: facts.requestHash,
       evidence,
       cause,
-    ),
+    }),
   )
 
 const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean =>
@@ -469,38 +508,38 @@ export const classifySubmitResponse = (
     const failure = decodeErrorResponse(facts.body)
     if (Result.isFailure(failure)) {
       return Result.fail(
-        unknownOutcome(
-          MutationOperation.Submit,
-          'Alpaca submit error response is invalid',
-          facts.requestHash,
+        unknownOutcome({
+          operation: MutationOperation.Submit,
+          message: 'Alpaca submit error response is invalid',
+          requestHash: facts.requestHash,
           evidence,
-          failure.failure,
-        ),
+          cause: failure.failure,
+        }),
       )
     }
     if ([400, 401, 403, 404, 422].includes(facts.status)) {
       return Result.fail(knownRejection(facts.requestHash, evidence, failure.success.code, failure.success.message))
     }
     return Result.fail(
-      unknownOutcome(
-        MutationOperation.Submit,
-        `Alpaca submit returned ambiguous HTTP ${facts.status}`,
-        facts.requestHash,
+      unknownOutcome({
+        operation: MutationOperation.Submit,
+        message: `Alpaca submit returned ambiguous HTTP ${facts.status}`,
+        requestHash: facts.requestHash,
         evidence,
-      ),
+      }),
     )
   }
 
   const decoded = decodeOrder(facts.body)
   if (Result.isFailure(decoded)) {
     return Result.fail(
-      unknownOutcome(
-        MutationOperation.Submit,
-        'Alpaca submit response does not match the order schema',
-        facts.requestHash,
+      unknownOutcome({
+        operation: MutationOperation.Submit,
+        message: 'Alpaca submit response does not match the order schema',
+        requestHash: facts.requestHash,
         evidence,
-        decoded.failure,
-      ),
+        cause: decoded.failure,
+      }),
     )
   }
   const order = normalizeAcceptedOrder(decoded.success, facts, evidence)
@@ -520,11 +559,11 @@ export const classifyCancelResponse = (
   return facts.status === 204
     ? Result.succeed({ requestHash: facts.requestHash, brokerOrderId: facts.brokerOrderId, evidence })
     : Result.fail(
-        unknownOutcome(
-          MutationOperation.Cancel,
-          `Alpaca cancel returned HTTP ${facts.status}; order lookup is required`,
-          facts.requestHash,
+        unknownOutcome({
+          operation: MutationOperation.Cancel,
+          message: `Alpaca cancel returned HTTP ${facts.status}; order lookup is required`,
+          requestHash: facts.requestHash,
           evidence,
-        ),
+        }),
       )
 }
