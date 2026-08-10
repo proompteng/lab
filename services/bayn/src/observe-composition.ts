@@ -82,7 +82,7 @@ import type {
   ObserveShadowDecisionDocument,
   PaperDecisionDocument,
 } from './shadow-decision-contract'
-import { currentUtcInstant } from './time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import {
   planTargets,
   type SignalSessionReferencePrices,
@@ -1111,15 +1111,15 @@ export type ObserveAutonomousCycleInput = {
 export const paperEpisodeCloseGraceMs = 15 * 60_000
 
 export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
-  new Date(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs).toISOString()
+  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs)
 
 /** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
 export const paperEpisodeReceiptFinalizationGraceMs = 15 * 60_000
 
 export const paperEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
-  new Date(
+  utcInstantFromEpochMillis(
     Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt)) + paperEpisodeReceiptFinalizationGraceMs,
-  ).toISOString()
+  )
 
 type ObserveDecisionRuntime =
   | BrokerRead

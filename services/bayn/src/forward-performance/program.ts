@@ -1,6 +1,6 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Data, Effect, Redacted, Result, Scope } from 'effect'
+import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
 
 import type { LoadedRuntimeConfig } from '../config'
 import { verifyAccountingReceipts } from '../db/reconciliation-algebra'
@@ -104,7 +104,8 @@ const finalizedInstant = (value: string): string | undefined => {
   const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:[.]([0-9]{3}))?$/.exec(value)
   if (match === null || match[1] === undefined || match[2] === undefined) return undefined
   const instant = `${match[1]}T${match[2]}.${match[3] ?? '000'}Z`
-  return Number.isFinite(Date.parse(instant)) && new Date(instant).toISOString() === instant ? instant : undefined
+  const dateTime = DateTime.make(instant)
+  return Option.isSome(dateTime) && DateTime.formatIso(dateTime.value) === instant ? instant : undefined
 }
 
 interface ForwardPerformanceMarketSnapshotRows {

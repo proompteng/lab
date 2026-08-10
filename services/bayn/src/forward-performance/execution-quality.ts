@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { DateTime, Option, Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type {
@@ -57,13 +57,16 @@ const roundHalfUp = (quantity: bigint, price: bigint): bigint | undefined => {
   return inSignedRange(value) ? value : undefined
 }
 
-const validInstant = (value: string): boolean =>
-  UTC_INSTANT_PATTERN.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+const validInstant = (value: string): boolean => {
+  if (!UTC_INSTANT_PATTERN.test(value)) return false
+  const instant = DateTime.make(value)
+  return Option.isSome(instant) && DateTime.formatIso(instant.value) === value
+}
 
 const validIsoDate = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const instant = new Date(`${value}T00:00:00.000Z`)
-  return Number.isFinite(instant.getTime()) && instant.toISOString().startsWith(`${value}T`)
+  const instant = DateTime.make(`${value}T00:00:00.000Z`)
+  return Option.isSome(instant) && DateTime.formatIsoDate(instant.value) === value
 }
 
 const compareStrings = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)

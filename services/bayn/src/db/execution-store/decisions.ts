@@ -9,6 +9,7 @@ import type { EventReceipt, PositionSnapshotReceipt } from './contract'
 import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
 import { EventKind } from './rows'
 import { Pipeable } from '../../pipeable'
+import { utcInstantFromEpochMillisResult } from '../../time'
 
 export interface ExecutionStoreDecisionFailure {
   readonly failure: 'conflict' | 'invariant'
@@ -100,9 +101,9 @@ const timestampDecision = (
   source: ExecutionStoreTimestampFailure['source'],
   epochMillis: number,
 ): Result.Result<string, ExecutionStoreDecisionFailure> => {
-  const instant = new Date(epochMillis)
-  return Number.isFinite(instant.getTime())
-    ? Result.succeed(instant.toISOString())
+  const instant = utcInstantFromEpochMillisResult(epochMillis)
+  return Result.isSuccess(instant)
+    ? Result.succeed(instant.success)
     : fail('invariant', 'valuation timestamp evidence is invalid', {
         _tag: 'ExecutionStoreTimestampFailure',
         source,

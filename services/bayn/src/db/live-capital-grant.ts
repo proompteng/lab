@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Layer, Result, Schema } from 'effect'
+import { Context, Data, DateTime, Effect, Layer, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
@@ -42,6 +42,8 @@ export interface LiveCapitalGrantStoreShape {
 export class LiveCapitalGrantStore extends Context.Service<LiveCapitalGrantStore, LiveCapitalGrantStoreShape>()(
   '@proompteng/bayn/db/live-capital-grant/LiveCapitalGrantStore',
 ) {}
+
+const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 
 const RowSchema = Schema.Struct({
   grant_hash: Sha256Schema,
@@ -398,7 +400,7 @@ const makeStore = Effect.gen(function* () {
         ${grant.strategy.parameterSchemaVersion},
         ${grant.limits.maxGrossNotionalMicros}, ${grant.limits.maxOrderNotionalMicros},
         ${grant.limits.maxPositionNotionalMicros}, ${grant.limits.maxDailyLossMicros}, ${grant.limits.maxOpenOrders},
-        ${new Date(grant.validFrom)}, ${new Date(grant.validUntil)}, ${new Date(grant.issuedAt)}, ${grant.issuedBy}
+        ${sqlTimestamp(grant.validFrom)}, ${sqlTimestamp(grant.validUntil)}, ${sqlTimestamp(grant.issuedAt)}, ${grant.issuedBy}
       FROM authority_generations AS generation
       WHERE generation.generation_hash = ${grant.authorityGenerationHash}
         AND generation.maximum = 'PAPER'
@@ -438,7 +440,7 @@ const makeStore = Effect.gen(function* () {
                     INSERT INTO live_capital_grant_revocations (
                       grant_hash, schema_version, revoked_at, revoked_by, reason
                     ) VALUES (
-                      ${grantHash}, ${revocation.schemaVersion}, ${new Date(revocation.revokedAt)},
+                      ${grantHash}, ${revocation.schemaVersion}, ${sqlTimestamp(revocation.revokedAt)},
                       ${revocation.revokedBy}, ${revocation.reason}
                     )
                     ON CONFLICT (grant_hash) DO NOTHING

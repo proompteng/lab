@@ -1,4 +1,4 @@
-import { pipe, Result } from 'effect'
+import { DateTime, pipe, Result } from 'effect'
 
 import type { RuntimeBuildMetadata } from '../config'
 import { makeStrategyProtocolHashResult, type ContractConstructionFailure } from '../contracts'
@@ -375,13 +375,13 @@ const validateAuthorityObservationDataFirst = (
   current: AuthorityState,
   observedAt: Date,
 ): Result.Result<void, CapitalGrantAlgebraFailure> => {
-  const updatedAt = new Date(current.updatedAt)
-  return updatedAt.getTime() <= observedAt.getTime()
+  const updatedAt = DateTime.makeUnsafe(current.updatedAt)
+  return DateTime.toEpochMillis(updatedAt) <= observedAt.getTime()
     ? Result.succeed(undefined)
     : fail({
         _tag: 'AuthorityUpdateAfterObservation',
         generationHash: current.generationHash,
-        updatedAt,
+        updatedAt: DateTime.toDateUtc(updatedAt),
         observedAt,
       })
 }
@@ -412,7 +412,7 @@ const validateCurrentGenerationHistoryDataFirst = <History extends AuthorityGene
       epochMillis: historyActivatedAtEpochMillis,
     })
   }
-  const historyActivatedAt = new Date(historyActivatedAtEpochMillis).toISOString()
+  const historyActivatedAt = DateTime.formatIso(DateTime.makeUnsafe(historyActivatedAtEpochMillis))
   if (
     history.generationHash !== current.generationHash ||
     history.maximum !== current.maximum ||
