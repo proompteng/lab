@@ -15,6 +15,7 @@ import {
 import { defaultExecutionModel } from './execution-model'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
 import { canonicalHashV1 } from './hash'
+import { utcInstantFromEpochMillis } from './time'
 import {
   AccountStatus,
   Authority,
@@ -544,7 +545,7 @@ describe('OBSERVE shadow decision', () => {
 
   test('clamps blocked risk evidence at the last instant before the exclusive cycle cutoff', async () => {
     const input = makeInput()
-    const createdAt = new Date(Date.parse(input.cycle.window.submissionCutoffAt) - 1).toISOString()
+    const createdAt = utcInstantFromEpochMillis(Date.parse(input.cycle.window.submissionCutoffAt) - 1)
     const plannerInput = { ...input.plannerInput, observedAt: createdAt }
     const document = await build({
       ...input,

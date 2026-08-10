@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
+import { utcInstantFromEpochMillis } from '../time'
 
 import {
   BrokerMutation,
@@ -1513,7 +1514,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           retryable: false,
         })
       }
-      const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+      const observedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
       if (options.notFoundOnce === true && lookupCalls === 1) {
         return yield* new BrokerReadError({
           operation: 'order-by-client-id',

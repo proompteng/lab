@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Redacted, Result } from 'effect'
+import { DateTime, Effect, Layer, Redacted, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
@@ -131,7 +131,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 ]
               : []),
           ],
-          reconciled_at: new Date('2026-07-20T21:01:00.000Z'),
+          reconciled_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:01:00.000Z')),
         },
       ])
     }
@@ -140,17 +140,17 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
         {
           reconciliation_id: hash('a'),
           reconciliation_content_hash: hash('b'),
-          reconciled_at: new Date('2026-07-20T21:01:00.000Z'),
+          reconciled_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:01:00.000Z')),
           baseline_account_event_id: hash('1'),
-          baseline_observed_at: new Date('2026-07-19T13:00:00.000Z'),
+          baseline_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-19T13:00:00.000Z')),
           baseline_cash_micros: '1000',
           opening_account_event_id: hash('c'),
-          opening_observed_at: new Date('2026-07-20T13:00:00.000Z'),
+          opening_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T13:00:00.000Z')),
           opening_cash_micros: '1000',
           pre_window_accounted_cash_delta_micros: '0',
           pre_window_cash_residual_micros: fixture.preWindowCashResidualMicros ?? '0',
           closing_account_event_id: hash('d'),
-          closing_observed_at: new Date('2026-07-20T21:00:00.000Z'),
+          closing_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:00:00.000Z')),
           closing_cash_micros: '1200',
           accounted_cash_delta_micros: '0',
           cash_yield_micros: '200',

@@ -67,7 +67,7 @@ import {
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
-import { currentUtcInstant } from './time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from './types'
 
 type CycleLoopTestOptions<E, ContextR, DecisionR> = Omit<
@@ -828,14 +828,14 @@ describe('autonomous cycle runner', () => {
     }
 
     const decision = makeDecision(active, active.window.submissionOpenAt)
-    const decisionBoundAt = new Date(Date.parse(decision.createdAt) + 1).toISOString()
+    const decisionBoundAt = utcInstantFromEpochMillis(Date.parse(decision.createdAt) + 1)
     const decisionBound: AutonomousCycle = {
       ...active,
       bindings: { ...active.bindings, decisionHash: decision.contentHash },
       stateVersion: active.stateVersion + 1,
       updatedAt: decisionBoundAt,
     }
-    const afterCutoff = new Date(Date.parse(active.window.submissionCutoffAt) + 1).toISOString()
+    const afterCutoff = utcInstantFromEpochMillis(Date.parse(active.window.submissionCutoffAt) + 1)
     expect(
       selectCycleRecovery(
         recoveryState(decisionBound, {

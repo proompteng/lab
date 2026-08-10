@@ -15,6 +15,7 @@ import {
   successfulEvidenceStore,
   successfulJournal,
 } from './app-test-support'
+import { utcInstantFromEpochMillis } from './time'
 import {
   type ApplicationIdentity,
   type AutonomousCycleStartupInput,
@@ -353,7 +354,7 @@ describe('Bayn application composition', () => {
                 startupQualificationRunId = qualificationRunId
               }),
               Effect.andThen(Clock.currentTimeMillis),
-              Effect.map((millis) => new Date(millis).toISOString()),
+              Effect.map(utcInstantFromEpochMillis),
               Effect.flatMap((observedAt) => recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' })),
               Effect.as(
                 pipe(
@@ -634,7 +635,7 @@ describe('Bayn application composition', () => {
                             startCycle: ({ recordPass }: AutonomousCycleStartupInput) =>
                               resource.use('cycle').pipe(
                                 Effect.andThen(Clock.currentTimeMillis),
-                                Effect.map((millis) => new Date(millis).toISOString()),
+                                Effect.map(utcInstantFromEpochMillis),
                                 Effect.flatMap((observedAt) =>
                                   recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' }),
                                 ),

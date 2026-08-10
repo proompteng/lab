@@ -22,6 +22,7 @@ import {
   type ReferenceIntent,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
+import { utcDateFromEpochMillis, utcInstantFromEpochMillis } from './time'
 import {
   BrokerMode,
   EvaluationSchema,
@@ -96,17 +97,17 @@ const changeExecutionWindow = (
         : { signal: { ...material.signal, finalizedAt: overrides.submissionOpenAt } }),
     })
   }
-  const executionOpenAt = new Date(
+  const executionOpenAt = utcInstantFromEpochMillis(
     Date.parse(overrides.submissionCutoffAt) + material.submissionCutoffLeadMinutes * 60_000,
-  ).toISOString()
+  )
   const executionDate = executionOpenAt.slice(0, 10) as State['executionSession']['executionSession']['date']
-  const signalDate = new Date(Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000)
-    .toISOString()
-    .slice(0, 10) as State['executionSession']['signal']['sessionDate']
+  const signalDate = utcDateFromEpochMillis(
+    Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000,
+  ) as State['executionSession']['signal']['sessionDate']
   const executionSession = {
     date: executionDate,
     openAt: executionOpenAt,
-    closeAt: new Date(Date.parse(executionOpenAt) + 2 * 60 * 60_000).toISOString(),
+    closeAt: utcInstantFromEpochMillis(Date.parse(executionOpenAt) + 2 * 60 * 60_000),
   }
   const calendar = {
     schemaVersion: material.calendar.schemaVersion,

@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { DateTime, Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity } from '../broker/identity'
@@ -165,7 +165,7 @@ const qualificationPolicy = (name: string) =>
 
 const qualificationSeries = (runId: string): QualificationSeries => {
   const sessionDate = (index: number): `${number}-${number}-${number}` => {
-    const date = new Date('2000-01-01T00:00:00.000Z')
+    const date = DateTime.toDateUtc(DateTime.makeUnsafe('2000-01-01T00:00:00.000Z'))
     date.setUTCDate(date.getUTCDate() + index)
     return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
   }

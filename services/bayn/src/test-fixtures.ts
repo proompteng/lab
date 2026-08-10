@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { DateTime, Effect } from 'effect'
 
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1 } from './hash'
@@ -72,10 +72,10 @@ export const makeTestDefinition = Pipeable.by<
 
 export const makeBars = (sessionCount = 1_122): readonly DailyBar[] => {
   const bars: DailyBar[] = []
-  const cursor = new Date(`${fixtureProtocol.historyStart}T00:00:00Z`)
+  let cursor = DateTime.makeUnsafe(`${fixtureProtocol.historyStart}T00:00:00Z`)
   let session = 0
   while (session < sessionCount) {
-    const day = cursor.getUTCDay()
+    const day = DateTime.getPartUtc(cursor, 'weekDay')
     if (day !== 0 && day !== 6) {
       for (let symbolIndex = 0; symbolIndex < fixtureProtocol.universe.length; symbolIndex += 1) {
         const symbol = fixtureProtocol.universe[symbolIndex]
@@ -85,7 +85,7 @@ export const makeBars = (sessionCount = 1_122): readonly DailyBar[] => {
         const open = close * (1 + 0.002 * Math.sin(session / 7 + symbolIndex))
         bars.push({
           symbol,
-          sessionDate: cursor.toISOString().slice(0, 10) as IsoDate,
+          sessionDate: DateTime.formatIsoDate(cursor) as IsoDate,
           open,
           high: Math.max(open, close) * 1.003,
           low: Math.min(open, close) * 0.997,
@@ -99,7 +99,7 @@ export const makeBars = (sessionCount = 1_122): readonly DailyBar[] => {
       }
       session += 1
     }
-    cursor.setUTCDate(cursor.getUTCDate() + 1)
+    cursor = DateTime.add(cursor, { days: 1 })
   }
   return bars
 }
