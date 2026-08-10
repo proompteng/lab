@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { resolve } from 'node:path'
 
-const serviceRoot = resolve(import.meta.dir, '../../..')
-const architectureLint = resolve(import.meta.dir, 'architecture-lint.mjs')
+const serviceRoot = `${import.meta.dir}/../../..`
+const architectureLint = `${import.meta.dir}/architecture-lint.mjs`
 
 describe('Bayn production architecture', () => {
   test('keeps production modules outside import cycles', async () => {
