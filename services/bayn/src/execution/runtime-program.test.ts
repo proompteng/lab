@@ -420,6 +420,63 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
+  test('revalidates the PAPER lease after broker refresh and before transmission', async () => {
+    const fixture = finalLiveFixture()
+    const sandboxAuthority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Sandbox),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
+      throw new Error('fixture requires sandbox mutation authority')
+    }
+    const brokerObservedAt = '2026-07-28T08:00:00.010Z'
+    const expiresAt = '2026-07-28T08:00:00.020Z'
+    const instants = [observedAt, brokerObservedAt, expiresAt]
+    let instantReads = 0
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('paper-lease-expiry-during-refresh'),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(fixture.stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      freshBrokerPrice: (symbol) =>
+        Effect.succeed({
+          symbol,
+          bidPriceMicros: '100000000',
+          askPriceMicros: '100000000',
+          quotedAt: brokerObservedAt,
+          observedAt: brokerObservedAt,
+        }),
+      currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
+      paperEpisodeEntryExpiresAt: expiresAt,
+      isPaperEpisodeCloseIntent: () => Effect.succeed(false),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        sandboxAuthority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('PaperEpisodeExpired')
+    expect(instantReads).toBe(3)
+    expect(posts).toBe(0)
+  })
+
   test('rejects a risk-policy binding mismatch before broker or grant I/O', async () => {
     const fixture = finalLiveFixture()
     const authority = Result.getOrThrow(
