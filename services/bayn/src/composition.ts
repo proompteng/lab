@@ -168,7 +168,7 @@ export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, {
 export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 
 const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
-  Layer.merge(HttpServerLive(config), NodeHttpClient.layerNodeHttp)
+  Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
 
 const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
