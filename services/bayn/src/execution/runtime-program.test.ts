@@ -16,6 +16,8 @@ import {
 } from '../broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
+import { canonicalHashV1Result } from '../hash'
+import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
   CapitalAuthorityKind,
@@ -49,6 +51,28 @@ const strategy: ExecutionStrategyIdentity = {
   parameterHash: '3'.repeat(64),
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
+const riskPolicy: Policy = {
+  schemaVersion: 'bayn.paper-risk-policy.v1',
+  accountId,
+  brokerMode: BrokerMode.Paper,
+  allowedSymbols: ['AMD'],
+  allowedOrderTypes: [OrderType.Market],
+  allowedTimeInForce: [TimeInForce.Day],
+  maxOrderNotionalMicros: '10000000000',
+  maxSymbolExposureMicros: '25000000000',
+  maxGrossExposureMicros: '100000000000',
+  maxNetExposureMicros: '100000000000',
+  maxDailyTradedNotionalMicros: '200000000000',
+  maxDailyLossMicros: '1000000000',
+  maxDrawdownMicros: '1000000000',
+  maxIntentAgeMs: 300_000,
+  maxBrokerStateAgeMs: 300_000,
+  maxMarketDataAgeMs: 300_000,
+  maxAdverseSlippageBps: 10,
+  maxUnresolvedOrders: 0,
+  decisionTtlMs: 300_000,
+}
+const riskPolicyHash = Result.getOrThrow(canonicalHashV1Result(riskPolicy))
 const identity = (environment: BrokerEnvironment) =>
   Result.getOrThrow(
     makeBrokerIdentity({
@@ -60,7 +84,7 @@ const identity = (environment: BrokerEnvironment) =>
   )
 
 const dependencies = (label: string): ExecutionProgramDependencies => ({
-  brokerRead: {} as ExecutionProgramDependencies['brokerRead'],
+  brokerRead: stableBrokerRead(),
   brokerMutation: {
     submit: () => Effect.die(new Error(`${label} submit must not run during composition proof`)),
     cancel: () => Effect.die(new Error(`${label} cancel must not run during composition proof`)),
@@ -68,11 +92,19 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   intentStore: {} as ExecutionProgramDependencies['intentStore'],
   mutationStore: {} as ExecutionProgramDependencies['mutationStore'],
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
+  riskPolicy,
   liveCapitalGrants: {
     lockForSubmit: () => Effect.die(new Error(`${label} live grant lock must not run during composition proof`)),
     read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
   },
-  freshBrokerPrice: () => Effect.die(new Error(`${label} fresh price read must not run during composition proof`)),
+  freshBrokerPrice: (symbol) =>
+    Effect.succeed({
+      symbol,
+      bidPriceMicros: '100000000',
+      askPriceMicros: '100000000',
+      quotedAt: observedAt,
+      observedAt,
+    }),
   currentUtcInstant: Effect.succeed(observedAt),
 })
 
@@ -83,7 +115,7 @@ const readEvidence: ReadEvidence = {
   observedAt,
 }
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
-const brokerAccount = (): Account => ({
+const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -95,6 +127,7 @@ const brokerAccount = (): Account => ({
   tradingBlocked: false,
   tradeSuspendedByUser: false,
   observedAt,
+  ...overrides,
 })
 const brokerPosition = (): Position => ({
   accountId,
@@ -110,6 +143,21 @@ const brokerPosition = (): Position => ({
   unrealizedPnlMicros: '0',
   observedAt,
 })
+
+const stableBrokerRead = (positions: readonly Position[] = []): BrokerReadShape => {
+  const unusedRead = Effect.die(new Error('stable broker fixture used an unrelated broker read'))
+  return {
+    account: Effect.succeed(readResult(brokerAccount())),
+    accountConfiguration: unusedRead,
+    assetBySymbol: () => unusedRead,
+    positions: Effect.succeed(readResult(positions)),
+    orders: () => Effect.succeed(readResult([])),
+    orderById: () => unusedRead,
+    orderByClientId: () => unusedRead,
+    fillActivities: () => unusedRead,
+    marketCalendar: () => unusedRead,
+  }
+}
 
 const finalLiveFixture = () => {
   const liveIdentity = identity(BrokerEnvironment.Live)
@@ -151,7 +199,7 @@ const finalLiveFixture = () => {
     strategyName: strategy.name,
     cycleId: '7'.repeat(64),
     decisionHash: '8'.repeat(64),
-    policyHash: '9'.repeat(64),
+    policyHash: riskPolicyHash,
     accountId,
     clientOrderId: `b1_${'C'.repeat(43)}`,
     symbol: 'AMD',
@@ -263,6 +311,113 @@ describe('same-code execution program composition', () => {
     )
   })
 
+  test('applies the same fresh broker-account safeguard to sandbox and live submissions', async () => {
+    const live = finalLiveFixture()
+    const sandboxAuthority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Sandbox),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
+      throw new Error('fixture requires sandbox mutation authority')
+    }
+
+    for (const authority of [sandboxAuthority, live.authority]) {
+      let posts = 0
+      let accountReads = 0
+      const brokerRead = stableBrokerRead()
+      const testDependencies: ExecutionProgramDependencies = {
+        ...dependencies(authority.brokerIdentity.environment),
+        brokerRead: {
+          ...brokerRead,
+          account: Effect.sync(() => {
+            accountReads += 1
+            return readResult(brokerAccount({ tradingBlocked: true }))
+          }),
+        },
+        intentStore: {
+          read: () => Effect.succeed(Option.some(live.stored)),
+        } as unknown as ExecutionProgramDependencies['intentStore'],
+        mutationStore: {
+          authorizeSubmit: () => Effect.void,
+        } as unknown as ExecutionProgramDependencies['mutationStore'],
+        writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+        liveCapitalGrants: {
+          read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+          lockForSubmit:
+            authority.brokerIdentity.environment === BrokerEnvironment.Live
+              ? () => Effect.succeed(liveCapitalAuthority(live.grant))
+              : () => Effect.die(new Error('sandbox final authorization must not read a live grant')),
+        },
+      }
+
+      const exit = await Effect.runPromise(
+        authorizeFinalBrokerSubmit(
+          authority,
+          live.intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+      )
+
+      expect(finalAuthorizationFailureTag(exit)).toBe('BrokerAccountUnavailable')
+      expect(accountReads).toBe(1)
+      expect(posts).toBe(0)
+    }
+  })
+
+  test('rejects a risk-policy binding mismatch before broker or grant I/O', async () => {
+    const fixture = finalLiveFixture()
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: identity(BrokerEnvironment.Sandbox),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const intent = { ...fixture.intent, policyHash: '0'.repeat(64) }
+    const stored = {
+      ...fixture.stored,
+      intent,
+      decision: { ...fixture.stored.decision, policyHash: intent.policyHash },
+    }
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('policy-mismatch'),
+      brokerRead: {} as ExecutionProgramDependencies['brokerRead'],
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('ExecutionRiskPolicyHashMismatch')
+    expect(posts).toBe(0)
+  })
+
   test('expires PAPER submission authority at runtime while allowing only a precommitted close intent', async () => {
     const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
     const authority = Result.getOrThrow(
@@ -287,6 +442,7 @@ describe('same-code execution program composition', () => {
     let authorizedCloseOnly: boolean | undefined
     const shared: ExecutionProgramDependencies = {
       ...dependencies('paper-lease'),
+      brokerRead: stableBrokerRead([brokerPosition()]),
       intentStore: {
         read: () => Effect.succeed(Option.some(stored)),
       } as unknown as ExecutionProgramDependencies['intentStore'],
@@ -302,6 +458,14 @@ describe('same-code execution program composition', () => {
         transaction: (effect) => effect,
       },
       currentUtcInstant: Effect.succeed(afterEntryBeforeClose),
+      freshBrokerPrice: (symbol) =>
+        Effect.succeed({
+          symbol,
+          bidPriceMicros: '100000000',
+          askPriceMicros: '100000000',
+          quotedAt: afterEntryBeforeClose,
+          observedAt: afterEntryBeforeClose,
+        }),
       paperEpisodeEntryExpiresAt: episodeExpiresAt,
       paperEpisodeCloseExpiresAt: closeExpiresAt,
     }
@@ -397,7 +561,7 @@ describe('same-code execution program composition', () => {
       strategyName: strategy.name,
       cycleId: 'c'.repeat(64),
       decisionHash: 'd'.repeat(64),
-      policyHash: 'e'.repeat(64),
+      policyHash: riskPolicyHash,
       accountId,
       clientOrderId: `b1_${'A'.repeat(43)}`,
       symbol: 'AMD',
@@ -638,7 +802,7 @@ describe('same-code execution program composition', () => {
       strategyName: strategy.name,
       cycleId: '9'.repeat(64),
       decisionHash: 'a'.repeat(64),
-      policyHash: 'b'.repeat(64),
+      policyHash: riskPolicyHash,
       accountId,
       clientOrderId: `b1_${'B'.repeat(43)}`,
       symbol: 'AMD',

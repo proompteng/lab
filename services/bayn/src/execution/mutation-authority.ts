@@ -1,4 +1,4 @@
-import { Effect, Result, Semaphore } from 'effect'
+import { Effect, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -21,11 +21,13 @@ import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
 import type { OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { OrderSide as IntentOrderSide, type Intent } from '../paper'
+import type { Policy } from '../risk'
 import {
   BrokerAccess,
   BrokerEnvironment,
   CapitalAuthorityKind,
   makeExecutionAuthority,
+  type ExecutionCapitalLimits,
   type ExecutionAuthority,
   type ExecutionAuthorityConstructionFailure,
   type LiveCapitalAuthority,
@@ -183,11 +185,13 @@ export type LiveCapitalLimitFailure =
       readonly symbol: string
     }
 
-export interface LiveCapitalSnapshot {
+export interface ExecutionCapitalSnapshot {
   readonly account: Account
   readonly positions: readonly Position[]
   readonly openOrders: readonly Order[]
 }
+
+export type LiveCapitalSnapshot = ExecutionCapitalSnapshot
 
 export interface FreshBrokerQuote {
   readonly symbol: string
@@ -214,15 +218,45 @@ export interface MutationAuthorityDependencies {
   readonly finalSubmitAuthorization: FinalSubmitAuthorization
 }
 
-export interface LiveBrokerSubmitSnapshot extends LiveCapitalSnapshot {
+export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot {
   readonly quotes: ReadonlyMap<string, FreshBrokerQuote>
 }
+
+export type LiveBrokerSubmitSnapshot = ExecutionBrokerSubmitSnapshot
 
 export type LiveBrokerSubmitRefreshDependencies = Pick<MutationAuthorityDependencies, 'brokerRead' | 'freshBrokerPrice'>
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const freshBrokerPriceMaximumAgeMs = 5_000
 const microsPerUnit = 1_000_000n
+
+export const executionCapitalLimitsFromPolicy = (policy: Policy): ExecutionCapitalLimits => ({
+  maxGrossNotionalMicros: policy.maxGrossExposureMicros,
+  maxOrderNotionalMicros: policy.maxOrderNotionalMicros,
+  maxPositionNotionalMicros: policy.maxSymbolExposureMicros,
+  maxDailyLossMicros: policy.maxDailyLossMicros,
+  maxOpenOrders: policy.maxUnresolvedOrders + 1,
+})
+
+const minimumMicros = (left: string, right: string): string => {
+  const leftMicros = BigInt(left)
+  const rightMicros = BigInt(right)
+  return (leftMicros < rightMicros ? leftMicros : rightMicros).toString()
+}
+
+export const constrainExecutionCapitalLimits = (
+  policyLimits: ExecutionCapitalLimits,
+  grantLimits: ExecutionCapitalLimits,
+): ExecutionCapitalLimits => ({
+  maxGrossNotionalMicros: minimumMicros(policyLimits.maxGrossNotionalMicros, grantLimits.maxGrossNotionalMicros),
+  maxOrderNotionalMicros: minimumMicros(policyLimits.maxOrderNotionalMicros, grantLimits.maxOrderNotionalMicros),
+  maxPositionNotionalMicros: minimumMicros(
+    policyLimits.maxPositionNotionalMicros,
+    grantLimits.maxPositionNotionalMicros,
+  ),
+  maxDailyLossMicros: minimumMicros(policyLimits.maxDailyLossMicros, grantLimits.maxDailyLossMicros),
+  maxOpenOrders: Math.min(policyLimits.maxOpenOrders, grantLimits.maxOpenOrders),
+})
 
 const positionExposureIdentity = (positions: readonly Position[]) =>
   positions
@@ -608,8 +642,8 @@ export const maximumAbsoluteExposureAcrossPendingFills = Pipeable.dual(
 )
 
 const validateSnapshotBindings = (
-  authority: LiveMutationExecutionAuthority,
-  snapshot: LiveCapitalSnapshot,
+  authority: MutationExecutionAuthority,
+  snapshot: ExecutionCapitalSnapshot,
 ): Result.Result<void, LiveCapitalLimitFailure> => {
   const expectedAccountId = authority.brokerIdentity.accountId
   if (snapshot.account.id !== expectedAccountId) {
@@ -656,10 +690,11 @@ const validateSnapshotBindings = (
   return Result.succeed(undefined)
 }
 
-const validateLiveCapitalLimitsDataFirst = (
-  authority: LiveMutationExecutionAuthority,
+const validateExecutionCapitalLimitsDataFirst = (
+  authority: MutationExecutionAuthority,
+  limits: ExecutionCapitalLimits,
   intent: Intent,
-  snapshot: LiveCapitalSnapshot,
+  snapshot: ExecutionCapitalSnapshot,
   proposedExposureNotional: bigint,
   proposedOrderNotional: bigint,
   openOrderNotionals: ReadonlyMap<string, bigint>,
@@ -671,7 +706,6 @@ const validateLiveCapitalLimitsDataFirst = (
   const pendingSellCoverage = validatePendingSellCoverage(snapshot)
   if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
-  const limits = authority.capitalAuthority.grant.limits
   const orderLimit = BigInt(limits.maxOrderNotionalMicros)
   if (snapshot.openOrders.length >= limits.maxOpenOrders) {
     return Result.fail({
@@ -781,46 +815,66 @@ const validateLiveCapitalLimitsDataFirst = (
   return Result.succeed(undefined)
 }
 
+export const validateExecutionCapitalLimits = Pipeable.dual(7, validateExecutionCapitalLimitsDataFirst)
+
+const validateLiveCapitalLimitsDataFirst = (
+  authority: LiveMutationExecutionAuthority,
+  intent: Intent,
+  snapshot: LiveCapitalSnapshot,
+  proposedExposureNotional: bigint,
+  proposedOrderNotional: bigint,
+  openOrderNotionals: ReadonlyMap<string, bigint>,
+): Result.Result<void, LiveCapitalLimitFailure> =>
+  validateExecutionCapitalLimits(
+    authority,
+    authority.capitalAuthority.grant.limits,
+    intent,
+    snapshot,
+    proposedExposureNotional,
+    proposedOrderNotional,
+    openOrderNotionals,
+  )
+
 export const validateLiveCapitalLimits = Pipeable.dual(6, validateLiveCapitalLimitsDataFirst)
 
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest({ operation: MutationOperation.Submit, message, cause })
 
-const refreshLiveBrokerSubmitSnapshotDataFirst = (
-  authority: LiveMutationExecutionAuthority,
+const refreshExecutionBrokerSubmitSnapshotDataFirst = (
+  limits: ExecutionCapitalLimits,
   intent: Intent,
   dependencies: LiveBrokerSubmitRefreshDependencies,
-): Effect.Effect<LiveBrokerSubmitSnapshot, BrokerMutationError> =>
+): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
     const account = yield* dependencies.brokerRead.account.pipe(
       Effect.mapError((cause) =>
-        mutationAuthorizationError('live broker account could not be refreshed before submit', cause),
+        mutationAuthorizationError('broker account could not be refreshed before submit', cause),
       ),
     )
     const positionsBefore = yield* dependencies.brokerRead.positions.pipe(
       Effect.mapError((cause) =>
-        mutationAuthorizationError('live broker positions could not be refreshed before submit', cause),
+        mutationAuthorizationError('broker positions could not be refreshed before submit', cause),
       ),
     )
     const openOrders = yield* dependencies.brokerRead
       .orders({
         status: OrderCollection.Open,
-        limit: authority.capitalAuthority.grant.limits.maxOpenOrders,
+        limit: limits.maxOpenOrders,
       })
       .pipe(
         Effect.mapError((cause) =>
-          mutationAuthorizationError('live broker open orders could not be refreshed before submit', cause),
+          mutationAuthorizationError('broker open orders could not be refreshed before submit', cause),
         ),
       )
     const positionsAfter = yield* dependencies.brokerRead.positions.pipe(
       Effect.mapError((cause) =>
-        mutationAuthorizationError('live broker positions could not be confirmed after open-order refresh', cause),
+        mutationAuthorizationError('broker positions could not be confirmed after open-order refresh', cause),
       ),
     )
     const stablePositions = validateStableLivePositionSnapshot(positionsBefore.value, positionsAfter.value)
     if (Result.isFailure(stablePositions)) {
       return yield* mutationAuthorizationError(
-        'live broker position snapshot changed during exposure refresh',
+        'broker position snapshot changed during exposure refresh',
         stablePositions.failure,
       )
     }
@@ -840,6 +894,15 @@ const refreshLiveBrokerSubmitSnapshotDataFirst = (
       quotes: new Map(quoteEntries),
     }
   })
+
+export const refreshExecutionBrokerSubmitSnapshot = Pipeable.dual(3, refreshExecutionBrokerSubmitSnapshotDataFirst)
+
+const refreshLiveBrokerSubmitSnapshotDataFirst = (
+  authority: LiveMutationExecutionAuthority,
+  intent: Intent,
+  dependencies: LiveBrokerSubmitRefreshDependencies,
+): Effect.Effect<LiveBrokerSubmitSnapshot, BrokerMutationError> =>
+  refreshExecutionBrokerSubmitSnapshot(authority.capitalAuthority.grant.limits, intent, dependencies)
 
 export const refreshLiveBrokerSubmitSnapshot = Pipeable.dual(3, refreshLiveBrokerSubmitSnapshotDataFirst)
 
@@ -892,15 +955,13 @@ export type LiveBrokerSubmitValidationFailure =
       readonly symbol: string
     }
 
-const validateLiveBrokerSubmitSnapshotDataFirst = (
-  captured: LiveMutationExecutionAuthority,
-  persisted: LiveCapitalAuthority,
+const validateExecutionBrokerSubmitSnapshotDataFirst = (
+  authority: MutationExecutionAuthority,
+  limits: ExecutionCapitalLimits,
   intent: Intent,
-  snapshot: LiveBrokerSubmitSnapshot,
+  snapshot: ExecutionBrokerSubmitSnapshot,
   observedAt: string,
 ): Result.Result<void, LiveBrokerSubmitValidationFailure> => {
-  const fresh = validateLiveGrantForSubmit(captured, persisted, observedAt)
-  if (Result.isFailure(fresh)) return Result.fail(fresh.failure)
   const intentQuote = snapshot.quotes.get(intent.symbol)
   if (intentQuote === undefined) {
     return Result.fail({
@@ -916,8 +977,9 @@ const validateLiveBrokerSubmitSnapshotDataFirst = (
   if (Result.isFailure(orderCapNotional)) return Result.fail(orderCapNotional.failure)
   const openOrderNotionals = priceOpenOrders(snapshot.openOrders)
   if (Result.isFailure(openOrderNotionals)) return Result.fail(openOrderNotionals.failure)
-  return validateLiveCapitalLimits(
-    fresh.success,
+  return validateExecutionCapitalLimits(
+    authority,
+    limits,
     intent,
     snapshot,
     requestedNotional.success,
@@ -926,13 +988,33 @@ const validateLiveBrokerSubmitSnapshotDataFirst = (
   )
 }
 
+export const validateExecutionBrokerSubmitSnapshot = Pipeable.dual(5, validateExecutionBrokerSubmitSnapshotDataFirst)
+
+const validateLiveBrokerSubmitSnapshotDataFirst = (
+  captured: LiveMutationExecutionAuthority,
+  persisted: LiveCapitalAuthority,
+  intent: Intent,
+  snapshot: LiveBrokerSubmitSnapshot,
+  observedAt: string,
+): Result.Result<void, LiveBrokerSubmitValidationFailure> => {
+  const fresh = validateLiveGrantForSubmit(captured, persisted, observedAt)
+  return Result.isFailure(fresh)
+    ? Result.fail(fresh.failure)
+    : validateExecutionBrokerSubmitSnapshot(
+        fresh.success,
+        fresh.success.capitalAuthority.grant.limits,
+        intent,
+        snapshot,
+        observedAt,
+      )
+}
+
 export const validateLiveBrokerSubmitSnapshot = Pipeable.dual(5, validateLiveBrokerSubmitSnapshotDataFirst)
 
 const makeAuthorityGuardedBrokerMutationDataFirst = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
-  const liveSubmitPermit = Semaphore.makeUnsafe(1)
   const transmit = (intent: Intent) =>
     dependencies
       .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
@@ -950,41 +1032,7 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    if (!isLiveMutationExecutionAuthority(authority)) {
-      return transmit(intent)
-    }
-    const liveAuthority = authority
-
-    return liveSubmitPermit.withPermit(
-      Effect.gen(function* () {
-        const snapshot = yield* refreshLiveBrokerSubmitSnapshot(liveAuthority, intent, dependencies)
-        const grantHash = liveAuthority.capitalAuthority.grant.grantHash
-        const persisted = yield* dependencies.liveCapitalGrants.read(grantHash).pipe(
-          Effect.mapError((cause) =>
-            mutationAuthorizationError('live capital grant could not be refreshed before submit', cause),
-          ),
-          Effect.flatMap((grant) =>
-            grant === undefined
-              ? Effect.fail(
-                  mutationAuthorizationError('live capital grant is missing before submit', {
-                    _tag: 'LiveCapitalGrantMissing',
-                    grantHash,
-                  }),
-                )
-              : Effect.succeed(grant),
-          ),
-        )
-        const observedAt = yield* dependencies.currentUtcInstant
-        const validation = validateLiveBrokerSubmitSnapshot(liveAuthority, persisted, intent, snapshot, observedAt)
-        if (Result.isFailure(validation)) {
-          return yield* mutationAuthorizationError(
-            'live broker submit preflight rejected the broker submit',
-            validation.failure,
-          )
-        }
-        return yield* transmit(intent)
-      }),
-    )
+    return transmit(intent)
   }
 
   return {

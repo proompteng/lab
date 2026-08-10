@@ -316,14 +316,14 @@ const mutationCycle = (
   })
 
 const executionProgramError = (
-  cause: BrokerMutationError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
+  cause: BrokerMutationError | Schema.SchemaError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
 ) =>
   cause instanceof BrokerMutationError
     ? operationalError({ component: 'config', operation: 'broker-mutation', message: cause.message, cause })
     : operationalError({
         component: 'config',
         operation: 'execution-program',
-        message: 'execution program requires validated mutation authority',
+        message: 'execution program requires validated mutation authority and risk policy',
         cause,
       })
 
@@ -1524,26 +1524,34 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     runtimeServices.alpacaHttpClient,
                                   ).pipe(
                                     Effect.flatMap((brokerMutation) =>
-                                      Effect.fromResult(
-                                        makeExecutionProgram(authority, {
-                                          brokerRead: runtimeServices.session.read,
-                                          liveCapitalGrants: runtimeServices.liveCapitalGrants,
-                                          freshBrokerPrice: makeFreshBrokerPriceReader(
-                                            runtimeServices.session.connection,
-                                            runtimeServices.alpacaHttpClient,
+                                      loadObserveRiskPolicy(
+                                        realizedPlan.config.alpaca.expectedAccountId,
+                                        realizedPlan.strategy.definition.parameters.universe,
+                                      ).pipe(
+                                        Effect.flatMap((riskPolicy) =>
+                                          Effect.fromResult(
+                                            makeExecutionProgram(authority, {
+                                              brokerRead: runtimeServices.session.read,
+                                              liveCapitalGrants: runtimeServices.liveCapitalGrants,
+                                              riskPolicy,
+                                              freshBrokerPrice: makeFreshBrokerPriceReader(
+                                                runtimeServices.session.connection,
+                                                runtimeServices.alpacaHttpClient,
+                                              ),
+                                              currentUtcInstant,
+                                              paperEpisodeEntryExpiresAt: request.cutoffAt,
+                                              paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+                                              isPaperEpisodeCloseIntent: (intentId) =>
+                                                runtimeServices.paperCycleClosureStore
+                                                  .containsIntent(intentId)
+                                                  .pipe(Effect.orElseSucceed(() => false)),
+                                              intentStore: runtimeServices.intentStore,
+                                              mutationStore: runtimeServices.mutationStore,
+                                              writerFence: runtimeServices.writerFence,
+                                              brokerMutation,
+                                            }),
                                           ),
-                                          currentUtcInstant,
-                                          paperEpisodeEntryExpiresAt: request.cutoffAt,
-                                          paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
-                                          isPaperEpisodeCloseIntent: (intentId) =>
-                                            runtimeServices.paperCycleClosureStore
-                                              .containsIntent(intentId)
-                                              .pipe(Effect.orElseSucceed(() => false)),
-                                          intentStore: runtimeServices.intentStore,
-                                          mutationStore: runtimeServices.mutationStore,
-                                          writerFence: runtimeServices.writerFence,
-                                          brokerMutation,
-                                        }),
+                                        ),
                                       ),
                                     ),
                                     Effect.mapError(executionProgramError),
