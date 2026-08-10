@@ -247,36 +247,27 @@ const runApplicationDataFirst = <StartupR, LoopR>(
   dependencies: ApplicationDependencies,
   runtime: ApplicationRuntime<StartupR, LoopR>,
 ): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>
-  pipe(
-    Effect.Do,
-    Effect.bind('state', () => Ref.make(initialRuntimeState(runtime))),
-    Effect.tap(({ state }) =>
-      serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read),
-    ),
-    Effect.tap(({ state }) =>
-      qualificationEvidenceRequired(runtime) ? runStartup(config, state, strategy, dependencies) : Effect.void,
-    ),
-    Effect.bind('resolvedRuntime', ({ state }) => resolveRuntimeAfterStartup(runtime, state)),
-    Effect.bind('autonomousCycleFiber', ({ state, resolvedRuntime }) => startAutonomousCycle(resolvedRuntime, state)),
-    Effect.tap(({ autonomousCycleFiber, resolvedRuntime, state }) =>
-      pipe(
-        runHealthMonitor(
-          config,
-          state,
-          dependencies,
-          brokerProbe(resolvedRuntime),
-          autonomousCycleFiber,
-          resolvedRuntime._tag === 'Brokerless'
-            ? undefined
-            : (resolvedRuntime.cycleObservationId ?? resolvedRuntime.cycleBindingId ?? undefined),
-          qualificationEvidenceRequired(resolvedRuntime),
-        ),
-        Effect.forkScoped({ startImmediately: true }),
-      ),
-    ),
-    Effect.andThen(Effect.never),
-    Effect.scoped,
-  )
+  Effect.gen(function* () {
+    const state = yield* Ref.make(initialRuntimeState(runtime))
+    yield* serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read)
+    if (qualificationEvidenceRequired(runtime)) {
+      yield* runStartup(config, state, strategy, dependencies)
+    }
+    const resolvedRuntime = yield* resolveRuntimeAfterStartup(runtime, state)
+    const autonomousCycleFiber = yield* startAutonomousCycle(resolvedRuntime, state)
+    yield* runHealthMonitor(
+      config,
+      state,
+      dependencies,
+      brokerProbe(resolvedRuntime),
+      autonomousCycleFiber,
+      resolvedRuntime._tag === 'Brokerless'
+        ? undefined
+        : (resolvedRuntime.cycleObservationId ?? resolvedRuntime.cycleBindingId ?? undefined),
+      qualificationEvidenceRequired(resolvedRuntime),
+    ).pipe(Effect.forkScoped({ startImmediately: true }))
+    return yield* Effect.never
+  }).pipe(Effect.scoped)
 
 export const runApplication = Pipeable.generic<
   <StartupR, LoopR>(
