@@ -35,8 +35,16 @@ const validateRecoveredSnapshotReferenceDataFirst = (
     for (const [path, observed, expected] of facts) {
       if (observed !== expected) return yield* mismatch('snapshot', [path], observed, expected)
     }
-    const observedManifestHash = yield* canonicalHash('snapshot-manifest', row.manifest, 'stored')
-    const expectedManifestHash = yield* canonicalHash('snapshot-manifest', snapshot, 'input-manifest')
+    const observedManifestHash = yield* canonicalHash({
+      operation: 'snapshot-manifest',
+      value: row.manifest,
+      subject: 'stored',
+    })
+    const expectedManifestHash = yield* canonicalHash({
+      operation: 'snapshot-manifest',
+      value: snapshot,
+      subject: 'input-manifest',
+    })
     if (observedManifestHash !== expectedManifestHash) {
       return yield* mismatch('snapshot', ['manifestHash'], observedManifestHash, expectedManifestHash)
     }

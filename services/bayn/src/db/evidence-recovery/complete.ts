@@ -59,8 +59,16 @@ const validateEvaluationIdentity = (prepared: PreparedEvidenceRecovery): Result.
 const validateEvaluationInput = (prepared: PreparedEvidenceRecovery): Result.Result<void, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
     const { evaluation, inputManifest } = prepared.decoded
-    const evaluationBoundsHash = yield* canonicalHash('evaluation-bounds', evaluation.input.bounds, 'evaluation')
-    const manifestBoundsHash = yield* canonicalHash('evaluation-bounds', inputManifest.bounds, 'input-manifest')
+    const evaluationBoundsHash = yield* canonicalHash({
+      operation: 'evaluation-bounds',
+      value: evaluation.input.bounds,
+      subject: 'evaluation',
+    })
+    const manifestBoundsHash = yield* canonicalHash({
+      operation: 'evaluation-bounds',
+      value: inputManifest.bounds,
+      subject: 'input-manifest',
+    })
     if (evaluationBoundsHash !== manifestBoundsHash) {
       return yield* componentMismatch(['evaluation', 'input', 'boundsHash'], evaluationBoundsHash, manifestBoundsHash)
     }
@@ -71,16 +79,16 @@ const validateEvaluationInput = (prepared: PreparedEvidenceRecovery): Result.Res
     for (const [path, observed, expected] of facts) {
       if (observed !== expected) return yield* componentMismatch(path, observed, expected)
     }
-    const evaluationSymbolsHash = yield* canonicalHash(
-      'evaluation-input-symbols',
-      evaluation.input.symbols,
-      'evaluation',
-    )
-    const manifestSymbolsHash = yield* canonicalHash(
-      'evaluation-input-symbols',
-      inputManifest.symbols.map((coverage) => coverage.symbol),
-      'input-manifest',
-    )
+    const evaluationSymbolsHash = yield* canonicalHash({
+      operation: 'evaluation-input-symbols',
+      value: evaluation.input.symbols,
+      subject: 'evaluation',
+    })
+    const manifestSymbolsHash = yield* canonicalHash({
+      operation: 'evaluation-input-symbols',
+      value: inputManifest.symbols.map((coverage) => coverage.symbol),
+      subject: 'input-manifest',
+    })
     if (evaluationSymbolsHash !== manifestSymbolsHash) {
       return yield* componentMismatch(
         ['evaluation', 'input', 'symbolsHash'],
@@ -140,12 +148,16 @@ const validateSignalDecisions = (prepared: PreparedEvidenceRecovery): Result.Res
           return yield* componentMismatch(['signalDecisions', index, path], observed, expected)
         }
       }
-      const decisionWeightsHash = yield* canonicalHash(
-        'signal-target-weights',
-        decision.targetWeights,
-        `decision:${decision.decisionId}`,
-      )
-      const eventWeightsHash = yield* canonicalHash('signal-target-weights', event.targetWeights, `event:${event.id}`)
+      const decisionWeightsHash = yield* canonicalHash({
+        operation: 'signal-target-weights',
+        value: decision.targetWeights,
+        subject: `decision:${decision.decisionId}`,
+      })
+      const eventWeightsHash = yield* canonicalHash({
+        operation: 'signal-target-weights',
+        value: event.targetWeights,
+        subject: `event:${event.id}`,
+      })
       if (decisionWeightsHash !== eventWeightsHash) {
         return yield* componentMismatch(
           ['signalDecisions', index, 'targetWeightsHash'],
@@ -239,7 +251,7 @@ const validateMetricArtifact = (
 ): Result.Result<void, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
     const artifact = yield* requiredArtifact(prepared.artifacts, artifactName)
-    const expectedHash = yield* canonicalHash('evaluation-metric', value, artifactName)
+    const expectedHash = yield* canonicalHash({ operation: 'evaluation-metric', value, subject: artifactName })
     if (artifact.contentHash !== expectedHash) {
       return yield* componentMismatch(['artifacts', artifactName, 'contentHash'], artifact.contentHash, expectedHash)
     }
@@ -257,12 +269,16 @@ const validateMarkedEquityBinding = (
         prepared.runId,
       )
     }
-    const evaluationHash = yield* canonicalHash(
-      'evaluation-marked-equity',
-      evaluation.markedEquityReconciliation,
-      'evaluation',
-    )
-    const artifactHash = yield* canonicalHash('evaluation-marked-equity', markedEquity, 'artifact')
+    const evaluationHash = yield* canonicalHash({
+      operation: 'evaluation-marked-equity',
+      value: evaluation.markedEquityReconciliation,
+      subject: 'evaluation',
+    })
+    const artifactHash = yield* canonicalHash({
+      operation: 'evaluation-marked-equity',
+      value: markedEquity,
+      subject: 'artifact',
+    })
     if (evaluationHash !== artifactHash) {
       return yield* componentMismatch(['evaluation', 'markedEquityReconciliation'], evaluationHash, artifactHash)
     }
@@ -288,12 +304,16 @@ const validateRecoveredGates = (prepared: PreparedEvidenceRecovery): Result.Resu
     for (const [index, gate] of gates.entries()) {
       const expectedGate = expectedGates[index]
       if (expectedGate === undefined) return yield* componentMismatch(['gates', index], gate, 'evaluation gate')
-      const observedHash = yield* canonicalHash(
-        'gate-outcome',
-        { name: gate.name, passed: gate.passed, actual: gate.actual, required: gate.required },
-        `stored:${index}`,
-      )
-      const expectedHash = yield* canonicalHash('gate-outcome', expectedGate, `evaluation:${index}`)
+      const observedHash = yield* canonicalHash({
+        operation: 'gate-outcome',
+        value: { name: gate.name, passed: gate.passed, actual: gate.actual, required: gate.required },
+        subject: `stored:${index}`,
+      })
+      const expectedHash = yield* canonicalHash({
+        operation: 'gate-outcome',
+        value: expectedGate,
+        subject: `evaluation:${index}`,
+      })
       if (observedHash !== expectedHash) {
         return yield* componentMismatch(['gates', index], observedHash, expectedHash)
       }
@@ -329,16 +349,24 @@ const validateReconstructedProof = (
   storedMarkedHash: string,
 ): Result.Result<void, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
-    const proofMarkedHash = yield* canonicalHash('marked-equity-proof', proof.reconciliation, 'reconstructed')
+    const proofMarkedHash = yield* canonicalHash({
+      operation: 'marked-equity-proof',
+      value: proof.reconciliation,
+      subject: 'reconstructed',
+    })
     if (proofMarkedHash !== storedMarkedHash) {
       return yield* componentMismatch(['markedEquity', 'proofHash'], proofMarkedHash, storedMarkedHash)
     }
-    const proofEquityHash = yield* canonicalHash('recovered-equity-series', proof.equitySeries, 'reconstructed')
-    const storedEquityHash = yield* canonicalHash(
-      'recovered-equity-series',
-      prepared.decoded.equitySeries.items,
-      'artifact',
-    )
+    const proofEquityHash = yield* canonicalHash({
+      operation: 'recovered-equity-series',
+      value: proof.equitySeries,
+      subject: 'reconstructed',
+    })
+    const storedEquityHash = yield* canonicalHash({
+      operation: 'recovered-equity-series',
+      value: prepared.decoded.equitySeries.items,
+      subject: 'artifact',
+    })
     if (proofEquityHash !== storedEquityHash) {
       return yield* componentMismatch(['equitySeries', 'proofHash'], proofEquityHash, storedEquityHash)
     }
