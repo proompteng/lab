@@ -55,11 +55,11 @@ const verifyPersistedAccount = (
     account.timestamp <= 0n ||
     (expectedId !== undefined && account.id !== expectedId)
   ) {
-    return failLedgerValidation(
-      'check-run',
-      'invalid-account-metadata',
-      `run ${result.runId} account ${account.id} has invalid locally verifiable metadata`,
-      {
+    return failLedgerValidation({
+      operation: 'check-run',
+      reason: 'invalid-account-metadata',
+      detail: `run ${result.runId} account ${account.id} has invalid locally verifiable metadata`,
+      material: {
         runId: result.runId,
         account,
         expected: {
@@ -74,7 +74,7 @@ const verifyPersistedAccount = (
           ...(expectedId === undefined ? {} : { deterministicId: expectedId }),
         },
       },
-    )
+    })
   }
   return Result.succeed(undefined)
 }
@@ -114,11 +114,11 @@ const verifyPersistedTransfer = (
     credit.code !== accountCodePair[1] ||
     (transfer.code === TransferCode.funding && (transfer.id !== fundingId || transfer.user_data_128 !== fundingEventId))
   ) {
-    return failLedgerValidation(
-      'check-run',
-      'invalid-transfer-metadata',
-      `run ${result.runId} transfer ${transfer.id} has invalid locally verifiable metadata`,
-      {
+    return failLedgerValidation({
+      operation: 'check-run',
+      reason: 'invalid-transfer-metadata',
+      detail: `run ${result.runId} transfer ${transfer.id} has invalid locally verifiable metadata`,
+      material: {
         runId: result.runId,
         transfer,
         expected: {
@@ -136,7 +136,7 @@ const verifyPersistedTransfer = (
             : {}),
         },
       },
-    )
+    })
   }
   return Result.succeed(undefined)
 }
@@ -153,30 +153,30 @@ export const validatePersistedRunEvidence = (
 ): Result.Result<void, LedgerValidationError> =>
   Result.gen(function* () {
     if (accounts.length !== result.accountCount) {
-      return yield* failLedgerValidation(
-        'check-run',
-        'run-count-mismatch',
-        `run ${result.runId} has ${accounts.length} accounts; expected ${result.accountCount}`,
-        {
+      return yield* failLedgerValidation({
+        operation: 'check-run',
+        reason: 'run-count-mismatch',
+        detail: `run ${result.runId} has ${accounts.length} accounts; expected ${result.accountCount}`,
+        material: {
           runId: result.runId,
           kind: 'account',
           actualCount: accounts.length,
           expectedCount: result.accountCount,
         },
-      )
+      })
     }
     if (transfers.length !== result.transferCount) {
-      return yield* failLedgerValidation(
-        'check-run',
-        'run-count-mismatch',
-        `run ${result.runId} has ${transfers.length} transfers; expected ${result.transferCount}`,
-        {
+      return yield* failLedgerValidation({
+        operation: 'check-run',
+        reason: 'run-count-mismatch',
+        detail: `run ${result.runId} has ${transfers.length} transfers; expected ${result.transferCount}`,
+        material: {
           runId: result.runId,
           kind: 'transfer',
           actualCount: transfers.length,
           expectedCount: result.transferCount,
         },
-      )
+      })
     }
 
     const runKey = stableU128('bayn-run-v1', result.runId)
@@ -188,24 +188,24 @@ export const validatePersistedRunEvidence = (
         const expectedId = stableU128('bayn-account-v1', result.runId, name)
         const persistedAccount = reconciled.accountsById.get(expectedId)
         if (persistedAccount === undefined) {
-          return yield* failLedgerValidation(
-            'check-run',
-            'record-set-mismatch',
-            `run ${result.runId} is missing required ${name} account`,
-            { runId: result.runId, kind: 'account', code, expectedId },
-          )
+          return yield* failLedgerValidation({
+            operation: 'check-run',
+            reason: 'record-set-mismatch',
+            detail: `run ${result.runId} is missing required ${name} account`,
+            material: { runId: result.runId, kind: 'account', code, expectedId },
+          })
         }
         if (persistedAccount.code !== code) {
-          return yield* failLedgerValidation(
-            'check-run',
-            'invalid-account-metadata',
-            `run ${result.runId} required ${name} account has code ${persistedAccount.code}; expected ${code}`,
-            {
+          return yield* failLedgerValidation({
+            operation: 'check-run',
+            reason: 'invalid-account-metadata',
+            detail: `run ${result.runId} required ${name} account has code ${persistedAccount.code}; expected ${code}`,
+            material: {
               runId: result.runId,
               account: persistedAccount,
               expected: { deterministicId: expectedId, code },
             },
-          )
+          })
         }
       }
     }
@@ -214,11 +214,11 @@ export const validatePersistedRunEvidence = (
     }
     const fundingId = stableU128('bayn-transfer-v1', result.runId, 'funding', 'principal')
     if (transfers.length > 0 && !reconciled.transfersById.has(fundingId)) {
-      return yield* failLedgerValidation(
-        'check-run',
-        'record-set-mismatch',
-        `run ${result.runId} is missing its deterministic funding transfer`,
-        { runId: result.runId, kind: 'transfer', code: TransferCode.funding, expectedId: fundingId },
-      )
+      return yield* failLedgerValidation({
+        operation: 'check-run',
+        reason: 'record-set-mismatch',
+        detail: `run ${result.runId} is missing its deterministic funding transfer`,
+        material: { runId: result.runId, kind: 'transfer', code: TransferCode.funding, expectedId: fundingId },
+      })
     }
   })

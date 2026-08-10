@@ -51,17 +51,17 @@ export type PaperProofReceiptFields = Omit<
 
 export type PaperProofExecutionHook = () => Effect.Effect<void, PaperProofError>
 
-export const paperProofFailure = (
-  operation: PaperProofError['operation'],
-  message: string,
-  cause: unknown,
-  failure: PaperProofError['failure'] = 'operational',
-): PaperProofError =>
+export interface PaperProofFailureInput {
+  readonly operation: PaperProofError['operation']
+  readonly message: string
+  readonly cause: unknown
+  readonly failure?: PaperProofError['failure']
+}
+
+export const paperProofFailure = (input: PaperProofFailureInput): PaperProofError =>
   new PaperProofError({
-    operation,
-    failure,
-    message,
-    cause,
+    ...input,
+    failure: input.failure ?? 'operational',
   })
 
 const timeoutFailureDataFirst = (operation: PaperProofError['operation'], message: string): PaperProofError =>
@@ -78,7 +78,7 @@ const liftDataFirst = <A>(
   message: string,
   effect: Effect.Effect<A, Error>,
 ): Effect.Effect<A, PaperProofError> =>
-  effect.pipe(Effect.mapError((cause) => paperProofFailure(operation, message, cause)))
+  effect.pipe(Effect.mapError((cause) => paperProofFailure({ operation, message, cause })))
 
 export const lift = Pipeable.generic<
   <A>(
@@ -120,12 +120,12 @@ const validateReconciliationAccountDataFirst = (
   reconciliation.accountId === expectedAccountId
     ? Result.succeed(reconciliation)
     : Result.fail(
-        paperProofFailure(
-          'RECONCILE',
-          'paper proof reconciliation account does not match the source-controlled account',
-          reconciliation,
-          'invariant',
-        ),
+        paperProofFailure({
+          operation: 'RECONCILE',
+          message: 'paper proof reconciliation account does not match the source-controlled account',
+          cause: reconciliation,
+          failure: 'invariant',
+        }),
       )
 
 export const validateReconciliationAccount = Pipeable.dual(2, validateReconciliationAccountDataFirst)
@@ -136,12 +136,12 @@ export const validateExactReconciliation = (
   reconciliation.status === 'EXACT' && reconciliation.unknownMutationCount === 0
     ? Result.succeed(reconciliation)
     : Result.fail(
-        paperProofFailure(
-          'RECONCILE',
-          'paper proof requires exact reconciliation with zero unknown mutations',
-          reconciliation,
-          'invariant',
-        ),
+        paperProofFailure({
+          operation: 'RECONCILE',
+          message: 'paper proof requires exact reconciliation with zero unknown mutations',
+          cause: reconciliation,
+          failure: 'invariant',
+        }),
       )
 
 const observeReconciliationDataFirst = (
@@ -240,12 +240,12 @@ const decideSubmitAdmissionDataFirst = (
 ): Result.Result<SubmitAdmission, PaperProofError> => {
   if (cancellation !== undefined) {
     return Result.fail(
-      paperProofFailure(
-        'SUBMIT',
-        'paper proof submit is superseded by a durable cancellation mutation',
-        cancellation,
-        'mutation-unresolved',
-      ),
+      paperProofFailure({
+        operation: 'SUBMIT',
+        message: 'paper proof submit is superseded by a durable cancellation mutation',
+        cause: cancellation,
+        failure: 'mutation-unresolved',
+      }),
     )
   }
   return existing === undefined
@@ -272,25 +272,32 @@ const decideCancellationAdmissionDataFirst = (
   if (existing !== undefined) return Result.succeed({ _tag: 'Existing', event: existing })
   if (submitted === undefined || !isSuccessfulSubmit(submitted) || submitted.brokerOrderId === undefined) {
     return Result.fail(
-      paperProofFailure(
-        'CANCEL',
-        'paper proof cancellation requires an exact durable submitted broker order',
-        submitted,
-        'mutation-unresolved',
-      ),
+      paperProofFailure({
+        operation: 'CANCEL',
+        message: 'paper proof cancellation requires an exact durable submitted broker order',
+        cause: submitted,
+        failure: 'mutation-unresolved',
+      }),
     )
   }
   if (intent === undefined) {
-    return Result.fail(paperProofFailure('CANCEL', 'paper proof durable intent does not exist', intent, 'invariant'))
+    return Result.fail(
+      paperProofFailure({
+        operation: 'CANCEL',
+        message: 'paper proof durable intent does not exist',
+        cause: intent,
+        failure: 'invariant',
+      }),
+    )
   }
   if (intent.state !== IntentState.Acknowledged) {
     return Result.fail(
-      paperProofFailure(
-        'CANCEL',
-        'paper proof cancellation requires an acknowledged durable intent',
-        intent,
-        'mutation-unresolved',
-      ),
+      paperProofFailure({
+        operation: 'CANCEL',
+        message: 'paper proof cancellation requires an acknowledged durable intent',
+        cause: intent,
+        failure: 'mutation-unresolved',
+      }),
     )
   }
   return Result.succeed({ _tag: 'New' })
@@ -352,23 +359,23 @@ const decideRecoverySelectionDataFirst = (
   const operation = selectRecoveryOperation(state, required)
   if (operation === undefined) {
     return Result.fail(
-      paperProofFailure(
-        'RECOVERY_STATE',
-        'paper proof RECOVER requires a durable marker, completion, or mutation evidence',
-        { required, mutations: state },
-        'mutation-unresolved',
-      ),
+      paperProofFailure({
+        operation: 'RECOVERY_STATE',
+        message: 'paper proof RECOVER requires a durable marker, completion, or mutation evidence',
+        cause: { required, mutations: state },
+        failure: 'mutation-unresolved',
+      }),
     )
   }
   const recorded = mutationForOperation(state, operation)
   return recorded === undefined
     ? Result.fail(
-        paperProofFailure(
-          'RECOVERY_STATE',
-          'paper proof recovery marker does not have a durable mutation to recover',
-          { operation, required, mutations: state },
-          'mutation-unresolved',
-        ),
+        paperProofFailure({
+          operation: 'RECOVERY_STATE',
+          message: 'paper proof recovery marker does not have a durable mutation to recover',
+          cause: { operation, required, mutations: state },
+          failure: 'mutation-unresolved',
+        }),
       )
     : Result.succeed({ operation, recorded })
 }
@@ -395,12 +402,12 @@ const validateCompletionMutationIdentityDataFirst = (
     completion.mutation.operation === expectedOperation
     ? Result.succeed(undefined)
     : Result.fail(
-        paperProofFailure(
-          'RECOVERY_STATE',
-          'paper proof durable recovery completion mutation identity is invalid',
-          completion,
-          'invariant',
-        ),
+        paperProofFailure({
+          operation: 'RECOVERY_STATE',
+          message: 'paper proof durable recovery completion mutation identity is invalid',
+          cause: completion,
+          failure: 'invariant',
+        }),
       )
 }
 
@@ -436,22 +443,22 @@ const ensureRecoveryMarkerCompatibleDataFirst = (
       if (existing === undefined) return Effect.as(Effect.void, undefined)
       if (!recoveryIdentityMatches(context, existing)) {
         return Effect.fail(
-          paperProofFailure(
-            'RECOVERY_STATE',
-            'paper proof durable recovery marker does not match the pinned proof identity',
-            existing,
-            'invariant',
-          ),
+          paperProofFailure({
+            operation: 'RECOVERY_STATE',
+            message: 'paper proof durable recovery marker does not match the pinned proof identity',
+            cause: existing,
+            failure: 'invariant',
+          }),
         )
       }
       if (existing.operation === 'CANCEL' && operation === 'SUBMIT') {
         return Effect.fail(
-          paperProofFailure(
-            'RECOVERY_STATE',
-            'paper proof cannot replace an unresolved cancellation marker with submit recovery',
-            existing,
-            'mutation-unresolved',
-          ),
+          paperProofFailure({
+            operation: 'RECOVERY_STATE',
+            message: 'paper proof cannot replace an unresolved cancellation marker with submit recovery',
+            cause: existing,
+            failure: 'mutation-unresolved',
+          }),
         )
       }
       return Effect.succeed(existing)
@@ -520,12 +527,12 @@ const loadRecoveryRequiredDataFirst = (
       required === undefined || recoveryIdentityMatches(context, required)
         ? Effect.succeed(required)
         : Effect.fail(
-            paperProofFailure(
-              'RECOVERY_STATE',
-              'paper proof durable recovery marker does not match the pinned proof identity',
-              required,
-              'invariant',
-            ),
+            paperProofFailure({
+              operation: 'RECOVERY_STATE',
+              message: 'paper proof durable recovery marker does not match the pinned proof identity',
+              cause: required,
+              failure: 'invariant',
+            }),
           ),
     ),
   )
@@ -545,12 +552,12 @@ const loadRecoveryCompletionDataFirst = (
     Effect.flatMap((completion) => {
       if (completion !== undefined && !recoveryIdentityMatches(context, completion)) {
         return Effect.fail(
-          paperProofFailure(
-            'RECOVERY_STATE',
-            'paper proof durable recovery completion does not match the pinned proof identity',
-            completion,
-            'invariant',
-          ),
+          paperProofFailure({
+            operation: 'RECOVERY_STATE',
+            message: 'paper proof durable recovery completion does not match the pinned proof identity',
+            cause: completion,
+            failure: 'invariant',
+          }),
         )
       }
       return Effect.succeed(completion)
@@ -567,7 +574,14 @@ const readPaperProofIntentDataFirst = (
   lift(operation, 'paper proof durable intent read failed', readIntent(context.sourcePlan.intentId)).pipe(
     Effect.flatMap((snapshot) =>
       snapshot === undefined
-        ? Effect.fail(paperProofFailure(operation, 'paper proof durable intent does not exist', snapshot, 'invariant'))
+        ? Effect.fail(
+            paperProofFailure({
+              operation,
+              message: 'paper proof durable intent does not exist',
+              cause: snapshot,
+              failure: 'invariant',
+            }),
+          )
         : Effect.succeed(snapshot),
     ),
   )
@@ -622,12 +636,12 @@ const makeRecoveryCompletionDataFirst = (
 ): Result.Result<PaperProofRecoveryCompletion, PaperProofError> =>
   receipt.mutation === undefined
     ? Result.fail(
-        paperProofFailure(
-          'RECOVERY_STATE',
-          'paper proof recovery completion requires durable mutation evidence',
-          receipt,
-          'invariant',
-        ),
+        paperProofFailure({
+          operation: 'RECOVERY_STATE',
+          message: 'paper proof recovery completion requires durable mutation evidence',
+          cause: receipt,
+          failure: 'invariant',
+        }),
       )
     : Result.succeed({
         schemaVersion: paperProofRecoveryCompletionSchemaVersion,
@@ -653,12 +667,12 @@ const completeRecoveryDataFirst = (
   Effect.gen(function* () {
     if (completion.operation === 'SUBMIT') {
       if (latestCancellation === undefined) {
-        return yield* paperProofFailure(
-          'RECOVERY_STATE',
-          'paper proof submit completion is missing its cancellation-state reader',
-          completion,
-          'invariant',
-        )
+        return yield* paperProofFailure({
+          operation: 'RECOVERY_STATE',
+          message: 'paper proof submit completion is missing its cancellation-state reader',
+          cause: completion,
+          failure: 'invariant',
+        })
       }
       const cancellation = yield* lift(
         'RECOVERY_STATE',
@@ -666,12 +680,12 @@ const completeRecoveryDataFirst = (
         latestCancellation(),
       )
       if (cancellation !== undefined) {
-        return yield* paperProofFailure(
-          'RECOVERY_STATE',
-          'paper proof submit completion is superseded by a durable cancellation mutation',
-          cancellation,
-          'mutation-unresolved',
-        )
+        return yield* paperProofFailure({
+          operation: 'RECOVERY_STATE',
+          message: 'paper proof submit completion is superseded by a durable cancellation mutation',
+          cause: cancellation,
+          failure: 'mutation-unresolved',
+        })
       }
     }
     yield* liftBounded(

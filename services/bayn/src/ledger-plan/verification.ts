@@ -57,29 +57,34 @@ const verifyUniqueExact = <Record extends { readonly id: bigint }>(
   const actualDuplicateId = duplicateRecordId(actual)
   const expectedDuplicateId = duplicateRecordId(expected)
   if (actual.length !== expected.length || actualDuplicateId !== undefined || expectedDuplicateId !== undefined) {
-    return failLedgerValidation(
+    return failLedgerValidation({
       operation,
-      'record-set-mismatch',
-      `${kind} set mismatch: expected ${expected.length}, received ${actual.length}`,
-      {
+      reason: 'record-set-mismatch',
+      detail: `${kind} set mismatch: expected ${expected.length}, received ${actual.length}`,
+      material: {
         kind,
         expectedCount: expected.length,
         actualCount: actual.length,
         ...(actualDuplicateId === undefined ? {} : { duplicateId: actualDuplicateId }),
         ...(expectedDuplicateId === undefined ? {} : { duplicateExpectedId: expectedDuplicateId }),
       },
-    )
+    })
   }
 
   const expectedById = new Map(expected.map((value) => [value.id, value]))
   for (const value of actual) {
     const expectedValue = expectedById.get(value.id)
     if (expectedValue === undefined || !matches(value, expectedValue)) {
-      return failLedgerValidation(operation, 'record-mismatch', `${kind} ${value.id} does not match its plan`, {
-        kind,
-        id: value.id,
-        actual: value,
-        expected: expectedValue,
+      return failLedgerValidation({
+        operation,
+        reason: 'record-mismatch',
+        detail: `${kind} ${value.id} does not match its plan`,
+        material: {
+          kind,
+          id: value.id,
+          actual: value,
+          expected: expectedValue,
+        },
       })
     }
   }
@@ -128,17 +133,17 @@ const preflightTransfersDataFirst = (
   const expectedDuplicateId = duplicateRecordId(expected)
   const existingDuplicateId = duplicateRecordId(existing)
   if (expectedDuplicateId !== undefined || existingDuplicateId !== undefined) {
-    return failLedgerValidation(
-      'preflight-transfers',
-      'record-set-mismatch',
-      'transfer preflight contains duplicate deterministic IDs',
-      {
+    return failLedgerValidation({
+      operation: 'preflight-transfers',
+      reason: 'record-set-mismatch',
+      detail: 'transfer preflight contains duplicate deterministic IDs',
+      material: {
         expectedCount: expected.length,
         actualCount: existing.length,
         ...(expectedDuplicateId === undefined ? {} : { duplicateExpectedId: expectedDuplicateId }),
         ...(existingDuplicateId === undefined ? {} : { duplicateId: existingDuplicateId }),
       },
-    )
+    })
   }
 
   const expectedById = new Map(expected.map((transfer) => [transfer.id, transfer]))
@@ -146,17 +151,17 @@ const preflightTransfersDataFirst = (
   for (const transfer of existing) {
     const expectedTransfer = expectedById.get(transfer.id)
     if (expectedTransfer === undefined || !transferMetadataMatches(transfer, expectedTransfer)) {
-      return failLedgerValidation(
-        'preflight-transfers',
-        'record-mismatch',
-        `existing transfer ${transfer.id} does not match its plan`,
-        {
+      return failLedgerValidation({
+        operation: 'preflight-transfers',
+        reason: 'record-mismatch',
+        detail: `existing transfer ${transfer.id} does not match its plan`,
+        material: {
           kind: 'existing transfer',
           id: transfer.id,
           actual: transfer,
           expected: expectedTransfer,
         },
-      )
+      })
     }
     existingIds.add(transfer.id)
   }
@@ -178,25 +183,27 @@ const reconcileBalancesDataFirst = (
 ): Result.Result<LedgerBalances, LedgerValidationError> => {
   const accountDuplicateId = duplicateRecordId(accounts)
   if (accountDuplicateId !== undefined) {
-    return failLedgerValidation(
+    return failLedgerValidation({
       operation,
-      'duplicate-account',
-      runId === undefined
-        ? `ledger contains duplicate account ${accountDuplicateId}`
-        : `run ${runId} contains duplicate account ${accountDuplicateId}`,
-      { ...(runId === undefined ? {} : { runId }), accountId: accountDuplicateId },
-    )
+      reason: 'duplicate-account',
+      detail:
+        runId === undefined
+          ? `ledger contains duplicate account ${accountDuplicateId}`
+          : `run ${runId} contains duplicate account ${accountDuplicateId}`,
+      material: { ...(runId === undefined ? {} : { runId }), accountId: accountDuplicateId },
+    })
   }
   const transferDuplicateId = duplicateRecordId(transfers)
   if (transferDuplicateId !== undefined) {
-    return failLedgerValidation(
+    return failLedgerValidation({
       operation,
-      'duplicate-transfer',
-      runId === undefined
-        ? `ledger contains duplicate transfer ${transferDuplicateId}`
-        : `run ${runId} contains duplicate transfer ${transferDuplicateId}`,
-      { ...(runId === undefined ? {} : { runId }), transferId: transferDuplicateId },
-    )
+      reason: 'duplicate-transfer',
+      detail:
+        runId === undefined
+          ? `ledger contains duplicate transfer ${transferDuplicateId}`
+          : `run ${runId} contains duplicate transfer ${transferDuplicateId}`,
+      material: { ...(runId === undefined ? {} : { runId }), transferId: transferDuplicateId },
+    })
   }
 
   const accountsById = new Map(accounts.map((account) => [account.id, account]))
@@ -206,19 +213,20 @@ const reconcileBalancesDataFirst = (
     const debit = balances.get(transfer.debit_account_id)
     const credit = balances.get(transfer.credit_account_id)
     if (debit === undefined || credit === undefined) {
-      return failLedgerValidation(
+      return failLedgerValidation({
         operation,
-        'unknown-account-reference',
-        runId === undefined
-          ? `transfer ${transfer.id} references an unknown account`
-          : `run ${runId} transfer ${transfer.id} references an account outside the run`,
-        {
+        reason: 'unknown-account-reference',
+        detail:
+          runId === undefined
+            ? `transfer ${transfer.id} references an unknown account`
+            : `run ${runId} transfer ${transfer.id} references an account outside the run`,
+        material: {
           ...(runId === undefined ? {} : { runId }),
           transferId: transfer.id,
           debitAccountId: transfer.debit_account_id,
           creditAccountId: transfer.credit_account_id,
         },
-      )
+      })
     }
     if (transfer.debit_account_id === transfer.credit_account_id) {
       balances.set(transfer.debit_account_id, {
@@ -234,14 +242,15 @@ const reconcileBalancesDataFirst = (
   for (const account of accounts) {
     const balance = balances.get(account.id)
     if (balance === undefined) {
-      return failLedgerValidation(
+      return failLedgerValidation({
         operation,
-        'missing-balance',
-        runId === undefined
-          ? `unexpected account ${account.id}`
-          : `run ${runId} has no balance for account ${account.id}`,
-        { ...(runId === undefined ? {} : { runId }), accountId: account.id },
-      )
+        reason: 'missing-balance',
+        detail:
+          runId === undefined
+            ? `unexpected account ${account.id}`
+            : `run ${runId} has no balance for account ${account.id}`,
+        material: { ...(runId === undefined ? {} : { runId }), accountId: account.id },
+      })
     }
     if (
       account.debits_pending !== 0n ||
@@ -249,14 +258,15 @@ const reconcileBalancesDataFirst = (
       account.debits_posted !== balance.debits ||
       account.credits_posted !== balance.credits
     ) {
-      return failLedgerValidation(
+      return failLedgerValidation({
         operation,
-        'invalid-balance',
-        runId === undefined
-          ? `account ${account.id} balance does not reconcile exactly`
-          : `run ${runId} account ${account.id} balance does not reconcile locally`,
-        { ...(runId === undefined ? {} : { runId }), account, expected: balance },
-      )
+        reason: 'invalid-balance',
+        detail:
+          runId === undefined
+            ? `account ${account.id} balance does not reconcile exactly`
+            : `run ${runId} account ${account.id} balance does not reconcile locally`,
+        material: { ...(runId === undefined ? {} : { runId }), account, expected: balance },
+      })
     }
   }
   return Result.succeed({ accountsById, transfersById })

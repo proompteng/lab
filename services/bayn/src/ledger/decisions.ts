@@ -23,36 +23,36 @@ const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   results: readonly LedgerCreateResult[],
 ): Result.Result<readonly Record[], LedgerValidationError> => {
   if (results.length !== records.length) {
-    return failLedgerValidation(
+    return failLedgerValidation({
       operation,
-      'batch-result-count',
-      `TigerBeetle returned an incomplete ${kind} result batch`,
-      { kind, expectedCount: records.length, actualCount: results.length },
-    )
+      reason: 'batch-result-count',
+      detail: `TigerBeetle returned an incomplete ${kind} result batch`,
+      material: { kind, expectedCount: records.length, actualCount: results.length },
+    })
   }
 
   const existing: Record[] = []
   for (const [index, result] of results.entries()) {
     const record = records[index]
     if (record === undefined) {
-      return failLedgerValidation(
+      return failLedgerValidation({
         operation,
-        'batch-result-count',
-        `TigerBeetle returned a ${kind} result without a corresponding record`,
-        { kind, index, expectedCount: records.length, actualCount: results.length },
-      )
+        reason: 'batch-result-count',
+        detail: `TigerBeetle returned a ${kind} result without a corresponding record`,
+        material: { kind, index, expectedCount: records.length, actualCount: results.length },
+      })
     }
     if (result.outcome === 'created') continue
     if (result.outcome === 'exists') {
       existing.push(record)
       continue
     }
-    return failLedgerValidation(
+    return failLedgerValidation({
       operation,
-      'create-rejected',
-      `TigerBeetle rejected ${kind} ${record.id} with status ${result.status}`,
-      { kind, id: record.id, status: result.status },
-    )
+      reason: 'create-rejected',
+      detail: `TigerBeetle rejected ${kind} ${record.id} with status ${result.status}`,
+      material: { kind, id: record.id, status: result.status },
+    })
   }
   return Result.succeed(existing)
 }
@@ -88,18 +88,28 @@ const queryFilter = (ledger: number): LedgerQueryFilter => ({
 export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<LedgerQueryFilter, LedgerValidationError> => {
   if (plan.accounts.length === 0 || plan.transfers.length === 0) {
     return Result.fail(
-      ledgerValidationError('post', 'empty-plan', 'TigerBeetle posting plan must contain accounts and transfers', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
+      ledgerValidationError({
+        operation: 'post',
+        reason: 'empty-plan',
+        message: 'TigerBeetle posting plan must contain accounts and transfers',
+        material: {
+          accountCount: plan.accounts.length,
+          transferCount: plan.transfers.length,
+        },
       }),
     )
   }
   if (plan.accounts.length >= LEDGER_BATCH_MAX || plan.transfers.length >= LEDGER_BATCH_MAX) {
     return Result.fail(
-      ledgerValidationError('post', 'batch-limit', 'TigerBeetle posting plan exceeds batch limits', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
-        limit: LEDGER_BATCH_MAX,
+      ledgerValidationError({
+        operation: 'post',
+        reason: 'batch-limit',
+        message: 'TigerBeetle posting plan exceeds batch limits',
+        material: {
+          accountCount: plan.accounts.length,
+          transferCount: plan.transfers.length,
+          limit: LEDGER_BATCH_MAX,
+        },
       }),
     )
   }
@@ -112,18 +122,19 @@ export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<Ledger
       (transfer) => transfer.ledger !== first.ledger || transfer.user_data_128 !== first.user_data_128,
     )
   ) {
-    return failLedgerValidation(
-      'build-transaction-transfer-query',
-      'invalid-transaction',
-      first === undefined
-        ? 'accounting plan contains no transfers'
-        : 'accounting transfers do not share one nonzero transaction tag and ledger',
-      {
+    return failLedgerValidation({
+      operation: 'build-transaction-transfer-query',
+      reason: 'invalid-transaction',
+      detail:
+        first === undefined
+          ? 'accounting plan contains no transfers'
+          : 'accounting transfers do not share one nonzero transaction tag and ledger',
+      material: {
         transferCount: plan.transfers.length,
         transactionTag: first?.user_data_128,
         ledger: first?.ledger,
       },
-    )
+    })
   }
   return Result.succeed({
     ...queryFilter(first.ledger),
@@ -143,10 +154,15 @@ const persistedRunQueriesDataFirst = (
 ): Result.Result<LedgerQueries, LedgerValidationError> => {
   if (result.accountCount >= LEDGER_BATCH_MAX || result.transferCount >= LEDGER_BATCH_MAX) {
     return Result.fail(
-      ledgerValidationError('check-run', 'batch-limit', 'persisted TigerBeetle counts exceed the exact query limit', {
-        accountCount: result.accountCount,
-        transferCount: result.transferCount,
-        limit: LEDGER_BATCH_MAX,
+      ledgerValidationError({
+        operation: 'check-run',
+        reason: 'batch-limit',
+        message: 'persisted TigerBeetle counts exceed the exact query limit',
+        material: {
+          accountCount: result.accountCount,
+          transferCount: result.transferCount,
+          limit: LEDGER_BATCH_MAX,
+        },
       }),
     )
   }
@@ -172,10 +188,15 @@ const accountReconciliationQueriesDataFirst = (
 ): Result.Result<LedgerQueries, LedgerValidationError> => {
   if (plan.accounts.length >= LEDGER_BATCH_MAX || plan.transfers.length >= LEDGER_BATCH_MAX) {
     return Result.fail(
-      ledgerValidationError('verify-account', 'batch-limit', 'paper account exceeds the exact reconciliation limit', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
-        limit: LEDGER_BATCH_MAX,
+      ledgerValidationError({
+        operation: 'verify-account',
+        reason: 'batch-limit',
+        message: 'paper account exceeds the exact reconciliation limit',
+        material: {
+          accountCount: plan.accounts.length,
+          transferCount: plan.transfers.length,
+          limit: LEDGER_BATCH_MAX,
+        },
       }),
     )
   }
@@ -212,33 +233,39 @@ const assembleAccountPlanDataFirst = (
   const transfers = new Map<bigint, LedgerTransferRecord>()
   for (const plan of plans) {
     if (plan.runKey !== runKey || plan.runTag !== runTag) {
-      return failLedgerValidation(
-        'build-account-reconciliation',
-        'wrong-account',
-        `accounting plan does not belong to paper account ${accountId}`,
-        { accountId, planRunKey: plan.runKey, planRunTag: plan.runTag, expectedRunKey: runKey, expectedRunTag: runTag },
-      )
+      return failLedgerValidation({
+        operation: 'build-account-reconciliation',
+        reason: 'wrong-account',
+        detail: `accounting plan does not belong to paper account ${accountId}`,
+        material: {
+          accountId,
+          planRunKey: plan.runKey,
+          planRunTag: plan.runTag,
+          expectedRunKey: runKey,
+          expectedRunTag: runTag,
+        },
+      })
     }
     for (const account of plan.accounts) {
       const existing = accounts.get(account.id)
       if (existing !== undefined && !accountMetadataMatches(account, existing)) {
-        return failLedgerValidation(
-          'build-account-reconciliation',
-          'record-mismatch',
-          `accounting account ${account.id} does not match its plan`,
-          { kind: 'accounting account', id: account.id, actual: account, expected: existing },
-        )
+        return failLedgerValidation({
+          operation: 'build-account-reconciliation',
+          reason: 'record-mismatch',
+          detail: `accounting account ${account.id} does not match its plan`,
+          material: { kind: 'accounting account', id: account.id, actual: account, expected: existing },
+        })
       }
       if (existing === undefined) accounts.set(account.id, account)
     }
     for (const transfer of plan.transfers) {
       if (transfers.has(transfer.id)) {
-        return failLedgerValidation(
-          'build-account-reconciliation',
-          'duplicate-transfer',
-          `duplicate accounting transfer ${transfer.id}`,
-          { accountId, transferId: transfer.id },
-        )
+        return failLedgerValidation({
+          operation: 'build-account-reconciliation',
+          reason: 'duplicate-transfer',
+          detail: `duplicate accounting transfer ${transfer.id}`,
+          material: { accountId, transferId: transfer.id },
+        })
       }
       transfers.set(transfer.id, transfer)
     }

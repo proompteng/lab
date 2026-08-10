@@ -154,22 +154,28 @@ export class LedgerValidationError extends Data.TaggedError('LedgerValidationErr
   readonly cause?: unknown
 }> {}
 
-export const ledgerValidationError = (
-  operation: LedgerValidationOperation,
-  reason: LedgerValidationReason,
-  message: string,
-  material: Readonly<Record<string, unknown>>,
-  cause?: unknown,
-): LedgerValidationError => new LedgerValidationError({ operation, reason, message, material, cause })
+export interface LedgerValidationErrorInput {
+  readonly operation: LedgerValidationOperation
+  readonly reason: LedgerValidationReason
+  readonly message: string
+  readonly material: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
 
-export const failLedgerValidation = (
-  operation: LedgerValidationOperation,
-  reason: LedgerValidationReason,
-  detail: string,
-  material: Readonly<Record<string, unknown>>,
-  cause?: unknown,
-): Result.Result<never, LedgerValidationError> =>
-  Result.fail(ledgerValidationError(operation, reason, `TigerBeetle ${operation} failed: ${detail}`, material, cause))
+export const ledgerValidationError = (input: LedgerValidationErrorInput): LedgerValidationError =>
+  new LedgerValidationError(input)
+
+export interface FailLedgerValidationInput extends Omit<LedgerValidationErrorInput, 'message'> {
+  readonly detail: string
+}
+
+export const failLedgerValidation = (input: FailLedgerValidationInput): Result.Result<never, LedgerValidationError> =>
+  Result.fail(
+    ledgerValidationError({
+      ...input,
+      message: `TigerBeetle ${input.operation} failed: ${input.detail}`,
+    }),
+  )
 
 export interface LedgerPlan {
   readonly runKey: bigint
@@ -302,13 +308,13 @@ const ledgerPlanCause = (failure: LedgerPlanFailureDetail): unknown => {
 
 const makeLedgerPlanFailureDataFirst = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
   Object.assign(
-    ledgerValidationError(
-      'build-plan',
-      'ledger-plan-failure',
-      `TigerBeetle build-plan failed: ${renderLedgerPlanFailure(detail)}`,
-      { ledger, failure: detail },
-      ledgerPlanCause(detail),
-    ),
+    ledgerValidationError({
+      operation: 'build-plan',
+      reason: 'ledger-plan-failure',
+      message: `TigerBeetle build-plan failed: ${renderLedgerPlanFailure(detail)}`,
+      material: { ledger, failure: detail },
+      cause: ledgerPlanCause(detail),
+    }),
     { kind: detail.kind, detail },
   ) as LedgerPlanFailure
 

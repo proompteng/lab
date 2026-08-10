@@ -69,7 +69,7 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
 
 const cashYieldFailure = (detail: string, material: Readonly<Record<string, unknown>>): LedgerValidationError =>
-  ledgerValidationError('verify-account', 'invalid-transaction', detail, material)
+  ledgerValidationError({ operation: 'verify-account', reason: 'invalid-transaction', message: detail, material })
 
 const parseSignedI128 = (value: string, field: string): Result.Result<bigint, LedgerValidationError> => {
   if (!INTEGER_PATTERN.test(value)) {
@@ -204,16 +204,16 @@ const readForwardPerformanceLedgerDataFirst = (
 
     if (accounts.length >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
       return yield* ledgerError(
-        ledgerValidationError(
-          'verify-account',
-          'batch-limit',
-          'paper account reached the exact TigerBeetle reconciliation limit',
-          {
+        ledgerValidationError({
+          operation: 'verify-account',
+          reason: 'batch-limit',
+          message: 'paper account reached the exact TigerBeetle reconciliation limit',
+          material: {
             accountCount: accounts.length,
             transferCount: transfers.length,
             limit: LEDGER_BATCH_MAX,
           },
-        ),
+        }),
       )
     }
 
