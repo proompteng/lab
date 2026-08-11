@@ -90,6 +90,21 @@ describe('Bayn promotion eligibility workflow', () => {
     expect(workflow).toContain('timeout-minutes: 8')
   })
 
+  test('installs locked verifier dependencies in every job before executing the verifier', () => {
+    const install = 'bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts'
+    const verifier = 'bun packages/scripts/src/bayn/verify-promotion-eligibility.ts'
+    const requiredStart = workflow.indexOf('  required:')
+    const refreshStart = workflow.indexOf('  refresh:')
+    const required = workflow.slice(requiredStart, refreshStart)
+    const refresh = workflow.slice(refreshStart)
+
+    expect(workflow.split(install).length - 1).toBe(2)
+    expect(required.indexOf(install)).toBeGreaterThan(-1)
+    expect(required.indexOf(install)).toBeLessThan(required.indexOf(verifier))
+    expect(refresh.indexOf(install)).toBeGreaterThan(-1)
+    expect(refresh.indexOf(install)).toBeLessThan(refresh.indexOf(verifier))
+  })
+
   test('refreshes the exact-head gate in both directions without touching unrelated pull requests', () => {
     expect(workflow).toContain('name: Refresh the exact-head gate when eligibility changes')
     expect(workflow).toContain("github.event_name == 'schedule'")

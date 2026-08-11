@@ -39,6 +39,7 @@ const snapshot = (): BaynPromotionAutomergeSnapshot => ({
     files: [
       { path: 'argocd/applications/bayn/deployment.yaml', status: 'MODIFIED' },
       { path: 'argocd/applications/bayn/kustomization.yaml', status: 'MODIFIED' },
+      { path: 'argocd/applications/bayn/lifecycle-current.yaml', status: 'MODIFIED' },
     ],
   },
   checks: [
@@ -124,7 +125,7 @@ describe('Bayn promotion auto-merge decision', () => {
     ).toBe('automerge-opted-out')
   })
 
-  test('requires exactly the two modified Bayn manifests', () => {
+  test('requires all release-owned manifests and permits only bounded lifecycle rotation', () => {
     const missing = snapshot()
     const extra = snapshot()
     const renamed = snapshot()
@@ -135,6 +136,19 @@ describe('Bayn promotion auto-merge decision', () => {
         pullRequest: { ...missing.pullRequest, files: missing.pullRequest.files.slice(0, 1) },
       }),
     ).toBe('promotion-paths-mismatch')
+    const rotated = snapshot()
+    expect(
+      decisionCode({
+        ...rotated,
+        pullRequest: {
+          ...rotated.pullRequest,
+          files: [
+            ...rotated.pullRequest.files,
+            { path: 'argocd/applications/bayn/lifecycle-previous.yaml', status: 'MODIFIED' },
+          ],
+        },
+      }),
+    ).toBe('eligible')
     expect(
       decisionCode({
         ...extra,

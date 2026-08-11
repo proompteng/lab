@@ -8,7 +8,13 @@ export const baynPromotionBranch = 'codex/bayn-release-current'
 export const baynPromotionAutomergeManifestPaths = [
   'argocd/applications/bayn/deployment.yaml',
   'argocd/applications/bayn/kustomization.yaml',
+  'argocd/applications/bayn/lifecycle-current.yaml',
 ] as const
+
+const optionalPromotionManifestPaths = new Set([
+  'argocd/applications/bayn/lifecycle-previous.yaml',
+  'argocd/applicationsets/product.yaml',
+])
 
 export const baynPromotionAutomergeRequiredChecks = [
   { workflow: 'Semantic Commits', name: 'Lint commit messages' },
@@ -188,16 +194,16 @@ export const decideBaynPromotionAutomerge = (
     return hold('automerge-opted-out', `PR #${pullRequest.number} has the do-not-automerge label`)
   }
 
-  const expectedPaths = [...baynPromotionAutomergeManifestPaths].sort()
-  const actualPaths = pullRequest.files.map(({ path }) => path).sort()
+  const expectedPaths = new Set<string>(baynPromotionAutomergeManifestPaths)
+  const actualPaths = new Set(pullRequest.files.map(({ path }) => path))
   if (
-    actualPaths.length !== expectedPaths.length ||
-    actualPaths.some((path, index) => path !== expectedPaths[index]) ||
+    [...expectedPaths].some((path) => !actualPaths.has(path)) ||
+    [...actualPaths].some((path) => !expectedPaths.has(path) && !optionalPromotionManifestPaths.has(path)) ||
     pullRequest.files.some(({ status }) => status !== 'MODIFIED')
   ) {
     return hold(
       'promotion-paths-mismatch',
-      `PR #${pullRequest.number} must modify exactly the two existing Bayn promotion manifests`,
+      `PR #${pullRequest.number} must modify the exact Bayn release manifests and no unrelated path`,
     )
   }
 

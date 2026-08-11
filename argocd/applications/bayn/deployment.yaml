@@ -39,14 +39,19 @@ spec:
           type: RuntimeDefault
       containers:
         - name: bayn
-          image: registry.ide-newton.ts.net/lab/bayn
+          image: bayn-main
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+            - name: lifecycle-command
+              containerPort: 8081
+              protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
+              value: 3a36fc2b3d80a323560f2ee03a1faed81dffcc29
+            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION
               value: 3a36fc2b3d80a323560f2ee03a1faed81dffcc29
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
@@ -176,12 +181,28 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: bayn-lifecycle-reviewer
+              mountPath: /var/run/secrets/bayn-lifecycle-reviewer
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
       volumes:
+        - name: bayn-lifecycle-reviewer
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  audience: https://kubernetes.default.svc.cluster.local
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi

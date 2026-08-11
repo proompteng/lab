@@ -3,6 +3,12 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
+import {
+  advanceBaynLifecycleManifests,
+  baynLifecycleCurrentPath,
+  baynLifecyclePreviousPath,
+} from './lifecycle-manifests'
+
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const hashPattern = /^[0-9a-f]{64}$/
 const sourceShaPattern = /^[0-9a-f]{40}$/
@@ -39,6 +45,8 @@ export interface UpdateBaynManifestOptions {
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
   readonly applicationSetPath?: string
+  readonly lifecycleCurrentPath?: string
+  readonly lifecyclePreviousPath?: string
 }
 
 export interface BaynManifestUpdate {
@@ -209,6 +217,8 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
   const deploymentPath = options.deploymentPath ?? 'argocd/applications/bayn/deployment.yaml'
   const applicationSetPath = options.applicationSetPath ?? 'argocd/applicationsets/product.yaml'
+  const lifecycleCurrentManifestPath = options.lifecycleCurrentPath ?? baynLifecycleCurrentPath
+  const lifecyclePreviousManifestPath = options.lifecyclePreviousPath ?? baynLifecyclePreviousPath
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const deployment = readFileSync(deploymentPath, 'utf8')
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
@@ -337,7 +347,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     }
   }
   const imageBlock =
-    /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
+    /(  - name: bayn-main\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
   const updatedKustomization = replaceExactlyOnce(
     kustomization,
     imageBlock,
@@ -350,6 +360,12 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     /(            - name: BAYN_CODE_REVISION\n              value: )[^\n]+/,
     `$1${options.sourceSha}`,
     'BAYN_CODE_REVISION value',
+  )
+  updatedDeployment = replaceExactlyOnce(
+    updatedDeployment,
+    /(            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: )[^\n]+/,
+    `$1${deployedSourceSha}`,
+    'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION value',
   )
   updatedDeployment = replaceExactlyOnce(
     updatedDeployment,
@@ -398,9 +414,20 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     'Bayn ApplicationSet enabled state',
   )
 
+  const lifecycle = advanceBaynLifecycleManifests({
+    base: {
+      current: readFileSync(lifecycleCurrentManifestPath, 'utf8'),
+      previous: readFileSync(lifecyclePreviousManifestPath, 'utf8'),
+    },
+    kustomization,
+    next: { sourceSha: options.sourceSha, tag: options.tag, digest: options.digest },
+  })
+
   writeFileSync(kustomizationPath, updatedKustomization)
   writeFileSync(deploymentPath, updatedDeployment)
   writeFileSync(applicationSetPath, updatedApplicationSet)
+  writeFileSync(lifecycleCurrentManifestPath, lifecycle.current)
+  writeFileSync(lifecyclePreviousManifestPath, lifecycle.previous)
   return {
     promotionAction: 'promote',
     promotionReason: 'eligible',

@@ -20,7 +20,7 @@ configMapGenerator:
     files:
       - squid.conf
 images:
-  - name: registry.ide-newton.ts.net/lab/bayn
+  - name: bayn-main
     newName: registry.ide-newton.ts.net/lab/bayn
     newTag: "sha-3a36fc2b3d80a323560f2ee03a1faed81dffcc29"
     digest: sha256:f936106f72ac3de75b7e338cb2b780e59fa1498cd756e68dcc8c38f6e29d6192
