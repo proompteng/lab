@@ -1021,6 +1021,7 @@ export const prepareOrRecoverResearchPaperActivation = (
         'research PAPER build continuation requires the exact active generation',
       )
     }
+    const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
         ? yield* Effect.fromResult(
@@ -1033,6 +1034,11 @@ export const prepareOrRecoverResearchPaperActivation = (
             ),
           )
         : currentSourceGenerationHash
+    if (activationRequired) {
+      // PostgreSQL requires broker evidence observed after the previous authority update. It must exist before a
+      // completed PAPER generation is rearmed, and the same observation then binds the new activation.
+      yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
+    }
     if (decision._tag === 'Rearm') {
       const rearmed = yield* authorityStore
         .ensureAuthorityGeneration({
@@ -1055,8 +1061,7 @@ export const prepareOrRecoverResearchPaperActivation = (
         )
       }
     }
-    if (decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
-      yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
+    if (activationRequired) {
       return yield* prepareResearchPaperActivation(
         plan,
         request,

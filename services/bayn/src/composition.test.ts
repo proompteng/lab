@@ -515,8 +515,8 @@ describe('Bayn PAPER startup recovery boundary', () => {
     }
   })
 
-  test('activates research PAPER from the persisted OBSERVE successor instead of the bootstrap hash', async () => {
-    const previousPaperGenerationHash = hash('12')
+  test('reconciles a completed PAPER generation before rearming and activates from its OBSERVE successor', async () => {
+    const previousPaperGenerationHash = continuationGeneration.generationHash
     const successorGenerationHash = Result.getOrThrow(
       paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }),
     )
@@ -557,27 +557,42 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
     let authority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
-      generationHash: successorGenerationHash,
-      maximum: Authority.Observe,
-      effective: Authority.Observe,
+      generationHash: previousPaperGenerationHash,
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
       kill: KillState.Clear,
-      version: 3,
-      updatedAt: '2026-08-31T20:00:00.000Z',
+      version: 2,
+      updatedAt: '2026-08-31T19:59:59.000Z',
     }
     const operations: string[] = []
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: ({ generationHash, maximum }) =>
         Effect.sync(() => {
-          operations.push(`validate:${generationHash}`)
+          operations.push(`rearm:${generationHash}`)
           expect({ generationHash, maximum }).toEqual({
             generationHash: successorGenerationHash,
             maximum: Authority.Observe,
           })
+          authority = {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: successorGenerationHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: 3,
+            updatedAt: '2026-08-31T20:00:00.500Z',
+          }
           return authority
         }),
       readAuthorityState: Effect.sync(() => authority),
       readResearchAuthorityGeneration: (generationHash) =>
-        Effect.succeed(generationHash === generation.generationHash ? generation : undefined),
+        Effect.succeed(
+          generationHash === continuationGeneration.generationHash
+            ? continuationGeneration
+            : generationHash === generation.generationHash
+              ? generation
+              : undefined,
+        ),
     }
     const lifecycle: CapitalGrantLifecycleStoreShape = {
       prepareCapitalGrant: () => Effect.die(new Error('research activation must not prepare qualified authority')),
@@ -685,11 +700,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(activated).toEqual(generation)
-    expect(operations).toEqual([
-      `validate:${successorGenerationHash}`,
-      'reconcile',
-      `activate:${successorGenerationHash}`,
-    ])
+    expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`, `activate:${successorGenerationHash}`])
   })
 
   test('recovers the exact continuation after cutoff and rejects stale build or generation bindings', async () => {
