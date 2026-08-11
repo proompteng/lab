@@ -13,6 +13,8 @@ resources:
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
   - deployment.yaml
+  - lifecycle-current.yaml
+  - lifecycle-previous.yaml
   - service.yaml
   - networkpolicy.yaml
 configMapGenerator:
@@ -22,5 +24,5 @@ configMapGenerator:
 images:
   - name: bayn-main
     newName: registry.ide-newton.ts.net/lab/bayn
-    newTag: "sha-3a36fc2b3d80a323560f2ee03a1faed81dffcc29"
-    digest: sha256:f936106f72ac3de75b7e338cb2b780e59fa1498cd756e68dcc8c38f6e29d6192
+    newTag: "sha-204d8a95a5107fdb5061c25b09a801b3589eb936"
+    digest: sha256:81cbd03fe27aba48348fb7c0e20617e9efbcc2c2c575a5307fbe9e9e674a90ce

@@ -52,7 +52,7 @@ describe('Bayn lifecycle release manifests', () => {
     expect(current).not.toContain('DATABASE_URL')
   })
 
-  test('keeps the checked-in dormant endpoints canonical and inactive', () => {
+  test('keeps the checked-in initial Restate endpoint canonical and atomically active', () => {
     const current = readFileSync(
       new URL('../../../../argocd/applications/bayn/lifecycle-current.yaml', import.meta.url),
       'utf8',
@@ -71,12 +71,12 @@ describe('Bayn lifecycle release manifests', () => {
     )
 
     expect(parseBaynLifecycleCurrent(current)).toEqual({
-      sourceSha: '3a36fc2b3d80a323560f2ee03a1faed81dffcc29',
-      tag: 'sha-3a36fc2b3d80a323560f2ee03a1faed81dffcc29',
-      digest: 'sha256:f936106f72ac3de75b7e338cb2b780e59fa1498cd756e68dcc8c38f6e29d6192',
+      sourceSha: '204d8a95a5107fdb5061c25b09a801b3589eb936',
+      tag: 'sha-204d8a95a5107fdb5061c25b09a801b3589eb936',
+      digest: 'sha256:81cbd03fe27aba48348fb7c0e20617e9efbcc2c2c575a5307fbe9e9e674a90ce',
     })
     expect(parseBaynLifecyclePrevious(previous)).toBeNull()
-    expect(baynLifecycleIsActive(kustomization)).toBeFalse()
+    expect(baynLifecycleIsActive(kustomization)).toBeTrue()
     expect(() => validateBaynLifecycleCommandPort(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleCommandAuthentication(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleOperationTimeout(deployment)).not.toThrow()
@@ -108,16 +108,16 @@ describe('Bayn lifecycle release manifests', () => {
   })
 
   test('switches lifecycle resources and ownership as one activation boundary', () => {
-    const deployment = readFileSync(
+    const restateOwnedDeployment = readFileSync(
       new URL('../../../../argocd/applications/bayn/deployment.yaml', import.meta.url),
       'utf8',
     )
-    const restateOwnedDeployment = deployment.replace(
-      '            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n',
-      '            - name: BAYN_LIFECYCLE_OWNER\n              value: RESTATE\n            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n',
+    const processOwnedDeployment = restateOwnedDeployment.replace(
+      '            - name: BAYN_LIFECYCLE_OWNER\n              value: RESTATE\n',
+      '',
     )
 
-    expect(() => validateBaynLifecycleActivation(deployment, activeKustomization)).toThrow(
+    expect(() => validateBaynLifecycleActivation(processOwnedDeployment, activeKustomization)).toThrow(
       'active Bayn lifecycle resources require BAYN_LIFECYCLE_OWNER=RESTATE',
     )
     expect(() => validateBaynLifecycleActivation(restateOwnedDeployment, inactiveKustomization)).toThrow(
