@@ -1,3 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn-lifecycle-204d8a95a510
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 204d8a95a510
+  annotations:
+    bayn.proompteng.ai/source-revision: 204d8a95a5107fdb5061c25b09a801b3589eb936
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  progressDeadlineSeconds: 600
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-lifecycle
+      app.kubernetes.io/version: 204d8a95a510
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-lifecycle
+        app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/version: 204d8a95a510
+    spec:
+      serviceAccountName: bayn-lifecycle
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lifecycle
+          image: registry.ide-newton.ts.net/lab/bayn:sha-204d8a95a5107fdb5061c25b09a801b3589eb936@sha256:81cbd03fe27aba48348fb7c0e20617e9efbcc2c2c575a5307fbe9e9e674a90ce
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restate-lifecycle-server.js
+          ports:
+            - name: restate
+              containerPort: 9080
+              protocol: TCP
+          env:
+            - name: BAYN_CODE_REVISION
+              value: 204d8a95a5107fdb5061c25b09a801b3589eb936
+            - name: BAYN_LIFECYCLE_CONTROLLER_KEY
+              value: primary
+            - name: BAYN_LIFECYCLE_COMMAND_URL
+              value: http://bayn-lifecycle-command.bayn.svc.cluster.local:8081
+            - name: BAYN_LIFECYCLE_COMMAND_TOKEN_PATH
+              value: /var/run/secrets/bayn-lifecycle-command/token
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: PORT
+              value: "9080"
+            - name: NODE_ENV
+              value: production
+          startupProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: command-identity
+              mountPath: /var/run/secrets/bayn-lifecycle-command
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: command-identity
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  audience: bayn.proompteng.ai/lifecycle-command
+                  expirationSeconds: 3600
+                  path: token
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
 apiVersion: v1
-kind: List
-items: []
+kind: Service
+metadata:
+  name: bayn-lifecycle-204d8a95a510
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 204d8a95a510
+  annotations:
+    bayn.proompteng.ai/source-revision: 204d8a95a5107fdb5061c25b09a801b3589eb936
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/version: 204d8a95a510
+  ports:
+    - name: restate
+      port: 9080
+      targetPort: restate
+      protocol: TCP
