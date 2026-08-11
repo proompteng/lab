@@ -68,6 +68,12 @@ export const validateBaynLifecycleCommandPort = (deployment: string): void => {
   }
 }
 
+export const validateBaynServiceLinksDisabled = (deployment: string): void => {
+  if (baynPodSpec(deployment).enableServiceLinks !== false) {
+    throw new Error('Bayn deployment must disable Kubernetes service-link environment injection')
+  }
+}
+
 export const validateBaynLifecycleCommandAuthentication = (deployment: string): void => {
   const container = baynContainer(deployment)
   const mounts = Array.isArray(container.volumeMounts) ? container.volumeMounts : []
@@ -173,6 +179,7 @@ spec:
     spec:
       serviceAccountName: bayn-lifecycle
       automountServiceAccountToken: false
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       nodeSelector:
         kubernetes.io/arch: arm64
@@ -510,6 +517,7 @@ spec:
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
+      enableServiceLinks: false
       restartPolicy: OnFailure
       nodeSelector:
         kubernetes.io/arch: arm64

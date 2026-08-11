@@ -75,6 +75,7 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: ${JSON.stringify(pins.rolloutTimestamp)}
     spec:
+      enableServiceLinks: false
       containers:
         - name: bayn
           image: bayn-main

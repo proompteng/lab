@@ -27,6 +27,7 @@ spec:
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 30
       nodeSelector:
         kubernetes.io/arch: arm64
