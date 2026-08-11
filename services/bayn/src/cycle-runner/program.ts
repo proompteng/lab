@@ -21,6 +21,7 @@ import {
   marketCalendarQueryForPublications,
   readinessFailure,
   reduceCycleAuthoritySelection,
+  selectCycleAcquisition,
   selectCycleCalendarCandidate,
   selectCyclePassContinuation,
   selectDiscoveredPublications,
@@ -154,6 +155,7 @@ const resumeDiscoveredPublication = (
   )
 
 const acquireCycleCandidate = (
+  cadence: CycleRunContext['cadence'],
   material: CycleAcquireMaterial,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   pipe(
@@ -161,9 +163,11 @@ const acquireCycleCandidate = (
     Effect.flatMap((store) =>
       pipe(
         currentIsoTime,
-        Effect.flatMap((acquiredAt) =>
-          pipe(
-            store.acquire(material.draft, acquiredAt),
+        Effect.flatMap((acquiredAt) => {
+          const admission = selectCycleAcquisition(cadence, material, acquiredAt)
+          if (admission._tag === 'NOT_DUE') return Effect.succeed(admission.result)
+          return pipe(
+            store.acquire(admission.material.draft, acquiredAt),
             Effect.mapError((cause) =>
               runnerError({
                 operation: 'acquire-cycle',
@@ -172,30 +176,30 @@ const acquireCycleCandidate = (
                 cause,
               }),
             ),
-          ),
-        ),
-        Effect.flatMap((receipt) =>
-          pipe(
-            currentIsoTime,
-            Effect.flatMap((bindingObservedAt) =>
+            Effect.flatMap((receipt) =>
               pipe(
-                bindDiscoveredPublication(receipt.cycle, material.publication, bindingObservedAt),
-                Effect.map(
-                  (readiness): CycleRunResult => ({
-                    outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
-                    signalSessionDate: material.signalSessionDate,
-                    executionSessionDate: material.executionSessionDate,
-                    observedAt: bindingObservedAt,
-                    calendarResponseHash: material.calendarResponseHash,
-                    calendarReadContentHash: material.calendarReadContentHash,
-                    receipt,
-                    readiness,
-                  }),
+                currentIsoTime,
+                Effect.flatMap((bindingObservedAt) =>
+                  pipe(
+                    bindDiscoveredPublication(receipt.cycle, material.publication, bindingObservedAt),
+                    Effect.map(
+                      (readiness): CycleRunResult => ({
+                        outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
+                        signalSessionDate: material.signalSessionDate,
+                        executionSessionDate: material.executionSessionDate,
+                        observedAt: bindingObservedAt,
+                        calendarResponseHash: material.calendarResponseHash,
+                        calendarReadContentHash: material.calendarReadContentHash,
+                        receipt,
+                        readiness,
+                      }),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+          )
+        }),
       ),
     ),
   )
@@ -220,7 +224,9 @@ const interpretCycleCalendar = <R>(
   ).pipe(
     Effect.mapError(calendarCandidateFailureError),
     Effect.flatMap((decision) =>
-      decision._tag === 'NOT_DUE' ? Effect.succeed(decision.result) : acquireCycleCandidate(decision.material),
+      decision._tag === 'NOT_DUE'
+        ? Effect.succeed(decision.result)
+        : acquireCycleCandidate(context.cadence, decision.material),
     ),
   )
 

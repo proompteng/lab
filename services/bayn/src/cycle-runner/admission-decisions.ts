@@ -30,7 +30,7 @@ export interface CycleAcquireMaterial {
   readonly calendarReadContentHash: string
 }
 
-type CycleCalendarCandidateDecision =
+export type CycleCalendarCandidateDecision =
   | { readonly _tag: 'NOT_DUE'; readonly result: CycleNotDueResult }
   | { readonly _tag: 'ACQUIRE'; readonly material: CycleAcquireMaterial }
 
@@ -41,6 +41,25 @@ type CycleCalendarCandidateFailure =
       readonly signalSessionDate: string
       readonly cause: CycleConstructionFailure
     }
+
+const stalePaperBootstrapResult = (material: CycleAcquireMaterial, observedAt: string): CycleNotDueResult => ({
+  outcome: 'NOT_DUE',
+  reason: CycleNotDueReason.StalePaperBootstrap,
+  signalSessionDate: material.signalSessionDate,
+  executionSessionDate: material.executionSessionDate,
+  observedAt,
+  calendarResponseHash: material.calendarResponseHash,
+  calendarReadContentHash: material.calendarReadContentHash,
+})
+
+export const selectCycleAcquisition = (
+  cadence: CycleRunContext['cadence'],
+  material: CycleAcquireMaterial,
+  acquiredAt: string,
+): CycleCalendarCandidateDecision =>
+  cadence === 'PAPER_BOOTSTRAP' && acquiredAt >= material.draft.window.publicationDeadlineAt
+    ? { _tag: 'NOT_DUE', result: stalePaperBootstrapResult(material, acquiredAt) }
+    : { _tag: 'ACQUIRE', material }
 
 const selectCycleCalendarPublication = <R>(
   context: CycleRunContext<R>,
@@ -81,16 +100,11 @@ const selectCycleCalendarPublication = <R>(
           result: { outcome: 'NOT_DUE', reason: CycleNotDueReason.MonthEndCadence, observedAt, ...common },
         }
       }
-      if (
-        context.cadence === 'PAPER_BOOTSTRAP' &&
-        (knownMissedPaperBootstrap || observedAt >= draft.window.publicationDeadlineAt)
-      ) {
-        return {
-          _tag: 'NOT_DUE',
-          result: { outcome: 'NOT_DUE', reason: CycleNotDueReason.StalePaperBootstrap, observedAt, ...common },
-        }
+      const material = { publication, draft, ...common }
+      if (context.cadence === 'PAPER_BOOTSTRAP' && knownMissedPaperBootstrap) {
+        return { _tag: 'NOT_DUE', result: stalePaperBootstrapResult(material, observedAt) }
       }
-      return { _tag: 'ACQUIRE', material: { publication, draft, ...common } }
+      return selectCycleAcquisition(context.cadence, material, observedAt)
     },
   )
 }

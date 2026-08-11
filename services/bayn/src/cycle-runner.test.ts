@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Fiber, Layer, Logger, Option, References, Result } from 'effect'
+import { Cause, Clock, Deferred, Effect, Fiber, Layer, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -2565,6 +2565,44 @@ describe('autonomous cycle runner', () => {
     expect(calendarReads).toBe(2)
     expect(control.acquisitions).toHaveLength(1)
     expect(control.binds).toBe(1)
+  })
+
+  test('rechecks a PAPER bootstrap deadline immediately before acquisition without persisting the race loser', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const times = [
+      Date.parse('2026-02-02T13:57:59.998Z'),
+      Date.parse('2026-02-02T13:57:59.999Z'),
+      Date.parse('2026-02-02T13:58:00.000Z'),
+    ] as const
+    let clockReads = 0
+    const readTime = () => times[Math.min(clockReads++, times.length - 1)]
+    const currentTime = () => times[Math.min(clockReads, times.length - 1)]
+    const clock: Clock.Clock = {
+      currentTimeMillisUnsafe: readTime,
+      currentTimeMillis: Effect.sync(readTime),
+      currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      sleep: () => Effect.void,
+    }
+
+    const result = await Effect.runPromise(
+      provide(
+        runAutonomousCyclePass({ ...context(), cadence: 'PAPER_BOOTSTRAP' }),
+        brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
+        cycleStore(control),
+        marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
+      ).pipe(Effect.provideService(Clock.Clock, clock)),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'NOT_DUE',
+      reason: CycleNotDueReason.StalePaperBootstrap,
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      observedAt: '2026-02-02T13:58:00.000Z',
+    })
+    expect(control.acquisitions).toHaveLength(0)
+    expect(control.binds).toBe(0)
   })
 
   test('restarts a persisted missed PAPER bootstrap as an exact not-due wait without reacquisition', async () => {
