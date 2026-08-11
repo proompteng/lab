@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'bun:test'
 import { parse } from 'yaml'
 
+import { renderBaynLifecycleCurrent, renderBaynLifecyclePrevious } from './lifecycle-manifests'
+
 import {
   baynPromotionCodexBotLogin,
   baynPromotionCodexReviewer,
@@ -75,10 +77,16 @@ spec:
     spec:
       containers:
         - name: bayn
-          image: registry.ide-newton.ts.net/lab/bayn
+          image: bayn-main
+          ports:
+            - name: lifecycle-command
+              containerPort: 8081
+              protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
               value: ${pins.sourceSha}
+            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION
+              value: ${oldSourceSha}
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
@@ -119,7 +127,7 @@ namespace: bayn
 resources:
   - deployment.yaml
 images:
-  - name: registry.ide-newton.ts.net/lab/bayn
+  - name: bayn-main
     newName: registry.ide-newton.ts.net/lab/bayn
     newTag: ${JSON.stringify(pins.tag)}
     digest: ${pins.digest}
@@ -143,6 +151,8 @@ const manifests = (pins: ManifestPins, enabled = true): BaynPromotionManifestCon
   deployment: deployment(pins),
   kustomization: kustomization(pins),
   applicationSet: applicationSet(enabled),
+  lifecycleCurrent: renderBaynLifecycleCurrent(pins),
+  lifecyclePrevious: renderBaynLifecyclePrevious(null),
 })
 
 const basePins: ManifestPins = {
@@ -180,6 +190,11 @@ const pullRequest = (overrides: Partial<BaynPromotionPullRequest> = {}): BaynPro
     },
     {
       path: 'argocd/applications/bayn/kustomization.yaml',
+      status: 'modified',
+      previousPath: null,
+    },
+    {
+      path: 'argocd/applications/bayn/lifecycle-current.yaml',
       status: 'modified',
       previousPath: null,
     },
@@ -664,10 +679,34 @@ describe('Bayn promotion eligibility', () => {
     ['image tag', { ...headPins, tag: `sha-${staleHeadSha}` }, 'promotion-pin-inconsistent'],
     ['image digest', { ...headPins, digest: `sha256:${'9'.repeat(64)}` }, 'release-contract-mismatch'],
   ] as const)('rejects an altered %s', (_name, alteredPins, expectedCode) => {
-    const altered = manifests(alteredPins)
+    const valid = manifests(headPins)
+    const altered =
+      _name === 'source revision'
+        ? { ...valid, deployment: valid.deployment.replace(sourceSha, staleHeadSha) }
+        : _name === 'image tag'
+          ? { ...valid, kustomization: valid.kustomization.replace(headPins.tag, alteredPins.tag) }
+          : manifests(alteredPins)
     expect(evaluate(snapshot({ headManifests: altered }))).toMatchObject({
       status: 'hold',
       code: expectedCode,
+    })
+  })
+
+  test('rejects a command boundary that does not retain exactly the promotion base source', () => {
+    const valid = manifests(headPins)
+    expect(
+      evaluate(
+        snapshot({
+          headManifests: {
+            ...valid,
+            deployment: valid.deployment.replace(`value: ${oldSourceSha}`, `value: ${staleHeadSha}`),
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'promotion-pin-inconsistent',
+      message: 'Bayn command boundary does not retain exactly the prior lifecycle source revision',
     })
   })
 
@@ -752,6 +791,13 @@ describe('Bayn promotion eligibility', () => {
     expect(buildWorkflow.on.push.paths).toBeUndefined()
     for (const pattern of buildWorkflow.on.push.paths ?? []) {
       const path = representativeBuildTriggerPath(pattern)
+      expect(isBaynPromotionSourceAffectingPath(path)).toBeTrue()
+    }
+    for (const path of [
+      'packages/scripts/src/bayn/lifecycle-manifests.ts',
+      'packages/scripts/src/bayn/update-manifests.ts',
+      'nix/images/bayn.nix',
+    ]) {
       expect(isBaynPromotionSourceAffectingPath(path)).toBeTrue()
     }
     for (const path of [
@@ -1123,11 +1169,15 @@ describe('bounded GitHub failure handling', () => {
       ['argocd/applications/bayn/deployment.yaml', manifests(headPins).deployment],
       ['argocd/applications/bayn/kustomization.yaml', manifests(headPins).kustomization],
       ['argocd/applicationsets/product.yaml', manifests(headPins).applicationSet],
+      ['argocd/applications/bayn/lifecycle-current.yaml', manifests(headPins).lifecycleCurrent],
+      ['argocd/applications/bayn/lifecycle-previous.yaml', manifests(headPins).lifecyclePrevious],
     ])
     const baseManifestByPath = new Map([
       ['argocd/applications/bayn/deployment.yaml', manifests(basePins).deployment],
       ['argocd/applications/bayn/kustomization.yaml', manifests(basePins).kustomization],
       ['argocd/applicationsets/product.yaml', manifests(basePins).applicationSet],
+      ['argocd/applications/bayn/lifecycle-current.yaml', manifests(basePins).lifecycleCurrent],
+      ['argocd/applications/bayn/lifecycle-previous.yaml', manifests(basePins).lifecyclePrevious],
     ])
     const emptyConnection = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
     const forcePushConnection = {
@@ -1789,14 +1839,15 @@ describe('real release provenance discovery regression', () => {
         const path = decodeURIComponent(parsed.pathname.split('/contents/')[1] ?? '')
         const ref = parsed.searchParams.get('ref')
         const pins = ref === realPromotionHeadSha ? realHeadPins : basePins
-        const content =
-          manifests(pins)[
-            path.endsWith('deployment.yaml')
-              ? 'deployment'
-              : path.endsWith('kustomization.yaml')
-                ? 'kustomization'
-                : 'applicationSet'
-          ]
+        const pinManifests = manifests(pins)
+        const content = new Map([
+          ['argocd/applications/bayn/deployment.yaml', pinManifests.deployment],
+          ['argocd/applications/bayn/kustomization.yaml', pinManifests.kustomization],
+          ['argocd/applicationsets/product.yaml', pinManifests.applicationSet],
+          ['argocd/applications/bayn/lifecycle-current.yaml', pinManifests.lifecycleCurrent],
+          ['argocd/applications/bayn/lifecycle-previous.yaml', pinManifests.lifecyclePrevious],
+        ]).get(path)
+        if (content === undefined) throw new Error(`unexpected manifest ${path}`)
         return Response.json({
           type: 'file',
           encoding: 'base64',
