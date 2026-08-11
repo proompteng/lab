@@ -32,6 +32,7 @@ import type {
   ForwardPerformanceTransactionEvidence,
 } from './model'
 import { Pipeable } from '../pipeable'
+import { intentExecutionKey, uniqueRows } from './postgres-decisions'
 
 const TerminalCycleRow = Schema.Struct({
   cycle_id: Sha256,
@@ -781,36 +782,6 @@ const ledgerReceiptQuery = (
     AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
   ORDER BY receipt.broker_event_id COLLATE "C"
 `
-
-const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {
-  const byKey = new Map<string, Row | null>()
-  for (const row of rows) {
-    const identity = key(row)
-    byKey.set(identity, byKey.has(identity) ? null : row)
-  }
-  return byKey
-}
-
-const intentExecutionKey = (input: {
-  readonly cycleId: string
-  readonly decisionHash: string
-  readonly accountId: string
-  readonly symbol: string
-  readonly side: 'BUY' | 'SELL'
-  readonly quantityMicros: string
-  readonly replanGenerationHash?: string
-  readonly createdAt: string
-}): string =>
-  JSON.stringify([
-    input.cycleId,
-    input.decisionHash,
-    input.accountId,
-    input.symbol,
-    input.side,
-    input.quantityMicros,
-    input.replanGenerationHash ?? null,
-    input.createdAt,
-  ])
 
 const executionEvidenceFromRows = (
   decisionRows: readonly (typeof CycleDecisionRow.Type)[],

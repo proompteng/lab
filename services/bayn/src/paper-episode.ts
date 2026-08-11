@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { notionalMicros } from './execution-model'
 import { Sha256Schema } from './schemas'
+import { utcInstantFromEpochMillis } from './time'
 
 export const QualificationBindingSchema = Schema.Struct({
   runId: Sha256Schema,
@@ -131,6 +132,19 @@ export const paperGrantFromGeneration = (generation: PersistedPaperGrantBinding)
           resultHash: generation.qualificationResultHash,
         },
       }
+
+export const paperEpisodeCloseGraceMs = 15 * 60_000
+
+export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
+  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs)
+
+/** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
+export const paperEpisodeReceiptFinalizationGraceMs = 15 * 60_000
+
+export const paperEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
+  utcInstantFromEpochMillis(
+    Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt)) + paperEpisodeReceiptFinalizationGraceMs,
+  )
 
 export type PaperEpisodeFailure =
   | { readonly _tag: 'IdentityDrift' }
