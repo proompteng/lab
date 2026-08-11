@@ -10,6 +10,7 @@ import {
 } from './cycle-observability'
 import type { QualificationResult } from './qualification'
 import type { RetainedAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
+import { CycleNotDueReason } from './cycle-runner/model'
 import { IsoDateSchema, UtcInstantSchema } from './schemas'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
@@ -108,6 +109,7 @@ export const AutonomousCyclePassObservationSchema = Schema.Union([
       'ACQUIRED',
       'REACQUIRED',
     ]),
+    notDueReason: Schema.optionalKey(Schema.Enum(CycleNotDueReason)),
     cadenceDecision: Schema.optionalKey(MonthEndCadenceDecisionSchema),
   }),
   Schema.Struct({

@@ -13,13 +13,12 @@ import {
 } from './calendar-decisions'
 import {
   runnerError,
+  CycleNotDueReason,
   type CycleCandidate,
   type CycleRunContext,
   type CycleRunnerError,
   type CycleRunResult,
 } from './model'
-import { Pipeable } from '../pipeable'
-
 type CycleNotDueResult = Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>
 
 export interface CycleAcquireMaterial {
@@ -49,6 +48,7 @@ const selectCycleCalendarPublication = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
+  knownMissedPaperBootstrap: boolean,
 ): Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure> => {
   const candidate: CycleCandidate = {
     qualificationRunId: context.qualificationRunId,
@@ -74,10 +74,24 @@ const selectCycleCalendarPublication = <R>(
       makeDueCycleDraft(candidate, observation, executionSession),
       (cause): CycleCalendarCandidateFailure => ({ _tag: 'CycleDraftConstructionFailed', signalSessionDate, cause }),
     ),
-    (draft): CycleCalendarCandidateDecision =>
-      draft === undefined
-        ? { _tag: 'NOT_DUE', result: { outcome: 'NOT_DUE', observedAt, ...common } }
-        : { _tag: 'ACQUIRE', material: { publication, draft, ...common } },
+    (draft): CycleCalendarCandidateDecision => {
+      if (draft === undefined) {
+        return {
+          _tag: 'NOT_DUE',
+          result: { outcome: 'NOT_DUE', reason: CycleNotDueReason.MonthEndCadence, observedAt, ...common },
+        }
+      }
+      if (
+        context.cadence === 'PAPER_BOOTSTRAP' &&
+        (knownMissedPaperBootstrap || observedAt >= draft.window.publicationDeadlineAt)
+      ) {
+        return {
+          _tag: 'NOT_DUE',
+          result: { outcome: 'NOT_DUE', reason: CycleNotDueReason.StalePaperBootstrap, observedAt, ...common },
+        }
+      }
+      return { _tag: 'ACQUIRE', material: { publication, draft, ...common } }
+    },
   )
 }
 
@@ -87,6 +101,7 @@ const selectCycleCalendarCandidateDataFirst = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
+  knownMissedPaperBootstrap = false,
 ): Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure> => {
   const [first, ...remaining] = publications
   return remaining.reduce<Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>>(
@@ -97,24 +112,30 @@ const selectCycleCalendarCandidateDataFirst = <R>(
           current._tag === 'ACQUIRE'
             ? Result.succeed(current)
             : pipe(
-                selectCycleCalendarPublication(context, publication, observation, calendarReadContentHash, observedAt),
+                selectCycleCalendarPublication(
+                  context,
+                  publication,
+                  observation,
+                  calendarReadContentHash,
+                  observedAt,
+                  knownMissedPaperBootstrap,
+                ),
                 Result.map((next) => (next._tag === 'ACQUIRE' ? next : current)),
               ),
         ),
       ),
-    selectCycleCalendarPublication(context, first, observation, calendarReadContentHash, observedAt),
+    selectCycleCalendarPublication(
+      context,
+      first,
+      observation,
+      calendarReadContentHash,
+      observedAt,
+      knownMissedPaperBootstrap,
+    ),
   )
 }
 
-export const selectCycleCalendarCandidate = Pipeable.generic<
-  <R>(
-    publications: NonEmptyPublications,
-    observation: MarketCalendarObservation,
-    calendarReadContentHash: string,
-    observedAt: string,
-  ) => (context: CycleRunContext<R>) => Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>,
-  typeof selectCycleCalendarCandidateDataFirst
->(5, selectCycleCalendarCandidateDataFirst)
+export const selectCycleCalendarCandidate = selectCycleCalendarCandidateDataFirst
 
 export const publicationFailureError = (cause: CyclePublicationFailure): CycleRunnerError =>
   runnerError({

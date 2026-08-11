@@ -6,6 +6,7 @@ import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
   deriveCycleOperationsStatusResult,
+  projectResearchPaperBootstrapWaiting,
   renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsStatus,
@@ -290,7 +291,12 @@ const deriveCycleStatus = (
           ...unknownCycleOperationsStatus(renderCycleOperationsStatusFailure(failure)),
           checkedAt: null,
         }),
-        onSuccess: (status) => status,
+        onSuccess: (status) =>
+          projectResearchPaperBootstrapWaiting(
+            status,
+            runtime.paperActivation?._tag === 'Realized' && runtime.paperActivation.grant === 'Research',
+            runtime.autonomousCycleLoop.lastPass,
+          ),
       },
     )
   }

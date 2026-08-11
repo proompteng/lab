@@ -1219,6 +1219,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 30, name: 'clear_unused_research_paper_rearm' },
       { migration_id: 31, name: 'blocked_paper_generation_rollover' },
       { migration_id: 32, name: 'lifecycle_commands' },
+      { migration_id: 33, name: 'lifecycle_command_not_due_reason' },
     ])
   })
 

@@ -48,6 +48,8 @@ import {
   type CycleRunContext,
   type CycleRunResult,
 } from '../../cycle-runner'
+import { CycleNotDueReason } from '../../cycle-runner/model'
+import { decideMonthEndCadenceEligibility } from '../../cycle-observability'
 import { runAutonomousCycleUntilSettled } from '../../cycle-runner/program'
 import { AuthorityGenerationStore, ExecutionStoreLive } from '../execution-store'
 import { LifecycleCommandStore } from '../lifecycle-command'
@@ -4939,7 +4941,39 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const conflicting = yield* Effect.exit(
             fence.transaction(store.begin({ ...command, commandId: lifecycleCommandId('primary', 3), sequence: 3 })),
           )
-          return { recoveredCursor, resumed, completed, replay, nextCursor, conflicting }
+          const secondCommand = {
+            controllerKey: 'primary',
+            commandId: lifecycleCommandId('primary', 2),
+            sequence: 2,
+            issuedAt: new Date(Date.parse(issuedAt) + 1).toISOString(),
+          }
+          const secondBegin = yield* fence.transaction(store.begin(secondCommand))
+          const secondCompletedAt = new Date().toISOString()
+          const secondObservation = {
+            result: 'SUCCESS' as const,
+            outcome: 'NOT_DUE' as const,
+            observedAt: secondCompletedAt,
+            notDueReason: CycleNotDueReason.StalePaperBootstrap,
+            cadenceDecision: decideMonthEndCadenceEligibility({
+              signalSessionDate: '2026-08-10',
+              executionSessionDate: '2026-08-11',
+            }),
+          }
+          const secondCompleted = yield* fence.transaction(
+            store.complete({ ...secondCommand, completedAt: secondCompletedAt, observation: secondObservation }),
+          )
+          const secondReplay = yield* fence.transaction(store.begin(secondCommand))
+          return {
+            recoveredCursor,
+            resumed,
+            completed,
+            replay,
+            nextCursor,
+            conflicting,
+            secondBegin,
+            secondCompleted,
+            secondReplay,
+          }
         }),
       )
 
@@ -4949,6 +4983,24 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         completed: { result: 'SUCCESS', outcome: 'NOT_DUE' },
         replay: { _tag: 'Completed', observation: { result: 'SUCCESS', outcome: 'NOT_DUE' } },
         nextCursor: { _tag: 'Next', sequence: 2 },
+        secondBegin: { _tag: 'Execute' },
+        secondCompleted: {
+          result: 'SUCCESS',
+          outcome: 'NOT_DUE',
+          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          cadenceDecision: {
+            signalSessionDate: '2026-08-10',
+            executionSessionDate: '2026-08-11',
+          },
+        },
+        secondReplay: {
+          _tag: 'Completed',
+          observation: {
+            result: 'SUCCESS',
+            outcome: 'NOT_DUE',
+            notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          },
+        },
       })
       expect(Exit.isFailure(recovered.conflicting)).toBe(true)
     } finally {

@@ -41,6 +41,11 @@ export interface CycleCandidate {
   readonly executionPolicy: CycleExecutionPolicy
 }
 
+export enum CycleNotDueReason {
+  MonthEndCadence = 'MONTH_END_CADENCE',
+  StalePaperBootstrap = 'STALE_PAPER_BOOTSTRAP',
+}
+
 export type CycleBindingResult = Exclude<CyclePublicationReadiness, { readonly outcome: 'WAITING' }>
 
 export type CycleRunResult =
@@ -81,6 +86,8 @@ export type CycleRunResult =
     }
   | {
       readonly outcome: 'NOT_DUE'
+      /** Optional only for compatibility with lifecycle observations persisted before reasons were recorded. */
+      readonly reason?: CycleNotDueReason
       readonly signalSessionDate: string
       readonly executionSessionDate: string
       readonly observedAt: string

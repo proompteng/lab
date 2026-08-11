@@ -4,7 +4,13 @@ import { decideMonthEndCadenceEligibility, type MonthEndCadenceDecision } from '
 import { CycleState, type AutonomousCycle } from '../cycle'
 import type { CycleReadinessError } from '../cycle-readiness'
 import type { CycleRecoverySelection } from '../cycle-recovery'
-import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
+import {
+  runnerError,
+  type CycleNotDueReason,
+  type CyclePassObservation,
+  type CycleRunnerError,
+  type CycleRunResult,
+} from './model'
 import { Pipeable } from '../pipeable'
 
 export const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure'] => {
@@ -83,6 +89,7 @@ export type RetainedAutonomousCyclePassObservation =
       readonly result: 'SUCCESS'
       readonly observedAt: string
       readonly outcome: CycleRunResult['outcome']
+      readonly notDueReason?: CycleNotDueReason
       readonly cadenceDecision?: MonthEndCadenceDecision
     }
   | {
@@ -110,6 +117,9 @@ export const retainAutonomousCyclePassObservation = (
     result: 'SUCCESS',
     observedAt: observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'NOT_DUE' && observation.result.reason !== undefined
+      ? { notDueReason: observation.result.reason }
+      : {}),
     ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
   }
 }
@@ -201,6 +211,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         message: 'Bayn autonomous cycle pass completed',
         annotations: {
           outcome: result.outcome,
+          ...(result.reason === undefined ? {} : { notDueReason: result.reason }),
           signalSessionDate: result.signalSessionDate,
           executionSessionDate: result.executionSessionDate,
           observedAt: result.observedAt,

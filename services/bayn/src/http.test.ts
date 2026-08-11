@@ -28,7 +28,7 @@ import {
   MonthEndCadenceReason,
 } from './cycle-observability'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from './cycle'
-import type { CyclePassObservation, CycleRunResult } from './cycle-runner/model'
+import { CycleNotDueReason, type CyclePassObservation, type CycleRunResult } from './cycle-runner/model'
 import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
@@ -1478,6 +1478,93 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_cycle_reason{reason="last_cycle_blocked"} 1')
     expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_provenance_mismatch"} 1')
     expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_data_stale"} 0')
+  })
+
+  test('exposes the reconciled stale research bootstrap wait in status and metrics', () => {
+    const base = readyState()
+    const checkedAt = '2026-08-11T17:30:00.000Z'
+    const generationHash = '4'.repeat(64)
+    const state: RuntimeState = {
+      ...base,
+      cycle: {
+        ...base.cycle,
+        last: {
+          cycleId: '1'.repeat(64),
+          accountId: 'paper-account-1',
+          signalSessionDate: '2026-08-10',
+          executionSessionDate: '2026-08-11',
+          phase: CycleState.Blocked,
+          snapshotId: null,
+          decisionHash: null,
+          terminalReason: CycleTerminalReason.MissedPublication,
+          submissionOpenAt: '2026-08-11T13:30:00.000Z',
+          submissionCutoffAt: '2026-08-11T13:58:00.000Z',
+          executionOpenAt: '2026-08-11T14:30:00.000Z',
+          executionCloseAt: '2026-08-11T21:00:00.000Z',
+          createdAt: '2026-08-11T17:12:00.000Z',
+          updatedAt: '2026-08-11T17:12:00.000Z',
+          terminalAt: '2026-08-11T17:12:00.000Z',
+        },
+        authority: {
+          generationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+          kill: KillState.Clear,
+          reason: null,
+          updatedAt: checkedAt,
+        },
+        reconciliation: {
+          accountId: 'paper-account-1',
+          reconciliationId: '5'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt: checkedAt,
+          coversLatestMutation: true,
+        },
+        condition: CycleOperationsCondition.Waiting,
+        reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+        alerts: { ...base.cycle.alerts, cycleFailed: false, reconciliationBlocked: false },
+      },
+      autonomousCycleLoop: {
+        configured: true,
+        owner: 'Restate',
+        startedAt: checkedAt,
+        lastPass: {
+          result: 'SUCCESS',
+          observedAt: checkedAt,
+          outcome: 'NOT_DUE',
+          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+        },
+      },
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: '6'.repeat(64),
+        generationHash,
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+
+    expect(facts.cycle).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      last: { terminalReason: CycleTerminalReason.MissedPublication },
+    })
+    expect(facts.autonomousCycleLoop.lastPass).toMatchObject({
+      result: 'SUCCESS',
+      outcome: 'NOT_DUE',
+      notDueReason: CycleNotDueReason.StalePaperBootstrap,
+    })
+    expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
+    expect(metrics).toContain('bayn_cycle_reason{reason="stale_paper_bootstrap_skipped"} 1')
+    expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_missed_publication_deadline"} 1')
+    expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="success"} 1')
+    expect(metrics).toContain('bayn_autonomous_cycle_not_due_reason{reason="stale_paper_bootstrap"} 1')
   })
 
   test('propagates interruption and finalizes a historical read exactly once', async () => {

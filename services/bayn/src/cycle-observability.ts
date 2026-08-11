@@ -1,7 +1,8 @@
 import { DateTime, Option, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { CycleState, type CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleNotDueReason, type CycleRunResult } from './cycle-runner/model'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from './time'
 import { Pipeable } from './pipeable'
 
@@ -338,6 +339,7 @@ export enum CycleOperationsReason {
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
+  StalePaperBootstrapSkipped = 'STALE_PAPER_BOOTSTRAP_SKIPPED',
 }
 
 export interface CycleOperationsAlerts {
@@ -361,6 +363,58 @@ export interface CycleOperationsStatus extends CycleOperationsProjection {
   readonly zeroMutation: boolean | null
   readonly alerts: CycleOperationsAlerts
   readonly error: string | null
+}
+
+export interface ResearchPaperBootstrapPassObservation {
+  readonly result: 'SUCCESS' | 'FAILURE'
+  readonly outcome?: CycleRunResult['outcome']
+  readonly notDueReason?: CycleNotDueReason
+  readonly cadenceDecision?: {
+    readonly signalSessionDate: string | null
+    readonly executionSessionDate: string | null
+  }
+}
+
+/**
+ * A research activation that starts after its first publication deadline must wait for a newer publication. The
+ * immutable missed cycle remains visible, but it is no longer an operational failure after a matching NOT_DUE pass
+ * and fresh exact reconciliation prove that no mutation is pending. Every other blocked-cycle state remains failed.
+ */
+export const projectResearchPaperBootstrapWaiting = (
+  status: CycleOperationsStatus,
+  enabled: boolean,
+  lastPass: ResearchPaperBootstrapPassObservation | null,
+): CycleOperationsStatus => {
+  const last = status.last
+  const cadence = lastPass?.cadenceDecision
+  if (
+    !enabled ||
+    status.condition !== CycleOperationsCondition.Failed ||
+    status.reason !== CycleOperationsReason.LastCycleBlocked ||
+    status.current !== null ||
+    last?.phase !== CycleState.Blocked ||
+    last.terminalReason !== CycleTerminalReason.MissedPublication ||
+    status.authority?.maximum !== Authority.Paper ||
+    status.authority.effective !== Authority.Paper ||
+    status.authority.kill !== KillState.Clear ||
+    status.reconciliation?.status !== ReconciliationStatus.Exact ||
+    status.reconciliation.discrepancyCount !== 0 ||
+    !status.reconciliation.coversLatestMutation ||
+    status.mutations.unresolvedCount !== 0 ||
+    lastPass?.result !== 'SUCCESS' ||
+    lastPass.outcome !== 'NOT_DUE' ||
+    lastPass.notDueReason !== CycleNotDueReason.StalePaperBootstrap ||
+    cadence?.signalSessionDate !== last.signalSessionDate ||
+    cadence.executionSessionDate !== last.executionSessionDate
+  ) {
+    return status
+  }
+  return {
+    ...status,
+    condition: CycleOperationsCondition.Waiting,
+    reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+    alerts: { ...status.alerts, cycleFailed: false },
+  }
 }
 
 export type CycleOperationsStatusFailure = {

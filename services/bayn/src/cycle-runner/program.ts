@@ -206,9 +206,17 @@ const interpretCycleCalendar = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
+  knownMissedPaperBootstrap: boolean,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   Effect.fromResult(
-    selectCycleCalendarCandidate(context, publications, observation, calendarReadContentHash, observedAt),
+    selectCycleCalendarCandidate(
+      context,
+      publications,
+      observation,
+      calendarReadContentHash,
+      observedAt,
+      knownMissedPaperBootstrap,
+    ),
   ).pipe(
     Effect.mapError(calendarCandidateFailureError),
     Effect.flatMap((decision) =>
@@ -218,10 +226,10 @@ const interpretCycleCalendar = <R>(
 
 const readCycleCalendar = <R>(
   context: CycleRunContext<R>,
-  publications: NonEmptyPublications,
+  selection: Extract<CycleAuthoritySelection, { readonly _tag: 'READ_CALENDAR' }>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> =>
   pipe(
-    marketCalendarQueryForPublications(publications),
+    marketCalendarQueryForPublications(selection.publications),
     Effect.fromResult,
     Effect.mapError(calendarQueryFailureError),
     Effect.flatMap((query) =>
@@ -242,7 +250,14 @@ const readCycleCalendar = <R>(
       pipe(
         currentIsoTime,
         Effect.flatMap((observedAt) =>
-          interpretCycleCalendar(context, publications, calendar.value, calendar.evidence.contentHash, observedAt),
+          interpretCycleCalendar(
+            context,
+            selection.publications,
+            calendar.value,
+            calendar.evidence.contentHash,
+            observedAt,
+            selection.reason === 'MISSED_PAPER_BOOTSTRAP',
+          ),
         ),
       ),
     ),
@@ -271,7 +286,7 @@ const interpretCycleAuthoritySelection = <R>(
         cycle: selection.cycle,
       })
     case 'READ_CALENDAR':
-      return readCycleCalendar(context, selection.publications)
+      return readCycleCalendar(context, selection)
   }
 }
 
