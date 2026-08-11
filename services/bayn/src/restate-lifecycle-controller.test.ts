@@ -7,20 +7,20 @@ import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
   lifecycleCommandFinalizationHeadroomMs,
   lifecycleCommandRequestTimeoutMs,
+  lifecycleHandlerTimeouts,
   makeLifecycleCommandClient,
 } from './restate-lifecycle-controller'
 
-const config = Result.getOrThrow(
-  decodeRestateLifecycleConfig({
-    schemaVersion: 'bayn.restate-lifecycle-config.v1',
-    controllerKey: 'primary',
-    commandBaseUrl: 'http://bayn-lifecycle-command.bayn.svc.cluster.local:8081',
-    operationTimeoutMs: 30_000,
-    pollIntervalMs: 30_000,
-    sourceRevision: 'a'.repeat(40),
-    port: 9080,
-  }),
-)
+const configInput = {
+  schemaVersion: 'bayn.restate-lifecycle-config.v1',
+  controllerKey: 'primary',
+  commandBaseUrl: 'http://bayn-lifecycle-command.bayn.svc.cluster.local:8081',
+  operationTimeoutMs: 30_000,
+  pollIntervalMs: 30_000,
+  sourceRevision: 'a'.repeat(40),
+  port: 9080,
+} as const
+const config = Result.getOrThrow(decodeRestateLifecycleConfig(configInput))
 
 const jsonResponse = (body: unknown, init: ResponseInit = {}): Response => {
   const headers = new Headers(init.headers)
@@ -33,6 +33,18 @@ describe('Restate lifecycle command client', () => {
     expect(lifecycleCommandRequestTimeoutMs(1_000)).toBe(1_000 + lifecycleCommandFinalizationHeadroomMs)
     expect(lifecycleCommandRequestTimeoutMs(30_000)).toBe(60_000)
     expect(lifecycleCommandRequestTimeoutMs(86_400_000)).toBe(86_400_000 + lifecycleCommandFinalizationHeadroomMs)
+  })
+
+  test('keeps Restate inactivity and abort limits beyond every accepted command request', () => {
+    for (const operationTimeoutMs of [1_000, 30_000, 86_400_000]) {
+      const expected = lifecycleHandlerTimeouts(operationTimeoutMs)
+
+      expect(expected).toEqual({
+        inactivityTimeout: operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs * 2,
+        abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+      })
+      expect(expected.inactivityTimeout).toBeGreaterThan(lifecycleCommandRequestTimeoutMs(operationTimeoutMs))
+    }
   })
 
   test('uses only the bound command origin and exact typed contracts', async () => {

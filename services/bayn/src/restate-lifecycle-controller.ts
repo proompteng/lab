@@ -86,6 +86,15 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
 export const lifecycleCommandRequestTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs
 
+// Let the bounded HTTP request finish and give Restate one additional journal-finalization window before requesting
+// suspension. The abort window then bounds non-cooperative code without cutting off any accepted Bayn operation.
+export const lifecycleHandlerTimeouts = (
+  operationTimeoutMs: number,
+): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
+  inactivityTimeout: lifecycleCommandRequestTimeoutMs(operationTimeoutMs) + lifecycleCommandFinalizationHeadroomMs,
+  abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+})
+
 const fetchJson = async (
   request: HttpRequest,
   url: string,
@@ -276,8 +285,7 @@ export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: Lifecy
     options: {
       ingressPrivate: true,
       enableLazyState: true,
-      inactivityTimeout: { minutes: 2 },
-      abortTimeout: { seconds: 60 },
+      ...lifecycleHandlerTimeouts(config.operationTimeoutMs),
     },
   })
 
@@ -300,7 +308,6 @@ export const makeBaynLifecycleBootstrap = (
       },
     },
     options: {
-      inactivityTimeout: { minutes: 2 },
-      abortTimeout: { seconds: 60 },
+      ...lifecycleHandlerTimeouts(config.operationTimeoutMs),
     },
   })
