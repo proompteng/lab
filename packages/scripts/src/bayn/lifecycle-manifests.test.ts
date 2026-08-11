@@ -111,6 +111,14 @@ describe('Bayn lifecycle release manifests', () => {
       ),
     ).toThrow('Bayn deployment must mount exactly one read-only lifecycle TokenReview identity')
     expect(() =>
+      validateBaynLifecycleCommandAuthentication(
+        deployment.replace(
+          '                  expirationSeconds: 3600\n',
+          '                  audience: bayn.proompteng.ai/lifecycle-command\n                  expirationSeconds: 3600\n',
+        ),
+      ),
+    ).toThrow('Bayn lifecycle TokenReview identity must use the API server audience and be bounded and CA-verified')
+    expect(() =>
       validateBaynLifecycleOperationTimeout(
         deployment.replace(
           `            - name: BAYN_OPERATION_TIMEOUT_MS\n              value: "30000"\n`,

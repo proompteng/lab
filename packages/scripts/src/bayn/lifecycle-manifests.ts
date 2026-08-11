@@ -100,7 +100,7 @@ export const validateBaynLifecycleCommandAuthentication = (deployment: string): 
     (source) =>
       record(source) &&
       record(source.serviceAccountToken) &&
-      source.serviceAccountToken.audience === 'https://kubernetes.default.svc.cluster.local' &&
+      source.serviceAccountToken.audience === undefined &&
       source.serviceAccountToken.expirationSeconds === 3600 &&
       source.serviceAccountToken.path === 'token',
   )
@@ -116,7 +116,9 @@ export const validateBaynLifecycleCommandAuthentication = (deployment: string): 
       source.configMap.items[0].path === 'ca.crt',
   )
   if (projected.defaultMode !== 444 || serviceAccountTokens.length !== 1 || rootCas.length !== 1) {
-    throw new Error('Bayn lifecycle TokenReview identity must be bounded, audience-bound, and CA-verified')
+    throw new Error(
+      'Bayn lifecycle TokenReview identity must use the API server audience and be bounded and CA-verified',
+    )
   }
 }
 
