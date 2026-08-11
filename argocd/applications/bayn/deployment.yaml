@@ -198,7 +198,8 @@ spec:
             defaultMode: 0444
             sources:
               - serviceAccountToken:
-                  audience: https://kubernetes.default.svc.cluster.local
+                  # Omit audience so kubelet binds this reviewer credential to
+                  # the API server's configured authentication audience.
                   expirationSeconds: 3600
                   path: token
               - configMap:
