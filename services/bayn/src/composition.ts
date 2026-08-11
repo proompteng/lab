@@ -328,15 +328,21 @@ const lifecycleDriverInterpreter = (
         }).pipe(Effect.scoped, Effect.orDie)) satisfies RecoveryFirstCycleDriverInterpreter)
     : undefined
 
+export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
+  authority.maximum === Authority.Observe && authority.effective === Authority.Observe
+    ? Result.succeed(authority.generationHash)
+    : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')
+
 const observeCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   lifecycleCommandStore: import('./db/lifecycle-command').LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
+  authorityGenerationHash: string,
 ) => {
   const interpretCycleDriver = lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
   return makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+    authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
@@ -885,6 +891,7 @@ const readCurrentResearchPaperGeneration = (
 const prepareResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
+  sourceGenerationHash: string,
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
@@ -902,7 +909,7 @@ const prepareResearchPaperActivation = (
 
     const proof = researchCapitalGrantProof(request)
     const authority = yield* lifecycle
-      .activateResearchCapitalGrant(proof)
+      .activateResearchCapitalGrant(proof, sourceGenerationHash)
       .pipe(
         Effect.mapError((cause) =>
           paperActivationOperationalError('research PAPER generation activation failed', cause),
@@ -1014,19 +1021,22 @@ export const prepareOrRecoverResearchPaperActivation = (
         'research PAPER build continuation requires the exact active generation',
       )
     }
+    const activationSourceGenerationHash =
+      decision._tag === 'Rearm'
+        ? yield* Effect.fromResult(
+            paperObserveSuccessorGenerationHash({
+              previousPaperGenerationHash: authority.generationHash,
+            }),
+          ).pipe(
+            Effect.mapError((cause) =>
+              paperActivationOperationalError('research PAPER OBSERVE successor hashing failed', cause),
+            ),
+          )
+        : currentSourceGenerationHash
     if (decision._tag === 'Rearm') {
-      const successorGenerationHash = yield* Effect.fromResult(
-        paperObserveSuccessorGenerationHash({
-          previousPaperGenerationHash: authority.generationHash,
-        }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          paperActivationOperationalError('research PAPER OBSERVE successor hashing failed', cause),
-        ),
-      )
       const rearmed = yield* authorityStore
         .ensureAuthorityGeneration({
-          generationHash: successorGenerationHash,
+          generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
         })
         .pipe(
@@ -1035,7 +1045,7 @@ export const prepareOrRecoverResearchPaperActivation = (
           ),
         )
       if (
-        rearmed.generationHash !== successorGenerationHash ||
+        rearmed.generationHash !== activationSourceGenerationHash ||
         rearmed.maximum !== Authority.Observe ||
         rearmed.effective !== Authority.Observe ||
         rearmed.kill !== KillState.Clear
@@ -1047,7 +1057,14 @@ export const prepareOrRecoverResearchPaperActivation = (
     }
     if (decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
       yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
-      return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle)
+      return yield* prepareResearchPaperActivation(
+        plan,
+        request,
+        activationSourceGenerationHash,
+        session,
+        authorityStore,
+        lifecycle,
+      )
     }
     const generation =
       currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
@@ -1471,11 +1488,27 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           Layer.succeed(PaperCycleClosureStore, runtimeServices.paperCycleClosureStore),
                         )
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
-                          observeCycle(
-                            observePlan,
-                            runtimeServices.lifecycleCommandStore,
-                            runtimeServices.writerFence,
-                          )(startup).pipe(
+                          Effect.gen(function* () {
+                            if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
+                              return yield* paperActivationOperationalError(
+                                'OBSERVE cycle startup requires durable authority state reads',
+                              )
+                            }
+                            const authority = yield* runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
+                              Effect.mapError((cause) =>
+                                paperActivationOperationalError('OBSERVE cycle startup authority read failed', cause),
+                              ),
+                            )
+                            const authorityGenerationHash = yield* Effect.fromResult(
+                              observeCycleGenerationHash(authority),
+                            ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
+                            return yield* observeCycle(
+                              observePlan,
+                              runtimeServices.lifecycleCommandStore,
+                              runtimeServices.writerFence,
+                              authorityGenerationHash,
+                            )(startup)
+                          }).pipe(
                             // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                             Effect.provide(cycleResources),
                             Effect.map((loop) =>

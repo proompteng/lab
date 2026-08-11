@@ -15,6 +15,7 @@ import {
   ApplicationPlatformLive,
   closedCycleReceiptEmissionAllowed,
   finalizePaperEpisode,
+  observeCycleGenerationHash,
   paperReceiptFinalizationWindowOpen,
   prepareOrRecoverResearchPaperActivation,
   recoverPaperActivationGeneration,
@@ -23,7 +24,7 @@ import {
   retryClosedCycleReceipts,
 } from './composition'
 import { makeApplicationPlan, type ApplicationPlanFor } from './app'
-import { alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
+import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import { makeStrategyProtocolHash } from './contracts'
 import type {
@@ -46,8 +47,9 @@ import {
 import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
+import { canonicalHashV1Result } from './hash'
 import { utcInstantFromEpochMillis } from './time'
-import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
+import { loadObserveRiskPolicy, paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
 
@@ -404,6 +406,31 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn PAPER startup recovery boundary', () => {
+  test('starts OBSERVE cycles from the persisted successor and never from stale PAPER authority', () => {
+    const successorGenerationHash = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash: hash('12') }),
+    )
+    const observeAuthority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: successorGenerationHash,
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      version: 3,
+      updatedAt: '2026-08-11T13:00:00.000Z',
+    }
+
+    expect(observeCycleGenerationHash(observeAuthority)).toEqual(Result.succeed(successorGenerationHash))
+    expect(
+      observeCycleGenerationHash({
+        ...observeAuthority,
+        generationHash: hash('34'),
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+      }),
+    ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+  })
+
   test('resumes only the exact active research generation across a reviewed build change', async () => {
     const logs: Array<{ readonly message: unknown; readonly annotations: Record<string, unknown> }> = []
     const logger = Logger.make<unknown, void>((entry) => {
@@ -486,6 +513,183 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
       expect(failure.message).toBe(fixture.message)
     }
+  })
+
+  test('activates research PAPER from the persisted OBSERVE successor instead of the bootstrap hash', async () => {
+    const previousPaperGenerationHash = hash('12')
+    const successorGenerationHash = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }),
+    )
+    const riskPolicy = await Effect.runPromise(
+      loadObserveRiskPolicy(continuationAccountId, continuationApplicationPlan.strategy.definition.parameters.universe),
+    )
+    const riskPolicyHash = Result.getOrThrow(canonicalHashV1Result(riskPolicy))
+    const plan = { ...continuationResearchPlan, activation: continuationBuild, riskPolicyHash }
+    const { schemaVersion: _schemaVersion, ...planFields } = plan
+    const request = Result.getOrThrow(
+      makeResearchPaperActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchPaperPlanHash(plan)) },
+        ...planFields,
+      }),
+    )
+    const generation = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Paper,
+        previousGenerationHash: successorGenerationHash,
+        grant: request.grant,
+        activationSourceRevision: request.activation.sourceRevision,
+        activationImageRepository: request.activation.imageRepository,
+        activationImageDigest: request.activation.imageDigest,
+        strategyName: request.strategy.name,
+        strategyBehaviorHash: request.strategy.behaviorHash,
+        strategyParameterHash: request.strategy.parameterHash,
+        strategyParameterSchemaVersion: request.strategy.parameterSchemaVersion,
+        strategyProtocolHash: request.strategy.protocolHash,
+        accountId: request.broker.accountId,
+        brokerIdentityHash: request.broker.identityHash,
+        riskPolicyHash: request.riskPolicyHash,
+        proofPlanHash: request.grant.planHash,
+        reconciliationId: hash('34'),
+        reconciliationContentHash: hash('56'),
+      }),
+    )
+    let authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: successorGenerationHash,
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      version: 3,
+      updatedAt: '2026-08-31T20:00:00.000Z',
+    }
+    const operations: string[] = []
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: ({ generationHash, maximum }) =>
+        Effect.sync(() => {
+          operations.push(`validate:${generationHash}`)
+          expect({ generationHash, maximum }).toEqual({
+            generationHash: successorGenerationHash,
+            maximum: Authority.Observe,
+          })
+          return authority
+        }),
+      readAuthorityState: Effect.sync(() => authority),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === generation.generationHash ? generation : undefined),
+    }
+    const lifecycle: CapitalGrantLifecycleStoreShape = {
+      prepareCapitalGrant: () => Effect.die(new Error('research activation must not prepare qualified authority')),
+      activateCapitalGrant: () => Effect.die(new Error('research activation must not activate qualified authority')),
+      activateResearchCapitalGrant: (_proof, sourceGenerationHash) =>
+        Effect.sync(() => {
+          operations.push(`activate:${sourceGenerationHash}`)
+          authority = {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: generation.generationHash,
+            maximum: Authority.Paper,
+            effective: Authority.Paper,
+            kill: KillState.Clear,
+            version: 4,
+            updatedAt: '2026-08-31T20:00:01.000Z',
+          }
+          return authority
+        }),
+    }
+    const unusedBrokerRead = Effect.die(new Error('research activation performed an unrelated broker read'))
+    const session: BrokerSessionShape = {
+      connection: {
+        provider: continuationApplicationPlan.config.alpaca.provider,
+        environment: continuationApplicationPlan.config.alpaca.environment,
+        identity: continuationApplicationPlan.config.alpaca.identity,
+        baseUrl: continuationApplicationPlan.config.alpaca.baseUrl,
+        expectedAccountId: continuationApplicationPlan.config.alpaca.expectedAccountId,
+        key: continuationApplicationPlan.config.alpaca.key,
+        secret: continuationApplicationPlan.config.alpaca.secret,
+        proxyUrl: continuationApplicationPlan.config.alpaca.proxyUrl,
+        operationTimeoutMs: continuationApplicationPlan.config.alpaca.operationTimeoutMs,
+        retryAttempts: continuationApplicationPlan.config.alpaca.retryAttempts,
+      },
+      preflight: {
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        accountId: continuationAccountId,
+        accountStatus: AccountStatus.Active,
+        accountBlocked: false,
+        tradingBlocked: false,
+        tradeSuspendedByUser: false,
+        accountHash: hash('78'),
+        fractionalTrading: true,
+        accountConfigurationHash: hash('9a'),
+        openOrderCount: 0,
+        recentOrderCount: 0,
+        ordersHash: hash('bc'),
+        positionCount: 0,
+        positionsHash: hash('de'),
+        fillCount: 0,
+        fillsHash: hash('f0'),
+        marketCalendarSessionCount: 3,
+        marketCalendarHash: hash('12'),
+        orderById: 'NOT_FOUND',
+        orderByClientId: 'NOT_FOUND',
+      },
+      read: {
+        account: unusedBrokerRead,
+        accountConfiguration: unusedBrokerRead,
+        assetBySymbol: () => unusedBrokerRead,
+        positions: unusedBrokerRead,
+        orders: () => unusedBrokerRead,
+        orderById: () => unusedBrokerRead,
+        orderByClientId: () => unusedBrokerRead,
+        fillActivities: () => unusedBrokerRead,
+        marketCalendar: (query: { readonly start: string; readonly end: string }) =>
+          Effect.succeed({
+            value: {
+              schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+              source: 'alpaca-v2-calendar',
+              requestedRange: query,
+              timeZone: 'UTC',
+              sessions: [
+                { date: '2026-09-01', openAt: '2026-09-01T13:30:00.000Z', closeAt: '2026-09-01T20:00:00.000Z' },
+                { date: '2026-09-02', openAt: '2026-09-02T13:30:00.000Z', closeAt: '2026-09-02T20:00:00.000Z' },
+                { date: '2026-09-03', openAt: '2026-09-03T13:30:00.000Z', closeAt: '2026-09-03T20:00:00.000Z' },
+              ],
+              normalizedResponseHash: hash('34'),
+            },
+            evidence: {
+              requestId: 'calendar-request',
+              status: 200,
+              contentHash: hash('56'),
+              observedAt: '2026-08-31T20:00:00.000Z',
+            },
+          }),
+      },
+    }
+
+    const activated = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchPaperActivation(
+          continuationApplicationPlan,
+          request,
+          null,
+          session,
+          authorityStore,
+          lifecycle,
+          Effect.sync(() => operations.push('reconcile')),
+          config.operationTimeoutMs,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(activated).toEqual(generation)
+    expect(operations).toEqual([
+      `validate:${successorGenerationHash}`,
+      'reconcile',
+      `activate:${successorGenerationHash}`,
+    ])
   })
 
   test('recovers the exact continuation after cutoff and rejects stale build or generation bindings', async () => {

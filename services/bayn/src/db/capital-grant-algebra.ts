@@ -739,7 +739,7 @@ const researchRuntimeMismatch = (
 
 export const validateResearchCapitalGrantProof = (input: {
   readonly proof: ResearchCapitalGrantProofBinding
-  readonly configuredSourceGenerationHash: string
+  readonly sourceGenerationHash: string
   readonly accountId: string
   readonly brokerIdentityHash: string
   readonly build: AuthorityBuildFacts
@@ -761,7 +761,7 @@ export const validateResearchCapitalGrantProof = (input: {
   ) {
     return researchRuntimeMismatch('strategy')
   }
-  return /^[0-9a-f]{64}$/.test(input.configuredSourceGenerationHash)
+  return /^[0-9a-f]{64}$/.test(input.sourceGenerationHash)
     ? Result.succeed(undefined)
     : researchRuntimeMismatch('generationHash')
 }

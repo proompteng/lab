@@ -1959,9 +1959,9 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(staticRequest))
+          const activated = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
           const beforeReplay = yield* readAuthorityTupleEvidence
-          const replay = yield* activateResearch(researchProofBinding(staticRequest))
+          const replay = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
           const afterReplay = yield* readAuthorityTupleEvidence
           const research = yield* readResearch(expected.generationHash)
           const qualified = yield* readQualified(expected.generationHash)
@@ -2032,7 +2032,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation))
+          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2148,7 +2148,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation))
+          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           yield* sql`
             WITH timing AS (
               SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
@@ -2330,7 +2330,22 @@ describePostgres('paper accounting persistence', () => {
               maximum: Authority.Observe,
             }),
           )
-          yield* seedExactReconciliation(exactReconciliation('qualified-v2-recovery-rollover'))
+          const rolloverReconciliation = exactReconciliation('qualified-v2-recovery-rollover')
+          const rolloverStateHash = hash('qualified-v2-recovery-rollover-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            )
+            SELECT
+              ${rolloverReconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${rolloverStateHash}, ${rolloverStateHash}, ${rolloverReconciliation.contentHash}, 'EXACT',
+              ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+            FROM authority_state AS state
+            WHERE state.singleton
+          `
+          // Recovery requires a strictly later, independently sampled activation time.
+          yield* sql`SELECT pg_sleep(0.01)`
           const rearmed = yield* store.ensureAuthorityGeneration({
             generationHash: nextSourceGenerationHash,
             maximum: Authority.Observe,
@@ -2383,7 +2398,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: configuredObserveGenerationHash,
             maximum: Authority.Observe,
           })
-          const paper = yield* activateResearch(researchProofBinding(activation))
+          const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2451,6 +2466,21 @@ describePostgres('paper accounting persistence', () => {
               maximum: Authority.Observe,
             }),
           )
+          const nextReconciliation = exactReconciliation('blocked-rollover-next-activation')
+          const nextStateHash = hash('blocked-rollover-next-activation-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            )
+            SELECT
+              ${nextReconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${nextStateHash}, ${nextStateHash}, ${nextReconciliation.contentHash}, 'EXACT',
+              ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+            FROM authority_state AS state
+            WHERE state.singleton
+          `
+          const nextPaper = yield* activateResearch(researchProofBinding(activation), first.generationHash)
           const history = yield* sql<{
             generation_hash: string
             maximum: Authority
@@ -2460,7 +2490,7 @@ describePostgres('paper accounting persistence', () => {
             FROM authority_generations
             ORDER BY authority_version
           `
-          return { first, history, paper, replay, reusedBootstrap }
+          return { first, history, nextPaper, paper, replay, reusedBootstrap }
         }),
       )
 
@@ -2485,6 +2515,13 @@ describePostgres('paper accounting persistence', () => {
         failure: 'conflict',
         message: 'authority generation hash was already used',
       })
+      expect(result.nextPaper).toMatchObject({
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+      })
+      expect(result.nextPaper.version).toBe(result.replay.version + 1)
+      expect(result.nextPaper.generationHash).not.toBe(result.paper.generationHash)
       expect(result.history).toEqual([
         {
           generation_hash: configuredObserveGenerationHash,
@@ -2500,6 +2537,11 @@ describePostgres('paper accounting persistence', () => {
           generation_hash: expectedSuccessor,
           maximum: Authority.Observe,
           previous_generation_hash: result.paper.generationHash,
+        },
+        {
+          generation_hash: result.nextPaper.generationHash,
+          maximum: Authority.Paper,
+          previous_generation_hash: expectedSuccessor,
         },
       ])
     } finally {
@@ -2526,7 +2568,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* activateResearch(researchProofBinding(activation))
+          yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state

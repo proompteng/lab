@@ -61,13 +61,14 @@ export interface CapitalGrantInterpreter {
   readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
+    sourceGenerationHash: string,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
 interface ResearchPaperRuntimeBinding {
   readonly accountId: string
   readonly brokerIdentityHash: string
-  readonly configuredSourceGenerationHash: string
+  readonly sourceGenerationHash: string
 }
 
 const makeCapitalGrantInterpreterDataFirst = (
@@ -98,7 +99,9 @@ const makeCapitalGrantInterpreterDataFirst = (
       ),
     )
 
-  const requireResearchPaperRuntime = (): Effect.Effect<ResearchPaperRuntimeBinding, ExecutionStoreError> => {
+  const requireResearchPaperRuntime = (
+    sourceGenerationHash: string,
+  ): Effect.Effect<ResearchPaperRuntimeBinding, ExecutionStoreError> => {
     const identity = config.execution.brokerIdentity
     const alpaca = config.alpaca
     if (
@@ -116,7 +119,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     return Effect.succeed({
       accountId: identity.accountId,
       brokerIdentityHash: identity.identityHash,
-      configuredSourceGenerationHash: alpaca.authorityGenerationHash,
+      sourceGenerationHash,
     })
   }
 
@@ -497,14 +500,14 @@ const makeCapitalGrantInterpreterDataFirst = (
       yield* liftAuthorityDecision(
         validatePaperPrepareGeneration(current, {
           accountId: binding.accountId,
-          configuredGenerationHash: binding.configuredSourceGenerationHash,
+          configuredGenerationHash: binding.sourceGenerationHash,
           qualificationRunId: proof.grant.planHash,
         }),
       )
       yield* liftAuthorityDecision(
         validateResearchCapitalGrantProof({
           proof,
-          configuredSourceGenerationHash: binding.configuredSourceGenerationHash,
+          sourceGenerationHash: binding.sourceGenerationHash,
           accountId: binding.accountId,
           brokerIdentityHash: binding.brokerIdentityHash,
           build: config.build,
@@ -523,9 +526,7 @@ const makeCapitalGrantInterpreterDataFirst = (
   ) =>
     researchPaperGenerationFromRow(history).pipe(
       Effect.flatMap((stored) =>
-        liftAuthorityDecision(
-          validateResearchPaperGenerationReplay(stored, proof, binding.configuredSourceGenerationHash),
-        ),
+        liftAuthorityDecision(validateResearchPaperGenerationReplay(stored, proof, binding.sourceGenerationHash)),
       ),
       Effect.as(current),
     )
@@ -598,16 +599,16 @@ const makeCapitalGrantInterpreterDataFirst = (
       return yield* writeResearchPaperGenerationActivation(decision, derived, activatedAt)
     })
 
-  const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding) =>
+  const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding, sourceGenerationHash: string) =>
     runExecutionOperation(
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeResearchCapitalGrantProofBinding(candidate)
-        const binding = yield* requireResearchPaperRuntime()
+        const binding = yield* requireResearchPaperRuntime(sourceGenerationHash)
         yield* liftAuthorityDecision(
           validateResearchCapitalGrantProof({
             proof,
-            configuredSourceGenerationHash: binding.configuredSourceGenerationHash,
+            sourceGenerationHash: binding.sourceGenerationHash,
             accountId: binding.accountId,
             brokerIdentityHash: binding.brokerIdentityHash,
             build: config.build,
