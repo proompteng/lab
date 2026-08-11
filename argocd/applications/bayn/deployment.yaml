@@ -45,7 +45,7 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-            - name: lifecycle-command
+            - name: lifecycle-cmd
               containerPort: 8081
               protocol: TCP
           env:

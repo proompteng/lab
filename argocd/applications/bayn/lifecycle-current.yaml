@@ -187,9 +187,9 @@ spec:
   selector:
     app.kubernetes.io/name: bayn
   ports:
-    - name: lifecycle-command
+    - name: lifecycle-cmd
       port: 8081
-      targetPort: lifecycle-command
+      targetPort: lifecycle-cmd
       protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
@@ -211,7 +211,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bayn-lifecycle
       ports:
-        - port: lifecycle-command
+        - port: lifecycle-cmd
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
@@ -290,7 +290,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bayn
       ports:
-        - port: lifecycle-command
+        - port: lifecycle-cmd
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
