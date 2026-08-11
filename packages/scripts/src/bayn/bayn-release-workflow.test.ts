@@ -46,3 +46,10 @@ test('holds release when the lifecycle manifest renderer changed after the built
   expect(releaseWorkflow).toContain('packages/scripts/src/bayn/lifecycle-manifests.ts \\')
   expect(releaseWorkflow.split('packages/scripts/src/bayn/lifecycle-manifests.ts').length - 1).toBe(1)
 })
+
+test('installs locked manifest renderer dependencies before executing the release renderer', () => {
+  const install = 'bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts'
+  const render = 'bun packages/scripts/src/bayn/update-manifests.ts'
+  expect(releaseWorkflow.split(install).length - 1).toBe(1)
+  expect(releaseWorkflow.indexOf(install)).toBeLessThan(releaseWorkflow.indexOf(render))
+})
