@@ -56,7 +56,7 @@ export interface LifecycleCommandClient {
 }
 
 type HttpRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
-export type LifecycleCommandCredential = () => Promise<string>
+export type LifecycleCommandCredential = (signal: AbortSignal) => Promise<string>
 
 export const lifecycleLog = (
   message: string,
@@ -131,9 +131,9 @@ const fetchJson = async (
   request: HttpRequest,
   url: string,
   init: RequestInit,
-  requestTimeoutMs: number,
+  signal: AbortSignal,
 ): Promise<unknown> => {
-  const response = await request(url, { ...init, signal: AbortSignal.timeout(requestTimeoutMs) })
+  const response = await request(url, { ...init, signal })
   if (!response.ok) {
     const message = `Bayn lifecycle command boundary returned HTTP ${response.status}`
     if (response.status >= 400 && response.status < 500) throw terminal(message)
@@ -150,7 +150,8 @@ export const makeLifecycleCommandClient = (
   const commandRequestTimeoutMs = lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs)
   return {
     readCursor: async () => {
-      const token = await credential()
+      const signal = AbortSignal.timeout(lifecycleCursorRequestTimeoutMs)
+      const token = await credential(signal)
       return decodeOrTerminal(
         decodeLifecycleCommandCursorResponse(
           await fetchJson(
@@ -160,14 +161,15 @@ export const makeLifecycleCommandClient = (
               method: 'GET',
               headers: { authorization: `Bearer ${token}` },
             },
-            lifecycleCursorRequestTimeoutMs,
+            signal,
           ),
         ),
         'Bayn lifecycle command cursor response failed validation',
       )
     },
     advance: async (command) => {
-      const token = await credential()
+      const signal = AbortSignal.timeout(commandRequestTimeoutMs)
+      const token = await credential(signal)
       return decodeOrTerminal(
         decodeLifecycleCommandResponse(
           await fetchJson(
@@ -182,7 +184,7 @@ export const makeLifecycleCommandClient = (
                 sourceRevision: config.sourceRevision,
               }),
             },
-            commandRequestTimeoutMs,
+            signal,
           ),
         ),
         'Bayn lifecycle command response failed validation',

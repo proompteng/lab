@@ -71,6 +71,7 @@ describe('Restate lifecycle command client', () => {
 
   test('uses only the bound command origin and exact typed contracts', async () => {
     const requests: Array<{ readonly url: string; readonly init: RequestInit }> = []
+    const credentialSignals: AbortSignal[] = []
     const request = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       requests.push({ url, init })
@@ -97,7 +98,14 @@ describe('Restate lifecycle command client', () => {
         },
       })
     }
-    const client = makeLifecycleCommandClient(config, async () => 'projected-worker-token', request)
+    const client = makeLifecycleCommandClient(
+      config,
+      async (signal) => {
+        credentialSignals.push(signal)
+        return 'projected-worker-token'
+      },
+      request,
+    )
 
     expect(await client.readCursor()).toMatchObject({ cursor: { _tag: 'Next', sequence: 4 } })
     expect(
@@ -118,6 +126,7 @@ describe('Restate lifecycle command client', () => {
       'Bearer projected-worker-token',
     ])
     expect(requests.every(({ init }) => init.signal instanceof AbortSignal && !init.signal.aborted)).toBe(true)
+    expect(requests.map(({ init }) => init.signal)).toEqual(credentialSignals)
     const advanceBody = requests[1]?.init.body
     if (typeof advanceBody !== 'string') throw new Error('advance request body is not a string')
     expect(JSON.parse(advanceBody)).toEqual({
