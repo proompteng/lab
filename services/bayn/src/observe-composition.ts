@@ -57,7 +57,12 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { decidePaperEpisodeCycleTerminalization, paperEpisodeAllocationCapitalMicros } from './paper-episode'
+import {
+  decidePaperEpisodeCycleTerminalization,
+  paperEpisodeAllocationCapitalMicros,
+  paperEpisodeCloseExpiresAt,
+  paperEpisodeReceiptFinalizationExpiresAt,
+} from './paper-episode'
 import {
   Authority,
   IntentState,
@@ -82,7 +87,7 @@ import type {
   ObserveShadowDecisionDocument,
   PaperDecisionDocument,
 } from './shadow-decision-contract'
-import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
+import { currentUtcInstant } from './time'
 import {
   planTargets,
   type SignalSessionReferencePrices,
@@ -152,6 +157,8 @@ export {
   paperSubmitExpiresAt,
   paperCycleHasFilledIntent,
   paperClosePlanNeedsResidualReplan,
+  paperEpisodeCloseExpiresAt,
+  paperEpisodeReceiptFinalizationExpiresAt,
   projectWorstCasePendingMutationPosition,
 }
 export type {
@@ -1111,19 +1118,6 @@ export type ObserveAutonomousCycleInput = {
   readonly paperEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
 }
-
-export const paperEpisodeCloseGraceMs = 15 * 60_000
-
-export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs)
-
-/** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
-export const paperEpisodeReceiptFinalizationGraceMs = 15 * 60_000
-
-export const paperEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(
-    Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt)) + paperEpisodeReceiptFinalizationGraceMs,
-  )
 
 type ObserveDecisionRuntime =
   | BrokerRead
