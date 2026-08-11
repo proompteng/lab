@@ -20,6 +20,7 @@ import {
 } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { paperObserveSuccessorGenerationHash, recoverBlockedGenerationToObserve } from '../blocked-generation-recovery'
 import { orderRequestBody } from '../broker/alpaca-mutations'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
@@ -71,6 +72,7 @@ import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
 import { paperEpisodeFailureRestrictionPrefix } from '../paper-episode'
+import type { BlockedCycleIntentStoreShape } from '../execution/intents'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -1957,9 +1959,9 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(staticRequest))
+          const activated = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
           const beforeReplay = yield* readAuthorityTupleEvidence
-          const replay = yield* activateResearch(researchProofBinding(staticRequest))
+          const replay = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
           const afterReplay = yield* readAuthorityTupleEvidence
           const research = yield* readResearch(expected.generationHash)
           const qualified = yield* readQualified(expected.generationHash)
@@ -2030,7 +2032,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation))
+          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2146,7 +2148,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation))
+          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           yield* sql`
             WITH timing AS (
               SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
@@ -2328,7 +2330,22 @@ describePostgres('paper accounting persistence', () => {
               maximum: Authority.Observe,
             }),
           )
-          yield* seedExactReconciliation(exactReconciliation('qualified-v2-recovery-rollover'))
+          const rolloverReconciliation = exactReconciliation('qualified-v2-recovery-rollover')
+          const rolloverStateHash = hash('qualified-v2-recovery-rollover-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            )
+            SELECT
+              ${rolloverReconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${rolloverStateHash}, ${rolloverStateHash}, ${rolloverReconciliation.contentHash}, 'EXACT',
+              ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+            FROM authority_state AS state
+            WHERE state.singleton
+          `
+          // Recovery requires a strictly later, independently sampled activation time.
+          yield* sql`SELECT pg_sleep(0.01)`
           const rearmed = yield* store.ensureAuthorityGeneration({
             generationHash: nextSourceGenerationHash,
             maximum: Authority.Observe,
@@ -2359,6 +2376,179 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('rolls a settled PAPER generation into one fresh restart-safe OBSERVE successor', async () => {
+    const configuredObserveGenerationHash = hash('blocked-rollover-configured-observe')
+    const activationReconciliation = exactReconciliation('blocked-rollover-activation')
+    const activation = makeResearchActivation(configuredObserveGenerationHash, activationReconciliation)
+    const runtime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      researchRuntimeConfig(configuredObserveGenerationHash),
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const writerFence = yield* WriterFence
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: configuredObserveGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(
+            `${paperEpisodeFailureRestrictionPrefix} blocked rollover regression`,
+            restrictionTime.updated_at.toISOString(),
+          )
+
+          const blockedIntents: BlockedCycleIntentStoreShape = {
+            terminalizeUntouchedApproved: () => Effect.die(new Error('startup settlement only')),
+            settleCurrentBlockedGeneration: () =>
+              Effect.succeed({
+                _tag: 'BlockedGenerationSettled' as const,
+                authorityGenerationHash: paper.generationHash,
+                blockedCycleCount: 1,
+                blockedIntentCount: 0,
+                expiredIntentCount: 0,
+                intentCount: 0,
+                terminalIntentCount: 0,
+              }),
+          }
+          const reconciliation = exactReconciliation('blocked-rollover-after-settlement')
+          const reconcileAfterSettlement = Effect.gen(function* () {
+            const stateHash = hash('blocked-rollover-after-settlement-state')
+            yield* sql`
+                INSERT INTO reconciliations (
+                  reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+                  content_hash, status, discrepancies, reconciled_at
+                )
+                SELECT
+                  ${reconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+                  ${stateHash}, ${stateHash}, ${reconciliation.contentHash}, 'EXACT',
+                  ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+                FROM authority_state AS state
+                WHERE state.singleton
+              `
+          }).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'database',
+                operation: 'test-blocked-rollover',
+                message: 'test reconciliation write failed',
+                cause,
+              }),
+            ),
+          )
+          const first = yield* recoverBlockedGenerationToObserve({
+            accountId,
+            blockedIntents,
+            authorityStore: store,
+            writerFence,
+            reconcileAfterSettlement,
+          })
+          if (first._tag !== 'RolledOver') return yield* Effect.die(new Error('rollover receipt is missing'))
+          const replay = yield* store.ensureAuthorityGeneration({
+            generationHash: first.generationHash,
+            maximum: Authority.Observe,
+          })
+          const reusedBootstrap = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: configuredObserveGenerationHash,
+              maximum: Authority.Observe,
+            }),
+          )
+          const nextReconciliation = exactReconciliation('blocked-rollover-next-activation')
+          const nextStateHash = hash('blocked-rollover-next-activation-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            )
+            SELECT
+              ${nextReconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${nextStateHash}, ${nextStateHash}, ${nextReconciliation.contentHash}, 'EXACT',
+              ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+            FROM authority_state AS state
+            WHERE state.singleton
+          `
+          const nextPaper = yield* activateResearch(researchProofBinding(activation), first.generationHash)
+          const history = yield* sql<{
+            generation_hash: string
+            maximum: Authority
+            previous_generation_hash: string | null
+          }>`
+            SELECT generation_hash, maximum, previous_generation_hash
+            FROM authority_generations
+            ORDER BY authority_version
+          `
+          return { first, history, nextPaper, paper, replay, reusedBootstrap }
+        }),
+      )
+
+      const expectedSuccessor = Result.getOrThrow(
+        paperObserveSuccessorGenerationHash({
+          previousPaperGenerationHash: result.paper.generationHash,
+        }),
+      )
+      expect(result.first).toMatchObject({
+        _tag: 'RolledOver',
+        previousGenerationHash: result.paper.generationHash,
+        generationHash: expectedSuccessor,
+      })
+      expect(result.replay).toMatchObject({
+        generationHash: expectedSuccessor,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+      expect(result.reusedBootstrap).toMatchObject({
+        operation: 'authority',
+        failure: 'conflict',
+        message: 'authority generation hash was already used',
+      })
+      expect(result.nextPaper).toMatchObject({
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+      })
+      expect(result.nextPaper.version).toBe(result.replay.version + 1)
+      expect(result.nextPaper.generationHash).not.toBe(result.paper.generationHash)
+      expect(result.history).toEqual([
+        {
+          generation_hash: configuredObserveGenerationHash,
+          maximum: Authority.Observe,
+          previous_generation_hash: null,
+        },
+        {
+          generation_hash: result.paper.generationHash,
+          maximum: Authority.Paper,
+          previous_generation_hash: configuredObserveGenerationHash,
+        },
+        {
+          generation_hash: expectedSuccessor,
+          maximum: Authority.Observe,
+          previous_generation_hash: result.paper.generationHash,
+        },
+        {
+          generation_hash: result.nextPaper.generationHash,
+          maximum: Authority.Paper,
+          previous_generation_hash: expectedSuccessor,
+        },
+      ])
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('rotates a non-rearm research PAPER kill to OBSERVE without clearing it', async () => {
     const sourceGenerationHash = hash('operator-killed-research-paper-source')
     const nextSourceGenerationHash = hash('operator-killed-research-paper-next-source')
@@ -2378,7 +2568,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* activateResearch(researchProofBinding(activation))
+          yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state

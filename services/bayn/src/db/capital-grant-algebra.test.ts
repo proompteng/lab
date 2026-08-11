@@ -654,7 +654,7 @@ describe('PAPER authority algebra', () => {
       successOf(
         validateResearchCapitalGrantProof({
           proof: research,
-          configuredSourceGenerationHash: observeGenerationHash,
+          sourceGenerationHash: observeGenerationHash,
           accountId,
           brokerIdentityHash: research.brokerIdentityHash,
           build: config.build,

@@ -31,6 +31,7 @@ import {
   type AutonomousRuntimeResolver,
 } from './app'
 import {
+  paperObserveSuccessorGenerationHash,
   recoverBlockedGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
@@ -327,15 +328,21 @@ const lifecycleDriverInterpreter = (
         }).pipe(Effect.scoped, Effect.orDie)) satisfies RecoveryFirstCycleDriverInterpreter)
     : undefined
 
+export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
+  authority.maximum === Authority.Observe && authority.effective === Authority.Observe
+    ? Result.succeed(authority.generationHash)
+    : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')
+
 const observeCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   lifecycleCommandStore: import('./db/lifecycle-command').LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
+  authorityGenerationHash: string,
 ) => {
   const interpretCycleDriver = lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
   return makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+    authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
@@ -646,10 +653,10 @@ const readBoundPaperActivationGeneration = (
       }
       const binding =
         buildContinuation === null
-          ? researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, generation)
+          ? researchPaperGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
           : researchPaperBuildContinuationIsBound(
               buildContinuation,
-              plan.config.alpaca.authorityGenerationHash,
+              generation.previousGenerationHash,
               generation,
               plan.config.build,
             )
@@ -884,6 +891,7 @@ const readCurrentResearchPaperGeneration = (
 const prepareResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
+  sourceGenerationHash: string,
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
@@ -901,7 +909,7 @@ const prepareResearchPaperActivation = (
 
     const proof = researchCapitalGrantProof(request)
     const authority = yield* lifecycle
-      .activateResearchCapitalGrant(proof)
+      .activateResearchCapitalGrant(proof, sourceGenerationHash)
       .pipe(
         Effect.mapError((cause) =>
           paperActivationOperationalError('research PAPER generation activation failed', cause),
@@ -960,18 +968,35 @@ export const prepareOrRecoverResearchPaperActivation = (
       Effect.mapError((cause) => paperActivationOperationalError('research PAPER authority read failed', cause)),
     )
     const currentGeneration = yield* readCurrentResearchPaperGeneration(authority, authorityStore)
+    const currentSourceGenerationHash = currentGeneration?.previousGenerationHash ?? authority.generationHash
+    if (authority.maximum === Authority.Observe) {
+      const replayed = yield* authorityStore
+        .ensureAuthorityGeneration({ generationHash: authority.generationHash, maximum: Authority.Observe })
+        .pipe(
+          Effect.mapError((cause) =>
+            paperActivationOperationalError('research PAPER current OBSERVE generation validation failed', cause),
+          ),
+        )
+      if (
+        replayed.generationHash !== authority.generationHash ||
+        replayed.maximum !== authority.maximum ||
+        replayed.effective !== authority.effective ||
+        replayed.kill !== authority.kill ||
+        replayed.version !== authority.version
+      ) {
+        return yield* paperActivationOperationalError(
+          'research PAPER current OBSERVE generation changed during validation',
+        )
+      }
+    }
     const currentGenerationMatchesRequest =
       currentGeneration !== undefined &&
       Result.isSuccess(
         buildContinuation === null
-          ? researchPaperGenerationIsBoundToRequest(
-              request,
-              plan.config.alpaca.authorityGenerationHash,
-              currentGeneration,
-            )
+          ? researchPaperGenerationIsBoundToRequest(request, currentSourceGenerationHash, currentGeneration)
           : researchPaperBuildContinuationIsBound(
               buildContinuation,
-              plan.config.alpaca.authorityGenerationHash,
+              currentSourceGenerationHash,
               currentGeneration,
               plan.config.build,
             ),
@@ -979,7 +1004,7 @@ export const prepareOrRecoverResearchPaperActivation = (
     const decision = yield* Effect.fromResult(
       decidePaperEpisodeAuthority({
         generationHash: authority.generationHash,
-        sourceGenerationHash: plan.config.alpaca.authorityGenerationHash,
+        sourceGenerationHash: currentSourceGenerationHash,
         currentGenerationMatchesRequest,
         maximum: authority.maximum,
         effective: authority.effective,
@@ -996,10 +1021,22 @@ export const prepareOrRecoverResearchPaperActivation = (
         'research PAPER build continuation requires the exact active generation',
       )
     }
+    const activationSourceGenerationHash =
+      decision._tag === 'Rearm'
+        ? yield* Effect.fromResult(
+            paperObserveSuccessorGenerationHash({
+              previousPaperGenerationHash: authority.generationHash,
+            }),
+          ).pipe(
+            Effect.mapError((cause) =>
+              paperActivationOperationalError('research PAPER OBSERVE successor hashing failed', cause),
+            ),
+          )
+        : currentSourceGenerationHash
     if (decision._tag === 'Rearm') {
       const rearmed = yield* authorityStore
         .ensureAuthorityGeneration({
-          generationHash: plan.config.alpaca.authorityGenerationHash,
+          generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
         })
         .pipe(
@@ -1008,7 +1045,7 @@ export const prepareOrRecoverResearchPaperActivation = (
           ),
         )
       if (
-        rearmed.generationHash !== plan.config.alpaca.authorityGenerationHash ||
+        rearmed.generationHash !== activationSourceGenerationHash ||
         rearmed.maximum !== Authority.Observe ||
         rearmed.effective !== Authority.Observe ||
         rearmed.kill !== KillState.Clear
@@ -1020,7 +1057,14 @@ export const prepareOrRecoverResearchPaperActivation = (
     }
     if (decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
       yield* refreshResearchPaperActivationReconciliation(reconcile, operationTimeoutMs)
-      return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle)
+      return yield* prepareResearchPaperActivation(
+        plan,
+        request,
+        activationSourceGenerationHash,
+        session,
+        authorityStore,
+        lifecycle,
+      )
     }
     const generation =
       currentGeneration ?? (yield* paperActivationOperationalError('research PAPER recovery lost durable history'))
@@ -1444,11 +1488,27 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           Layer.succeed(PaperCycleClosureStore, runtimeServices.paperCycleClosureStore),
                         )
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
-                          observeCycle(
-                            observePlan,
-                            runtimeServices.lifecycleCommandStore,
-                            runtimeServices.writerFence,
-                          )(startup).pipe(
+                          Effect.gen(function* () {
+                            if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
+                              return yield* paperActivationOperationalError(
+                                'OBSERVE cycle startup requires durable authority state reads',
+                              )
+                            }
+                            const authority = yield* runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
+                              Effect.mapError((cause) =>
+                                paperActivationOperationalError('OBSERVE cycle startup authority read failed', cause),
+                              ),
+                            )
+                            const authorityGenerationHash = yield* Effect.fromResult(
+                              observeCycleGenerationHash(authority),
+                            ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
+                            return yield* observeCycle(
+                              observePlan,
+                              runtimeServices.lifecycleCommandStore,
+                              runtimeServices.writerFence,
+                              authorityGenerationHash,
+                            )(startup)
+                          }).pipe(
                             // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                             Effect.provide(cycleResources),
                             Effect.map((loop) =>
@@ -1472,7 +1532,6 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                         })
                         const recoverBlockedGeneration = recoverBlockedGenerationToObserve({
                           accountId: observePlan.config.alpaca.expectedAccountId,
-                          observeGenerationHash: observePlan.config.alpaca.authorityGenerationHash,
                           blockedIntents: runtimeServices.blockedCycleIntentStore,
                           authorityStore: runtimeServices.authorityGenerationStore,
                           writerFence: runtimeServices.writerFence,

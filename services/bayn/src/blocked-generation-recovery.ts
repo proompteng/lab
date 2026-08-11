@@ -1,11 +1,27 @@
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
 import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
 import { Authority, KillState } from './execution/contracts'
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { currentUtcInstant } from './time'
+
+const observeSuccessorSchemaVersion = 'bayn.paper-observe-successor-generation.v1' as const
+
+/**
+ * Derives the immutable OBSERVE successor for one terminal PAPER generation. The configured generation is only a
+ * bootstrap key, not a reusable history key; the terminal PAPER hash makes retries deterministic and independent of
+ * which reviewed build performs recovery.
+ */
+export const paperObserveSuccessorGenerationHash = (input: {
+  readonly previousPaperGenerationHash: string
+}): Result.Result<string, CanonicalHashFailure> =>
+  canonicalHashV1Result({
+    schemaVersion: observeSuccessorSchemaVersion,
+    previousPaperGenerationHash: input.previousPaperGenerationHash,
+  })
 
 export type BlockedGenerationRolloverReceipt =
   | { readonly _tag: 'NotRequired' }
@@ -21,7 +37,6 @@ export type BlockedGenerationRolloverReceipt =
 
 export interface BlockedGenerationRecoveryInput<R> {
   readonly accountId: string
-  readonly observeGenerationHash: string
   readonly blockedIntents: BlockedCycleIntentStoreShape
   readonly authorityStore: AuthorityGenerationStoreShape
   readonly writerFence: WriterFenceService
@@ -95,11 +110,16 @@ export const recoverBlockedGenerationToObserve = <R>(
     )
 
     yield* input.reconcileAfterSettlement
+    const successorGenerationHash = yield* Effect.fromResult(
+      paperObserveSuccessorGenerationHash({
+        previousPaperGenerationHash: settlement.authorityGenerationHash,
+      }),
+    ).pipe(Effect.mapError((cause) => recoveryError('blocked generation OBSERVE successor hashing failed', cause)))
     const authority = yield* input.authorityStore
-      .ensureAuthorityGeneration({ generationHash: input.observeGenerationHash, maximum: Authority.Observe })
+      .ensureAuthorityGeneration({ generationHash: successorGenerationHash, maximum: Authority.Observe })
       .pipe(Effect.mapError((cause) => recoveryError('blocked generation OBSERVE rollover failed', cause)))
     if (
-      authority.generationHash !== input.observeGenerationHash ||
+      authority.generationHash !== successorGenerationHash ||
       authority.maximum !== Authority.Observe ||
       authority.effective !== Authority.Observe ||
       authority.kill !== KillState.Clear
