@@ -79,7 +79,7 @@ spec:
         - name: bayn
           image: bayn-main
           ports:
-            - name: lifecycle-command
+            - name: lifecycle-cmd
               containerPort: 8081
               protocol: TCP
           env:

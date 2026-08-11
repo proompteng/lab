@@ -84,11 +84,14 @@ describe('Bayn lifecycle release manifests', () => {
     expect(() =>
       validateBaynLifecycleCommandPort(
         deployment.replace(
-          `            - name: lifecycle-command\n              containerPort: 8081\n              protocol: TCP\n`,
+          `            - name: lifecycle-cmd\n              containerPort: 8081\n              protocol: TCP\n`,
           '',
         ),
       ),
-    ).toThrow('Bayn deployment must expose exactly one lifecycle-command container port on TCP 8081')
+    ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
+    expect(() =>
+      validateBaynLifecycleCommandPort(deployment.replace('name: lifecycle-cmd', 'name: lifecycle-command')),
+    ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
     expect(() =>
       validateBaynLifecycleCommandAuthentication(
         deployment.replace(

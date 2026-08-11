@@ -60,11 +60,11 @@ export const validateBaynLifecycleCommandPort = (deployment: string): void => {
   const lifecyclePorts = Array.isArray(ports)
     ? ports.filter(
         (port) =>
-          record(port) && port.name === 'lifecycle-command' && port.containerPort === 8081 && port.protocol === 'TCP',
+          record(port) && port.name === 'lifecycle-cmd' && port.containerPort === 8081 && port.protocol === 'TCP',
       )
     : []
   if (lifecyclePorts.length !== 1) {
-    throw new Error('Bayn deployment must expose exactly one lifecycle-command container port on TCP 8081')
+    throw new Error('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
   }
 }
 
@@ -339,9 +339,9 @@ spec:
   selector:
     app.kubernetes.io/name: bayn
   ports:
-    - name: lifecycle-command
+    - name: lifecycle-cmd
       port: 8081
-      targetPort: lifecycle-command
+      targetPort: lifecycle-cmd
       protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
@@ -363,7 +363,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bayn-lifecycle
       ports:
-        - port: lifecycle-command
+        - port: lifecycle-cmd
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
@@ -442,7 +442,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bayn
       ports:
-        - port: lifecycle-command
+        - port: lifecycle-cmd
           protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
