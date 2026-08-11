@@ -16,18 +16,27 @@ export interface CycleAuthoritySlot {
 
 type NonEmptyAuthoritySlots = readonly [CycleAuthoritySlot, ...CycleAuthoritySlot[]]
 
+interface TerminalCycleAuthoritySlot {
+  readonly publication: MarketDataInspection
+  readonly cycle: AutonomousCycle
+}
+
 export type CycleAuthoritySelection =
   | Extract<CycleAuthoritySlotDecision, { readonly _tag: 'RESUME' | 'ALREADY_ACQUIRED' }>
-  | { readonly _tag: 'READ_CALENDAR'; readonly publications: NonEmptyPublications }
+  | {
+      readonly _tag: 'READ_CALENDAR'
+      readonly publications: NonEmptyPublications
+      readonly reason: 'DISCOVERY' | 'MISSED_PAPER_BOOTSTRAP'
+    }
   | { readonly _tag: 'ALREADY_TERMINAL'; readonly cycle: AutonomousCycle }
 
 export type CycleAuthoritySelectionState =
   | {
       readonly _tag: 'UNCLAIMED'
       readonly publications: NonEmptyPublications
-      readonly latestTerminal: AutonomousCycle | undefined
+      readonly latestTerminal: TerminalCycleAuthoritySlot | undefined
     }
-  | { readonly _tag: 'TERMINAL'; readonly latestTerminal: AutonomousCycle }
+  | { readonly _tag: 'TERMINAL'; readonly latestTerminal: TerminalCycleAuthoritySlot }
 
 type CycleAuthoritySelectionReduction =
   | { readonly _tag: 'CONTINUE'; readonly state: CycleAuthoritySelectionState }
@@ -53,7 +62,10 @@ export const beginCycleAuthoritySelection = (slot: CycleAuthoritySlot): CycleAut
         state: { _tag: 'UNCLAIMED', publications: [decision.publication], latestTerminal: undefined },
       }
     case 'TERMINAL':
-      return { _tag: 'CONTINUE', state: { _tag: 'TERMINAL', latestTerminal: decision.cycle } }
+      return {
+        _tag: 'CONTINUE',
+        state: { _tag: 'TERMINAL', latestTerminal: { publication: slot.publication, cycle: decision.cycle } },
+      }
     case 'RESUME':
     case 'ALREADY_ACQUIRED':
       return decision
@@ -79,7 +91,7 @@ const reduceCycleAuthoritySelectionDataFirst = (
         _tag: 'CONTINUE',
         state:
           state._tag === 'UNCLAIMED' && state.latestTerminal === undefined
-            ? { ...state, latestTerminal: decision.cycle }
+            ? { ...state, latestTerminal: { publication: slot.publication, cycle: decision.cycle } }
             : state,
       }
     case 'RESUME':
@@ -94,8 +106,17 @@ const completeCycleAuthoritySelectionDataFirst = (
   state: CycleAuthoritySelectionState,
   cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
 ): CycleAuthoritySelection => {
-  if (state._tag === 'TERMINAL') return { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
-  const latestTerminal = state.latestTerminal
+  if (state._tag === 'TERMINAL') {
+    const cycle = state.latestTerminal.cycle
+    return cadence === 'PAPER_BOOTSTRAP' && cycle.terminalReason === CycleTerminalReason.MissedPublication
+      ? {
+          _tag: 'READ_CALENDAR',
+          publications: [state.latestTerminal.publication],
+          reason: 'MISSED_PAPER_BOOTSTRAP',
+        }
+      : { _tag: 'ALREADY_TERMINAL', cycle }
+  }
+  const latestTerminal = state.latestTerminal?.cycle
   if (cadence === 'PAPER_BOOTSTRAP' && latestTerminal !== undefined && latestTerminal.state !== CycleState.NoTrade) {
     const newerPublications = state.publications.filter(
       (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
@@ -106,11 +127,26 @@ const completeCycleAuthoritySelectionDataFirst = (
       latestTerminal.terminalReason === CycleTerminalReason.MissedPublication &&
       firstNewerPublication !== undefined
     ) {
-      return { _tag: 'READ_CALENDAR', publications: [firstNewerPublication, ...remainingNewerPublications] }
+      return {
+        _tag: 'READ_CALENDAR',
+        publications: [firstNewerPublication, ...remainingNewerPublications],
+        reason: 'DISCOVERY',
+      }
+    }
+    if (
+      latestTerminal.state === CycleState.Blocked &&
+      latestTerminal.terminalReason === CycleTerminalReason.MissedPublication &&
+      state.latestTerminal !== undefined
+    ) {
+      return {
+        _tag: 'READ_CALENDAR',
+        publications: [state.latestTerminal.publication],
+        reason: 'MISSED_PAPER_BOOTSTRAP',
+      }
     }
     return { _tag: 'ALREADY_TERMINAL', cycle: latestTerminal }
   }
-  return { _tag: 'READ_CALENDAR', publications: state.publications }
+  return { _tag: 'READ_CALENDAR', publications: state.publications, reason: 'DISCOVERY' }
 }
 
 export const completeCycleAuthoritySelection = Pipeable.by<

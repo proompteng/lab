@@ -5,13 +5,16 @@ import { historicalSandboxAuthority } from '../execution/legacy-authority'
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
+  CycleOperationsReason,
   deriveCycleOperationsStatusResult,
   renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from '../cycle-observability'
-import { Authority } from '../execution/contracts'
+import { CycleState, CycleTerminalReason } from '../cycle'
+import { CycleNotDueReason, type CycleRunResult } from '../cycle-runner/model'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'
 import type {
@@ -38,6 +41,69 @@ import type {
   SignalIdentityFailure,
 } from './model'
 import { Pipeable } from '../pipeable'
+
+export interface ResearchPaperBootstrapPassObservation {
+  readonly result: 'SUCCESS' | 'FAILURE'
+  readonly outcome?: CycleRunResult['outcome']
+  readonly notDueReason?: CycleNotDueReason
+  readonly cadenceDecision?: {
+    readonly signalSessionDate: string | null
+    readonly executionSessionDate: string | null
+  }
+}
+
+const observesMissedOrNewerBootstrap = (
+  last: NonNullable<CycleOperationsStatus['last']>,
+  cadence: NonNullable<ResearchPaperBootstrapPassObservation['cadenceDecision']> | undefined,
+): boolean => {
+  if (cadence === undefined || cadence.signalSessionDate === null || cadence.executionSessionDate === null) return false
+  const exact =
+    cadence.signalSessionDate === last.signalSessionDate && cadence.executionSessionDate === last.executionSessionDate
+  const newer =
+    cadence.signalSessionDate > last.signalSessionDate && cadence.executionSessionDate > last.executionSessionDate
+  return exact || newer
+}
+
+/**
+ * A research activation that starts after its first publication deadline must wait for a newer publication. The
+ * immutable missed cycle remains visible, but it is no longer an operational failure after a matching NOT_DUE pass
+ * and fresh exact reconciliation prove that no mutation is pending. Every other blocked-cycle state remains failed.
+ */
+export const projectResearchPaperBootstrapWaiting = (
+  status: CycleOperationsStatus,
+  enabled: boolean,
+  lastPass: ResearchPaperBootstrapPassObservation | null,
+): CycleOperationsStatus => {
+  const last = status.last
+  const cadence = lastPass?.cadenceDecision
+  if (
+    !enabled ||
+    status.condition !== CycleOperationsCondition.Failed ||
+    status.reason !== CycleOperationsReason.LastCycleBlocked ||
+    status.current !== null ||
+    last?.phase !== CycleState.Blocked ||
+    last.terminalReason !== CycleTerminalReason.MissedPublication ||
+    status.authority?.maximum !== Authority.Paper ||
+    status.authority.effective !== Authority.Paper ||
+    status.authority.kill !== KillState.Clear ||
+    status.reconciliation?.status !== ReconciliationStatus.Exact ||
+    status.reconciliation.discrepancyCount !== 0 ||
+    !status.reconciliation.coversLatestMutation ||
+    status.mutations.unresolvedCount !== 0 ||
+    lastPass?.result !== 'SUCCESS' ||
+    lastPass.outcome !== 'NOT_DUE' ||
+    lastPass.notDueReason !== CycleNotDueReason.StalePaperBootstrap ||
+    !observesMissedOrNewerBootstrap(last, cadence)
+  ) {
+    return status
+  }
+  return {
+    ...status,
+    condition: CycleOperationsCondition.Waiting,
+    reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+    alerts: { ...status.alerts, cycleFailed: false },
+  }
+}
 
 const validateSignalIdentityDataFirst = (
   snapshot: FinalizedSnapshotProvenance,
@@ -290,7 +356,12 @@ const deriveCycleStatus = (
           ...unknownCycleOperationsStatus(renderCycleOperationsStatusFailure(failure)),
           checkedAt: null,
         }),
-        onSuccess: (status) => status,
+        onSuccess: (status) =>
+          projectResearchPaperBootstrapWaiting(
+            status,
+            runtime.paperActivation?._tag === 'Realized' && runtime.paperActivation.grant === 'Research',
+            runtime.autonomousCycleLoop.lastPass,
+          ),
       },
     )
   }

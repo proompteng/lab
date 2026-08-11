@@ -20,8 +20,14 @@ import {
   type ReadResult,
 } from './broker/alpaca'
 import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
-import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
+import {
+  CycleOperationsCondition,
+  CycleOperationsReason,
+  decideMonthEndCadenceEligibility,
+  type CycleOperationsProjection,
+} from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleNotDueReason } from './cycle-runner/model'
 import { currentUtcInstant } from './time'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { DatabaseError, EvidenceStore } from './db/evidence-store'
@@ -855,6 +861,96 @@ describe('Bayn continuous health', () => {
 
     expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+  })
+
+  test('recovers readiness after an exact stale research bootstrap wait and preserves immutable failure evidence', () => {
+    const checkedAt = '2026-08-11T17:30:00.000Z'
+    const terminalAt = '2026-08-11T17:12:00.000Z'
+    const generationHash = 'b'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: terminalAt,
+        lastPass: {
+          result: 'SUCCESS',
+          observedAt: checkedAt,
+          outcome: 'NOT_DUE',
+          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          cadenceDecision: decideMonthEndCadenceEligibility({
+            signalSessionDate: '2026-08-10',
+            executionSessionDate: '2026-08-11',
+          }),
+        },
+      },
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: 'a'.repeat(64),
+        generationHash,
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            last: {
+              ...pendingCycle(terminalAt),
+              signalSessionDate: '2026-08-10',
+              executionSessionDate: '2026-08-11',
+              phase: CycleState.Blocked,
+              snapshotId: null,
+              terminalReason: CycleTerminalReason.MissedPublication,
+              terminalAt,
+            },
+            authority: {
+              generationHash,
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+            reconciliation: {
+              accountId: brokerAccountId,
+              reconciliationId: 'c'.repeat(64),
+              status: ReconciliationStatus.Exact,
+              discrepancyCount: 0,
+              reconciledAt: checkedAt,
+              coversLatestMutation: true,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'READY',
+        cycle: {
+          condition: CycleOperationsCondition.Waiting,
+          reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+          last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
+          alerts: { cycleFailed: false, reconciliationBlocked: false },
+        },
+      },
+      failedDependencies: [],
+    })
   })
 
   test('observes a research cycle binding when startup evidence is unavailable', async () => {

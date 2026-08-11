@@ -16,6 +16,7 @@ import {
   type AutonomousCycleCadenceFreshness,
 } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleNotDueReason } from './cycle-runner/model'
 import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
@@ -172,6 +173,7 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               outcome: lastPass.outcome,
+              ...(lastPass.notDueReason === undefined ? {} : { notDueReason: lastPass.notDueReason }),
             }
           : {
               result: lastPass.result,
@@ -523,6 +525,11 @@ const renderPrometheusMetricsDataFirst = (
     cycleObservationAvailable === false ? 'unknown' : (state.cycle.last?.terminalReason?.toLowerCase() ?? 'none')
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
+  const notDueReasons = ['unknown', 'none', ...Object.values(CycleNotDueReason).map((reason) => reason.toLowerCase())]
+  const loopNotDueReason =
+    state.autonomousCycleLoop.lastPass?.result === 'SUCCESS' && state.autonomousCycleLoop.lastPass.outcome === 'NOT_DUE'
+      ? (state.autonomousCycleLoop.lastPass.notDueReason?.toLowerCase() ?? 'unknown')
+      : 'none'
   const paperActivationRealized = state.paperActivation?._tag === 'Realized'
   const effectiveBrokerMutation = paperActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
   const effectiveCapitalPromotion =
@@ -619,6 +626,11 @@ const renderPrometheusMetricsDataFirst = (
     '# TYPE bayn_autonomous_cycle_loop_last_pass gauge',
     ...loopResults.map(
       (result) => `bayn_autonomous_cycle_loop_last_pass{result="${result}"} ${loopResult === result ? 1 : 0}`,
+    ),
+    '# HELP bayn_autonomous_cycle_not_due_reason Exact bounded reason for the latest NOT_DUE pass.',
+    '# TYPE bayn_autonomous_cycle_not_due_reason gauge',
+    ...notDueReasons.map(
+      (reason) => `bayn_autonomous_cycle_not_due_reason{reason="${reason}"} ${loopNotDueReason === reason ? 1 : 0}`,
     ),
     ...(state.autonomousCycleLoop.lastPass === null
       ? []

@@ -17,6 +17,8 @@ import {
   type CycleOperationsSnapshot,
 } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleNotDueReason } from './cycle-runner/model'
+import { projectResearchPaperBootstrapWaiting } from './health/decisions'
 import { Authority, KillState, ReconciliationStatus } from './paper'
 
 const now = '2026-07-20T12:00:00.000Z'
@@ -262,6 +264,104 @@ describe('month-end cadence observability decisions', () => {
 })
 
 describe('autonomous cycle operations classification', () => {
+  test('projects only an exact reconciled research bootstrap miss into a healthy wait', () => {
+    const last = snapshot(CycleState.Blocked, {
+      signalSessionDate: '2026-08-10',
+      executionSessionDate: '2026-08-11',
+      terminalReason: CycleTerminalReason.MissedPublication,
+    })
+    const authority = {
+      generationHash: '4'.repeat(64),
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
+      kill: KillState.Clear,
+      reason: null,
+      updatedAt: now,
+    } as const
+    const reconciliation = {
+      accountId: 'paper-account-1',
+      reconciliationId: '5'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancyCount: 0,
+      reconciledAt: now,
+      coversLatestMutation: true,
+    } as const
+    const failed = deriveCycleOperationsStatus(
+      projection({ last, authority, reconciliation }),
+      Date.parse(now),
+      Authority.Paper,
+      thresholds,
+    )
+    const matchingPass = {
+      result: 'SUCCESS' as const,
+      outcome: 'NOT_DUE' as const,
+      notDueReason: CycleNotDueReason.StalePaperBootstrap,
+      cadenceDecision: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
+    }
+
+    expect(projectResearchPaperBootstrapWaiting(failed, true, matchingPass)).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
+      alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
+    })
+    expect(projectResearchPaperBootstrapWaiting(failed, false, matchingPass)).toBe(failed)
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
+        cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-09-11' },
+      }),
+    ).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      last: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
+    })
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
+        notDueReason: CycleNotDueReason.MonthEndCadence,
+      }),
+    ).toBe(failed)
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
+        cadenceDecision: { ...matchingPass.cadenceDecision, signalSessionDate: '2026-08-09' },
+      }),
+    ).toBe(failed)
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
+        cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-08-11' },
+      }),
+    ).toBe(failed)
+
+    const unsafe = deriveCycleOperationsStatus(
+      projection({
+        last,
+        authority,
+        reconciliation,
+        mutations: {
+          eventCount: 1,
+          recoveryFoundCount: 0,
+          approvedIntentCount: 0,
+          acknowledgedIntentCount: 0,
+          unresolvedCount: 1,
+          oldestUnresolvedAt: now,
+          latestOccurredAt: now,
+        },
+      }),
+      Date.parse(now),
+      Authority.Paper,
+      thresholds,
+    )
+    expect(projectResearchPaperBootstrapWaiting(unsafe, true, matchingPass)).toBe(unsafe)
+    expect(unsafe).toMatchObject({
+      condition: CycleOperationsCondition.Failed,
+      reason: CycleOperationsReason.UnresolvedMutation,
+      alerts: { cycleFailed: true },
+    })
+  })
+
   test('returns exact clock failures without defecting', () => {
     const notInteger = deriveCycleOperationsStatusResult(projection(), 0.5, Authority.Observe, thresholds)
     expect(notInteger).toEqual(

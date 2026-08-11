@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 
 import { Data, Effect, Exit, Fiber } from 'effect'
 
+import { CycleNotDueReason } from './cycle-runner/model'
 import type { LifecycleCommandStoreShape } from './db/lifecycle-command'
 import type { WriterFenceService } from './execution/writer-fence'
 import { executeLifecycleCommand, type LifecycleCommandAdvance, serveLifecycleCommands } from './lifecycle-command-http'
@@ -19,6 +20,7 @@ const command = {
 const observation = {
   result: 'SUCCESS' as const,
   outcome: 'NOT_DUE' as const,
+  notDueReason: CycleNotDueReason.StalePaperBootstrap,
   observedAt: '2026-08-10T20:00:01.000Z',
 }
 

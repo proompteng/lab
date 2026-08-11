@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Fiber, Layer, Logger, Option, References, Result } from 'effect'
+import { Cause, Clock, Deferred, Effect, Fiber, Layer, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -48,7 +48,7 @@ import {
   type CycleRunContext,
   type CycleRunResult,
 } from './cycle-runner'
-import { CycleNotDueReconciliationError } from './cycle-runner/model'
+import { CycleNotDueReason, CycleNotDueReconciliationError } from './cycle-runner/model'
 import { completeCycleAuthoritySelection } from './cycle-runner/decisions'
 import { runAutonomousCycleUntilSettled } from './cycle-runner/program'
 import { selectBoundDecision } from './cycle-runner/recovery-decision-binding'
@@ -1090,6 +1090,7 @@ describe('autonomous cycle runner', () => {
     expect(selectCycleAuthoritySlots([{ publication, existing: undefined }])).toEqual({
       _tag: 'READ_CALENDAR',
       publications: [publication],
+      reason: 'DISCOVERY',
     })
     expect(
       selectCycleAuthoritySlots([
@@ -1099,6 +1100,7 @@ describe('autonomous cycle runner', () => {
     ).toEqual({
       _tag: 'READ_CALENDAR',
       publications: [publication, olderPublication],
+      reason: 'DISCOVERY',
     })
     for (const state of [CycleState.Completed, CycleState.NoTrade, CycleState.Blocked] as const) {
       const cycle = { ...terminal, state }
@@ -1109,35 +1111,51 @@ describe('autonomous cycle runner', () => {
     }
     expect(
       completeCycleAuthoritySelection(
-        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: terminal },
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: terminal } },
         'PAPER_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: terminal })
+    ).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [publication],
+      reason: 'MISSED_PAPER_BOOTSTRAP',
+    })
     const noTrade = { ...terminal, state: CycleState.NoTrade }
     expect(
       completeCycleAuthoritySelection(
-        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: noTrade },
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: noTrade } },
         'PAPER_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication] })
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication], reason: 'DISCOVERY' })
     const blocked = { ...terminal, state: CycleState.Blocked }
     expect(
       completeCycleAuthoritySelection(
-        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: blocked },
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: blocked } },
         'PAPER_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: blocked })
+    ).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [publication],
+      reason: 'MISSED_PAPER_BOOTSTRAP',
+    })
     const newerPublication = finalizedPublicationInspection('2026-02-02')
     expect(
       completeCycleAuthoritySelection(
-        { _tag: 'UNCLAIMED', publications: [newerPublication, publication], latestTerminal: terminal },
+        {
+          _tag: 'UNCLAIMED',
+          publications: [newerPublication, publication],
+          latestTerminal: { publication, cycle: terminal },
+        },
         'PAPER_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication] })
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
     const riskBlocked = { ...terminal, terminalReason: CycleTerminalReason.Risk }
     expect(
       completeCycleAuthoritySelection(
-        { _tag: 'UNCLAIMED', publications: [newerPublication], latestTerminal: riskBlocked },
+        {
+          _tag: 'UNCLAIMED',
+          publications: [newerPublication],
+          latestTerminal: { publication, cycle: riskBlocked },
+        },
         'PAPER_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: riskBlocked })
@@ -1155,13 +1173,14 @@ describe('autonomous cycle runner', () => {
     ).toEqual({
       _tag: 'READ_CALENDAR',
       publications: [olderPublication],
+      reason: 'DISCOVERY',
     })
     expect(
       selectCycleAuthoritySlots([
         { publication, existing: undefined },
         { publication: olderPublication, existing: terminal },
       ]),
-    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication] })
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication], reason: 'DISCOVERY' })
     expect(selectCycleAuthoritySlots([{ publication, existing: pending }])).toEqual({
       _tag: 'RESUME',
       publication,
@@ -2493,7 +2512,7 @@ describe('autonomous cycle runner', () => {
     expect(control.binds).toBe(0)
   })
 
-  test('admits only a newer PAPER bootstrap publication after a missed publication deadline', async () => {
+  test('skips an expired PAPER bootstrap without persistence and admits only a newer publication', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
     let calendarReads = 0
@@ -2529,12 +2548,10 @@ describe('autonomous cycle runner', () => {
     )
 
     expect(result.missed).toMatchObject({
-      outcome: 'ACQUIRED',
+      outcome: 'NOT_DUE',
+      reason: CycleNotDueReason.StalePaperBootstrap,
       signalSessionDate: '2026-01-29',
-      readiness: {
-        outcome: 'BLOCKED',
-        cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
-      },
+      executionSessionDate: '2026-01-30',
     })
     expect(result.successor).toMatchObject({
       outcome: 'ACQUIRED',
@@ -2546,8 +2563,101 @@ describe('autonomous cycle runner', () => {
       },
     })
     expect(calendarReads).toBe(2)
-    expect(control.acquisitions).toHaveLength(2)
+    expect(control.acquisitions).toHaveLength(1)
     expect(control.binds).toBe(1)
+  })
+
+  test('rechecks a PAPER bootstrap deadline immediately before acquisition without persisting the race loser', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const times = [
+      Date.parse('2026-02-02T13:57:59.998Z'),
+      Date.parse('2026-02-02T13:57:59.999Z'),
+      Date.parse('2026-02-02T13:58:00.000Z'),
+    ] as const
+    let clockReads = 0
+    const readTime = () => times[Math.min(clockReads++, times.length - 1)]
+    const currentTime = () => times[Math.min(clockReads, times.length - 1)]
+    const clock: Clock.Clock = {
+      currentTimeMillisUnsafe: readTime,
+      currentTimeMillis: Effect.sync(readTime),
+      currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      sleep: () => Effect.void,
+    }
+
+    const result = await Effect.runPromise(
+      provide(
+        runAutonomousCyclePass({ ...context(), cadence: 'PAPER_BOOTSTRAP' }),
+        brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
+        cycleStore(control),
+        marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
+      ).pipe(Effect.provideService(Clock.Clock, clock)),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'NOT_DUE',
+      reason: CycleNotDueReason.StalePaperBootstrap,
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      observedAt: '2026-02-02T13:58:00.000Z',
+    })
+    expect(control.acquisitions).toHaveLength(0)
+    expect(control.binds).toBe(0)
+  })
+
+  test('restarts a persisted missed PAPER bootstrap as an exact not-due wait without reacquisition', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const persistence = makeCycleStorePersistence()
+    const store = cycleStore(control, persistence)
+    const publication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
+    const executionSession = selectNextExecutionSession(publication.signalSession.session_date, monthEndCalendar)
+    if (executionSession === undefined) throw new Error('bootstrap fixture requires an execution session')
+    const paperContext = { ...context(), cadence: 'PAPER_BOOTSTRAP' as const }
+    const draft = dueCycleDraftFixture(
+      { ...paperContext, signalSession: publication.signalSession },
+      monthEndCalendar,
+      executionSession,
+    )
+    const terminal = cycleFrom(draft, draft.window.publicationDeadlineAt)
+    persistence.cycles.set(terminal.identity.cycleId, terminal)
+    persistence.slots.set(
+      slotKey({
+        qualificationRunId: terminal.identity.qualificationRunId,
+        accountId: terminal.identity.accountId,
+        signalSessionDate: terminal.identity.signalSessionDate,
+      }),
+      terminal.identity.cycleId,
+    )
+    let calendarReads = 0
+    const read = brokerRead(() => {
+      calendarReads += 1
+      return Effect.succeed({ value: monthEndCalendar, evidence })
+    })
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        // A persisted terminal outcome remains authoritative even if the observed clock is before its deadline.
+        yield* TestClock.setTime(Date.parse('2026-01-30T13:00:00.000Z'))
+        return yield* provide(
+          runAutonomousCyclePass(paperContext),
+          read,
+          store,
+          marketDataService(Effect.succeed(finalizedPublications([publication]))),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'NOT_DUE',
+      reason: CycleNotDueReason.StalePaperBootstrap,
+      signalSessionDate: '2026-01-29',
+      executionSessionDate: '2026-01-30',
+      observedAt: '2026-01-30T13:00:00.000Z',
+    })
+    expect(calendarReads).toBe(1)
+    expect(control.acquisitions).toHaveLength(0)
+    expect(control.binds).toBe(0)
+    expect(persistence.cycles.get(terminal.identity.cycleId)).toEqual(terminal)
   })
 
   test('reinspects and activates a bound cycle on restart before any new discovery', async () => {

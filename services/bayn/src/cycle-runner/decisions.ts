@@ -21,6 +21,7 @@ export {
   calendarCandidateFailureError,
   calendarQueryFailureError,
   publicationFailureError,
+  selectCycleAcquisition,
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   type CycleAcquireMaterial,

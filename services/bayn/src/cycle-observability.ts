@@ -1,7 +1,7 @@
 import { DateTime, Option, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { CycleState, type CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from './time'
 import { Pipeable } from './pipeable'
 
@@ -338,6 +338,7 @@ export enum CycleOperationsReason {
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
+  StalePaperBootstrapSkipped = 'STALE_PAPER_BOOTSTRAP_SKIPPED',
 }
 
 export interface CycleOperationsAlerts {

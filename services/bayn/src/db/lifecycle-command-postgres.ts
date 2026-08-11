@@ -8,6 +8,7 @@ import {
   MonthEndCadenceDecisionSchema,
   type AutonomousCyclePassObservation,
 } from '../runtime-state'
+import { CycleNotDueReason } from '../cycle-runner/model'
 import {
   LifecycleCommandStore,
   LifecycleCommandStoreError,
@@ -45,6 +46,7 @@ const CommandRow = Schema.Struct({
   message: Schema.NullOr(Schema.NonEmptyString),
   observed_at: Schema.NullOr(UtcInstantSchema),
   cadence_decision: Schema.NullOr(MonthEndCadenceDecisionSchema),
+  not_due_reason: Schema.NullOr(Schema.Enum(CycleNotDueReason)),
 })
 
 const CommandRows = Schema.Tuple([CommandRow])
@@ -81,6 +83,7 @@ const decodeObservation = (
       outcome: row.outcome,
       observedAt: row.observed_at,
       ...(row.cadence_decision === null ? {} : { cadenceDecision: row.cadence_decision }),
+      ...(row.not_due_reason === null ? {} : { notDueReason: row.not_due_reason }),
     }).pipe(Effect.mapError((cause) => storeError('decode', 'lifecycle command observation failed decoding', cause)))
   }
   if (
@@ -128,7 +131,8 @@ const readCursor = (
                  WHEN observed_at IS NULL THEN NULL
                  ELSE to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                END AS observed_at,
-               cadence_decision
+               cadence_decision,
+               not_due_reason
         FROM lifecycle_commands
         WHERE controller_key = ${validatedControllerKey}
         ORDER BY sequence DESC
@@ -190,7 +194,8 @@ const begin = (sql: PgClient.PgClient, candidate: LifecycleCommandInput) =>
                    WHEN observed_at IS NULL THEN NULL
                    ELSE to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                  END AS observed_at,
-                 cadence_decision
+                 cadence_decision,
+                 not_due_reason
           FROM lifecycle_commands
           WHERE controller_key = ${input.controllerKey}
             AND command_id = ${input.commandId}
@@ -241,6 +246,7 @@ const complete = (sql: PgClient.PgClient, candidate: LifecycleCommandCompletionI
           message = ${success ? null : input.observation.message},
           observed_at = ${input.observation.observedAt},
           cadence_decision = ${success ? (input.observation.cadenceDecision ?? null) : null},
+          not_due_reason = ${success && input.observation.outcome === 'NOT_DUE' ? (input.observation.notDueReason ?? null) : null},
           completed_at = greatest(${input.completedAt}, started_at)
         WHERE controller_key = ${input.controllerKey}
           AND command_id = ${input.commandId}
@@ -261,7 +267,8 @@ const complete = (sql: PgClient.PgClient, candidate: LifecycleCommandCompletionI
             WHEN observed_at IS NULL THEN NULL
             ELSE to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
           END AS observed_at,
-          cadence_decision
+          cadence_decision,
+          not_due_reason
       `.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(CommandRows, strictParseOptions)),
         Effect.flatMap(([row]) => decodeObservation(row)),
