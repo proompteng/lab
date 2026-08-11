@@ -997,6 +997,47 @@ describe('Bayn continuous health', () => {
     })
   })
 
+  test('keeps Restate-owned lifecycle unavailable until its first durable pass reaches Bayn', () => {
+    const startedAt = '2026-07-20T00:00:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        owner: 'Restate',
+        startedAt,
+        lastPass: null,
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: availableClock('2026-07-20T00:00:01.000Z'),
+    })
+
+    expect(transition.next).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'Restate lifecycle has not completed its first durable pass',
+          },
+        },
+      },
+      error: 'cycleRunner: Restate lifecycle has not completed its first durable pass',
+    })
+  })
+
   test('preserves the prior validated cycle-runner failure when the clock is unavailable', () => {
     const progressAt = '2026-07-20T00:00:00.000Z'
     const previousRunner = {

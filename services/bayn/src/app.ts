@@ -129,7 +129,7 @@ const cyclePassDependencyError = (
   observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>,
 ): string => `${observation.operation}/${observation.failure}: ${observation.message}`
 
-const recordAutonomousCyclePass = (
+export const recordAutonomousCyclePass = (
   state: Ref.Ref<RuntimeState>,
   observation: AutonomousCyclePassObservation,
 ): Effect.Effect<void> => Ref.update(state, (current) => applyAutonomousCyclePass(current, observation))
@@ -165,12 +165,16 @@ const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, Loop
 const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): boolean =>
   runtime._tag === 'Brokerless' || runtime.startupEvidenceMode !== 'Research'
 
-const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
+const initialRuntimeState = <StartupR, LoopR>(
+  config: RuntimeConfig,
+  runtime: ApplicationRuntime<StartupR, LoopR>,
+): RuntimeState =>
   runtime._tag === 'Brokerless'
     ? initialState({})
     : initialState({
         broker: runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
         autonomousCycleLoopConfigured: true,
+        autonomousCycleLoopOwner: config.lifecycleOwner ?? 'Process',
       })
 
 const resolveRuntimeAfterStartup = <StartupR, LoopR>(
@@ -248,7 +252,7 @@ const runApplicationDataFirst = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
 ): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialRuntimeState(runtime))
+    const state = yield* Ref.make(initialRuntimeState(config, runtime))
     yield* serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read)
     if (qualificationEvidenceRequired(runtime)) {
       yield* runStartup(config, state, strategy, dependencies)

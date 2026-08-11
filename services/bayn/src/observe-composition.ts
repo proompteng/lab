@@ -44,7 +44,7 @@ import { WriterFence } from './execution/writer-fence'
 import { MutationOperation } from './broker/alpaca-mutations'
 import { recover as recoverMutation } from './execution/coordinator'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
-import { IntentStore } from './execution/intents'
+import { IntentStore, type BlockedCycleIntentStoreShape } from './execution/intents'
 import { MutationStore } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
 import {
@@ -83,6 +83,7 @@ import type {
   PaperDecisionDocument,
 } from './shadow-decision-contract'
 import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
+import type { AutonomousCyclePassObservation } from './runtime-state'
 import {
   planTargets,
   type SignalSessionReferencePrices,
@@ -1094,7 +1095,10 @@ export const buildClosingPaperCycleDecision = (
 const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
   observation: CyclePassObservation,
-) => recordPass(retainAutonomousCyclePassObservation(observation))
+): Effect.Effect<AutonomousCyclePassObservation> => {
+  const retained = retainAutonomousCyclePassObservation(observation)
+  return recordPass(retained).pipe(Effect.as(retained))
+}
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
@@ -1106,10 +1110,12 @@ export type ObserveAutonomousCycleInput = {
   readonly cycleCadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly paperCycleClosureStore?: PaperCycleClosureStoreShape
+  readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
   readonly paperEpisodeCutoffAt?: string
   readonly paperEpisodeCloseSubmitCutoffAt?: string
   readonly paperEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
+  readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
 
 export const paperEpisodeCloseGraceMs = 15 * 60_000
@@ -1136,7 +1142,7 @@ type ObserveDecisionRuntime =
   | AuthorityRestrictionStore
   | WriterFence
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
-type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
+export type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
 
 export type ObserveStartupPreparation = {
   readonly executionModel: CausalProtocol['executionModel']
@@ -1781,13 +1787,15 @@ const terminalizeUnboundMutationCycleAtCutoff = (
 const terminalizeBlockedPaperCycleDataFirst = (
   cycle: AutonomousCycle,
   outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
+  authorityGenerationHash: string,
+  blockedIntents: BlockedCycleIntentStoreShape,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | AuthorityRestrictionStore | WriterFence> =>
   Effect.gen(function* () {
     const store = yield* CycleStore
     const restrictionStore = yield* AuthorityRestrictionStore
     const fence = yield* WriterFence
     const restrictionReason = `bound cycle ${cycle.identity.cycleId} blocked: ${outcome.reason}`
-    const receipt = yield* fence.transaction(
+    const { cycleReceipt, intentReceipt } = yield* fence.transaction(
       store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt).pipe(
         Effect.mapError((cause) =>
           mutationRunnerError({ message: 'blocked PAPER cycle finalization failed', cause, failure: 'store' }),
@@ -1808,6 +1816,24 @@ const terminalizeBlockedPaperCycleDataFirst = (
               ),
             ),
         ),
+        Effect.bindTo('cycleReceipt'),
+        Effect.bind('intentReceipt', () =>
+          blockedIntents
+            .terminalizeUntouchedApproved({
+              authorityGenerationHash,
+              cycleId: cycle.identity.cycleId,
+              observedAt: outcome.observedAt,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                mutationRunnerError({
+                  message: 'untouched approved intents could not be terminalized with their blocked PAPER cycle',
+                  cause,
+                  failure: 'store',
+                }),
+              ),
+            ),
+        ),
       ),
     )
     yield* Effect.logWarning('Bayn PAPER cycle terminalized with restricted mutation authority').pipe(
@@ -1815,6 +1841,9 @@ const terminalizeBlockedPaperCycleDataFirst = (
         service: 'bayn',
         cycleId: cycle.identity.cycleId,
         terminalReason: outcome.reason,
+        blockedIntentCount: intentReceipt.blockedIntentCount,
+        expiredIntentCount: intentReceipt.expiredIntentCount,
+        terminalIntentCount: intentReceipt.terminalIntentCount,
         observedAt: outcome.observedAt,
       }),
     )
@@ -1822,7 +1851,7 @@ const terminalizeBlockedPaperCycleDataFirst = (
       outcome: 'RECOVERED' as const,
       action: 'BLOCKED' as const,
       observedAt: outcome.observedAt,
-      cycle: receipt.cycle,
+      cycle: cycleReceipt.cycle,
     }
   }).pipe(
     Effect.mapError((cause) =>
@@ -1832,7 +1861,7 @@ const terminalizeBlockedPaperCycleDataFirst = (
     ),
   )
 
-export const terminalizeBlockedPaperCycle = Pipeable.dual(2, terminalizeBlockedPaperCycleDataFirst)
+export const terminalizeBlockedPaperCycle = terminalizeBlockedPaperCycleDataFirst
 
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,
@@ -1851,7 +1880,14 @@ const interpretBoundMutationCycleOutcome = (
         cycle,
       })
     case 'Block':
-      return terminalizeBlockedPaperCycle(cycle, outcome)
+      return input.blockedCycleIntentStore === undefined
+        ? Effect.fail(
+            mutationRunnerError({
+              message: 'blocked PAPER cycle terminalization store is unavailable',
+              failure: 'contract',
+            }),
+          )
+        : terminalizeBlockedPaperCycle(cycle, outcome, input.authorityGenerationHash, input.blockedCycleIntentStore)
     case 'Complete':
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),
@@ -1944,11 +1980,11 @@ const runRecoveryFirstCyclePass = (
 const observeMutationPass = (
   startup: Parameters<AutonomousCycleStartup>[0],
   observation: CyclePassObservation,
-): Effect.Effect<void> => {
+): Effect.Effect<AutonomousCyclePassObservation> => {
   const facts = cyclePassLogFacts(observation)
   const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
   return observePass(startup.recordPass, observation).pipe(
-    Effect.andThen(log.pipe(Effect.annotateLogs(facts.annotations))),
+    Effect.tap(() => log.pipe(Effect.annotateLogs(facts.annotations))),
   )
 }
 
@@ -2024,7 +2060,7 @@ const observeMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   result: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+): Effect.Effect<AutonomousCyclePassObservation, never, ObserveDecisionRuntime> =>
   reconcileMutationNotDuePass(input, cadence, reconcile, result).pipe(
     Effect.flatMap((reconciled) =>
       currentUtcInstant.pipe(
@@ -2145,7 +2181,7 @@ const observeMutationCycleResult = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   result: CycleRunResult,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+): Effect.Effect<AutonomousCyclePassObservation, never, ObserveDecisionRuntime> =>
   result.outcome === 'NOT_DUE'
     ? observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
     : Ref.get(cadence).pipe(
@@ -2160,66 +2196,101 @@ const observeMutationCycleResult = (
         ),
       )
 
-const recoveryFirstCycleLoop = (
+export type RecoveryFirstCycleAdvance = {
+  readonly observation: AutonomousCyclePassObservation
+  readonly result?: CycleRunResult
+}
+
+export type RecoveryFirstCycleDriver = {
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
+  /** The external owner must not delay the next command beyond either the cycle or reconciliation cadence. */
+  readonly nextDelayMs: number
+  readonly wait: (advance: RecoveryFirstCycleAdvance) => Effect.Effect<void, never, RecoveryFirstRuntime>
+}
+
+export type RecoveryFirstCycleDriverInterpreter = (
+  driver: RecoveryFirstCycleDriver,
+) => Effect.Effect<void, never, RecoveryFirstRuntime>
+
+export const recoveryFirstCycleNextDelayMs = (input: {
+  readonly pollIntervalMs: number
+  readonly reconciliationIntervalMs: number
+}): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+
+const makeRecoveryFirstCycleDriver = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
   capability: PaperExecutionCapability,
   buildDecision: RecoveryFirstDecisionBuilder,
-): Effect.Effect<void, never, RecoveryFirstRuntime> =>
+): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
-    const run = (): Effect.Effect<void, never, RecoveryFirstRuntime> =>
-      Effect.suspend(() =>
-        Effect.gen(function* () {
-          const context: CycleRunContext<ObserveDecisionRuntime> = {
-            qualificationRunId: startup.qualificationRunId,
-            ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
-            strategyProtocolHash: preparation.strategyProtocolHash,
-            accountId: input.accountId,
-            executionPolicy: preparation.executionPolicy,
-            buildDecision: (cycle) => buildDecision(cycle, reconcile),
-          }
-          const result = yield* runMutationPassWithinTimeout(
-            runRecoveryFirstCyclePass(input, preparation, policy, context, reconcile, capability),
-            cyclePassTimeoutMs,
-          )
-          if (isPostMutationReconciliation(result)) {
-            return yield* completePostMutationReconciliation(result, reconcile)
-          }
-          return result
-        }).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              (capability._tag === 'Mutation' ? restrictMutationLoopFailure(error) : Effect.void).pipe(
-                Effect.catch((restrictionError: CycleRunnerError) =>
-                  currentUtcInstant.pipe(
-                    Effect.flatMap((observedAt) =>
-                      observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
-                    ),
-                    Effect.andThen(Effect.die(restrictionError)),
-                  ),
-                ),
-                Effect.andThen(currentUtcInstant),
-                Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-                Effect.andThen(waitAfterMutationFailure(input, startup, cadence, reconcile)),
-                Effect.andThen(run()),
-              ),
-            onSuccess: (result) =>
-              observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
-                Effect.andThen(waitAfterMutationPass(input, startup, cadence, reconcile, result)),
-                Effect.andThen(run()),
-              ),
-          }),
-        ),
+    const advance = Effect.gen(function* () {
+      const context: CycleRunContext<ObserveDecisionRuntime> = {
+        qualificationRunId: startup.qualificationRunId,
+        ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
+        strategyProtocolHash: preparation.strategyProtocolHash,
+        accountId: input.accountId,
+        executionPolicy: preparation.executionPolicy,
+        buildDecision: (cycle) => buildDecision(cycle, reconcile),
+      }
+      const result = yield* runMutationPassWithinTimeout(
+        runRecoveryFirstCyclePass(input, preparation, policy, context, reconcile, capability),
+        cyclePassTimeoutMs,
       )
-    yield* run()
+      if (isPostMutationReconciliation(result)) {
+        return yield* completePostMutationReconciliation(result, reconcile)
+      }
+      return result
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          (capability._tag === 'Mutation' ? restrictMutationLoopFailure(error) : Effect.void).pipe(
+            Effect.catch((restrictionError: CycleRunnerError) =>
+              currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) =>
+                  observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
+                ),
+                Effect.andThen(Effect.fail(restrictionError)),
+              ),
+            ),
+            Effect.andThen(currentUtcInstant),
+            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+            Effect.map((observation) => ({ observation })),
+          ),
+        onSuccess: (result) =>
+          observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
+            Effect.map((observation) => ({ observation, result })),
+          ),
+      }),
+    )
+    return {
+      advance,
+      nextDelayMs: recoveryFirstCycleNextDelayMs(input),
+      wait: (completed) =>
+        completed.result === undefined
+          ? waitAfterMutationFailure(input, startup, cadence, reconcile)
+          : waitAfterMutationPass(input, startup, cadence, reconcile, completed.result),
+    }
   })
+
+const interpretRecoveryFirstCycleInProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
+  const run = (): Effect.Effect<void, never, RecoveryFirstRuntime> =>
+    Effect.suspend(() =>
+      driver.advance.pipe(
+        Effect.flatMap(driver.wait),
+        Effect.catch((restrictionError) => Effect.die(restrictionError)),
+        Effect.andThen(run()),
+      ),
+    )
+  return run()
+}
 
 const makeRecoveryFirstAutonomousLoop = (
   input: ObserveAutonomousCycleInput,
@@ -2235,7 +2306,11 @@ const makeRecoveryFirstAutonomousLoop = (
     Result.map(validateCycleLoopInterval(input.pollIntervalMs), () => input.reconciliationIntervalMs).pipe(
       Result.flatMap(validateReconciliationInterval),
       Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
-      Result.map(() => recoveryFirstCycleLoop(input, startup, preparation, policy, capability, buildDecision)),
+      Result.map(() =>
+        makeRecoveryFirstCycleDriver(input, startup, preparation, policy, capability, buildDecision).pipe(
+          Effect.flatMap(input.interpretCycleDriver ?? interpretRecoveryFirstCycleInProcess),
+        ),
+      ),
     ),
     (cause) =>
       operationalError({

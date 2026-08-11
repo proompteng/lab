@@ -4,6 +4,10 @@ import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Logger, Redacted, 
 import { TestClock } from 'effect/testing'
 
 import { config, fixtureRuntime } from './app-test-support'
+import {
+  recoverBlockedGenerationToObserve,
+  recoverRestrictedGenerationBeforeRollover,
+} from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
 
 import {
@@ -38,7 +42,9 @@ import {
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
 } from './execution/contracts'
+import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
 import type { WriterFenceService } from './execution/writer-fence'
+import { OperationalError } from './errors'
 import { utcInstantFromEpochMillis } from './time'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState } from './runtime-state'
@@ -188,6 +194,9 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
+      lifecycleOwner: config.lifecycleOwner ?? 'Process',
+      lifecycleCommandPort: config.lifecycleCommandPort ?? 8081,
+      lifecycleControllerKey: config.lifecycleControllerKey ?? 'primary',
       cyclePollIntervalMs: 30_000,
       execution: {
         brokerIdentity: continuationBrokerIdentity,
@@ -515,6 +524,165 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(operations).toEqual(['reconcile', 'activate'])
+  })
+
+  test('settles, freshly reconciles, and only then rolls a blocked generation to clear OBSERVE', async () => {
+    const operations: string[] = []
+    const sourceGenerationHash = hash('1')
+    const previousGenerationHash = hash('2')
+    const blockedIntents: BlockedCycleIntentStoreShape = {
+      terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
+      settleCurrentBlockedGeneration: () =>
+        Effect.sync(() => {
+          operations.push('settle')
+          return {
+            _tag: 'BlockedGenerationSettled' as const,
+            authorityGenerationHash: previousGenerationHash,
+            blockedCycleCount: 1,
+            blockedIntentCount: 0,
+            expiredIntentCount: 1,
+            intentCount: 1,
+            terminalIntentCount: 1,
+          }
+        }),
+    }
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: (input) =>
+        Effect.sync(() => {
+          operations.push('rollover')
+          return {
+            schemaVersion: 'bayn.paper-authority.v1' as const,
+            generationHash: input.generationHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: 3,
+            updatedAt: '2026-08-10T19:00:02.000Z',
+          }
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: (effect) => Effect.sync(() => operations.push('fence')).pipe(Effect.andThen(effect)),
+    }
+
+    const receipt = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-10T19:00:00.000Z'))
+        return yield* recoverBlockedGenerationToObserve({
+          accountId: 'paper-account',
+          observeGenerationHash: sourceGenerationHash,
+          blockedIntents,
+          authorityStore,
+          writerFence,
+          reconcileAfterSettlement: Effect.sync(() => operations.push('reconcile')),
+        })
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(operations).toEqual(['fence', 'settle', 'reconcile', 'rollover'])
+    expect(receipt).toEqual({
+      _tag: 'RolledOver',
+      previousGenerationHash,
+      generationHash: sourceGenerationHash,
+      blockedCycleCount: 1,
+      blockedIntentCount: 0,
+      expiredIntentCount: 1,
+      terminalIntentCount: 1,
+    })
+  })
+
+  test('does not reconcile or rotate when no blocked generation exists', async () => {
+    const blockedIntents: BlockedCycleIntentStoreShape = {
+      terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
+      settleCurrentBlockedGeneration: () => Effect.succeed({ _tag: 'NoBlockedGeneration' }),
+    }
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () => Effect.die(new Error('no blocked generation must not rotate authority')),
+    }
+
+    const receipt = await Effect.runPromise(
+      recoverBlockedGenerationToObserve({
+        accountId: 'paper-account',
+        observeGenerationHash: hash('1'),
+        blockedIntents,
+        authorityStore,
+        writerFence: unusedWriterFence,
+        reconcileAfterSettlement: Effect.die(new Error('no blocked generation must not reconcile')),
+      }),
+    )
+
+    expect(receipt).toEqual({ _tag: 'NotRequired' })
+  })
+
+  test('recovers a nonterminal mutation before retrying blocked-generation settlement', async () => {
+    const operations: string[] = []
+    let attempt = 0
+    const receipt = await Effect.runPromise(
+      recoverRestrictedGenerationBeforeRollover({
+        advance: Effect.sync(() => {
+          attempt += 1
+          operations.push(`recover:${attempt.toString()}`)
+          return attempt
+        }),
+        wait: (advanced) => Effect.sync(() => operations.push(`wait:${advanced.toString()}`)),
+        settle: Effect.suspend(() => {
+          operations.push(`settle:${attempt.toString()}`)
+          return attempt === 1
+            ? Effect.fail(
+                new OperationalError({
+                  component: 'strategy',
+                  operation: 'blocked-generation-recovery',
+                  message: 'blocked generation intent settlement failed',
+                  retryable: false,
+                  cause: new BlockedCycleIntentStoreError({
+                    failure: 'invariant',
+                    message: 'intent still requires broker recovery',
+                  }),
+                }),
+              )
+            : Effect.succeed({
+                _tag: 'RolledOver' as const,
+                previousGenerationHash: hash('1'),
+                generationHash: hash('2'),
+                blockedCycleCount: 1,
+                blockedIntentCount: 1,
+                expiredIntentCount: 0,
+                terminalIntentCount: 1,
+              })
+        }),
+      }),
+    )
+
+    expect(operations).toEqual(['recover:1', 'settle:1', 'wait:1', 'recover:2', 'settle:2'])
+    expect(receipt).toEqual({
+      _tag: 'RolledOver',
+      previousGenerationHash: hash('1'),
+      generationHash: hash('2'),
+      blockedCycleCount: 1,
+      blockedIntentCount: 1,
+      expiredIntentCount: 0,
+      terminalIntentCount: 1,
+    })
+  })
+
+  test('fails closed when restricted recovery cannot identify a generation to roll over', async () => {
+    let advances = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        recoverRestrictedGenerationBeforeRollover({
+          advance: Effect.sync(() => {
+            advances += 1
+          }),
+          wait: () => Effect.die(new Error('a missing blocked generation is not retryable')),
+          settle: Effect.succeed({ _tag: 'NotRequired' }),
+        }),
+      ),
+    )
+
+    expect(advances).toBe(1)
+    expect(failure.message).toBe('restricted generation recovery found no blocked generation to roll over')
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {

@@ -212,6 +212,9 @@ const cycleLoopHealth = (
   if (fiber._tag === 'NotProvided') return unavailable('configured autonomous cycle loop has no scoped fiber')
   if (fiber._tag === 'ExitedSuccessfully') return unavailable('autonomous cycle loop exited unexpectedly')
   if (fiber._tag === 'ExitedWithFailure') return unavailable(`autonomous cycle loop failed: ${fiber.error}`)
+  if (loop.owner === 'Restate' && loop.lastPass === null) {
+    return unavailable('Restate lifecycle has not completed its first durable pass')
+  }
   if (loop.lastPass?.result === 'FAILURE') {
     return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
   }

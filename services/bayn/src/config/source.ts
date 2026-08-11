@@ -6,6 +6,7 @@ import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contract
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
 import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
+import { LifecycleControllerKeySchema } from '../lifecycle-command-contract'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -13,12 +14,19 @@ import {
   PositiveIntegerSchema as PositiveInteger,
   TrimmedNonEmptyStringSchema as NonEmptyString,
 } from '../schemas'
-import type { ParsedRuntimeConfig, RuntimeOperation } from './model'
+import {
+  maximumOperationalThresholdMs,
+  minimumOperationalThresholdMs,
+  type ParsedRuntimeConfig,
+  type RuntimeOperation,
+} from './model'
 import { Pipeable } from '../pipeable'
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
-const OperationalThresholdMs = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 86_400_000 }))
+const OperationalThresholdMs = Schema.Int.check(
+  Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
+)
 const LegacyAuthorityTokenSchema = Schema.Literals(['OBSERVE', 'PAPER'])
 const RuntimeOperationTokenSchema = Schema.Literals([
   'EXECUTION_CANDIDATE_DISCOVERY',
@@ -26,6 +34,7 @@ const RuntimeOperationTokenSchema = Schema.Literals([
   'EXECUTION_PREPARE',
 ])
 const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
+const LifecycleOwnerSchema = Schema.Literals(['PROCESS', 'RESTATE'])
 
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -78,6 +87,14 @@ export const runtimeConfigSource = Config.all({
   liveCapitalGrantHash: Config.option(Config.schema(Sha256Schema, 'BAYN_LIVE_CAPITAL_GRANT_HASH')),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  lifecycleOwner: Config.schema(LifecycleOwnerSchema, 'BAYN_LIFECYCLE_OWNER').pipe(Config.withDefault('PROCESS')),
+  lifecycleCommandPort: Config.port('BAYN_LIFECYCLE_COMMAND_PORT').pipe(Config.withDefault(8081)),
+  lifecycleControllerKey: Config.schema(LifecycleControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
+    Config.withDefault('primary'),
+  ),
+  lifecyclePreviousSourceRevision: Config.option(
+    Config.schema(SourceRevision, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'),
+  ),
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
@@ -140,6 +157,10 @@ export const runtimeConfigSource = Config.all({
       provenanceMode: config.provenanceMode,
       healthIntervalMs: config.healthIntervalMs,
       operationTimeoutMs: config.operationTimeoutMs,
+      lifecycleOwner: config.lifecycleOwner === 'RESTATE' ? 'Restate' : 'Process',
+      lifecycleCommandPort: config.lifecycleCommandPort,
+      lifecycleControllerKey: config.lifecycleControllerKey,
+      lifecyclePreviousSourceRevision: Option.getOrUndefined(config.lifecyclePreviousSourceRevision),
       cycleStallThresholdMs: config.cycleStallThresholdMs,
       reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
       unknownMutationThresholdMs: config.unknownMutationThresholdMs,

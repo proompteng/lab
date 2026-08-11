@@ -1167,6 +1167,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'fills',
       'gate_outcomes',
       'intents',
+      'lifecycle_commands',
       'live_capital_grant_revocations',
       'live_capital_grants',
       'mutation_events',
@@ -1216,6 +1217,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 28, name: 'research_paper_grants' },
       { migration_id: 29, name: 'unused_research_paper_rearm' },
       { migration_id: 30, name: 'clear_unused_research_paper_rearm' },
+      { migration_id: 31, name: 'blocked_paper_generation_rollover' },
+      { migration_id: 32, name: 'lifecycle_commands' },
     ])
   })
 

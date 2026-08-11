@@ -50,8 +50,12 @@ import {
 } from '../../cycle-runner'
 import { runAutonomousCycleUntilSettled } from '../../cycle-runner/program'
 import { AuthorityGenerationStore, ExecutionStoreLive } from '../execution-store'
-import { WriterFenceLive } from '../../execution/writer-fence'
+import { LifecycleCommandStore } from '../lifecycle-command'
+import { LifecycleCommandStoreLive } from '../lifecycle-command-postgres'
+import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
+import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../execution/intents'
 import { canonicalHashV1, sha256 } from '../../hash'
+import { lifecycleCommandId } from '../../lifecycle-command-contract'
 import { Journal, type JournalService } from '../../ledger'
 import {
   MarketData,
@@ -299,7 +303,12 @@ const autonomousJournal: JournalService = {
 
 const makeAutonomousRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(CycleStoreLive, ExecutionStoreLive(autonomousRuntimeConfig)).pipe(
+    Layer.mergeAll(
+      CycleStoreLive,
+      ExecutionStoreLive(autonomousRuntimeConfig),
+      BlockedCycleIntentStoreLive,
+      LifecycleCommandStoreLive,
+    ).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, autonomousJournal)),
       Layer.provideMerge(PostgresClientLive(autonomousRuntimeConfig)),
@@ -3468,9 +3477,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       const result = await atomicRuntime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          const writerFence = yield* WriterFence
           const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
-            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            (clock_timestamp() - interval '1 minute') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
@@ -3497,6 +3507,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             lastSession: signalSessionDate,
           })
           const store = yield* CycleStore
+          const blockedCycleIntentStore = yield* BlockedCycleIntentStore
           yield* store.acquire(draft, acquisitionAt)
           yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
           const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
@@ -3533,11 +3544,16 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `
 
           const terminalization = yield* Effect.exit(
-            terminalizeBlockedPaperCycle(bound.cycle, {
-              _tag: 'Block',
-              reason: CycleTerminalReason.MissedSubmission,
-              observedAt: draft.window.submissionCutoffAt,
-            }),
+            terminalizeBlockedPaperCycle(
+              bound.cycle,
+              {
+                _tag: 'Block',
+                reason: CycleTerminalReason.MissedSubmission,
+                observedAt: draft.window.submissionCutoffAt,
+              },
+              planned.document.bindings.authorityGenerationHash,
+              blockedCycleIntentStore,
+            ),
           )
           const [authorityAfterRejectedBlock] = yield* sql<{
             effective: string
@@ -3555,11 +3571,91 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             unfinished.intent.intentId,
             'cancel-unknown',
           )
-          const committed = yield* terminalizeBlockedPaperCycle(bound.cycle, {
-            _tag: 'Block',
-            reason: CycleTerminalReason.Risk,
-            observedAt: settled.recoveredAt,
-          })
+          const committed = yield* terminalizeBlockedPaperCycle(
+            bound.cycle,
+            {
+              _tag: 'Block',
+              reason: CycleTerminalReason.Risk,
+              observedAt: settled.recoveredAt,
+            },
+            planned.document.bindings.authorityGenerationHash,
+            blockedCycleIntentStore,
+          )
+          const staleIntentId = canonicalHashV1({ cycleId: draft.identity.cycleId, fixture: 'stale-approved' })
+          const staleDecisionId = canonicalHashV1({ intentId: staleIntentId, fixture: 'risk-decision' })
+          const staleInputHash = canonicalHashV1({ intentId: staleIntentId, fixture: 'risk-input' })
+          const [staleTiming] = yield* sql<{ decided_at: string; observed_at: string }>`
+            SELECT
+              to_char(
+                clock_timestamp() AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+              ) AS decided_at,
+              to_char(
+                greatest(clock_timestamp(), cycle.terminal_at + interval '1 hour') AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+              ) AS observed_at
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.cycle_id = ${draft.identity.cycleId}
+          `
+          if (staleTiming === undefined) return yield* Effect.die(new Error('stale intent timing is unavailable'))
+          yield* sql`
+            INSERT INTO intents (
+              intent_id, schema_version, authority_generation_hash, strategy_name,
+              cycle_id, decision_hash, policy_hash, account_id, client_order_id,
+              symbol, side, order_type, time_in_force, quantity_micros,
+              notional_limit_micros, state, created_at, updated_at
+            )
+            SELECT
+              ${staleIntentId}, source.schema_version, source.authority_generation_hash, source.strategy_name,
+              source.cycle_id, source.decision_hash, source.policy_hash, source.account_id,
+              ${`stale-${staleIntentId.slice(0, 24)}`}, 'ZZZ', source.side, source.order_type,
+              source.time_in_force, source.quantity_micros, source.notional_limit_micros,
+              'PLANNED', ${staleTiming.decided_at}::timestamptz - interval '1 millisecond',
+              ${staleTiming.decided_at}::timestamptz - interval '1 millisecond'
+            FROM intents AS source
+            WHERE source.intent_id = ${unfinished.intent.intentId}
+          `
+          yield* writerFence.transaction(
+            sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash,
+                outcome, reason_codes, decided_at, expires_at
+              )
+              SELECT
+                ${staleDecisionId}, source.schema_version, ${staleInputHash}, ${staleIntentId}, source.policy_hash,
+                'APPROVED', ARRAY[]::text[], ${staleTiming.decided_at}::timestamptz,
+                ${staleTiming.decided_at}::timestamptz + interval '1 hour'
+              FROM risk_decisions AS source
+              WHERE source.intent_id = ${unfinished.intent.intentId}
+            `.pipe(
+              Effect.andThen(sql`
+                UPDATE intents
+                SET
+                  risk_decision_id = ${staleDecisionId},
+                  state = 'APPROVED',
+                  state_version = state_version + 1,
+                  updated_at = ${staleTiming.decided_at}::timestamptz
+                WHERE intent_id = ${staleIntentId}
+              `),
+            ),
+          )
+          const settlement = yield* writerFence.transaction(
+            blockedCycleIntentStore.settleCurrentBlockedGeneration({
+              accountId: draft.identity.accountId,
+              observedAt: staleTiming.observed_at,
+            }),
+          )
+          const replay = yield* writerFence.transaction(
+            blockedCycleIntentStore.settleCurrentBlockedGeneration({
+              accountId: draft.identity.accountId,
+              observedAt: utcInstantFromEpochMillis(Date.parse(staleTiming.observed_at) + 1),
+            }),
+          )
+          const [staleIntent] = yield* sql<{ state: string; terminal_outcome: string | null }>`
+            SELECT state, terminal_outcome
+            FROM intents
+            WHERE intent_id = ${staleIntentId}
+          `
           const [authorityAfterCommittedBlock] = yield* sql<{
             effective: string
             kill_state: string
@@ -3575,6 +3671,9 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             authorityAfterRejectedBlock,
             committed,
             cycleAfterRejectedBlock,
+            replay,
+            settlement,
+            staleIntent,
             terminalization,
           }
         }).pipe(Effect.provide(TestClock.layer())),
@@ -3606,6 +3705,23 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       expect(result.authorityAfterCommittedBlock?.reason).toContain(
         `bound cycle ${result.committed.cycle.identity.cycleId} blocked: BLOCKED_RISK`,
       )
+      expect(result.settlement).toMatchObject({
+        _tag: 'BlockedGenerationSettled',
+        authorityGenerationHash: plannedPaperGenerationHash,
+        blockedCycleCount: 1,
+        blockedIntentCount: 0,
+        expiredIntentCount: 1,
+        intentCount: 2,
+        terminalIntentCount: 2,
+      })
+      expect(result.replay).toMatchObject({
+        _tag: 'BlockedGenerationSettled',
+        blockedIntentCount: 0,
+        expiredIntentCount: 0,
+        intentCount: 2,
+        terminalIntentCount: 2,
+      })
+      expect(result.staleIntent).toEqual({ state: 'TERMINAL', terminal_outcome: 'EXPIRED' })
     } finally {
       await atomicRuntime.dispose()
     }
@@ -4774,4 +4890,70 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       if (restartedRuntime !== undefined) await restartedRuntime.dispose()
     }
   }, 60_000)
+
+  test('recovers one contiguous lifecycle command across process ownership loss and replays its completion', async () => {
+    let first = makeAutonomousRuntime()
+    let second: ReturnType<typeof makeAutonomousRuntime> | undefined
+    const issuedAt = new Date().toISOString()
+    const command = {
+      controllerKey: 'primary',
+      commandId: lifecycleCommandId('primary', 1),
+      sequence: 1,
+      issuedAt,
+    }
+
+    try {
+      const started = await first.runPromise(
+        Effect.gen(function* () {
+          const store = yield* LifecycleCommandStore
+          const fence = yield* WriterFence
+          const initialCursor = yield* store.readCursor('primary')
+          const begin = yield* fence.transaction(store.begin(command))
+          const pendingCursor = yield* store.readCursor('primary')
+          return { initialCursor, begin, pendingCursor }
+        }),
+      )
+      expect(started).toEqual({
+        initialCursor: { _tag: 'Next', sequence: 1 },
+        begin: { _tag: 'Execute' },
+        pendingCursor: { _tag: 'Pending', command },
+      })
+
+      await first.dispose()
+      second = makeAutonomousRuntime()
+      const recovered = await second.runPromise(
+        Effect.gen(function* () {
+          const store = yield* LifecycleCommandStore
+          const fence = yield* WriterFence
+          const recoveredCursor = yield* store.readCursor('primary')
+          const resumed = yield* fence.transaction(store.begin(command))
+          const completedAt = new Date().toISOString()
+          const observation = {
+            result: 'SUCCESS' as const,
+            outcome: 'NOT_DUE' as const,
+            observedAt: completedAt,
+          }
+          const completed = yield* fence.transaction(store.complete({ ...command, completedAt, observation }))
+          const replay = yield* fence.transaction(store.begin(command))
+          const nextCursor = yield* store.readCursor('primary')
+          const conflicting = yield* Effect.exit(
+            fence.transaction(store.begin({ ...command, commandId: lifecycleCommandId('primary', 3), sequence: 3 })),
+          )
+          return { recoveredCursor, resumed, completed, replay, nextCursor, conflicting }
+        }),
+      )
+
+      expect(recovered).toMatchObject({
+        recoveredCursor: { _tag: 'Pending', command },
+        resumed: { _tag: 'Execute' },
+        completed: { result: 'SUCCESS', outcome: 'NOT_DUE' },
+        replay: { _tag: 'Completed', observation: { result: 'SUCCESS', outcome: 'NOT_DUE' } },
+        nextCursor: { _tag: 'Next', sequence: 2 },
+      })
+      expect(Exit.isFailure(recovered.conflicting)).toBe(true)
+    } finally {
+      await first.dispose()
+      if (second !== undefined) await second.dispose()
+    }
+  })
 })

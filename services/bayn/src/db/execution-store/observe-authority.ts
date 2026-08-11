@@ -337,17 +337,21 @@ const makeObserveAuthorityInterpreterDataFirst = (
         ), research_rearm AS (
           SELECT
             state.maximum = 'PAPER'
-            AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
             AND (
               (
                 state.effective = 'OBSERVE'
                 AND state.kill_state = 'ACTIVE'
                 AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                AND previous_generation.activation_schema_version IN (
+                  'bayn.paper-authority-generation.v2',
+                  'bayn.paper-authority-generation.v3'
+                )
               )
               OR (
                 state.effective = 'PAPER'
                 AND state.kill_state = 'CLEAR'
                 AND state.reason IS NULL
+                AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
               )
             ) AS candidate,
             research_paper_rearm_eligible(
