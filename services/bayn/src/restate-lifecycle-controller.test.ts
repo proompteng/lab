@@ -5,8 +5,13 @@ import { Result } from 'effect'
 import { lifecycleCommandId } from './lifecycle-command-contract'
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
+  lifecycleActivationAwaitTimeoutMs,
+  lifecycleActivationIdempotencyRetentionMs,
+  lifecycleActivationRetryPolicy,
+  lifecycleBootstrapRetryPolicy,
   lifecycleCommandFinalizationHeadroomMs,
   lifecycleCommandRequestTimeoutMs,
+  lifecycleCursorRequestTimeoutMs,
   lifecycleHandlerTimeouts,
   makeLifecycleCommandClient,
 } from './restate-lifecycle-controller'
@@ -45,6 +50,23 @@ describe('Restate lifecycle command client', () => {
       })
       expect(expected.inactivityTimeout).toBeGreaterThan(lifecycleCommandRequestTimeoutMs(operationTimeoutMs))
     }
+  })
+
+  test('bounds activation lock ownership and keeps the registration waiter outside that boundary', () => {
+    expect(lifecycleActivationRetryPolicy).toEqual({
+      maxAttempts: 8,
+      onMaxAttempts: 'kill',
+      initialInterval: 1_000,
+      maxInterval: 30_000,
+      exponentiationFactor: 2,
+    })
+    expect(lifecycleBootstrapRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
+    expect(lifecycleActivationIdempotencyRetentionMs).toBe(600_000)
+    expect(lifecycleCursorRequestTimeoutMs).toBe(10_000)
+    expect(lifecycleActivationAwaitTimeoutMs).toBe(201_000)
+    expect(lifecycleActivationAwaitTimeoutMs).toBeGreaterThan(
+      lifecycleHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout,
+    )
   })
 
   test('uses only the bound command origin and exact typed contracts', async () => {

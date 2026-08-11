@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { restateDeploymentRegistration } from './restate-lifecycle-register'
+import {
+  restateDeploymentRegistration,
+  restateLifecycleActivationIdempotencyKey,
+  restateLifecycleActivationRequest,
+} from './restate-lifecycle-register'
+import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 
 describe('Restate lifecycle deployment registration', () => {
   test('registers one immutable HTTP/2 endpoint without forcing replacement', () => {
@@ -17,5 +22,25 @@ describe('Restate lifecycle deployment registration', () => {
         source_revision: sourceRevision,
       },
     })
+  })
+
+  test('deduplicates pod retries while waiting for the bounded activation result', () => {
+    const sourceRevision = 'b'.repeat(40)
+    const controllerKey = 'primary'
+
+    expect(restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey)).toBe(
+      `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
+    )
+    expect(restateLifecycleActivationRequest(sourceRevision, controllerKey)).toEqual({
+      body: {
+        schemaVersion: 'bayn.restate-lifecycle-activation.v1',
+        controllerKey,
+      },
+      headers: {
+        'idempotency-key': `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
+      },
+      timeoutMs: lifecycleActivationAwaitTimeoutMs,
+    })
+    expect(lifecycleActivationAwaitTimeoutMs).toBe(201_000)
   })
 })
