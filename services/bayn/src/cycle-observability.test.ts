@@ -11,7 +11,6 @@ import {
   deriveCycleOperationsStatus,
   deriveCycleOperationsStatusResult,
   projectAutonomousCycleCadenceObservation,
-  projectResearchPaperBootstrapWaiting,
   retainedAutonomousCycleCadenceDecision,
   renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
@@ -19,6 +18,7 @@ import {
 } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
 import { CycleNotDueReason } from './cycle-runner/model'
+import { projectResearchPaperBootstrapWaiting } from './health/decisions'
 import { Authority, KillState, ReconciliationStatus } from './paper'
 
 const now = '2026-07-20T12:00:00.000Z'
