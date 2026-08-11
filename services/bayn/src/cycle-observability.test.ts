@@ -309,6 +309,16 @@ describe('autonomous cycle operations classification', () => {
     expect(
       projectResearchPaperBootstrapWaiting(failed, true, {
         ...matchingPass,
+        cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-09-11' },
+      }),
+    ).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      last: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
+    })
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
         notDueReason: CycleNotDueReason.MonthEndCadence,
       }),
     ).toBe(failed)
@@ -316,6 +326,12 @@ describe('autonomous cycle operations classification', () => {
       projectResearchPaperBootstrapWaiting(failed, true, {
         ...matchingPass,
         cadenceDecision: { ...matchingPass.cadenceDecision, signalSessionDate: '2026-08-09' },
+      }),
+    ).toBe(failed)
+    expect(
+      projectResearchPaperBootstrapWaiting(failed, true, {
+        ...matchingPass,
+        cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-08-11' },
       }),
     ).toBe(failed)
 

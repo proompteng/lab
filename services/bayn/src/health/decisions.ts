@@ -52,6 +52,18 @@ export interface ResearchPaperBootstrapPassObservation {
   }
 }
 
+const observesMissedOrNewerBootstrap = (
+  last: NonNullable<CycleOperationsStatus['last']>,
+  cadence: NonNullable<ResearchPaperBootstrapPassObservation['cadenceDecision']> | undefined,
+): boolean => {
+  if (cadence === undefined || cadence.signalSessionDate === null || cadence.executionSessionDate === null) return false
+  const exact =
+    cadence.signalSessionDate === last.signalSessionDate && cadence.executionSessionDate === last.executionSessionDate
+  const newer =
+    cadence.signalSessionDate > last.signalSessionDate && cadence.executionSessionDate > last.executionSessionDate
+  return exact || newer
+}
+
 /**
  * A research activation that starts after its first publication deadline must wait for a newer publication. The
  * immutable missed cycle remains visible, but it is no longer an operational failure after a matching NOT_DUE pass
@@ -81,8 +93,7 @@ export const projectResearchPaperBootstrapWaiting = (
     lastPass?.result !== 'SUCCESS' ||
     lastPass.outcome !== 'NOT_DUE' ||
     lastPass.notDueReason !== CycleNotDueReason.StalePaperBootstrap ||
-    cadence?.signalSessionDate !== last.signalSessionDate ||
-    cadence.executionSessionDate !== last.executionSessionDate
+    !observesMissedOrNewerBootstrap(last, cadence)
   ) {
     return status
   }
