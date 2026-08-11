@@ -60,14 +60,16 @@ const serverConfig = Config.all({
 
 const maximumServiceAccountTokenBytes = 16_384
 
-const commandCredential = (path: string) => async (): Promise<string> => {
-  const source = await readFile(path, 'utf8')
-  const token = source.trim()
-  if (token.length === 0 || Buffer.byteLength(token, 'utf8') > maximumServiceAccountTokenBytes) {
-    throw new Error('Bayn lifecycle command workload credential is empty or exceeds its size limit')
+const commandCredential =
+  (path: string) =>
+  async (signal: AbortSignal): Promise<string> => {
+    const source = await readFile(path, { encoding: 'utf8', signal })
+    const token = source.trim()
+    if (token.length === 0 || Buffer.byteLength(token, 'utf8') > maximumServiceAccountTokenBytes) {
+      throw new Error('Bayn lifecycle command workload credential is empty or exceeds its size limit')
+    }
+    return token
   }
-  return token
-}
 
 interface RestateHttp2ServerResource {
   readonly server: Http2Server

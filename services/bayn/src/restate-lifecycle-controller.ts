@@ -20,6 +20,23 @@ import {
 const stateKey = 'controller'
 const maximumResponseBytes = 64 * 1024
 export const lifecycleCommandFinalizationHeadroomMs = 30_000
+export const lifecycleCursorRequestTimeoutMs = 10_000
+export const lifecycleActivationMaximumAttempts = 8
+export const lifecycleActivationInitialRetryIntervalMs = 1_000
+export const lifecycleActivationMaximumRetryIntervalMs = 30_000
+export const lifecycleActivationRetryIntervalFactor = 2
+export const lifecycleActivationIdempotencyRetentionMs = 10 * 60_000
+export const lifecycleActivationRetryPolicy = {
+  maxAttempts: lifecycleActivationMaximumAttempts,
+  onMaxAttempts: 'kill',
+  initialInterval: lifecycleActivationInitialRetryIntervalMs,
+  maxInterval: lifecycleActivationMaximumRetryIntervalMs,
+  exponentiationFactor: lifecycleActivationRetryIntervalFactor,
+} as const satisfies restate.RetryPolicy
+export const lifecycleBootstrapRetryPolicy = {
+  maxAttempts: 1,
+  onMaxAttempts: 'kill',
+} as const satisfies restate.RetryPolicy
 const lifecycleTickSerde = restate.serde.json.schema<RestateLifecycleTick>({
   type: 'object',
   required: ['schemaVersion', 'epoch', 'sequence'],
@@ -39,7 +56,7 @@ export interface LifecycleCommandClient {
 }
 
 type HttpRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
-export type LifecycleCommandCredential = () => Promise<string>
+export type LifecycleCommandCredential = (signal: AbortSignal) => Promise<string>
 
 export const lifecycleLog = (
   message: string,
@@ -86,6 +103,21 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
 export const lifecycleCommandRequestTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs
 
+const lifecycleActivationRetryDelayMs = (): number => {
+  let interval = lifecycleActivationInitialRetryIntervalMs
+  let total = 0
+  for (let attempt = 1; attempt < lifecycleActivationMaximumAttempts; attempt += 1) {
+    total += interval
+    interval = Math.min(interval * lifecycleActivationRetryIntervalFactor, lifecycleActivationMaximumRetryIntervalMs)
+  }
+  return total
+}
+
+export const lifecycleActivationAwaitTimeoutMs =
+  lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
+  lifecycleActivationRetryDelayMs() +
+  lifecycleCommandFinalizationHeadroomMs
+
 // Let the bounded HTTP request finish and give Restate one additional journal-finalization window before requesting
 // suspension. The abort window then bounds non-cooperative code without cutting off any accepted Bayn operation.
 export const lifecycleHandlerTimeouts = (
@@ -99,9 +131,9 @@ const fetchJson = async (
   request: HttpRequest,
   url: string,
   init: RequestInit,
-  requestTimeoutMs: number,
+  signal: AbortSignal,
 ): Promise<unknown> => {
-  const response = await request(url, { ...init, signal: AbortSignal.timeout(requestTimeoutMs) })
+  const response = await request(url, { ...init, signal })
   if (!response.ok) {
     const message = `Bayn lifecycle command boundary returned HTTP ${response.status}`
     if (response.status >= 400 && response.status < 500) throw terminal(message)
@@ -115,10 +147,11 @@ export const makeLifecycleCommandClient = (
   credential: LifecycleCommandCredential,
   request: HttpRequest = fetch,
 ): LifecycleCommandClient => {
-  const requestTimeoutMs = lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs)
+  const commandRequestTimeoutMs = lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs)
   return {
     readCursor: async () => {
-      const token = await credential()
+      const signal = AbortSignal.timeout(lifecycleCursorRequestTimeoutMs)
+      const token = await credential(signal)
       return decodeOrTerminal(
         decodeLifecycleCommandCursorResponse(
           await fetchJson(
@@ -128,14 +161,15 @@ export const makeLifecycleCommandClient = (
               method: 'GET',
               headers: { authorization: `Bearer ${token}` },
             },
-            requestTimeoutMs,
+            signal,
           ),
         ),
         'Bayn lifecycle command cursor response failed validation',
       )
     },
     advance: async (command) => {
-      const token = await credential()
+      const signal = AbortSignal.timeout(commandRequestTimeoutMs)
+      const token = await credential(signal)
       return decodeOrTerminal(
         decodeLifecycleCommandResponse(
           await fetchJson(
@@ -150,7 +184,7 @@ export const makeLifecycleCommandClient = (
                 sourceRevision: config.sourceRevision,
               }),
             },
-            requestTimeoutMs,
+            signal,
           ),
         ),
         'Bayn lifecycle command response failed validation',
@@ -187,36 +221,39 @@ export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: Lifecy
   restate.object({
     name: 'BaynLifecycle',
     handlers: {
-      activate: async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown) => {
-        const request = decodeOrTerminal(
-          decodeRestateLifecycleActivation(candidate),
-          'Restate lifecycle activation request failed validation',
-        )
-        if (ctx.key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
-          throw terminal('Restate lifecycle activation controller key does not match this deployment')
-        }
+      activate: restate.handlers.object.exclusive(
+        { retryPolicy: lifecycleActivationRetryPolicy },
+        async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown) => {
+          const request = decodeOrTerminal(
+            decodeRestateLifecycleActivation(candidate),
+            'Restate lifecycle activation request failed validation',
+          )
+          if (ctx.key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
+            throw terminal('Restate lifecycle activation controller key does not match this deployment')
+          }
 
-        const current = await readState(ctx)
-        // The public bootstrap is intentionally idempotent for one immutable plan. In particular, it cannot undo an
-        // operator-initiated deactivation; only a newly reviewed source/configuration plan may start a new epoch.
-        if (current?.planHash === config.planHash) return current
+          const current = await readState(ctx)
+          // The public bootstrap is intentionally idempotent for one immutable plan. In particular, it cannot undo an
+          // operator-initiated deactivation; only a newly reviewed source/configuration plan may start a new epoch.
+          if (current?.planHash === config.planHash) return current
 
-        const cursor = await ctx.run('recover Bayn lifecycle command cursor', () => client.readCursor())
-        if (cursor.controllerKey !== config.controllerKey || cursor.sourceRevision !== config.sourceRevision) {
-          throw new Error('Bayn lifecycle command cursor does not match this source deployment')
-        }
-        const state = initialRestateLifecycleState(config, cursor.cursor, current?.epoch ?? 0)
-        ctx.set(stateKey, state)
-        scheduleTick(ctx, state, 0)
-        await lifecycleLog('Bayn Restate lifecycle activated', {
-          controllerKey: ctx.key,
-          epoch: state.epoch,
-          nextSequence: state.cursor._tag === 'Pending' ? state.cursor.command.sequence : state.cursor.sequence,
-          planHash: state.planHash,
-          sourceRevision: state.sourceRevision,
-        })
-        return state
-      },
+          const cursor = await ctx.run('recover Bayn lifecycle command cursor', () => client.readCursor())
+          if (cursor.controllerKey !== config.controllerKey || cursor.sourceRevision !== config.sourceRevision) {
+            throw terminal('Bayn lifecycle command cursor does not match this source deployment')
+          }
+          const state = initialRestateLifecycleState(config, cursor.cursor, current?.epoch ?? 0)
+          ctx.set(stateKey, state)
+          scheduleTick(ctx, state, 0)
+          await lifecycleLog('Bayn Restate lifecycle activated', {
+            controllerKey: ctx.key,
+            epoch: state.epoch,
+            nextSequence: state.cursor._tag === 'Pending' ? state.cursor.command.sequence : state.cursor.sequence,
+            planHash: state.planHash,
+            sourceRevision: state.sourceRevision,
+          })
+          return state
+        },
+      ),
 
       advance: async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown): Promise<void> => {
         const tick = decodeOrTerminal(decodeRestateLifecycleTick(candidate), 'Restate lifecycle tick failed validation')
@@ -296,16 +333,22 @@ export const makeBaynLifecycleBootstrap = (
   restate.service({
     name: 'BaynLifecycleBootstrap',
     handlers: {
-      start: async (ctx: restate.Context, candidate: unknown) => {
-        const request = decodeOrTerminal(
-          decodeRestateLifecycleActivation(candidate),
-          'Restate lifecycle bootstrap request failed validation',
-        )
-        if (request.controllerKey !== config.controllerKey) {
-          throw terminal('Restate lifecycle bootstrap controller key does not match this deployment')
-        }
-        return ctx.objectClient(lifecycle, config.controllerKey).activate(request)
-      },
+      start: restate.handlers.handler(
+        {
+          idempotencyRetention: lifecycleActivationIdempotencyRetentionMs,
+          retryPolicy: lifecycleBootstrapRetryPolicy,
+        },
+        async (ctx: restate.Context, candidate: unknown) => {
+          const request = decodeOrTerminal(
+            decodeRestateLifecycleActivation(candidate),
+            'Restate lifecycle bootstrap request failed validation',
+          )
+          if (request.controllerKey !== config.controllerKey) {
+            throw terminal('Restate lifecycle bootstrap controller key does not match this deployment')
+          }
+          return ctx.objectClient(lifecycle, config.controllerKey).activate(request)
+        },
+      ),
     },
     options: {
       ...lifecycleHandlerTimeouts(config.operationTimeoutMs),

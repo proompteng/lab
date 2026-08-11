@@ -5,8 +5,13 @@ import { Result } from 'effect'
 import { lifecycleCommandId } from './lifecycle-command-contract'
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
+  lifecycleActivationAwaitTimeoutMs,
+  lifecycleActivationIdempotencyRetentionMs,
+  lifecycleActivationRetryPolicy,
+  lifecycleBootstrapRetryPolicy,
   lifecycleCommandFinalizationHeadroomMs,
   lifecycleCommandRequestTimeoutMs,
+  lifecycleCursorRequestTimeoutMs,
   lifecycleHandlerTimeouts,
   makeLifecycleCommandClient,
 } from './restate-lifecycle-controller'
@@ -47,8 +52,26 @@ describe('Restate lifecycle command client', () => {
     }
   })
 
+  test('bounds activation lock ownership and keeps the registration waiter outside that boundary', () => {
+    expect(lifecycleActivationRetryPolicy).toEqual({
+      maxAttempts: 8,
+      onMaxAttempts: 'kill',
+      initialInterval: 1_000,
+      maxInterval: 30_000,
+      exponentiationFactor: 2,
+    })
+    expect(lifecycleBootstrapRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
+    expect(lifecycleActivationIdempotencyRetentionMs).toBe(600_000)
+    expect(lifecycleCursorRequestTimeoutMs).toBe(10_000)
+    expect(lifecycleActivationAwaitTimeoutMs).toBe(201_000)
+    expect(lifecycleActivationAwaitTimeoutMs).toBeGreaterThan(
+      lifecycleHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout,
+    )
+  })
+
   test('uses only the bound command origin and exact typed contracts', async () => {
     const requests: Array<{ readonly url: string; readonly init: RequestInit }> = []
+    const credentialSignals: AbortSignal[] = []
     const request = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       requests.push({ url, init })
@@ -75,7 +98,14 @@ describe('Restate lifecycle command client', () => {
         },
       })
     }
-    const client = makeLifecycleCommandClient(config, async () => 'projected-worker-token', request)
+    const client = makeLifecycleCommandClient(
+      config,
+      async (signal) => {
+        credentialSignals.push(signal)
+        return 'projected-worker-token'
+      },
+      request,
+    )
 
     expect(await client.readCursor()).toMatchObject({ cursor: { _tag: 'Next', sequence: 4 } })
     expect(
@@ -96,6 +126,7 @@ describe('Restate lifecycle command client', () => {
       'Bearer projected-worker-token',
     ])
     expect(requests.every(({ init }) => init.signal instanceof AbortSignal && !init.signal.aborted)).toBe(true)
+    expect(requests.map(({ init }) => init.signal)).toEqual(credentialSignals)
     const advanceBody = requests[1]?.init.body
     if (typeof advanceBody !== 'string') throw new Error('advance request body is not a string')
     expect(JSON.parse(advanceBody)).toEqual({

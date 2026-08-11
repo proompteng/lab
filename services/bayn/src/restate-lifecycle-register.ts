@@ -3,6 +3,7 @@ import { Config, Data, Effect, Logger, Option, Schema, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
+import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 import { GitSourceRevisionSchema } from './schemas'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
@@ -25,7 +26,6 @@ const InternalHttpOriginSchema = Schema.Trim.check(
     { expected: 'an uncredentialed internal HTTP origin' },
   ),
 )
-
 class RestateRegistrationError extends Data.TaggedError('RestateRegistrationError')<{
   readonly operation: 'configuration' | 'register' | 'activate'
   readonly message: string
@@ -48,18 +48,24 @@ const config = Config.all({
   configuredSourceRevision: Config.option(Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')),
 })
 
+interface JsonPostOptions {
+  readonly headers?: Readonly<Record<string, string>>
+  readonly timeoutMs: number
+}
+
 const postJson = (
   operation: 'register' | 'activate',
   url: string,
   body: unknown,
+  options: JsonPostOptions,
 ): Effect.Effect<number, RestateRegistrationError> =>
   Effect.tryPromise({
     try: async () => {
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...options.headers },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(options.timeoutMs),
       })
       if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
       await response.body?.cancel()
@@ -81,6 +87,20 @@ export const restateDeploymentRegistration = (endpointUri: string, sourceRevisio
     service: 'bayn-lifecycle',
     source_revision: sourceRevision,
   },
+})
+
+export const restateLifecycleActivationIdempotencyKey = (sourceRevision: string, controllerKey: string): string =>
+  `bayn-lifecycle-${sourceRevision}-${controllerKey}`
+
+export const restateLifecycleActivationRequest = (sourceRevision: string, controllerKey: string) => ({
+  body: {
+    schemaVersion: 'bayn.restate-lifecycle-activation.v1',
+    controllerKey,
+  },
+  headers: {
+    'idempotency-key': restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey),
+  },
+  timeoutMs: lifecycleActivationAwaitTimeoutMs,
 })
 
 const program = Effect.gen(function* () {
@@ -107,6 +127,7 @@ const program = Effect.gen(function* () {
     'register',
     `${loaded.adminOrigin}/deployments`,
     restateDeploymentRegistration(loaded.endpointUri, sourceRevision),
+    { timeoutMs: 30_000 },
   )
   yield* Effect.logInfo('Bayn Restate deployment registered').pipe(
     Effect.annotateLogs({
@@ -116,10 +137,13 @@ const program = Effect.gen(function* () {
       sourceRevision,
     }),
   )
-  const activationStatus = yield* postJson('activate', `${loaded.ingressOrigin}/BaynLifecycleBootstrap/start`, {
-    schemaVersion: 'bayn.restate-lifecycle-activation.v1',
-    controllerKey: loaded.controllerKey,
-  })
+  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey)
+  const activationStatus = yield* postJson(
+    'activate',
+    `${loaded.ingressOrigin}/BaynLifecycleBootstrap/start`,
+    activation.body,
+    { headers: activation.headers, timeoutMs: activation.timeoutMs },
+  )
   yield* Effect.logInfo('Bayn Restate lifecycle activated through ingress').pipe(
     Effect.annotateLogs({
       activationStatus,
