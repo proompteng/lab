@@ -31,6 +31,7 @@ import {
   type AutonomousRuntimeResolver,
 } from './app'
 import {
+  paperObserveSuccessorGenerationHash,
   recoverBlockedGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
@@ -646,10 +647,10 @@ const readBoundPaperActivationGeneration = (
       }
       const binding =
         buildContinuation === null
-          ? researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, generation)
+          ? researchPaperGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
           : researchPaperBuildContinuationIsBound(
               buildContinuation,
-              plan.config.alpaca.authorityGenerationHash,
+              generation.previousGenerationHash,
               generation,
               plan.config.build,
             )
@@ -960,18 +961,35 @@ export const prepareOrRecoverResearchPaperActivation = (
       Effect.mapError((cause) => paperActivationOperationalError('research PAPER authority read failed', cause)),
     )
     const currentGeneration = yield* readCurrentResearchPaperGeneration(authority, authorityStore)
+    const currentSourceGenerationHash = currentGeneration?.previousGenerationHash ?? authority.generationHash
+    if (authority.maximum === Authority.Observe) {
+      const replayed = yield* authorityStore
+        .ensureAuthorityGeneration({ generationHash: authority.generationHash, maximum: Authority.Observe })
+        .pipe(
+          Effect.mapError((cause) =>
+            paperActivationOperationalError('research PAPER current OBSERVE generation validation failed', cause),
+          ),
+        )
+      if (
+        replayed.generationHash !== authority.generationHash ||
+        replayed.maximum !== authority.maximum ||
+        replayed.effective !== authority.effective ||
+        replayed.kill !== authority.kill ||
+        replayed.version !== authority.version
+      ) {
+        return yield* paperActivationOperationalError(
+          'research PAPER current OBSERVE generation changed during validation',
+        )
+      }
+    }
     const currentGenerationMatchesRequest =
       currentGeneration !== undefined &&
       Result.isSuccess(
         buildContinuation === null
-          ? researchPaperGenerationIsBoundToRequest(
-              request,
-              plan.config.alpaca.authorityGenerationHash,
-              currentGeneration,
-            )
+          ? researchPaperGenerationIsBoundToRequest(request, currentSourceGenerationHash, currentGeneration)
           : researchPaperBuildContinuationIsBound(
               buildContinuation,
-              plan.config.alpaca.authorityGenerationHash,
+              currentSourceGenerationHash,
               currentGeneration,
               plan.config.build,
             ),
@@ -979,7 +997,7 @@ export const prepareOrRecoverResearchPaperActivation = (
     const decision = yield* Effect.fromResult(
       decidePaperEpisodeAuthority({
         generationHash: authority.generationHash,
-        sourceGenerationHash: plan.config.alpaca.authorityGenerationHash,
+        sourceGenerationHash: currentSourceGenerationHash,
         currentGenerationMatchesRequest,
         maximum: authority.maximum,
         effective: authority.effective,
@@ -997,9 +1015,18 @@ export const prepareOrRecoverResearchPaperActivation = (
       )
     }
     if (decision._tag === 'Rearm') {
+      const successorGenerationHash = yield* Effect.fromResult(
+        paperObserveSuccessorGenerationHash({
+          previousPaperGenerationHash: authority.generationHash,
+        }),
+      ).pipe(
+        Effect.mapError((cause) =>
+          paperActivationOperationalError('research PAPER OBSERVE successor hashing failed', cause),
+        ),
+      )
       const rearmed = yield* authorityStore
         .ensureAuthorityGeneration({
-          generationHash: plan.config.alpaca.authorityGenerationHash,
+          generationHash: successorGenerationHash,
           maximum: Authority.Observe,
         })
         .pipe(
@@ -1008,7 +1035,7 @@ export const prepareOrRecoverResearchPaperActivation = (
           ),
         )
       if (
-        rearmed.generationHash !== plan.config.alpaca.authorityGenerationHash ||
+        rearmed.generationHash !== successorGenerationHash ||
         rearmed.maximum !== Authority.Observe ||
         rearmed.effective !== Authority.Observe ||
         rearmed.kill !== KillState.Clear
@@ -1472,7 +1499,6 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                         })
                         const recoverBlockedGeneration = recoverBlockedGenerationToObserve({
                           accountId: observePlan.config.alpaca.expectedAccountId,
-                          observeGenerationHash: observePlan.config.alpaca.authorityGenerationHash,
                           blockedIntents: runtimeServices.blockedCycleIntentStore,
                           authorityStore: runtimeServices.authorityGenerationStore,
                           writerFence: runtimeServices.writerFence,

@@ -5,6 +5,7 @@ import { TestClock } from 'effect/testing'
 
 import { config, fixtureRuntime } from './app-test-support'
 import {
+  paperObserveSuccessorGenerationHash,
   recoverBlockedGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
@@ -528,8 +529,12 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
   test('settles, freshly reconciles, and only then rolls a blocked generation to clear OBSERVE', async () => {
     const operations: string[] = []
-    const sourceGenerationHash = hash('1')
     const previousGenerationHash = hash('2')
+    const successorGenerationHash = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({
+        previousPaperGenerationHash: previousGenerationHash,
+      }),
+    )
     const blockedIntents: BlockedCycleIntentStoreShape = {
       terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
       settleCurrentBlockedGeneration: () =>
@@ -572,7 +577,6 @@ describe('Bayn PAPER startup recovery boundary', () => {
         yield* TestClock.setTime(Date.parse('2026-08-10T19:00:00.000Z'))
         return yield* recoverBlockedGenerationToObserve({
           accountId: 'paper-account',
-          observeGenerationHash: sourceGenerationHash,
           blockedIntents,
           authorityStore,
           writerFence,
@@ -585,12 +589,27 @@ describe('Bayn PAPER startup recovery boundary', () => {
     expect(receipt).toEqual({
       _tag: 'RolledOver',
       previousGenerationHash,
-      generationHash: sourceGenerationHash,
+      generationHash: successorGenerationHash,
       blockedCycleCount: 1,
       blockedIntentCount: 0,
       expiredIntentCount: 1,
       terminalIntentCount: 1,
     })
+  })
+
+  test('derives one stable OBSERVE successor per immutable PAPER generation', () => {
+    const previousPaperGenerationHash = hash('2')
+    const first = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
+    const replay = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
+    const nextEpisode = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({
+        previousPaperGenerationHash: hash('3'),
+      }),
+    )
+
+    expect(first).toBe(replay)
+    expect(first).not.toBe(previousPaperGenerationHash)
+    expect(nextEpisode).not.toBe(first)
   })
 
   test('does not reconcile or rotate when no blocked generation exists', async () => {
@@ -605,7 +624,6 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const receipt = await Effect.runPromise(
       recoverBlockedGenerationToObserve({
         accountId: 'paper-account',
-        observeGenerationHash: hash('1'),
         blockedIntents,
         authorityStore,
         writerFence: unusedWriterFence,
