@@ -11,6 +11,7 @@ import {
   validateBaynLifecycleActivation,
   validateBaynLifecycleCommandPort,
   validateBaynLifecyclePromotion,
+  validateBaynServiceLinksDisabled,
   type BaynLifecycleImagePin,
 } from './lifecycle-manifests'
 
@@ -564,6 +565,7 @@ const applicationEnabled = (applicationSet: string): boolean => {
 
 export const parseBaynPromotionPins = (manifests: BaynPromotionManifestContents): BaynPromotionPins => {
   validateBaynLifecycleCommandPort(manifests.deployment)
+  validateBaynServiceLinksDisabled(manifests.deployment)
   validateBaynLifecycleActivation(manifests.deployment, manifests.kustomization)
   const image = kustomizationImage(manifests.kustomization)
   const lifecycleCurrent = parseBaynLifecycleCurrent(manifests.lifecycleCurrent)

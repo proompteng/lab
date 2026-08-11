@@ -13,6 +13,7 @@ import {
   validateBaynLifecycleCommandAuthentication,
   validateBaynLifecycleCommandPort,
   validateBaynLifecycleOperationTimeout,
+  validateBaynServiceLinksDisabled,
   type BaynLifecycleImagePin,
 } from './lifecycle-manifests'
 
@@ -47,6 +48,7 @@ describe('Bayn lifecycle release manifests', () => {
     expect(current).toContain('- tokenreviews')
     expect(current).toContain('cidr: 10.96.0.1/32')
     expect(current).toContain('name: BAYN_OPERATION_TIMEOUT_MS')
+    expect(current.match(/enableServiceLinks: false/g)).toHaveLength(2)
     expect(current).not.toContain('secretKeyRef:')
     expect(current).not.toContain('BAYN_ALPACA_')
     expect(current).not.toContain('DATABASE_URL')
@@ -78,6 +80,7 @@ describe('Bayn lifecycle release manifests', () => {
     expect(parseBaynLifecyclePrevious(previous)).toBeNull()
     expect(baynLifecycleIsActive(kustomization)).toBeTrue()
     expect(() => validateBaynLifecycleCommandPort(deployment)).not.toThrow()
+    expect(() => validateBaynServiceLinksDisabled(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleCommandAuthentication(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleOperationTimeout(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleActivation(deployment, kustomization)).not.toThrow()
@@ -92,6 +95,9 @@ describe('Bayn lifecycle release manifests', () => {
     expect(() =>
       validateBaynLifecycleCommandPort(deployment.replace('name: lifecycle-cmd', 'name: lifecycle-command')),
     ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
+    expect(() => validateBaynServiceLinksDisabled(deployment.replace('      enableServiceLinks: false\n', ''))).toThrow(
+      'Bayn deployment must disable Kubernetes service-link environment injection',
+    )
     expect(() =>
       validateBaynLifecycleCommandAuthentication(
         deployment.replace(
