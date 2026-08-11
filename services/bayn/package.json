@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/forward-performance-command.ts --target=node --external tigerbeetle-node --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts src/restate-lifecycle-server.ts src/restate-lifecycle-register.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
@@ -24,6 +24,7 @@
     "@effect/platform-node": "4.0.0-beta.102",
     "@effect/sql-clickhouse": "4.0.0-beta.102",
     "@effect/sql-pg": "4.0.0-beta.102",
+    "@restatedev/restate-sdk": "1.16.4",
     "effect": "4.0.0-beta.102",
     "tigerbeetle-node": "0.17.9"
   },

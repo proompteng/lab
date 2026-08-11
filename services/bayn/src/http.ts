@@ -161,6 +161,7 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
   const lastPass = state.autonomousCycleLoop.lastPass
   return {
     configured: state.autonomousCycleLoop.configured,
+    owner: state.autonomousCycleLoop.owner ?? 'Process',
     startedAt: state.autonomousCycleLoop.startedAt,
     cadence: autonomousCycleCadenceObservation(state),
     lastPass:
@@ -602,9 +603,15 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_cycle_stall_threshold_seconds Configured attempt-stall threshold.',
     '# TYPE bayn_cycle_stall_threshold_seconds gauge',
     `bayn_cycle_stall_threshold_seconds ${prometheusNumber(config.cycleStallThresholdMs / 1_000)}`,
-    '# HELP bayn_autonomous_cycle_loop_configured Whether the in-process autonomous cycle loop is configured.',
+    '# HELP bayn_autonomous_cycle_loop_configured Whether autonomous cycle ownership is configured.',
     '# TYPE bayn_autonomous_cycle_loop_configured gauge',
     `bayn_autonomous_cycle_loop_configured ${state.autonomousCycleLoop.configured ? 1 : 0}`,
+    '# HELP bayn_autonomous_cycle_owner Active durable scheduler owner for the Bayn lifecycle.',
+    '# TYPE bayn_autonomous_cycle_owner gauge',
+    ...(['process', 'restate'] as const).map(
+      (owner) =>
+        `bayn_autonomous_cycle_owner{owner="${owner}"} ${(state.autonomousCycleLoop.owner ?? 'Process').toLowerCase() === owner ? 1 : 0}`,
+    ),
     '# HELP bayn_autonomous_cycle_loop_health_available Whether the configured scoped loop is live and has not failed or stalled.',
     '# TYPE bayn_autonomous_cycle_loop_health_available gauge',
     `bayn_autonomous_cycle_loop_health_available ${loopHealthy ? 1 : 0}`,

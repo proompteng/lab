@@ -2292,6 +2292,73 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('clears a failure-restricted qualified v2 PAPER generation only after fresh exact reconciliation', async () => {
+    const sourceGenerationHash = hash('qualified-v2-recovery-source')
+    const nextSourceGenerationHash = hash('qualified-v2-recovery-next-source')
+    const activationReconciliation = exactReconciliation('qualified-v2-recovery-activation')
+    const activation = makeActivation(sourceGenerationHash, qualifiedEvidence, activationReconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const activated = yield* store.activateCapitalGrant(proofBinding(activation))
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(
+            `${paperEpisodeFailureRestrictionPrefix} qualified v2 recovery`,
+            restrictionTime.updated_at.toISOString(),
+          )
+
+          const beforeFreshReconciliation = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: nextSourceGenerationHash,
+              maximum: Authority.Observe,
+            }),
+          )
+          yield* seedExactReconciliation(exactReconciliation('qualified-v2-recovery-rollover'))
+          const rearmed = yield* store.ensureAuthorityGeneration({
+            generationHash: nextSourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          return { activated, beforeFreshReconciliation, rearmed }
+        }),
+      )
+
+      expect(result.activated).toMatchObject({
+        generationHash: activation.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+      })
+      expect(result.beforeFreshReconciliation).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+      })
+      expect(result.rearmed).toMatchObject({
+        generationHash: nextSourceGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+      expect(result.rearmed.reason).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('rotates a non-rearm research PAPER kill to OBSERVE without clearing it', async () => {
     const sourceGenerationHash = hash('operator-killed-research-paper-source')
     const nextSourceGenerationHash = hash('operator-killed-research-paper-next-source')

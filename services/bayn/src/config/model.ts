@@ -12,6 +12,9 @@ import type {
 } from '../execution/configuration'
 import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
+export const minimumOperationalThresholdMs = 1_000
+export const maximumOperationalThresholdMs = 86_400_000
+
 export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly imageDigest: string
   readonly verification: 'embedded' | 'development-configured'
@@ -26,6 +29,10 @@ export interface RuntimeConfig {
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
+  readonly lifecycleOwner?: 'Process' | 'Restate'
+  readonly lifecycleCommandPort?: number
+  readonly lifecycleControllerKey?: string
+  readonly lifecyclePreviousSourceRevision?: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
@@ -64,7 +71,21 @@ export type RuntimeOperation = 'ExecutionCandidateDiscovery' | 'ExecutionPrepare
 
 export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
 
-type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca' | 'qualificationRunId'> & AutonomousCycleRuntimeConfig
+type LoadedRuntimeConfigBase = Omit<
+  RuntimeConfig,
+  | 'alpaca'
+  | 'qualificationRunId'
+  | 'lifecycleOwner'
+  | 'lifecycleCommandPort'
+  | 'lifecycleControllerKey'
+  | 'lifecyclePreviousSourceRevision'
+> &
+  AutonomousCycleRuntimeConfig & {
+    readonly lifecycleOwner: 'Process' | 'Restate'
+    readonly lifecycleCommandPort: number
+    readonly lifecycleControllerKey: string
+    readonly lifecyclePreviousSourceRevision?: string | undefined
+  }
 
 export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
   (
@@ -120,6 +141,10 @@ export interface ParsedRuntimeConfig {
   readonly provenanceMode: 'production' | 'development'
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
+  readonly lifecycleOwner: 'Process' | 'Restate'
+  readonly lifecycleCommandPort: number
+  readonly lifecycleControllerKey: string
+  readonly lifecyclePreviousSourceRevision: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
@@ -161,6 +186,14 @@ export type RuntimeConfigResolutionFailure =
       readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
       readonly cyclePollIntervalMs: number
       readonly cycleStallThresholdMs: number
+    }
+  | {
+      readonly _tag: 'LifecycleCommandPortConflict'
+      readonly httpPort: number
+      readonly lifecycleCommandPort: number
+    }
+  | {
+      readonly _tag: 'RestateLifecycleRequiresAutonomousService'
     }
   | {
       readonly _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold'

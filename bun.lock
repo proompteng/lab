@@ -721,6 +721,7 @@
         "@effect/platform-node": "4.0.0-beta.102",
         "@effect/sql-clickhouse": "4.0.0-beta.102",
         "@effect/sql-pg": "4.0.0-beta.102",
+        "@restatedev/restate-sdk": "1.16.4",
         "effect": "4.0.0-beta.102",
         "tigerbeetle-node": "0.17.9",
       },
@@ -2447,6 +2448,10 @@
     "@redocly/openapi-core": ["@redocly/openapi-core@1.34.6", "", { "dependencies": { "@redocly/ajv": "^8.11.2", "@redocly/config": "^0.22.0", "colorette": "^1.2.0", "https-proxy-agent": "^7.0.5", "js-levenshtein": "^1.1.6", "js-yaml": "^4.1.0", "minimatch": "^5.0.1", "pluralize": "^8.0.0", "yaml-ast-parser": "0.0.43" } }, "sha512-2+O+riuIUgVSuLl3Lyh5AplWZyVMNuG2F98/o6NrutKJfW4/GTZdPpZlIphS0HGgcOHgmWcCSHj+dWFlZaGSHw=="],
 
     "@reduxjs/toolkit": ["@reduxjs/toolkit@2.11.2", "", { "dependencies": { "@standard-schema/spec": "^1.0.0", "@standard-schema/utils": "^0.3.0", "immer": "^11.0.0", "redux": "^5.0.1", "redux-thunk": "^3.1.0", "reselect": "^5.1.0" }, "peerDependencies": { "react": "^16.9.0 || ^17.0.0 || ^18 || ^19", "react-redux": "^7.2.1 || ^8.1.3 || ^9.0.0" }, "optionalPeers": ["react", "react-redux"] }, "sha512-Kd6kAHTA6/nUpp8mySPqj3en3dm0tdMIgbttnQ1xFMVpufoj+ADi8pXLBsd4xzTRHQa7t/Jv8W5UnCuW4kuWMQ=="],
+
+    "@restatedev/restate-sdk": ["@restatedev/restate-sdk@1.16.4", "", { "dependencies": { "@restatedev/restate-sdk-core": "1.16.4" } }, "sha512-6i6CLCga0DyurJUkt7WcONVO1z32k5MC3mOF0QnmRIm0qN6eiY2ZRoUO9FPy1bSj5alnaCokKhsDyCF0q0M5WA=="],
+
+    "@restatedev/restate-sdk-core": ["@restatedev/restate-sdk-core@1.16.4", "", {}, "sha512-jxxi+y35aRcn71seCLVFFeOWO3rcBSOmM2Xjs80P1bdSpLLfZau38EPUSZV7yw8ZXq7TM++Z0CrHC1M5qE8Geg=="],
 
     "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.0.0-rc.18", "", { "os": "android", "cpu": "arm64" }, "sha512-lIDyUAfD7U3+BWKzdxMbJcsYHuqXqmGz40aeRqvuAm3y5TkJSYTBW2RDrn65DJFPQqVjUAUqq5uz8urzQ8aBdQ=="],
 

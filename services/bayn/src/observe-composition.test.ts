@@ -51,7 +51,13 @@ import {
 } from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
-import { IntentStore, planPaperIntent, type IntentStoreService, type StoredIntent } from './execution/intents'
+import {
+  IntentStore,
+  planPaperIntent,
+  type BlockedCycleIntentStoreShape,
+  type IntentStoreService,
+  type StoredIntent,
+} from './execution/intents'
 import { MutationEventType, MutationStore, type MutationEvent, type MutationStoreShape } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
@@ -83,6 +89,7 @@ import {
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,
+  recoveryFirstCycleNextDelayMs,
   terminalizeBlockedPaperCycle,
 } from './observe-composition'
 import {
@@ -120,6 +127,11 @@ const generationHash = 'a'.repeat(64)
 const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:45:01.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
+
+test('external lifecycle ownership never schedules past the reconciliation cadence', () => {
+  expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)
+  expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 15_000, reconciliationIntervalMs: 30_000 })).toBe(15_000)
+})
 
 test('PAPER submissions obey separate entry and final close-session cutoffs', () => {
   expect(
@@ -1776,15 +1788,28 @@ describe('OBSERVE runtime composition', () => {
           events.push('fence')
         }).pipe(Effect.andThen(effect)),
     }
+    const blockedCycleIntentStore: BlockedCycleIntentStoreShape = {
+      settleCurrentBlockedGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
+      terminalizeUntouchedApproved: () =>
+        Effect.sync(() => {
+          events.push('terminalize-intents')
+          return { blockedIntentCount: 0, expiredIntentCount: 1, terminalIntentCount: 1 }
+        }),
+    }
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* terminalizeBlockedPaperCycle(fixture.boundCycle, {
-          _tag: 'Block',
-          reason: CycleTerminalReason.Risk,
-          observedAt,
-        })
+        return yield* terminalizeBlockedPaperCycle(
+          fixture.boundCycle,
+          {
+            _tag: 'Block',
+            reason: CycleTerminalReason.Risk,
+            observedAt,
+          },
+          generationHash,
+          blockedCycleIntentStore,
+        )
       }).pipe(
         Effect.provideService(CycleStore, cycleStore),
         Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
@@ -1793,7 +1818,7 @@ describe('OBSERVE runtime composition', () => {
       ),
     )
 
-    expect(events).toEqual(['fence', 'block', 'restrict'])
+    expect(events).toEqual(['fence', 'block', 'restrict', 'terminalize-intents'])
     expect(result).toMatchObject({ action: 'BLOCKED', cycle: { state: CycleState.Blocked } })
   })
 
@@ -1833,14 +1858,23 @@ describe('OBSERVE runtime composition', () => {
       check: unused,
       transaction: (effect) => effect,
     }
+    const blockedCycleIntentStore: BlockedCycleIntentStoreShape = {
+      settleCurrentBlockedGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
+      terminalizeUntouchedApproved: () => Effect.die(new Error('rejected cycle block must not terminalize intents')),
+    }
 
     const failure = await Effect.runPromise(
       Effect.flip(
-        terminalizeBlockedPaperCycle(fixture.boundCycle, {
-          _tag: 'Block',
-          reason: CycleTerminalReason.MissedSubmission,
-          observedAt,
-        }).pipe(
+        terminalizeBlockedPaperCycle(
+          fixture.boundCycle,
+          {
+            _tag: 'Block',
+            reason: CycleTerminalReason.MissedSubmission,
+            observedAt,
+          },
+          generationHash,
+          blockedCycleIntentStore,
+        ).pipe(
           Effect.provideService(CycleStore, cycleStore),
           Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
           Effect.provideService(WriterFence, writerFence),

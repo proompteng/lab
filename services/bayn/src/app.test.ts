@@ -116,6 +116,9 @@ const broker: BrokerProbe = {
 const autonomousConfig = (runtime: typeof config): AutonomousApplicationConfig => ({
   ...runtime,
   runtimeMode: 'AutonomousService',
+  lifecycleOwner: runtime.lifecycleOwner ?? 'Process',
+  lifecycleCommandPort: runtime.lifecycleCommandPort ?? 8081,
+  lifecycleControllerKey: runtime.lifecycleControllerKey ?? 'primary',
   cyclePollIntervalMs: 30_000,
   execution: {
     brokerIdentity: Result.getOrThrow(
@@ -155,6 +158,9 @@ const autonomousConfig = (runtime: typeof config): AutonomousApplicationConfig =
 const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig => ({
   ...runtime,
   runtimeMode: 'BrokerlessService',
+  lifecycleOwner: runtime.lifecycleOwner ?? 'Process',
+  lifecycleCommandPort: runtime.lifecycleCommandPort ?? 8081,
+  lifecycleControllerKey: runtime.lifecycleControllerKey ?? 'primary',
   cyclePollIntervalMs: 30_000,
   execution: {
     brokerIdentity: undefined,
