@@ -1,13 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bayn-lifecycle-f024ca5775cd
+  name: bayn-lifecycle-b919699d8530
   labels:
     app.kubernetes.io/name: bayn-lifecycle
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: f024ca5775cd
+    app.kubernetes.io/version: b919699d8530
   annotations:
-    bayn.proompteng.ai/source-revision: f024ca5775cde0310175e8551cdbaf84def2e238
+    bayn.proompteng.ai/source-revision: b919699d85305f688ebaec12bf17cd4463396505
 spec:
   replicas: 1
   revisionHistoryLimit: 1
@@ -17,13 +17,13 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-lifecycle
-      app.kubernetes.io/version: f024ca5775cd
+      app.kubernetes.io/version: b919699d8530
   template:
     metadata:
       labels:
         app.kubernetes.io/name: bayn-lifecycle
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: f024ca5775cd
+        app.kubernetes.io/version: b919699d8530
     spec:
       serviceAccountName: bayn-lifecycle
       automountServiceAccountToken: false
@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: lifecycle
-          image: registry.ide-newton.ts.net/lab/bayn:sha-f024ca5775cde0310175e8551cdbaf84def2e238@sha256:82b47bf00fc404d88524c6c2ae36737c8eb35a2184bef4ee872f0dbf8738ad98
+          image: registry.ide-newton.ts.net/lab/bayn:sha-b919699d85305f688ebaec12bf17cd4463396505@sha256:33bd4a044ec62b2971cf109d9b506ee06649a11755f45ddf53f3c530183c9314
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -50,7 +50,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: f024ca5775cde0310175e8551cdbaf84def2e238
+              value: b919699d85305f688ebaec12bf17cd4463396505
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
             - name: BAYN_LIFECYCLE_COMMAND_URL
@@ -117,18 +117,18 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: bayn-lifecycle-f024ca5775cd
+  name: bayn-lifecycle-b919699d8530
   labels:
     app.kubernetes.io/name: bayn-lifecycle
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: f024ca5775cd
+    app.kubernetes.io/version: b919699d8530
   annotations:
-    bayn.proompteng.ai/source-revision: f024ca5775cde0310175e8551cdbaf84def2e238
+    bayn.proompteng.ai/source-revision: b919699d85305f688ebaec12bf17cd4463396505
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: bayn-lifecycle
-    app.kubernetes.io/version: f024ca5775cd
+    app.kubernetes.io/version: b919699d8530
   ports:
     - name: restate
       port: 9080
@@ -336,11 +336,11 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-lifecycle-register-f024ca5775cd
+  name: bayn-lifecycle-register-b919699d8530
   labels:
     app.kubernetes.io/name: bayn-lifecycle-register
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: f024ca5775cd
+    app.kubernetes.io/version: b919699d8530
   annotations:
     # The command Service publishes not-ready Bayn endpoints, so this same-wave hook can activate the first durable
     # tick that makes strict Restate-owned readiness healthy. PostSync would deadlock behind that readiness gate.
@@ -355,7 +355,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-lifecycle-register
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: f024ca5775cd
+        app.kubernetes.io/version: b919699d8530
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -371,18 +371,18 @@ spec:
           type: RuntimeDefault
       containers:
         - name: register
-          image: registry.ide-newton.ts.net/lab/bayn:sha-f024ca5775cde0310175e8551cdbaf84def2e238@sha256:82b47bf00fc404d88524c6c2ae36737c8eb35a2184bef4ee872f0dbf8738ad98
+          image: registry.ide-newton.ts.net/lab/bayn:sha-b919699d85305f688ebaec12bf17cd4463396505@sha256:33bd4a044ec62b2971cf109d9b506ee06649a11755f45ddf53f3c530183c9314
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-lifecycle-register.js
           env:
             - name: BAYN_CODE_REVISION
-              value: f024ca5775cde0310175e8551cdbaf84def2e238
+              value: b919699d85305f688ebaec12bf17cd4463396505
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
             - name: BAYN_RESTATE_ENDPOINT_URI
-              value: http://bayn-lifecycle-f024ca5775cd.bayn.svc.cluster.local:9080
+              value: http://bayn-lifecycle-b919699d8530.bayn.svc.cluster.local:9080
             - name: RESTATE_ADMIN_ORIGIN
               value: http://restate.restate.svc.cluster.local:9070
             - name: RESTATE_INGRESS_ORIGIN
