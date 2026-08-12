@@ -24,6 +24,8 @@ export interface IntentExpectation {
   readonly side: Order['side']
   readonly orderType: Order['orderType']
   readonly submittedOrderType: Order['orderType']
+  readonly submittedQuantityMicros?: string
+  readonly submittedNotionalMicros?: string
   readonly submittedLimitPriceMicros?: string
   readonly timeInForce: Order['timeInForce']
   readonly quantityMicros: string

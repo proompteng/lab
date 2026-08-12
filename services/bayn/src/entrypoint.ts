@@ -24,12 +24,4 @@ export {
   validateExecutionPreparePlan,
   WriterFenceResourceLive,
 } from './composition'
-export {
-  decodeFreshBrokerPrice,
-  latestQuoteUrl,
-  makeFreshBrokerPriceReader,
-  type AlpacaFreshBrokerQuote,
-  type LatestQuoteDecodeFailure,
-} from './broker/alpaca/http'
-
 export const program = loadApplicationPlan.pipe(Effect.flatMap(runApplicationPlan), Effect.scoped)

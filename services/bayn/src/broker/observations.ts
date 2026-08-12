@@ -99,7 +99,7 @@ export type BrokerObservationError =
   | {
       readonly _tag: 'FilledQuantityInvalid'
       readonly filledQuantityMicros: string
-      readonly quantityMicros: string
+      readonly quantityMicros?: string
     }
   | { readonly _tag: 'UnsupportedOrderStatus'; readonly value: AlpacaOrderStatus }
   | { readonly _tag: 'DuplicatePositionAsset'; readonly assetId: string }
@@ -109,7 +109,7 @@ export type BrokerObservationError =
       readonly expectedAccountId: string
       readonly accountIds: readonly string[]
     }
-  | { readonly _tag: 'QuantityOrderRequired'; readonly brokerOrderId: string }
+  | { readonly _tag: 'OrderQuantityOrNotionalRequired'; readonly brokerOrderId: string }
   | { readonly _tag: 'ExtendedHoursUnsupported'; readonly brokerOrderId: string }
   | { readonly _tag: 'OrderUpdatedAtMissing'; readonly brokerOrderId: string }
   | {
@@ -224,15 +224,22 @@ const timeInForce = (value: AlpacaTimeInForce): Result.Result<TimeInForce, Broke
 
 const nonterminalStatus = (
   filledQuantityMicros: string,
-  quantityMicros: string,
+  quantityMicros?: string,
 ): Result.Result<OrderStatus, BrokerObservationError> => {
-  if (
-    !canonicalUnsignedIntegerPattern.test(filledQuantityMicros) ||
-    !canonicalUnsignedIntegerPattern.test(quantityMicros)
-  ) {
-    return fail({ _tag: 'FilledQuantityInvalid', filledQuantityMicros, quantityMicros })
+  if (!canonicalUnsignedIntegerPattern.test(filledQuantityMicros)) {
+    return fail({
+      _tag: 'FilledQuantityInvalid',
+      filledQuantityMicros,
+      ...(quantityMicros === undefined ? {} : { quantityMicros }),
+    })
   }
   const filled = BigInt(filledQuantityMicros)
+  if (quantityMicros === undefined) {
+    return Result.succeed(filled === 0n ? OrderStatus.Pending : OrderStatus.PartiallyFilled)
+  }
+  if (!canonicalUnsignedIntegerPattern.test(quantityMicros)) {
+    return fail({ _tag: 'FilledQuantityInvalid', filledQuantityMicros, quantityMicros })
+  }
   const quantity = BigInt(quantityMicros)
   if (filled === 0n) return Result.succeed(OrderStatus.Pending)
   if (filled < quantity) return Result.succeed(OrderStatus.PartiallyFilled)
@@ -244,7 +251,7 @@ const nonterminalStatus = (
 const orderStatus = (
   value: AlpacaOrderStatus,
   filledQuantityMicros: string,
-  quantityMicros: string,
+  quantityMicros?: string,
 ): Result.Result<OrderStatus, BrokerObservationError> => {
   switch (value) {
     case AlpacaOrderStatus.New:
@@ -392,19 +399,18 @@ const positionSnapshotDataFirst = (
 
 export const positionSnapshot = Pipeable.dual(2, positionSnapshotDataFirst)
 
-type QuantityOrder = Omit<AlpacaOrder, 'notionalMicros' | 'quantityMicros' | 'updatedAt'> & {
-  readonly quantityMicros: string
-  readonly notionalMicros?: undefined
+type ValidatedOrder = Omit<AlpacaOrder, 'updatedAt'> & {
   readonly updatedAt: string
 }
 
 const validateOrderShape = (
   value: AlpacaOrder,
   evidence: ReadEvidence,
-): Result.Result<QuantityOrder, BrokerObservationError> => {
+): Result.Result<ValidatedOrder, BrokerObservationError> => {
   const quantityMicros = value.quantityMicros
-  if (quantityMicros === undefined || value.notionalMicros !== undefined) {
-    return fail({ _tag: 'QuantityOrderRequired', brokerOrderId: value.brokerOrderId })
+  const notionalMicros = value.notionalMicros
+  if ((quantityMicros === undefined) === (notionalMicros === undefined)) {
+    return fail({ _tag: 'OrderQuantityOrNotionalRequired', brokerOrderId: value.brokerOrderId })
   }
   if (value.extendedHours) {
     return fail({ _tag: 'ExtendedHoursUnsupported', brokerOrderId: value.brokerOrderId })
@@ -413,12 +419,10 @@ const validateOrderShape = (
   if (updatedAt === undefined) {
     return fail({ _tag: 'OrderUpdatedAtMissing', brokerOrderId: value.brokerOrderId })
   }
-  const { notionalMicros: _omittedNotionalMicros, ...order } = value
   return pipe(
     validateObservationTime(value.observedAt, evidence),
     Result.map(() => ({
-      ...order,
-      quantityMicros,
+      ...value,
       updatedAt,
     })),
   )
@@ -441,7 +445,7 @@ const orderObservationDataFirst = (
         }),
         Result.flatMap(({ occurredAt, orderType: normalizedOrderType, status, timeInForce: normalizedTimeInForce }) => {
           const order = {
-            schemaVersion: 'bayn.paper-order.v1' as const,
+            schemaVersion: 'bayn.paper-order.v2' as const,
             accountId: validated.accountId,
             brokerOrderId: validated.brokerOrderId,
             clientOrderId: validated.clientOrderId,
@@ -450,7 +454,8 @@ const orderObservationDataFirst = (
             side: side(validated.side),
             orderType: normalizedOrderType,
             timeInForce: normalizedTimeInForce,
-            quantityMicros: validated.quantityMicros,
+            ...(validated.quantityMicros === undefined ? {} : { quantityMicros: validated.quantityMicros }),
+            ...(validated.notionalMicros === undefined ? {} : { notionalMicros: validated.notionalMicros }),
             filledQuantityMicros: validated.filledQuantityMicros,
             ...(validated.limitPriceMicros === undefined ? {} : { limitPriceMicros: validated.limitPriceMicros }),
             status,
@@ -585,8 +590,8 @@ export const renderBrokerObservationError = (error: BrokerObservationError): str
       return `duplicate Alpaca position symbol ${error.symbol}`
     case 'PositionAccountMismatch':
       return `Alpaca position accounts ${error.accountIds.join(',')} do not match ${error.expectedAccountId}`
-    case 'QuantityOrderRequired':
-      return `paper accounting requires quantity order ${error.brokerOrderId}`
+    case 'OrderQuantityOrNotionalRequired':
+      return `paper order ${error.brokerOrderId} must contain exactly one of quantity or notional`
     case 'ExtendedHoursUnsupported':
       return `paper execution requires extended hours disabled for ${error.brokerOrderId}`
     case 'OrderUpdatedAtMissing':

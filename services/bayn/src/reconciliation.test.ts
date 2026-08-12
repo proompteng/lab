@@ -84,7 +84,7 @@ const fill: Fill = {
   ...(order.intentId === undefined ? {} : { intentId: order.intentId }),
   symbol: order.symbol,
   side: order.side,
-  quantityMicros: order.quantityMicros,
+  quantityMicros: position.quantityMicros,
   priceMicros: '90000000',
   feeMicros: '0',
   occurredAt: observedAt,
@@ -117,9 +117,10 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
       side: order.side,
       orderType: OrderType.Market,
       submittedOrderType: OrderType.Limit,
+      submittedQuantityMicros: position.quantityMicros,
       ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
       timeInForce: order.timeInForce,
-      quantityMicros: order.quantityMicros,
+      quantityMicros: position.quantityMicros,
       state: IntentState.Terminal,
       terminalOutcome: TerminalOutcome.Filled,
       expectsBrokerOrder: true,
@@ -156,6 +157,40 @@ describe('paper reconciliation', () => {
     })
   })
 
+  test('reconciles the exact notional MARKET representation used by current BUY submissions', () => {
+    const { quantityMicros: _omittedOrderQuantity, limitPriceMicros: _omittedLimitPrice, ...currentOrderBase } = order
+    const currentOrder: Order = {
+      ...currentOrderBase,
+      schemaVersion: 'bayn.paper-order.v2',
+      orderType: OrderType.Market,
+      notionalMicros: '100000000',
+    }
+    const [legacyIntent] = snapshot().intents
+    if (legacyIntent === undefined) throw new Error('expected reconciliation intent fixture')
+    const {
+      submittedLimitPriceMicros: _omittedSubmittedLimitPrice,
+      submittedQuantityMicros: _omittedSubmittedQuantity,
+      ...currentIntentBase
+    } = legacyIntent
+    const result = successOf(
+      compareReconciliation(
+        snapshot({
+          orders: [currentOrder],
+          intents: [
+            {
+              ...currentIntentBase,
+              submittedOrderType: OrderType.Market,
+              submittedNotionalMicros: '100000000',
+            },
+          ],
+        }),
+      ),
+    )
+
+    expect(result.discrepancies).toEqual([])
+    expect(result.observedHash).toBe(result.expectedHash)
+  })
+
   test('treats a restricted broker account as a blocking discrepancy', () => {
     const result = successOf(
       compareReconciliation(snapshot({ account: { ...account, status: AccountStatus.Restricted } })),
@@ -186,7 +221,7 @@ describe('paper reconciliation', () => {
           submittedOrderType: OrderType.Limit,
           ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
           timeInForce: order.timeInForce,
-          quantityMicros: order.quantityMicros,
+          quantityMicros: position.quantityMicros,
           state: IntentState.Terminal,
           terminalOutcome: TerminalOutcome.Filled,
           expectsBrokerOrder: true,

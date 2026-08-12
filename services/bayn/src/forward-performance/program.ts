@@ -449,7 +449,8 @@ const bindForwardPerformanceTerminalReferencePricesDataFirst = (
   return Result.all(
     executionEvidence.map((execution) => {
       const order = execution.terminalOrder
-      const orderQuantity = order === undefined ? undefined : canonicalUnsigned(order.quantityMicros)
+      const orderQuantity = order?.quantityMicros === undefined ? undefined : canonicalUnsigned(order.quantityMicros)
+      const orderNotional = order?.notionalMicros === undefined ? undefined : canonicalUnsigned(order.notionalMicros)
       const filledQuantity = order === undefined ? undefined : canonicalUnsigned(order.filledQuantityMicros)
       const blockedAt =
         execution.intent?.terminalOutcome === 'BLOCKED' && order === undefined && execution.fills.length === 0
@@ -458,9 +459,8 @@ const bindForwardPerformanceTerminalReferencePricesDataFirst = (
       const incompleteOrder =
         order !== undefined &&
         ['CANCELED', 'EXPIRED', 'REJECTED'].includes(order.status) &&
-        orderQuantity !== undefined &&
         filledQuantity !== undefined &&
-        filledQuantity < orderQuantity
+        ((orderQuantity !== undefined && filledQuantity < orderQuantity) || orderNotional !== undefined)
           ? order
           : undefined
       const terminalOccurredAt = blockedAt ?? incompleteOrder?.occurredAt

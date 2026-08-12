@@ -211,6 +211,26 @@ describe('paper contracts', () => {
     expect(
       await Effect.runPromise(decodeOrder({ ...order, orderType: OrderType.Limit, limitPriceMicros: '125000000' })),
     ).toMatchObject({ orderType: OrderType.Limit })
+
+    const { quantityMicros: _omittedQuantityMicros, ...notionalOrderBase } = order
+    const notionalOrder = {
+      ...notionalOrderBase,
+      schemaVersion: 'bayn.paper-order.v2' as const,
+      notionalMicros: '200000000',
+      filledQuantityMicros: '0',
+      status: OrderStatus.New,
+    }
+    expect(await Effect.runPromise(decodeOrder(notionalOrder))).toEqual(notionalOrder)
+    await expectFailure(decodeOrder({ ...notionalOrder, quantityMicros: '1000000' }))
+    await expectFailure(decodeOrder({ ...notionalOrderBase, schemaVersion: 'bayn.paper-order.v2' }))
+    await expectFailure(decodeOrder({ ...order, notionalMicros: '200000000' }))
+    await expectFailure(decodeOrder({ ...notionalOrder, orderType: OrderType.Limit, limitPriceMicros: '125000000' }))
+    await expectFailure(decodeOrder({ ...notionalOrder, status: OrderStatus.Filled }))
+    expect(
+      await Effect.runPromise(
+        decodeOrder({ ...notionalOrder, status: OrderStatus.Filled, filledQuantityMicros: '1999999' }),
+      ),
+    ).toMatchObject({ status: OrderStatus.Filled })
     await expectFailure(decodeRateLimit({ ...rateLimit, remaining: '201' }))
   })
 

@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { MutationOperation, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import { MutationOperation, compatibleOrderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
 import {
   Authority,
@@ -134,30 +134,42 @@ const decidePreparedMutationIntentDataFirst = (
           message: 'accepted nonterminal submit lacks a durable broker order identity',
         })
       }
-      const priceBoundary = orderPriceBoundaryMicros(intent)
-      if (Result.isFailure(priceBoundary)) {
+      const representation = compatibleOrderRequestBody(intent, latest.requestHash)
+      if (Result.isFailure(representation)) {
         return Result.fail({
           _tag: 'PreparedMutationIntentDecisionFailure',
           intentId: intent.intentId,
           eventType: latest.eventType,
-          message: `accepted submit has no valid immutable broker price boundary: ${priceBoundary.failure.message}`,
+          message: `accepted submit has no supported immutable broker representation: ${representation.failure.message}`,
+        })
+      }
+      const request = representation.success
+      const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
+      if (Result.isFailure(limitPrice)) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: `accepted submit has no valid immutable limit price: ${limitPrice.failure.message}`,
         })
       }
       return Result.succeed({
         _tag: 'Pending',
         order: {
-          schemaVersion: 'bayn.paper-order.v1',
+          schemaVersion: 'bayn.paper-order.v2',
           accountId: intent.accountId,
           brokerOrderId: latest.brokerOrderId,
           clientOrderId: intent.clientOrderId,
           intentId: intent.intentId,
           symbol: intent.symbol,
           side: intent.side,
-          orderType: OrderType.Limit,
+          orderType: 'limit_price' in request ? OrderType.Limit : OrderType.Market,
           timeInForce: intent.timeInForce,
-          quantityMicros: intent.quantityMicros,
+          ...('notional' in request
+            ? { notionalMicros: intent.notionalLimitMicros }
+            : { quantityMicros: intent.quantityMicros }),
           filledQuantityMicros: '0',
-          limitPriceMicros: priceBoundary.success.toString(),
+          ...(limitPrice.success === undefined ? {} : { limitPriceMicros: limitPrice.success.toString() }),
           status: OrderStatus.New,
           observedAt: latest.occurredAt,
         },
@@ -205,6 +217,7 @@ const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean 
   observed.orderType === expected.orderType &&
   observed.timeInForce === expected.timeInForce &&
   observed.quantityMicros === expected.quantityMicros &&
+  observed.notionalMicros === expected.notionalMicros &&
   observed.limitPriceMicros === expected.limitPriceMicros
 
 const decidePendingMutationObservationDataFirst = (

@@ -146,6 +146,7 @@ export interface ForwardPerformanceExecutionEvidence {
     readonly symbol: string
     readonly side: 'BUY' | 'SELL'
     readonly quantityMicros: string
+    readonly notionalLimitMicros?: string
     readonly terminalOutcome: 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'BLOCKED'
     readonly createdAt: string
     readonly updatedAt: string
@@ -158,7 +159,8 @@ export interface ForwardPerformanceExecutionEvidence {
     readonly accountId: string
     readonly symbol: string
     readonly side: 'BUY' | 'SELL'
-    readonly quantityMicros: string
+    readonly quantityMicros?: string
+    readonly notionalMicros?: string
     readonly filledQuantityMicros: string
     readonly status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'PENDING'
     readonly occurredAt: string

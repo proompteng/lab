@@ -232,7 +232,7 @@ const makeDecision = (targetWeights: Readonly<Record<string, number>>): Decision
 
 const makePolicy = (): Policy =>
   decodePolicy({
-    schemaVersion: 'bayn.paper-risk-policy.v1',
+    schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId,
     brokerMode: BrokerMode.Paper,
     allowedSymbols: ['AMD', 'NVDA'],
@@ -249,7 +249,7 @@ const makePolicy = (): Policy =>
     maxBrokerStateAgeMs: 1_800_000,
     maxMarketDataAgeMs: 1_800_000,
     maxAdverseSlippageBps: 100,
-    maxUnresolvedOrders: 0,
+    maxOpenOrders: 2,
     decisionTtlMs: 1_200_000,
   })
 
@@ -410,7 +410,7 @@ describe('OBSERVE shadow decision', () => {
     const replay = await build(makeInput())
 
     expect(replay).toEqual(first)
-    expect(first.contentHash).toBe('9690389d06537db6d479ef7c1c690d6f5edb21dcd8b4e483baba1e9d372998b3')
+    expect(first.contentHash).toBe('84dfb635059af0c829d550d52c340faa29ade2d9d0f79bd4cd4500fb87803134')
     expect(first).toMatchObject({
       schemaVersion: 'bayn.observe-shadow-decision.v1',
       mode: 'OBSERVE',

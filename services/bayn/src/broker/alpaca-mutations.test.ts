@@ -23,6 +23,7 @@ import {
   MutationFailure,
   MutationOperation,
   authorizeMutationAccess,
+  legacyBoundedLimitOrderRequestBody,
   makeMutation,
   orderPriceBoundaryMicros,
   orderRequestBody,
@@ -175,16 +176,16 @@ const orderResponse = {
   asset_id: assetId,
   symbol: intent.symbol,
   asset_class: 'us_equity',
-  notional: null,
-  qty: '1.25',
+  notional: '200',
+  qty: null,
   filled_qty: '0',
   filled_avg_price: null,
   order_class: '',
-  order_type: 'limit',
-  type: 'limit',
+  order_type: 'market',
+  type: 'market',
   side: 'buy',
   time_in_force: 'day',
-  limit_price: '160',
+  limit_price: null,
   stop_price: null,
   status: 'accepted',
   extended_hours: false,
@@ -256,7 +257,7 @@ describe('Alpaca broker mutations', () => {
     })
   })
 
-  test('derives side-safe broker limit prices from the durable notional boundary', () => {
+  test('preserves legacy price boundaries while current BUY and SELL market requests stay broker-bounded', () => {
     const boundaryIntent = {
       ...intent,
       quantityMicros: '3000000',
@@ -265,8 +266,14 @@ describe('Alpaca broker mutations', () => {
 
     expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Buy })).toEqual(Result.succeed(33_330_000n))
     expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Sell })).toEqual(Result.succeed(33_340_000n))
-    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
+    expect(legacyBoundedLimitOrderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
       Result.succeed({ type: 'limit', limit_price: '33.34', side: 'sell' }),
+    )
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy })).toMatchObject(
+      Result.succeed({ type: 'market', notional: '100.000001', side: 'buy' }),
+    )
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
+      Result.succeed({ type: 'market', qty: '3', side: 'sell' }),
     )
   })
 
@@ -431,11 +438,54 @@ describe('Alpaca broker mutations', () => {
 
     const body = {
       symbol: 'AMD',
-      qty: '1.25',
+      notional: '200',
       side: 'buy',
-      type: 'limit',
+      type: 'market',
       time_in_force: 'day',
-      limit_price: '160',
+      client_order_id: intent.clientOrderId,
+      extended_hours: false,
+    }
+    expect(requests).toEqual([{ body, method: 'POST', url: 'https://paper-api.alpaca.markets/v2/orders' }])
+    expect(receipt).toMatchObject({
+      requestHash: canonicalHashV1(body),
+      order: {
+        accountId,
+        brokerOrderId: orderId,
+        clientOrderId: intent.clientOrderId,
+        status: OrderStatus.Accepted,
+        notionalMicros: intent.notionalLimitMicros,
+      },
+      evidence: {
+        requestId: 'req-123',
+        status: 200,
+        contentHash: canonicalHashV1(orderResponse),
+      },
+    })
+  })
+
+  test('submits a SELL as an exact quantity market order and verifies the accepted order', async () => {
+    const sellIntent = { ...intent, side: OrderSide.Sell }
+    const requests: Array<{ body: unknown; method: string; url: string }> = []
+    const client = HttpClient.make((request, url) => {
+      requests.push({ body: requestBody(request), method: request.method, url: url.toString() })
+      return Effect.succeed(
+        response(request, {
+          ...orderResponse,
+          notional: null,
+          qty: '1.25',
+          side: 'sell',
+        }),
+      )
+    })
+
+    const receipt = await Effect.runPromise(withMutation(client, (mutation) => mutation.submit(sellIntent)))
+
+    const body = {
+      symbol: 'AMD',
+      qty: '1.25',
+      side: 'sell',
+      type: 'market',
+      time_in_force: 'day',
       client_order_id: intent.clientOrderId,
       extended_hours: false,
     }
@@ -448,11 +498,6 @@ describe('Alpaca broker mutations', () => {
         clientOrderId: intent.clientOrderId,
         status: OrderStatus.Accepted,
         quantityMicros: intent.quantityMicros,
-      },
-      evidence: {
-        requestId: 'req-123',
-        status: 200,
-        contentHash: canonicalHashV1(orderResponse),
       },
     })
   })

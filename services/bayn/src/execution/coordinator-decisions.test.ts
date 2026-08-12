@@ -5,6 +5,8 @@ import { Option, Result } from 'effect'
 import {
   MutationOperation,
   cancelRequestHash,
+  legacyBoundedLimitOrderRequestBody,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
 } from '../broker/alpaca-mutations'
@@ -109,11 +111,10 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
   symbol: intent.symbol,
   assetClass: AssetClass.UsEquity,
-  quantityMicros: intent.quantityMicros,
+  notionalMicros: intent.notionalLimitMicros,
   filledQuantityMicros: '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Limit,
-  limitPriceMicros: '160000000',
+  orderType: BrokerOrderType.Market,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status: OrderStatus.Accepted,
@@ -227,6 +228,34 @@ describe('execution coordinator decisions', () => {
     expect(
       Result.getOrThrow(ensureRecoveryDelay(MutationOperation.Submit, submit, Date.parse(submit.occurredAt) + 1_000)),
     ).toEqual(submit)
+  })
+
+  test('recovers an interrupted pre-upgrade bounded-limit submit from its durable request hash', () => {
+    const unknownIntent = { ...intent, state: IntentState.Unknown }
+    const legacyRequest = Result.getOrThrow(legacyBoundedLimitOrderRequestBody(unknownIntent))
+    const legacyEvent = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+    const { notionalMicros: _notionalMicros, ...currentOrder } = order()
+    const legacyOrder: Order = {
+      ...currentOrder,
+      quantityMicros: intent.quantityMicros,
+      orderType: BrokerOrderType.Limit,
+      limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(intent)).toString(),
+    }
+
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
+    expect(
+      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
+        value: legacyOrder,
+        evidence,
+      }),
+    ).toEqual({
+      _tag: 'RecoveryFound',
+      brokerOrderId,
+      evidence,
+    })
   })
 
   test('does not append another mutation event for the same known open recovery', () => {

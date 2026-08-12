@@ -11,7 +11,6 @@ import { BrokerEnvironment } from './broker/identity'
 import type { RuntimeConfig } from './config'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
-import { decodeFreshBrokerPrice, latestQuoteUrl } from './broker/alpaca/http'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
@@ -154,40 +153,6 @@ const resultFailure = <A>(decision: Result.Result<A, ReplicaAddressValidationErr
   if (Result.isSuccess(decision)) throw new Error('replica address decision unexpectedly succeeded')
   return decision.failure
 }
-
-describe('Alpaca latest quote boundary', () => {
-  test('uses the exact market-data host and SIP latest-quote route', () => {
-    expect(latestQuoteUrl('BRK.B').toString()).toBe(
-      'https://data.alpaca.markets/v2/stocks/BRK.B/quotes/latest?feed=sip',
-    )
-  })
-
-  test('rounds the fresh bid down and ask up to micros and binds them to the requested symbol', () => {
-    expect(
-      decodeFreshBrokerPrice(
-        'AAPL',
-        { symbol: 'AAPL', quote: { bp: 99.9999999, ap: 100.0000001, t: '2026-07-28T08:00:00.000Z' } },
-        '2026-07-28T08:00:00.100Z',
-      ),
-    ).toEqual(
-      Result.succeed({
-        symbol: 'AAPL',
-        bidPriceMicros: '99999999',
-        askPriceMicros: '100000001',
-        quotedAt: '2026-07-28T08:00:00.000Z',
-        observedAt: '2026-07-28T08:00:00.100Z',
-      }),
-    )
-
-    expect(
-      decodeFreshBrokerPrice(
-        'AAPL',
-        { symbol: 'MSFT', quote: { bp: 99, ap: 100, t: '2026-07-28T08:00:00.000Z' } },
-        '2026-07-28T08:00:00.100Z',
-      ),
-    ).toMatchObject(Result.fail({ _tag: 'LatestQuoteSymbolMismatch' }))
-  })
-})
 
 describe('TigerBeetle replica address decisions', () => {
   test('parses configured endpoints synchronously while preserving request order', () => {

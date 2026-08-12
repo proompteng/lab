@@ -45,7 +45,29 @@ export interface ResolvedMutationCapability {
   readonly secret: string
 }
 
-export interface OrderRequestBody {
+export interface BuyNotionalMarketOrderRequestBody {
+  readonly symbol: string
+  readonly notional: string
+  readonly side: OrderSide
+  readonly type: OrderType.Market
+  readonly time_in_force: TimeInForce
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export interface SellQuantityMarketOrderRequestBody {
+  readonly symbol: string
+  readonly qty: string
+  readonly side: OrderSide
+  readonly type: OrderType.Market
+  readonly time_in_force: TimeInForce
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export type OrderRequestBody = BuyNotionalMarketOrderRequestBody | SellQuantityMarketOrderRequestBody
+
+export interface LegacyBoundedLimitOrderRequestBody {
   readonly symbol: string
   readonly qty: string
   readonly side: OrderSide
@@ -56,15 +78,12 @@ export interface OrderRequestBody {
   readonly extended_hours: false
 }
 
-export interface HistoricalMarketOrderRequestBody {
-  readonly symbol: string
-  readonly qty: string
-  readonly side: OrderSide
-  readonly type: OrderType.Market
-  readonly time_in_force: TimeInForce
-  readonly client_order_id: string
-  readonly extended_hours: false
-}
+export type HistoricalMarketOrderRequestBody = SellQuantityMarketOrderRequestBody
+
+export type CompatibleOrderRequestBody =
+  | OrderRequestBody
+  | LegacyBoundedLimitOrderRequestBody
+  | HistoricalMarketOrderRequestBody
 
 export type OrderRequestIntent = Pick<
   Intent,
@@ -79,6 +98,7 @@ export class OrderRequestError extends Data.TaggedError('OrderRequestError')<{
   readonly timeInForce?: DomainTimeInForce
   readonly quantityMicros?: string
   readonly notionalLimitMicros?: string
+  readonly requestHash?: string
 }> {}
 
 export interface PreparedSubmit {
@@ -287,7 +307,9 @@ export const historicalMarketOrderRequestBody = (
   })
 }
 
-export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+export const legacyBoundedLimitOrderRequestBody = (
+  intent: OrderRequestIntent,
+): Result.Result<LegacyBoundedLimitOrderRequestBody, OrderRequestError> => {
   if (intent.orderType !== DomainOrderType.Market) {
     return Result.fail(
       new OrderRequestError({
@@ -321,6 +343,76 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     client_order_id: intent.clientOrderId,
     extended_hours: false,
   })
+}
+
+export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  if (intent.orderType !== DomainOrderType.Market) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'Bayn broker submission supports market orders only',
+        orderType: intent.orderType,
+      }),
+    )
+  }
+  const quantity = quantityMicros(intent.quantityMicros)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  const notional = notionalMicros(intent.notionalLimitMicros)
+  if (Result.isFailure(notional)) return Result.fail(notional.failure)
+  if (intent.timeInForce !== DomainTimeInForce.Day) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'fractional market orders require DAY time in force',
+        timeInForce: intent.timeInForce,
+        quantityMicros: intent.quantityMicros,
+      }),
+    )
+  }
+  const common = {
+    symbol: intent.symbol,
+    side: side(intent.side),
+    type: OrderType.Market,
+    time_in_force: timeInForce(intent.timeInForce),
+    client_order_id: intent.clientOrderId,
+    extended_hours: false,
+  } as const
+  return intent.side === DomainSide.Buy
+    ? Result.succeed({ ...common, notional: microsToDecimal(notional.success) })
+    : Result.succeed({ ...common, qty: microsToDecimal(quantity.success) })
+}
+
+export const compatibleOrderRequestBody = (
+  intent: OrderRequestIntent,
+  requestHash: string,
+): Result.Result<CompatibleOrderRequestBody, OrderRequestError> => {
+  const candidates: CompatibleOrderRequestBody[] = []
+  const current = orderRequestBody(intent)
+  if (Result.isSuccess(current)) candidates.push(current.success)
+  const bounded = legacyBoundedLimitOrderRequestBody(intent)
+  if (Result.isSuccess(bounded)) candidates.push(bounded.success)
+  const historical = historicalMarketOrderRequestBody(intent)
+  if (Result.isSuccess(historical)) candidates.push(historical.success)
+  for (const candidate of candidates) {
+    const candidateHash = canonicalHashV1Result(candidate)
+    if (Result.isFailure(candidateHash)) {
+      return Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-order',
+          message: 'compatible order request cannot be canonically hashed',
+          requestHash,
+        }),
+      )
+    }
+    if (candidateHash.success === requestHash) return Result.succeed(candidate)
+  }
+  return Result.fail(
+    new OrderRequestError({
+      failure: 'invalid-order',
+      message: 'durable submit request hash does not match a supported order representation',
+      requestHash,
+    }),
+  )
 }
 
 export const submitBody = (intent: Intent): Result.Result<OrderRequestBody, OrderRequestError> =>
@@ -481,21 +573,22 @@ const normalizeAcceptedOrder = (
     }),
   )
 
-const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean =>
-  Result.match(orderPriceBoundaryMicros(facts.intent), {
-    onFailure: () => false,
-    onSuccess: (limitPriceMicros) =>
-      order.accountId === facts.intent.accountId &&
-      order.assetClass === AssetClass.UsEquity &&
-      order.clientOrderId === facts.intent.clientOrderId &&
-      order.symbol === facts.intent.symbol &&
-      order.side === facts.request.side &&
-      order.orderType === facts.request.type &&
-      order.timeInForce === facts.request.time_in_force &&
-      order.quantityMicros === facts.intent.quantityMicros &&
-      order.limitPriceMicros === limitPriceMicros.toString() &&
-      !order.extendedHours,
-  })
+const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean => {
+  const commonMatches =
+    order.accountId === facts.intent.accountId &&
+    order.assetClass === AssetClass.UsEquity &&
+    order.clientOrderId === facts.intent.clientOrderId &&
+    order.symbol === facts.intent.symbol &&
+    order.side === facts.request.side &&
+    order.orderType === facts.request.type &&
+    order.timeInForce === facts.request.time_in_force &&
+    order.limitPriceMicros === undefined &&
+    !order.extendedHours
+  if (!commonMatches) return false
+  return 'notional' in facts.request
+    ? order.quantityMicros === undefined && order.notionalMicros === facts.intent.notionalLimitMicros
+    : order.quantityMicros === facts.intent.quantityMicros && order.notionalMicros === undefined
+}
 
 export const classifySubmitResponse = (
   facts: SubmitResponseFacts,

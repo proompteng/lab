@@ -117,11 +117,10 @@ const brokerOrder = (status = OrderStatus.Accepted, observedAt = '1970-01-01T00:
   assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
   symbol: intent.symbol,
   assetClass: AssetClass.UsEquity,
-  quantityMicros: intent.quantityMicros,
+  notionalMicros: intent.notionalLimitMicros,
   filledQuantityMicros: status === OrderStatus.Filled ? intent.quantityMicros : '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Limit,
-  limitPriceMicros: '160000000',
+  orderType: BrokerOrderType.Market,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status,
@@ -1929,7 +1928,7 @@ describe('paper execution coordinator', () => {
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
-  test('keeps a partial broker fill UNKNOWN instead of recording a false terminal fill', async () => {
+  test('accepts the broker-determined filled quantity for an exact notional market order', async () => {
     const harness = makeHarness({
       submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityMicros: '500000' },
     })
@@ -1937,11 +1936,11 @@ describe('paper execution coordinator', () => {
     const result = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
 
     expect(result).toMatchObject({
-      eventType: MutationEventType.SubmitUnknown,
+      eventType: MutationEventType.SubmitAccepted,
       brokerOrderId: orderId,
     })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
-    expect(harness.state()).toBe(IntentState.Unknown)
+    expect(harness.state()).toBe(IntentState.Terminal)
   })
 
   test('records a deterministic pre-transmit denial as terminal without recovery or containment', async () => {

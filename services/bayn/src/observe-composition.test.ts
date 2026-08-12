@@ -17,7 +17,7 @@ import {
   type ReadResult,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
-import { MutationOperation } from './broker/alpaca-mutations'
+import { MutationOperation, orderRequestBody } from './broker/alpaca-mutations'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import {
   CycleState,
@@ -765,7 +765,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: '8'.repeat(64),
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(intent))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'accepted-broker-order',
       occurredAt: evaluatedAt,
@@ -777,8 +777,8 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: accepted.brokerOrderId,
       clientOrderId: intent.clientOrderId,
       intentId: intent.intentId,
-      orderType: OrderType.Limit,
-      limitPriceMicros: '100000000',
+      orderType: OrderType.Market,
+      notionalMicros: intent.notionalLimitMicros,
       status: OrderStatus.New,
       filledQuantityMicros: '0',
     })
@@ -797,7 +797,7 @@ describe('OBSERVE runtime composition', () => {
     expect(
       Result.getOrThrow(
         decidePendingMutationObservation(decision.order, [
-          { ...reconciledOrder, status: OrderStatus.Filled, filledQuantityMicros: reconciledOrder.quantityMicros },
+          { ...reconciledOrder, status: OrderStatus.Filled, filledQuantityMicros: intent.quantityMicros },
         ]),
       ),
     ).toMatchObject({ _tag: 'Recover', reason: 'terminal' })
@@ -806,14 +806,15 @@ describe('OBSERVE runtime composition', () => {
       reason: 'missing',
     })
     expect(
-      Result.isFailure(
-        decidePendingMutationObservation(decision.order, [{ ...reconciledOrder, orderType: OrderType.Market }]),
-      ),
+      Result.isFailure(decidePendingMutationObservation(decision.order, [{ ...reconciledOrder, symbol: 'AMD' }])),
     ).toBe(true)
     expect(
       Result.isFailure(
         decidePendingMutationObservation(decision.order, [
-          { ...reconciledOrder, limitPriceMicros: (BigInt(reconciledOrder.limitPriceMicros ?? '0') + 1n).toString() },
+          {
+            ...reconciledOrder,
+            notionalMicros: (BigInt(reconciledOrder.notionalMicros ?? '0') + 1n).toString(),
+          },
         ]),
       ),
     ).toBe(true)
@@ -843,7 +844,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: '3'.repeat(64),
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(first))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'stable-open-order',
       occurredAt: fixture.document.createdAt,
@@ -907,7 +908,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: '6'.repeat(64),
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(first))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'stable-open-after-cutoff',
       occurredAt: fixture.document.createdAt,
@@ -1161,7 +1162,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitUnknown,
-      requestHash: '3'.repeat(64),
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
       consistencyDelayMs: 1_000,
       occurredAt,
     }
@@ -1606,7 +1607,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: '3'.repeat(64),
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'accepted-past-cutoff',
       occurredAt: fixture.document.createdAt,
@@ -3029,7 +3030,7 @@ describe('OBSERVE runtime composition', () => {
       maxDailyTradedNotionalMicros: '200000000000',
       maxDailyLossMicros: '5000000000',
       maxDrawdownMicros: '5000000000',
-      maxUnresolvedOrders: 0,
+      maxOpenOrders: fixtureProtocol.universe.length,
     })
   })
 
