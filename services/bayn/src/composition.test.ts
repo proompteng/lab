@@ -577,8 +577,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
   })
 
   test('resumes an exact failure-restricted generation for recovery without rearming or activating', async () => {
-    const authorityReason =
-      'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_MISSED_SUBMISSION_DEADLINE'
+    const authorityReason = `bound PAPER cycle ${hash('c')} restricted effective authority: intent ${hash('d')} submit settled denied`
     const authority: AuthorityState = {
       ...continuationAuthority,
       effective: Authority.Observe,

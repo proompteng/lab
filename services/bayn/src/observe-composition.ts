@@ -1710,8 +1710,8 @@ const executeBoundPaperCycle = (
     )
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
-        `bound PAPER cycle ${cycle.identity.cycleId}`,
-        `intent ${step.intentId} submit settled ${executed.settlement.outcome}`,
+        'PAPER autonomous cycle loop',
+        `bound cycle ${cycle.identity.cycleId}: intent ${step.intentId} submit settled ${executed.settlement.outcome}`,
       )
     }
     if (executed.mutationAdvanced)
