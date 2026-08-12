@@ -159,6 +159,9 @@ const requestIntent = {
 const boundedSubmitRequestHash = canonicalHashV1(Result.getOrThrow(legacyBoundedLimitOrderRequestBody(requestIntent)))
 const historicalSubmitRequestHash = canonicalHashV1(Result.getOrThrow(historicalMarketOrderRequestBody(requestIntent)))
 const currentSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
+const historicalGtcSubmitRequestHash = canonicalHashV1(
+  Result.getOrThrow(historicalMarketOrderRequestBody({ ...requestIntent, timeInForce: TimeInForce.GoodUntilCanceled })),
+)
 
 const intentRow = {
   intent_id: fill.intentId ?? hash('missing-intent'),
@@ -293,6 +296,25 @@ describe('PostgreSQL reconciliation algebra', () => {
         expectation.submittedOrderType === OrderType.Limit ? fill.priceMicros : undefined,
       )
     }
+  })
+
+  test('recovers a historical whole-share GTC market request when the current encoder rejects it', () => {
+    const projection = successOf(
+      projectIntentExpectations([
+        {
+          ...intentRow,
+          time_in_force: TimeInForce.GoodUntilCanceled,
+          submit_request_hash: historicalGtcSubmitRequestHash,
+        },
+      ]),
+    )
+
+    expect(projection.intents).toHaveLength(1)
+    expect(projection.intents[0]).toMatchObject({
+      submittedOrderType: OrderType.Market,
+      submittedQuantityMicros: fill.quantityMicros,
+      timeInForce: TimeInForce.GoodUntilCanceled,
+    })
   })
 
   test('verifies ledger plans, receipt material, and exact accounting bindings', () => {

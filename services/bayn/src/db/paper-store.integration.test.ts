@@ -4197,6 +4197,12 @@ describePostgres('paper accounting persistence', () => {
             FROM orders
             WHERE broker_order_id = ${notionalOrderEvent().order.brokerOrderId}
           `
+          const orderCheckConstraints = yield* sql<{ conname: string }>`
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'orders'::regclass AND contype = 'c'
+            ORDER BY conname COLLATE "C"
+          `
           return {
             baselineAfter,
             baselineBefore,
@@ -4207,6 +4213,7 @@ describePostgres('paper accounting persistence', () => {
             conflict,
             counts,
             storedNotional,
+            orderCheckConstraints,
           }
         }),
       )
@@ -4222,6 +4229,21 @@ describePostgres('paper accounting persistence', () => {
         quantity_micros: null,
         notional_micros: '300000000',
       })
+      const orderCheckConstraints = result.orderCheckConstraints.map((constraint) => constraint.conname)
+      expect(orderCheckConstraints).not.toContain('orders_check')
+      expect(orderCheckConstraints).not.toContain('orders_check1')
+      expect(orderCheckConstraints).not.toContain('orders_check2')
+      expect(orderCheckConstraints).toEqual(
+        expect.arrayContaining([
+          'orders_filled_quantity_micros_check',
+          'orders_notional_micros_check',
+          'orders_quantity_micros_check',
+          'orders_request_representation_check',
+          'orders_schema_version_check',
+          'orders_status_quantity_check',
+          'orders_type_price_check',
+        ]),
+      )
       expect(Exit.isFailure(result.conflict)).toBe(true)
       if (Exit.isFailure(result.conflict)) expect(Cause.pretty(result.conflict.cause)).toContain('different content')
       expect(result.counts).toEqual({ events: 3, accounts: 1, orders: 2 })
