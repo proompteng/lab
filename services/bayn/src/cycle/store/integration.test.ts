@@ -1501,6 +1501,43 @@ const buildPlannedPaperDecision = (
     return { document, reconciliation }
   })
 
+const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: string) =>
+  Effect.gen(function* () {
+    const evaluatedAt = plannedDecisionAt
+    const policy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
+    const paperReconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
+    const authority = paperReconciliation.riskContext.authority
+    if (authority === null) return yield* Effect.die(new Error('planned OBSERVE fixture requires authority'))
+    const reconciliation: ReconciliationPassResult = {
+      ...paperReconciliation,
+      riskContext: {
+        ...paperReconciliation.riskContext,
+        authority: {
+          ...authority,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+        },
+      },
+    }
+    const decision = plannedPaperDecisionPlan(cycle)
+    yield* TestClock.setTime(Date.parse(evaluatedAt))
+    const document = yield* buildObserveCycleDecision({
+      authorityGenerationHash: plannedPaperGenerationHash,
+      cycle,
+      executionModel: fixtureProtocol.executionModel,
+      policy,
+      reconcile: Effect.succeed(reconciliation),
+      strategy: {
+        definition: { ...dueStrategy.definition, decide: () => Result.succeed(decision) },
+        provenance: dueStrategy.provenance,
+      },
+    }).pipe(
+      Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
+      Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId)),
+    )
+    return { document, reconciliation }
+  })
+
 const insertReconciliation = (result: ReconciliationPassResult) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -3029,7 +3066,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.exactSnapshot).toMatchObject({ changed: true, cycle: { bindings: { snapshotId: snapshotA } } })
   })
 
-  test('refuses to install qualified snapshot enforcement over incompatible nonterminal history', async () => {
+  test('refuses to install qualified snapshot enforcement over incompatible pending history', async () => {
     const draft = makeDraft('paper-account-qualified-snapshot-migration')
 
     const result = await runtime.runPromise(
@@ -3059,10 +3096,57 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(Exit.isFailure(result.migration)).toBe(true)
     if (Exit.isFailure(result.migration)) {
       expect(Cause.pretty(result.migration.cause)).toContain(
-        'qualified cycle snapshot binding migration found incompatible nonterminal history',
+        'qualified cycle snapshot binding migration found incompatible history',
       )
     }
     expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Pending })
+    expect(result.installed).toBe(false)
+  })
+
+  test('refuses to install qualified snapshot enforcement over incompatible completed history', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makePlannedDraft('paper-account-qualified-snapshot-completed-migration', executionPolicy)
+    const completedAt = utcInstantFromEpochMillis(Date.parse(plannedDecisionAt) + 1_000)
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedObserveDecision(activated.cycle, snapshotB)
+        if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+          return yield* Effect.die(new Error('completed migration fixture requires a planned OBSERVE decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
+        yield* store.finish(draft.identity.cycleId, CycleState.Completed, completedAt)
+
+        const migration = yield* Effect.exit(qualifiedCycleSnapshotBinding)
+        const [history] = yield* sql<{ snapshot_id: string; state: string }>`
+          SELECT snapshot_id, state FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { history, installed: installed.installed, migration }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.migration)).toBe(true)
+    if (Exit.isFailure(result.migration)) {
+      expect(Cause.pretty(result.migration.cause)).toContain(
+        'qualified cycle snapshot binding migration found incompatible history',
+      )
+    }
+    expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Completed })
     expect(result.installed).toBe(false)
   })
 

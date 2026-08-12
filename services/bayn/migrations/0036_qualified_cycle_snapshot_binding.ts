@@ -14,8 +14,7 @@ export default Effect.gen(function* () {
           IF EXISTS (
             SELECT 1
             FROM autonomous_cycles AS cycle
-            WHERE cycle.state IN ('PENDING', 'ACTIVE')
-              AND cycle.snapshot_id IS NOT NULL
+            WHERE cycle.snapshot_id IS NOT NULL
               AND EXISTS (
                 SELECT 1
                 FROM qualification_results AS result
@@ -32,7 +31,7 @@ export default Effect.gen(function* () {
                   AND lock.snapshot_id = cycle.snapshot_id
               )
           ) THEN
-            RAISE EXCEPTION 'qualified cycle snapshot binding migration found incompatible nonterminal history'
+            RAISE EXCEPTION 'qualified cycle snapshot binding migration found incompatible history'
               USING ERRCODE = '23514';
           END IF;
         END
