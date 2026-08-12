@@ -1769,6 +1769,55 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('persists a restriction after its observed timestamp loses an authority-generation race', async () => {
+    const initialGenerationHash = hash('stale-restriction-initial-generation')
+    const rotatedGenerationHash = hash('stale-restriction-rotated-generation')
+    const reason = 'operator requested fail-closed restriction after rotation'
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const [observedBeforeRotation] = yield* sql<{ updated_at: Date }>`
+            SELECT updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (observedBeforeRotation === undefined) {
+            return yield* Effect.die(new Error('initial authority timestamp is unavailable'))
+          }
+          const rotated = yield* store.ensureAuthorityGeneration({
+            generationHash: rotatedGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.restrictAuthority(reason, observedBeforeRotation.updated_at.toISOString())
+          const readAuthorityState = store.readAuthorityState
+          assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
+          const restricted = yield* readAuthorityState
+          return { observedBeforeRotation: observedBeforeRotation.updated_at, rotated, restricted }
+        }),
+      )
+
+      expect(Date.parse(result.rotated.updatedAt)).toBeGreaterThan(result.observedBeforeRotation.getTime())
+      expect(result.restricted).toMatchObject({
+        generationHash: rotatedGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason,
+        version: result.rotated.version + 1,
+      })
+      expect(Date.parse(result.restricted.updatedAt)).toBeGreaterThan(Date.parse(result.rotated.updatedAt))
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('preserves the first terminal PAPER restriction when reconciliation restricts authority again', async () => {
     const sourceGenerationHash = hash('terminal-restriction-source-generation')
     const activationReconciliation = exactReconciliation('terminal-restriction-activation')

@@ -262,13 +262,10 @@ const restrictAuthorityDataFirst = (
             kill_state = 'ACTIVE',
             reason = ${reason},
             version = version + 1,
-            updated_at = CASE
-              WHEN ${promoteReason} THEN greatest(
-                ${updatedAt}::timestamptz,
-                updated_at + interval '1 millisecond'
-              )
-              ELSE ${updatedAt}::timestamptz
-            END
+            updated_at = greatest(
+              ${updatedAt}::timestamptz,
+              updated_at + interval '1 millisecond'
+            )
           WHERE singleton
           RETURNING singleton
         `
