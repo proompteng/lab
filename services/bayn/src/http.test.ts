@@ -26,10 +26,10 @@ import {
   CycleOperationsReason,
   MonthEndCadenceCondition,
   MonthEndCadenceReason,
-} from './cycle-observability'
+} from './cycle/observability'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from './cycle'
-import { CycleNotDueReason, type CyclePassObservation, type CycleRunResult } from './cycle-runner/model'
-import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
+import { CycleNotDueReason, type CyclePassObservation, type CycleRunResult } from './cycle/runner/model'
+import { retainAutonomousCyclePassObservation } from './cycle/runner/pass-decisions'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import {

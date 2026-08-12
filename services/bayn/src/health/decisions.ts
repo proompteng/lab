@@ -11,9 +11,9 @@ import {
   type CycleOperationsProjection,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
-} from '../cycle-observability'
+} from '../cycle/observability'
 import { CycleState, CycleTerminalReason } from '../cycle'
-import { CycleNotDueReason, type CycleRunResult } from '../cycle-runner/model'
+import { CycleNotDueReason, type CycleRunResult } from '../cycle/runner/model'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'

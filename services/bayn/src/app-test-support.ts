@@ -5,7 +5,7 @@ import { expect } from 'bun:test'
 import { Effect, Option, pipe, Redacted, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { deriveCycleOperationsStatus } from './cycle-observability'
+import { deriveCycleOperationsStatus } from './cycle/observability'
 import type { EvidenceStoreService, StoredEvaluationEvidence } from './db/evidence-store'
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'

@@ -13,7 +13,7 @@ import {
 } from '../broker/alpaca'
 import { RuntimeProvenanceSchema } from '../contracts'
 import type { AutonomousCycle } from '../cycle'
-import type { CycleOperationsProjection } from '../cycle-observability'
+import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import {
   GitSourceRevisionSchema,

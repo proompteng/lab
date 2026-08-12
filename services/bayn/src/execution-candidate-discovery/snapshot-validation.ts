@@ -2,7 +2,7 @@ import { Result, Schema, pipe } from 'effect'
 
 import { makeStrategyProtocolHash } from '../contracts'
 import { CycleState } from '../cycle'
-import type { CycleOperationsProjection } from '../cycle-observability'
+import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, RiskOutcome } from '../execution/contracts'
 import { Gate, Reason } from '../risk'
 import { strictParseOptions } from '../schemas'

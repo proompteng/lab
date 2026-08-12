@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 
 import { Data, Effect, Exit, Fiber } from 'effect'
 
-import { CycleNotDueReason } from './cycle-runner/model'
+import { CycleNotDueReason } from './cycle/runner/model'
 import type { LifecycleCommandStoreShape } from './db/lifecycle-command'
 import type { WriterFenceService } from './execution/writer-fence'
 import { executeLifecycleCommand, type LifecycleCommandAdvance, serveLifecycleCommands } from './lifecycle-command-http'

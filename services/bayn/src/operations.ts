@@ -1,7 +1,7 @@
 import { Duration, Effect, Layer, Schedule } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
-import { CycleObservabilityError } from './db/cycle-observability'
+import { CycleObservabilityError } from './cycle/store'
 import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
 import { retryLayerAcquisition } from './resource-boundary'

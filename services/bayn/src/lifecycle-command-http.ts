@@ -12,7 +12,7 @@ import { bearerToken, type LifecycleCommandAuthenticator } from './lifecycle-com
 import { decideLifecycleCommand } from './lifecycle-command-contract'
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { currentUtcInstant } from './time'
-import type { CycleRunnerError } from './cycle-runner'
+import type { CycleRunnerError } from './cycle/runner'
 
 export interface LifecycleCommandServerConfig {
   readonly host: string

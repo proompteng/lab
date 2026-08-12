@@ -12,7 +12,7 @@ import {
   UnknownError,
 } from 'effect/unstable/sql/SqlError'
 
-import { CycleObservabilityError } from './db/cycle-observability'
+import { CycleObservabilityError } from './cycle/store'
 import { DatabaseError } from './db/evidence-store'
 import { databaseOperation, sqlResource } from './operations'
 

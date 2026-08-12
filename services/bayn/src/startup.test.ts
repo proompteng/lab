@@ -28,7 +28,7 @@ import {
 } from './app-test-support'
 import { runApplication, type BrokerlessApplicationConfig } from './app'
 import { makeStrategyProtocolHash } from './contracts'
-import { CycleObservability } from './db/cycle-observability'
+import { CycleObservability } from './cycle/store'
 import {
   DatabaseError,
   EvidenceStore,
