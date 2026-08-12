@@ -2852,8 +2852,11 @@ describePostgres('paper accounting persistence', () => {
             yield* sql`
             WITH timing AS (
               SELECT
-                clock_timestamp() AS terminal_at,
-                (clock_timestamp() AT TIME ZONE 'UTC')::date AS execution_date
+                ((execution_date + time '22:00:00') AT TIME ZONE 'UTC') AS terminal_at,
+                execution_date
+              FROM (
+                SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date - 1 AS execution_date
+              ) AS dates
             )
             INSERT INTO autonomous_cycles (
               cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -2876,9 +2879,9 @@ describePostgres('paper accounting persistence', () => {
               ${hash(`receipt-rollover-${fixture}-execution-model`)}, 1800000, 1800000,
               'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
               'alpaca-v2-calendar', ${hash(`receipt-rollover-${fixture}-calendar`)}, execution_date,
-              terminal_at - interval '4 hours', terminal_at - interval '3 hours',
-              terminal_at - interval '3 hours', terminal_at - interval '2 hours',
-              terminal_at + interval '4 hours', terminal_at - interval '2 hours 30 minutes',
+              terminal_at - interval '25 hours', terminal_at - interval '8 hours 30 minutes',
+              terminal_at - interval '8 hours 30 minutes', terminal_at - interval '7 hours 30 minutes',
+              terminal_at - interval '1 hour', terminal_at - interval '8 hours',
               'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_PUBLICATION_DEADLINE', 1,
               terminal_at, terminal_at, terminal_at
             FROM timing
