@@ -3,9 +3,11 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import {
+  beginRestateLifecycleTick,
   completeRestateLifecycleTick,
   decodeLifecycleCommandResponse,
   decodeRestateLifecycleConfig,
+  decodeRestateLifecycleTick,
   initialRestateLifecycleState,
   lifecycleCommandFromCursor,
 } from './restate-lifecycle'
@@ -65,6 +67,19 @@ describe('Restate lifecycle domain', () => {
     expect(Result.isFailure(decodeLifecycleCommandResponse({ ...response, nextDelayMs: 86_400_001 }))).toBe(true)
   })
 
+  test('decodes legacy ticks and bounded delivery attempts without widening the wire contract', () => {
+    const legacyTick = {
+      schemaVersion: 'bayn.restate-lifecycle-tick.v1',
+      epoch: 5,
+      sequence: 2307,
+    }
+    expect(Result.isSuccess(decodeRestateLifecycleTick(legacyTick))).toBe(true)
+    expect(Result.isSuccess(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: 1 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: -1 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: 0.5 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, extra: true }))).toBe(true)
+  })
+
   test('rejects credentialed, routed, or non-HTTP command URLs', () => {
     for (const commandBaseUrl of [
       'https://bayn.example.test',
@@ -87,6 +102,17 @@ describe('Restate lifecycle domain', () => {
       },
     }
     expect(lifecycleCommandFromCursor('primary', pending, '2026-08-10T21:00:00.000Z')).toEqual(pending.command)
+  })
+
+  test('journals one exact command identity before a response-loss retry', () => {
+    const config = Result.getOrThrow(decodeRestateLifecycleConfig(configInput))
+    const initial = initialRestateLifecycleState(config, { _tag: 'Next', sequence: 7 }, 4)
+    const started = beginRestateLifecycleTick(initial, 'primary', '2026-08-10T20:00:00.000Z')
+    const recovered = beginRestateLifecycleTick(started.state, 'primary', '2026-08-10T21:00:00.000Z')
+
+    expect(started.state.cursor).toEqual({ _tag: 'Pending', command: started.command })
+    expect(recovered.command).toEqual(started.command)
+    expect(recovered.state).toEqual(started.state)
   })
 
   test('advances a completed command exactly once', () => {

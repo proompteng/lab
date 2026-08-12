@@ -1,5 +1,5 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Config, Data, Effect, Logger, Option, Schema, pipe } from 'effect'
+import { Config, Data, Duration, Effect, Logger, Option, Result, Schema, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
@@ -33,7 +33,7 @@ class RestateRegistrationError extends Data.TaggedError('RestateRegistrationErro
   readonly cause?: unknown
 }> {}
 
-const config = Config.all({
+export const restateLifecycleRegistrationConfig = Config.all({
   adminOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_ADMIN_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:9070'),
   ),
@@ -57,19 +57,44 @@ interface JsonPostOptions {
   readonly timeoutMs: number
 }
 
+type HttpRequest = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+const requestSignal = (interruptionSignal: AbortSignal, timeoutMs: number): AbortSignal =>
+  AbortSignal.any([interruptionSignal, AbortSignal.timeout(timeoutMs)])
+
+const maximumInvocationReceiptBytes = 16 * 1024
+export const restateLifecycleActivationAcceptTimeoutMs = 30_000
+export const restateLifecycleActivationOutputRequestTimeoutMs = 10_000
+export const restateLifecycleActivationCompletionPollIntervalMs = 3_000
+// The first completion request is immediate, so the remaining attempt intervals span the controller's entire bounded
+// activation window. The Sync hook therefore keeps one waiter alive instead of relying on restart backoff.
+export const restateLifecycleActivationCompletionMaximumAttempts = (operationTimeoutMs: number): number =>
+  Math.ceil(
+    lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) / restateLifecycleActivationCompletionPollIntervalMs,
+  ) + 1
+const RestateAcceptedInvocationSchema = Schema.Struct({
+  invocationId: Schema.Trim.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/)),
+  status: Schema.Literal('Accepted'),
+})
+
+export const decodeRestateAcceptedInvocation = Schema.decodeUnknownResult(RestateAcceptedInvocationSchema, {
+  errors: 'all',
+  onExcessProperty: 'error',
+})
+
 const postJson = (
-  operation: 'register' | 'activate',
+  operation: 'register',
   url: string,
   body: unknown,
   options: JsonPostOptions,
 ): Effect.Effect<number, RestateRegistrationError> =>
   Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...options.headers },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(options.timeoutMs),
+        signal: requestSignal(signal, options.timeoutMs),
       })
       if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
       await response.body?.cancel()
@@ -81,6 +106,87 @@ const postJson = (
         message: `Bayn Restate lifecycle ${operation} request failed`,
         cause,
       }),
+  })
+
+export const postAcceptedInvocation = (
+  url: string,
+  body: unknown,
+  options: JsonPostOptions,
+  request: HttpRequest = fetch,
+): Effect.Effect<typeof RestateAcceptedInvocationSchema.Type, RestateRegistrationError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...options.headers },
+        body: JSON.stringify(body),
+        signal: requestSignal(signal, options.timeoutMs),
+      })
+      if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
+      const contentType = response.headers.get('content-type') ?? ''
+      if (!contentType.toLowerCase().startsWith('application/json')) {
+        throw new Error(`${url} returned a non-JSON invocation receipt`)
+      }
+      const declaredLength = Number.parseInt(response.headers.get('content-length') ?? '0', 10)
+      if (Number.isFinite(declaredLength) && declaredLength > maximumInvocationReceiptBytes) {
+        throw new Error(`${url} returned an oversized invocation receipt`)
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      if (bytes.byteLength > maximumInvocationReceiptBytes) {
+        throw new Error(`${url} returned an oversized invocation receipt`)
+      }
+      const decoded = decodeRestateAcceptedInvocation(JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+      if (Result.isFailure(decoded)) throw new Error(`${url} returned an invalid invocation receipt`)
+      return decoded.success
+    },
+    catch: (cause) =>
+      new RestateRegistrationError({
+        operation: 'activate',
+        message: 'Bayn Restate lifecycle activate request failed',
+        cause,
+      }),
+  })
+
+export const waitForRestateInvocationCompletion = (
+  ingressOrigin: string,
+  invocationId: string,
+  request: HttpRequest = fetch,
+  maximumAttempts = restateLifecycleActivationCompletionMaximumAttempts(30_000),
+  pollIntervalMs = restateLifecycleActivationCompletionPollIntervalMs,
+): Effect.Effect<void, RestateRegistrationError> =>
+  Effect.gen(function* () {
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      const completed = yield* Effect.tryPromise({
+        try: async (signal) => {
+          const response = await request(`${ingressOrigin}/restate/invocation/${invocationId}/output`, {
+            method: 'GET',
+            signal: requestSignal(signal, restateLifecycleActivationOutputRequestTimeoutMs),
+          })
+          if (response.status === 470) {
+            await response.body?.cancel()
+            return false
+          }
+          if (!response.ok) throw new Error(`Restate invocation output returned HTTP ${response.status}`)
+          if (response.headers.get('x-restate-id') !== invocationId) {
+            throw new Error('Restate invocation output identity does not match the accepted invocation')
+          }
+          await response.body?.cancel()
+          return true
+        },
+        catch: (cause) =>
+          new RestateRegistrationError({
+            operation: 'activate',
+            message: 'Bayn Restate lifecycle activation completion check failed',
+            cause,
+          }),
+      })
+      if (completed) return
+      if (attempt < maximumAttempts) yield* Effect.sleep(Duration.millis(pollIntervalMs))
+    }
+    return yield* new RestateRegistrationError({
+      operation: 'activate',
+      message: 'Bayn Restate lifecycle activation remains incomplete after the bounded completion check',
+    })
   })
 
 export const restateDeploymentRegistration = (endpointUri: string, sourceRevision: string) => ({
@@ -96,11 +202,8 @@ export const restateDeploymentRegistration = (endpointUri: string, sourceRevisio
 export const restateLifecycleActivationIdempotencyKey = (sourceRevision: string, controllerKey: string): string =>
   `bayn-lifecycle-${sourceRevision}-${controllerKey}`
 
-export const restateLifecycleActivationRequest = (
-  sourceRevision: string,
-  controllerKey: string,
-  operationTimeoutMs: number,
-) => ({
+export const restateLifecycleActivationRequest = (sourceRevision: string, controllerKey: string) => ({
+  path: '/restate/send/BaynLifecycleBootstrap/start',
   body: {
     schemaVersion: 'bayn.restate-lifecycle-activation.v1',
     controllerKey,
@@ -108,11 +211,11 @@ export const restateLifecycleActivationRequest = (
   headers: {
     'idempotency-key': restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey),
   },
-  timeoutMs: lifecycleActivationAwaitTimeoutMs(operationTimeoutMs),
+  timeoutMs: restateLifecycleActivationAcceptTimeoutMs,
 })
 
 const program = Effect.gen(function* () {
-  const loaded = yield* config
+  const loaded = yield* restateLifecycleRegistrationConfig
   const configuredSourceRevision = Option.getOrUndefined(loaded.configuredSourceRevision)
   const sourceRevision = embeddedBuildMetadata?.sourceRevision ?? configuredSourceRevision
   if (sourceRevision === undefined) {
@@ -145,17 +248,29 @@ const program = Effect.gen(function* () {
       sourceRevision,
     }),
   )
-  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey, loaded.operationTimeoutMs)
-  const activationStatus = yield* postJson(
-    'activate',
-    `${loaded.ingressOrigin}/BaynLifecycleBootstrap/start`,
+  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey)
+  const activationReceipt = yield* postAcceptedInvocation(
+    `${loaded.ingressOrigin}${activation.path}`,
     activation.body,
     { headers: activation.headers, timeoutMs: activation.timeoutMs },
   )
-  yield* Effect.logInfo('Bayn Restate lifecycle activated through ingress').pipe(
+  yield* Effect.logInfo('Bayn Restate lifecycle activation accepted through ingress').pipe(
     Effect.annotateLogs({
-      activationStatus,
       controllerKey: loaded.controllerKey,
+      invocationId: activationReceipt.invocationId,
+      sourceRevision,
+    }),
+  )
+  yield* waitForRestateInvocationCompletion(
+    loaded.ingressOrigin,
+    activationReceipt.invocationId,
+    fetch,
+    restateLifecycleActivationCompletionMaximumAttempts(loaded.operationTimeoutMs),
+  )
+  yield* Effect.logInfo('Bayn Restate lifecycle activation completed').pipe(
+    Effect.annotateLogs({
+      controllerKey: loaded.controllerKey,
+      invocationId: activationReceipt.invocationId,
       sourceRevision,
     }),
   )
