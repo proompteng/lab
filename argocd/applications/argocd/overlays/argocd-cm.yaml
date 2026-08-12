@@ -11,8 +11,43 @@ data:
   timeout.reconciliation: 180s
   resource.customizations.health.bitnami.com_SealedSecret: |
     hs = {}
-    hs.status = "Healthy"
-    hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
+
+    local metadata = obj.metadata or {}
+    local annotations = metadata.annotations or {}
+    if annotations["argocd.proompteng.ai/wait-for-sealed-secret"] ~= "true" then
+      hs.status = "Healthy"
+      hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
+      return hs
+    end
+
+    local status = obj.status or {}
+    local generation = metadata.generation
+    local observedGeneration = status.observedGeneration
+    if generation == nil or observedGeneration == nil or generation ~= observedGeneration then
+      hs.status = "Progressing"
+      hs.message = "Waiting for the sealed-secrets controller to observe the current generation."
+      return hs
+    end
+
+    local conditions = status.conditions or {}
+    for _, condition in ipairs(conditions) do
+      if condition.type == "Synced" then
+        if condition.status == "True" then
+          hs.status = "Healthy"
+          hs.message = "The sealed-secrets controller produced the current Secret generation."
+          return hs
+        end
+
+        if condition.status == "False" then
+          hs.status = "Degraded"
+          hs.message = condition.message or "The sealed-secrets controller rejected the current generation."
+          return hs
+        end
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for the sealed-secrets controller to report the current generation."
     return hs
   resource.customizations.health.batch_CronJob: |
     hs = {}
