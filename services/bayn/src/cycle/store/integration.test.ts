@@ -969,7 +969,11 @@ const insertSnapshotReference = (
     `
   })
 
-const seedTerminalQualifiedSnapshot = (draft: CycleDraft, snapshotId: string) =>
+const seedTerminalQualificationSnapshot = (
+  draft: CycleDraft,
+  snapshotId: string,
+  verdict: 'QUALIFIED' | 'REJECTED' = 'QUALIFIED',
+) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const lockId = '1'.repeat(64)
@@ -1021,13 +1025,13 @@ const seedTerminalQualifiedSnapshot = (draft: CycleDraft, snapshotId: string) =>
       INSERT INTO qualification_results (
         lock_id, schema_version, run_id, verdict, committed_at, analysis_hash, result_hash, payload
       ) VALUES (
-        ${lockId}, 'bayn.qualification-result.v2', ${draft.identity.qualificationRunId}, 'QUALIFIED',
+        ${lockId}, 'bayn.qualification-result.v2', ${draft.identity.qualificationRunId}, ${verdict},
         '2026-03-06T20:58:30.000Z', ${analysisHash}, ${resultHash},
         ${sql.json({
           schemaVersion: 'bayn.qualification-result.v2',
           lockId,
           runId: draft.identity.qualificationRunId,
-          verdict: 'QUALIFIED',
+          verdict,
           analysis: { analysisHash },
           resultHash,
         })}
@@ -3035,7 +3039,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const store = yield* CycleStore
         const sql = yield* PgClient.PgClient
 
-        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA)
 
         yield* store.acquire(draft, acquireAt)
         const wrongSnapshot = yield* Effect.exit(
@@ -3066,6 +3070,27 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.exactSnapshot).toMatchObject({ changed: true, cycle: { bindings: { snapshotId: snapshotA } } })
   })
 
+  test('rejects a new snapshot binding for a rejected qualification result', async () => {
+    const draft = makeDraft('paper-account-rejected-snapshot')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA, 'REJECTED')
+        yield* store.acquire(draft, acquireAt)
+        return yield* Effect.exit(store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt))
+      }),
+    )
+
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        'autonomous cycle snapshot does not match its terminal qualified dataset',
+      )
+    }
+  })
+
   test('refuses to install qualified snapshot enforcement over incompatible pending history', async () => {
     const draft = makeDraft('paper-account-qualified-snapshot-migration')
 
@@ -3074,7 +3099,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const store = yield* CycleStore
         const sql = yield* PgClient.PgClient
 
-        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA)
         yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
         yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
         yield* store.acquire(draft, acquireAt)
@@ -3113,7 +3138,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const store = yield* CycleStore
         const sql = yield* PgClient.PgClient
 
-        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA)
         yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
         yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
         yield* store.acquire(draft, acquireAt)
@@ -3150,6 +3175,80 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.installed).toBe(false)
   })
 
+  test('installs qualified snapshot enforcement over completed rejected history', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makePlannedDraft('paper-account-rejected-snapshot-migration', executionPolicy)
+    const completedAt = utcInstantFromEpochMillis(Date.parse(plannedDecisionAt) + 1_000)
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA, 'REJECTED')
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedObserveDecision(activated.cycle, snapshotB)
+        if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+          return yield* Effect.die(new Error('rejected migration fixture requires a planned OBSERVE decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
+        yield* store.finish(draft.identity.cycleId, CycleState.Completed, completedAt)
+
+        yield* qualifiedCycleSnapshotBinding
+        const [history] = yield* sql<{ snapshot_id: string; state: string }>`
+          SELECT snapshot_id, state FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { history, installed: installed.installed }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Completed })
+    expect(result.installed).toBe(true)
+  })
+
+  test('refuses to install qualified snapshot enforcement over pending rejected history', async () => {
+    const draft = makeDraft('paper-account-rejected-pending-migration')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualificationSnapshot(draft, snapshotA, 'REJECTED')
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+
+        const migration = yield* Effect.exit(qualifiedCycleSnapshotBinding)
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { installed: installed.installed, migration }
+      }),
+    )
+
+    expect(Exit.isFailure(result.migration)).toBe(true)
+    if (Exit.isFailure(result.migration)) {
+      expect(Cause.pretty(result.migration.cause)).toContain(
+        'qualified cycle snapshot binding migration found incompatible history',
+      )
+    }
+    expect(result.installed).toBe(false)
+  })
+
   test('locks cycle writers from qualified-history validation through trigger installation', async () => {
     const draft = makeDraft('paper-account-qualified-snapshot-migration-race')
     const blocker = makeRuntime()
@@ -3161,7 +3260,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const store = yield* CycleStore
           const sql = yield* PgClient.PgClient
 
-          yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+          yield* seedTerminalQualificationSnapshot(draft, snapshotA)
           yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
           yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
           yield* store.acquire(draft, acquireAt)

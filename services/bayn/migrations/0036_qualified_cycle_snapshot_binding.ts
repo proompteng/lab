@@ -19,6 +19,10 @@ export default Effect.gen(function* () {
                 SELECT 1
                 FROM qualification_results AS result
                 WHERE result.run_id = cycle.qualification_run_id
+                  AND (
+                    result.verdict = 'QUALIFIED'
+                    OR cycle.state IN ('PENDING', 'ACTIVE')
+                  )
               )
               AND NOT EXISTS (
                 SELECT 1
