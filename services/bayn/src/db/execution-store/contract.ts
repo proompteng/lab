@@ -33,6 +33,12 @@ export interface EnsureAuthorityGenerationInput {
   readonly maximum: Authority
 }
 
+export interface AuthorityGenerationLineage {
+  readonly generationHash: string
+  readonly previousGenerationHash: string | null
+  readonly maximum: Authority
+}
+
 export class ExecutionStoreError extends Data.TaggedError('ExecutionStoreError')<{
   readonly operation:
     | 'ingest'
@@ -82,6 +88,9 @@ export interface AuthorityGenerationStoreShape {
   readonly readResearchAuthorityGeneration?: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
+  readonly readAuthorityGenerationLineage?: (
+    generationHash: string,
+  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }
 
 /** Domain operations; the live Layer captures the process-wide writer fence. */

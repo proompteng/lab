@@ -10,6 +10,7 @@ import {
   FileSystem,
   Layer,
   Logger,
+  Option,
   Redacted,
   Ref,
   References,
@@ -33,6 +34,7 @@ import {
   observeCycleGenerationHash,
   paperReceiptFinalizationWindowOpen,
   prepareOrRecoverResearchPaperActivation,
+  readCompletedExecutionLifecycle,
   recoverPaperActivationGeneration,
   refreshResearchPaperActivationReconciliation,
   restrictExpiredPaperActivation,
@@ -486,6 +488,68 @@ describe('Bayn PAPER startup recovery boundary', () => {
         effective: Authority.Paper,
       }),
     ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+  })
+
+  test('recognizes the receipt-completed OBSERVE successor before retrying PAPER recovery on restart', async () => {
+    const successorGenerationHash = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({
+        previousPaperGenerationHash: continuationGeneration.generationHash,
+      }),
+    )
+    const receiptHash = hash('receipt')
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () => Effect.die(new Error('completed execution must not mutate authority')),
+      readAuthorityState: Effect.succeed({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: successorGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 3,
+        updatedAt: '2026-09-03T20:01:00.000Z',
+      }),
+      readAuthorityGenerationLineage: (generationHash) =>
+        Effect.succeed(
+          generationHash === successorGenerationHash
+            ? {
+                generationHash,
+                previousGenerationHash: continuationGeneration.generationHash,
+                maximum: Authority.Observe,
+              }
+            : undefined,
+        ),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === continuationGeneration.generationHash ? continuationGeneration : undefined),
+    }
+    const readReceiptHash = (generationHash: string) =>
+      Effect.succeed(
+        generationHash === continuationGeneration.generationHash ? Option.some(receiptHash) : Option.none<string>(),
+      )
+
+    const completed = await Effect.runPromise(
+      readCompletedExecutionLifecycle(
+        continuationApplicationPlan,
+        continuationRequest,
+        researchBuildContinuation,
+        authorityStore,
+        readReceiptHash,
+      ),
+    )
+    const withoutReceipt = await Effect.runPromise(
+      readCompletedExecutionLifecycle(
+        continuationApplicationPlan,
+        continuationRequest,
+        researchBuildContinuation,
+        authorityStore,
+        () => Effect.succeed(Option.none()),
+      ),
+    )
+
+    expect(completed).toEqual({
+      authorityGenerationHash: continuationGeneration.generationHash,
+      receiptHash,
+    })
+    expect(withoutReceipt).toBeUndefined()
   })
 
   test('resumes only the exact active research generation across a reviewed build change', async () => {

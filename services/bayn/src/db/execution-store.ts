@@ -23,6 +23,7 @@ export {
   VALUATION_SNAPSHOT_MAX_SKEW_MS,
   ValuationStore,
   type BrokerEventStoreShape,
+  type AuthorityGenerationLineage,
   type AuthorityGenerationStoreShape,
   type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,

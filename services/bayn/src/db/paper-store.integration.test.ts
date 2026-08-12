@@ -2584,6 +2584,11 @@ describePostgres('paper accounting persistence', () => {
             assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
             const readAuthorityState = store.readAuthorityState
             assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
+            const readAuthorityGenerationLineage = store.readAuthorityGenerationLineage
+            assert(
+              readAuthorityGenerationLineage !== undefined,
+              'durable authority generation lineage reads must be implemented',
+            )
 
             yield* seedExactReconciliation(activationReconciliation)
             yield* store.ensureAuthorityGeneration({
@@ -2696,7 +2701,8 @@ describePostgres('paper accounting persistence', () => {
               reconcileAfterSettlement,
             })
             const authority = yield* readAuthorityState
-            return { authority, beforeReceipt, paper, rollover }
+            const lineage = yield* readAuthorityGenerationLineage(authority.generationHash)
+            return { authority, beforeReceipt, lineage, paper, rollover }
           }),
         )
 
@@ -2710,6 +2716,11 @@ describePostgres('paper accounting persistence', () => {
           maximum: Authority.Observe,
           effective: Authority.Observe,
           kill: KillState.Clear,
+        })
+        expect(result.lineage).toEqual({
+          generationHash: result.authority.generationHash,
+          previousGenerationHash: result.paper.generationHash,
+          maximum: Authority.Observe,
         })
       } finally {
         await runtime.dispose()

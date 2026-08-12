@@ -40,6 +40,7 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
         readAuthorityState: observeAuthority.readAuthorityState,
         readAuthorityGeneration: observeAuthority.readAuthorityGeneration,
         readResearchAuthorityGeneration: observeAuthority.readResearchAuthorityGeneration,
+        readAuthorityGenerationLineage: observeAuthority.readAuthorityGenerationLineage,
       },
       capitalGrantLifecycle: {
         prepareCapitalGrant: capitalGrant.prepareCapitalGrant,

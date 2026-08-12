@@ -762,6 +762,108 @@ const readBoundPaperActivationGeneration = (
     return generation
   })
 
+export interface CompletedExecutionLifecycle {
+  readonly authorityGenerationHash: string
+  readonly receiptHash: string
+}
+
+export const readCompletedExecutionLifecycle = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  request: PaperActivationRequest,
+  buildContinuation: ResearchPaperBuildContinuation | null,
+  authorityStore: AuthorityGenerationStoreShape,
+  readReceiptHash: (authorityGenerationHash: string) => Effect.Effect<Option.Option<string>, OperationalError>,
+): Effect.Effect<CompletedExecutionLifecycle | undefined, OperationalError> =>
+  Effect.gen(function* () {
+    if (
+      authorityStore.readAuthorityState === undefined ||
+      authorityStore.readAuthorityGenerationLineage === undefined
+    ) {
+      return undefined
+    }
+    const authority = yield* authorityStore.readAuthorityState.pipe(
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('completed execution lifecycle authority read failed', cause),
+      ),
+    )
+    if (
+      authority.maximum !== Authority.Observe ||
+      authority.effective !== Authority.Observe ||
+      authority.kill !== KillState.Clear
+    ) {
+      return undefined
+    }
+    const lineage = yield* authorityStore
+      .readAuthorityGenerationLineage(authority.generationHash)
+      .pipe(
+        Effect.mapError((cause) =>
+          paperActivationOperationalError('completed execution lifecycle lineage read failed', cause),
+        ),
+      )
+    if (
+      lineage === undefined ||
+      lineage.generationHash !== authority.generationHash ||
+      lineage.maximum !== Authority.Observe ||
+      lineage.previousGenerationHash === null
+    ) {
+      return undefined
+    }
+
+    const previousGenerationHash = lineage.previousGenerationHash
+    let generation: PaperAuthorityGeneration | undefined
+    let binding: Result.Result<void, string>
+    if (isResearchPaperActivationRequest(request)) {
+      if (authorityStore.readResearchAuthorityGeneration === undefined) return undefined
+      generation = yield* authorityStore
+        .readResearchAuthorityGeneration(previousGenerationHash)
+        .pipe(
+          Effect.mapError((cause) =>
+            paperActivationOperationalError('completed research PAPER generation read failed', cause),
+          ),
+        )
+      if (generation === undefined) return undefined
+      binding =
+        buildContinuation === null
+          ? researchPaperGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
+          : researchPaperBuildContinuationIsBound(
+              buildContinuation,
+              generation.previousGenerationHash,
+              generation,
+              plan.config.build,
+            )
+    } else {
+      if (authorityStore.readAuthorityGeneration === undefined) return undefined
+      generation = yield* authorityStore
+        .readAuthorityGeneration(previousGenerationHash)
+        .pipe(
+          Effect.mapError((cause) =>
+            paperActivationOperationalError('completed qualified PAPER generation read failed', cause),
+          ),
+        )
+      if (generation === undefined) return undefined
+      binding = paperGenerationIsBoundToRequest(request, plan, generation)
+    }
+    if (Result.isFailure(binding)) return undefined
+
+    const expectedSuccessorHash = yield* Effect.fromResult(
+      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash: generation.generationHash }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('completed execution lifecycle successor hashing failed', cause),
+      ),
+    )
+    if (expectedSuccessorHash !== authority.generationHash) {
+      return yield* paperActivationOperationalError(
+        'completed execution lifecycle OBSERVE successor does not match the terminal PAPER generation',
+      )
+    }
+    const receiptHash = yield* readReceiptHash(generation.generationHash)
+    return Option.match(receiptHash, {
+      onNone: () => undefined,
+      onSome: (hash) => ({ authorityGenerationHash: generation.generationHash, receiptHash: hash }),
+    })
+  })
+
 export const recoverPaperActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
@@ -1701,6 +1803,22 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           ),
                         )
                         if (request === null) return recoverBlockedGeneration.pipe(Effect.as(readRuntime()))
+                        const completedLifecycle = readCompletedExecutionLifecycle(
+                          observePlan,
+                          request,
+                          buildContinuation,
+                          runtimeServices.authorityGenerationStore,
+                          (authorityGenerationHash) =>
+                            runtimeServices.forwardPerformanceReceiptStore.read(authorityGenerationHash).pipe(
+                              Effect.mapError((cause) =>
+                                paperActivationOperationalError(
+                                  'completed execution lifecycle receipt read failed',
+                                  cause,
+                                ),
+                              ),
+                              Effect.map(Option.map((receipt) => receipt.receiptHash)),
+                            ),
+                        )
                         const evidence = validated.success.evidence
                         if (evidence === null && !isResearchPaperActivationRequest(request)) {
                           return recoverBlockedGeneration.pipe(
@@ -2090,8 +2208,22 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             }),
                           )
                         }
-                        return prepareOrRecover.pipe(
-                          Effect.flatMap(resolvePrepared),
+                        return completedLifecycle.pipe(
+                          Effect.flatMap(
+                            (
+                              completed,
+                            ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
+                              if (completed === undefined) {
+                                return prepareOrRecover.pipe(Effect.flatMap(resolvePrepared))
+                              }
+                              return completedPaperActivation(
+                                state,
+                                request,
+                                completed.authorityGenerationHash,
+                                completed.receiptHash,
+                              ).pipe(Effect.as(readRuntime()))
+                            },
+                          ),
                           Effect.catch((cause) =>
                             Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
                               Effect.annotateLogs({

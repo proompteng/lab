@@ -28,7 +28,7 @@ import {
   researchPaperGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
@@ -131,6 +131,9 @@ export interface ObserveAuthorityInterpreter {
   readonly readResearchAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
+  readonly readAuthorityGenerationLineage: (
+    generationHash: string,
+  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }
 
 const makeObserveAuthorityInterpreterDataFirst = (
@@ -512,7 +515,30 @@ const makeObserveAuthorityInterpreterDataFirst = (
       ),
     )
 
-  return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration, readResearchAuthorityGeneration }
+  const readAuthorityGenerationLineage = (generationHash: string) =>
+    runExecutionOperation(
+      'authority',
+      authority.readGeneration(generationHash).pipe(
+        Effect.map((rows) => {
+          const row = rows[0]
+          return row === undefined
+            ? undefined
+            : {
+                generationHash: row.generation_hash,
+                previousGenerationHash: row.previous_generation_hash,
+                maximum: row.maximum,
+              }
+        }),
+      ),
+    )
+
+  return {
+    ensureAuthorityGeneration,
+    readAuthorityState,
+    readAuthorityGeneration,
+    readResearchAuthorityGeneration,
+    readAuthorityGenerationLineage,
+  }
 }
 
 export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)
