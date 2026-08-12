@@ -33,9 +33,9 @@ import {
 } from './app'
 import {
   paperObserveSuccessorGenerationHash,
-  recoverBlockedGenerationToObserve,
+  recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
-  type BlockedGenerationRolloverReceipt,
+  type TerminalGenerationRolloverReceipt,
 } from './blocked-generation-recovery'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
 import {
@@ -1651,7 +1651,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             : {}),
                           startCycle: readStartCycle,
                         })
-                        const recoverBlockedGeneration = recoverBlockedGenerationToObserve({
+                        const recoverBlockedGeneration = recoverTerminalGenerationToObserve({
                           accountId: observePlan.config.alpaca.expectedAccountId,
                           blockedIntents: runtimeServices.blockedCycleIntentStore,
                           authorityStore: runtimeServices.authorityGenerationStore,
@@ -1665,11 +1665,11 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           ),
                         })
                         const recoverTerminalExecutionGeneration: Effect.Effect<
-                          BlockedGenerationRolloverReceipt,
+                          TerminalGenerationRolloverReceipt,
                           OperationalError
                         > = recoverBlockedGeneration.pipe(
                           Effect.flatMap(
-                            (receipt): Effect.Effect<BlockedGenerationRolloverReceipt, OperationalError> => {
+                            (receipt): Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError> => {
                               if (receipt._tag === 'RolledOver') return Effect.succeed(receipt)
                               if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
                                 return Effect.fail(

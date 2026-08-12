@@ -20,7 +20,7 @@ import {
 } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { paperObserveSuccessorGenerationHash, recoverBlockedGenerationToObserve } from '../blocked-generation-recovery'
+import { paperObserveSuccessorGenerationHash, recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { orderRequestBody } from '../broker/alpaca-mutations'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
@@ -71,8 +71,16 @@ import {
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
-import { paperEpisodeFailureRestrictionPrefix } from '../paper-episode'
-import type { BlockedCycleIntentStoreShape } from '../execution/intents'
+import {
+  paperActivationExpiredRestrictionReason,
+  paperEpisodeCompletedRestrictionReason,
+  paperEpisodeFailureRestrictionPrefix,
+} from '../paper-episode'
+import {
+  BlockedCycleIntentStore,
+  BlockedCycleIntentStoreLive,
+  type BlockedCycleIntentStoreShape,
+} from '../execution/intents'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -348,7 +356,7 @@ const journal = (control: JournalControl): JournalService => ({
 
 const makeStoreRuntime = (control: JournalControl, runtimeConfig: RuntimeConfig = config) =>
   ManagedRuntime.make(
-    ExecutionStoreLive(runtimeConfig).pipe(
+    Layer.mergeAll(ExecutionStoreLive(runtimeConfig), BlockedCycleIntentStoreLive).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, journal(control))),
       Layer.provideMerge(PostgresClientLive(runtimeConfig)),
@@ -2412,9 +2420,9 @@ describePostgres('paper accounting persistence', () => {
 
           const blockedIntents: BlockedCycleIntentStoreShape = {
             terminalizeUntouchedApproved: () => Effect.die(new Error('startup settlement only')),
-            settleCurrentBlockedGeneration: () =>
+            settleCurrentTerminalGeneration: () =>
               Effect.succeed({
-                _tag: 'BlockedGenerationSettled' as const,
+                _tag: 'TerminalGenerationSettled' as const,
                 authorityGenerationHash: paper.generationHash,
                 blockedCycleCount: 1,
                 blockedIntentCount: 0,
@@ -2448,7 +2456,7 @@ describePostgres('paper accounting persistence', () => {
               }),
             ),
           )
-          const first = yield* recoverBlockedGenerationToObserve({
+          const first = yield* recoverTerminalGenerationToObserve({
             accountId,
             blockedIntents,
             authorityStore: store,
@@ -2548,6 +2556,167 @@ describePostgres('paper accounting persistence', () => {
       await runtime.dispose()
     }
   }, 15_000)
+
+  test.each([
+    ['completed', paperEpisodeCompletedRestrictionReason],
+    ['expired', paperActivationExpiredRestrictionReason],
+  ] as const)(
+    'rolls a receipt-finalized %s PAPER generation to clear OBSERVE only after durable receipt evidence',
+    async (fixture, restrictionReason) => {
+      const configuredObserveGenerationHash = hash(`receipt-rollover-${fixture}-configured-observe`)
+      const activationReconciliation = exactReconciliation(`receipt-rollover-${fixture}-activation`)
+      const activation = makeResearchActivation(configuredObserveGenerationHash, activationReconciliation)
+      const cycleId = hash(`receipt-rollover-${fixture}-cycle`)
+      const receiptHash = hash(`receipt-rollover-${fixture}-receipt`)
+      const contentHash = hash(`receipt-rollover-${fixture}-envelope`)
+      const runtime = makeStoreRuntime(
+        { fail: false, planHashes: [] },
+        researchRuntimeConfig(configuredObserveGenerationHash),
+      )
+      try {
+        const result = await runtime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* ExecutionStore
+            const blockedIntents = yield* BlockedCycleIntentStore
+            const sql = yield* PgClient.PgClient
+            const writerFence = yield* WriterFence
+            const activateResearch = store.activateResearchCapitalGrant
+            assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+            const readAuthorityState = store.readAuthorityState
+            assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
+
+            yield* seedExactReconciliation(activationReconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: configuredObserveGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+            yield* sql`
+            WITH timing AS (
+              SELECT
+                clock_timestamp() AS terminal_at,
+                (clock_timestamp() AT TIME ZONE 'UTC')::date AS execution_date
+            )
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
+              'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
+              execution_date - 1, 'test-calendar-v1',
+              'bayn.autonomous-cycle-execution-policy.v1', ${hash(`receipt-rollover-${fixture}-policy`)},
+              ${hash(`receipt-rollover-${fixture}-execution-model`)}, 1800000, 1800000,
+              'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash(`receipt-rollover-${fixture}-calendar`)}, execution_date,
+              terminal_at - interval '4 hours', terminal_at - interval '3 hours',
+              terminal_at - interval '3 hours', terminal_at - interval '2 hours',
+              terminal_at + interval '4 hours', terminal_at - interval '2 hours 30 minutes',
+              'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_PUBLICATION_DEADLINE', 1,
+              terminal_at, terminal_at, terminal_at
+            FROM timing
+          `
+            const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+            if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+            yield* store.restrictAuthority(restrictionReason, restrictionTime.updated_at.toISOString())
+
+            const beforeReceipt = yield* writerFence.transaction(
+              blockedIntents.settleCurrentTerminalGeneration({
+                accountId,
+                observedAt: restrictionTime.updated_at.toISOString(),
+              }),
+            )
+            const [receiptTime] = yield* sql<{ created_at: Date }>`SELECT clock_timestamp() AS created_at`
+            if (receiptTime === undefined) return yield* Effect.die(new Error('receipt time is unavailable'))
+            const createdAt = receiptTime.created_at.toISOString()
+            yield* sql`
+            INSERT INTO autonomous_forward_performance_receipts (
+              authority_generation_hash, cycle_id, document, created_at
+            ) VALUES (
+              ${paper.generationHash},
+              ${cycleId},
+              ${sql.json(
+                encodeSqlJson({
+                  schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
+                  authorityGenerationHash: paper.generationHash,
+                  cycleId,
+                  createdAt,
+                  contentHash,
+                  receiptHash,
+                  receipt: { receiptHash },
+                }),
+              )},
+              ${createdAt}
+            )
+          `
+            const rolloverReconciliation = exactReconciliation(`receipt-rollover-${fixture}-after-terminal-settlement`)
+            const reconcileAfterSettlement = Effect.gen(function* () {
+              const stateHash = hash(`receipt-rollover-${fixture}-after-terminal-settlement-state`)
+              yield* sql`
+              INSERT INTO reconciliations (
+                reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+                content_hash, status, discrepancies, reconciled_at
+              )
+              SELECT
+                ${rolloverReconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+                ${stateHash}, ${stateHash}, ${rolloverReconciliation.contentHash}, 'EXACT',
+                ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+              FROM authority_state AS state
+              WHERE state.singleton
+            `
+              yield* sql`SELECT pg_sleep(0.01)`
+            }).pipe(
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'database',
+                  operation: 'test-receipt-rollover',
+                  message: 'test reconciliation write failed',
+                  cause,
+                }),
+              ),
+            )
+            const rollover = yield* recoverTerminalGenerationToObserve({
+              accountId,
+              blockedIntents,
+              authorityStore: store,
+              writerFence,
+              reconcileAfterSettlement,
+            })
+            const authority = yield* readAuthorityState
+            return { authority, beforeReceipt, paper, rollover }
+          }),
+        )
+
+        expect(result.beforeReceipt).toEqual({ _tag: 'NoTerminalGeneration' })
+        expect(result.rollover).toMatchObject({
+          _tag: 'RolledOver',
+          previousGenerationHash: result.paper.generationHash,
+        })
+        expect(result.authority).toMatchObject({
+          generationHash: result.rollover._tag === 'RolledOver' ? result.rollover.generationHash : '',
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Clear,
+        })
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    15_000,
+  )
 
   test('rotates a non-rearm research PAPER kill to OBSERVE without clearing it', async () => {
     const sourceGenerationHash = hash('operator-killed-research-paper-source')

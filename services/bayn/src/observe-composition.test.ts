@@ -1789,7 +1789,7 @@ describe('OBSERVE runtime composition', () => {
         }).pipe(Effect.andThen(effect)),
     }
     const blockedCycleIntentStore: BlockedCycleIntentStoreShape = {
-      settleCurrentBlockedGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
+      settleCurrentTerminalGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
       terminalizeUntouchedApproved: () =>
         Effect.sync(() => {
           events.push('terminalize-intents')
@@ -1859,7 +1859,7 @@ describe('OBSERVE runtime composition', () => {
       transaction: (effect) => effect,
     }
     const blockedCycleIntentStore: BlockedCycleIntentStoreShape = {
-      settleCurrentBlockedGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
+      settleCurrentTerminalGeneration: () => Effect.die(new Error('startup recovery is outside this unit boundary')),
       terminalizeUntouchedApproved: () => Effect.die(new Error('rejected cycle block must not terminalize intents')),
     }
 

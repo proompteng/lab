@@ -23,7 +23,7 @@ export const paperObserveSuccessorGenerationHash = (input: {
     previousPaperGenerationHash: input.previousPaperGenerationHash,
   })
 
-export type BlockedGenerationRolloverReceipt =
+export type TerminalGenerationRolloverReceipt =
   | { readonly _tag: 'NotRequired' }
   | {
       readonly _tag: 'RolledOver'
@@ -35,7 +35,7 @@ export type BlockedGenerationRolloverReceipt =
       readonly terminalIntentCount: number
     }
 
-export interface BlockedGenerationRecoveryInput<R> {
+export interface TerminalGenerationRecoveryInput<R> {
   readonly accountId: string
   readonly blockedIntents: BlockedCycleIntentStoreShape
   readonly authorityStore: AuthorityGenerationStoreShape
@@ -47,14 +47,14 @@ export interface BlockedGenerationRecoveryInput<R> {
 const recoveryError = (message: string, cause?: unknown): OperationalError =>
   new OperationalError({
     component: 'strategy',
-    operation: 'blocked-generation-recovery',
+    operation: 'terminal-generation-recovery',
     message,
     retryable: false,
-    cause: cause === undefined ? { _tag: 'BlockedGenerationRecoveryRejected' } : cause,
+    cause: cause === undefined ? { _tag: 'TerminalGenerationRecoveryRejected' } : cause,
   })
 
 const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
-  error.operation === 'blocked-generation-recovery' &&
+  error.operation === 'terminal-generation-recovery' &&
   error.cause instanceof BlockedCycleIntentStoreError &&
   error.cause.failure === 'invariant'
 
@@ -66,9 +66,9 @@ const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
 export const recoverRestrictedGenerationBeforeRollover = <A, E, R>(input: {
   readonly advance: Effect.Effect<A, E, R>
   readonly wait: (advance: A) => Effect.Effect<void, never, R>
-  readonly settle: Effect.Effect<BlockedGenerationRolloverReceipt, OperationalError, R>
-}): Effect.Effect<BlockedGenerationRolloverReceipt, E | OperationalError, R> => {
-  const recover = (): Effect.Effect<BlockedGenerationRolloverReceipt, E | OperationalError, R> =>
+  readonly settle: Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R>
+}): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> => {
+  const recover = (): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> =>
     input.advance.pipe(
       Effect.flatMap((advanced) =>
         input.settle.pipe(
@@ -76,7 +76,7 @@ export const recoverRestrictedGenerationBeforeRollover = <A, E, R>(input: {
           Effect.flatMap((receipt) =>
             receipt._tag === 'RolledOver'
               ? Effect.succeed(receipt)
-              : Effect.fail(recoveryError('restricted generation recovery found no blocked generation to roll over')),
+              : Effect.fail(recoveryError('restricted generation recovery found no terminal generation to roll over')),
           ),
         ),
       ),
@@ -88,17 +88,17 @@ export const recoverRestrictedGenerationBeforeRollover = <A, E, R>(input: {
  * Settles the terminal generation first, then requires later exact reconciliation before clearing the kill in a new
  * OBSERVE generation. The transaction boundary intentionally excludes reconciliation and authority rollover.
  */
-export const recoverBlockedGenerationToObserve = <R>(
-  input: BlockedGenerationRecoveryInput<R>,
-): Effect.Effect<BlockedGenerationRolloverReceipt, OperationalError, R> =>
+export const recoverTerminalGenerationToObserve = <R>(
+  input: TerminalGenerationRecoveryInput<R>,
+): Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
     const settlement = yield* input.writerFence
-      .transaction(input.blockedIntents.settleCurrentBlockedGeneration({ accountId: input.accountId, observedAt }))
-      .pipe(Effect.mapError((cause) => recoveryError('blocked generation intent settlement failed', cause)))
-    if (settlement._tag === 'NoBlockedGeneration') return { _tag: 'NotRequired' }
+      .transaction(input.blockedIntents.settleCurrentTerminalGeneration({ accountId: input.accountId, observedAt }))
+      .pipe(Effect.mapError((cause) => recoveryError('terminal generation intent settlement failed', cause)))
+    if (settlement._tag === 'NoTerminalGeneration') return { _tag: 'NotRequired' }
 
-    yield* Effect.logWarning('Bayn settled a terminal blocked generation before authority rollover').pipe(
+    yield* Effect.logWarning('Bayn settled a terminal PAPER generation before authority rollover').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         previousGenerationHash: settlement.authorityGenerationHash,
@@ -114,20 +114,20 @@ export const recoverBlockedGenerationToObserve = <R>(
       paperObserveSuccessorGenerationHash({
         previousPaperGenerationHash: settlement.authorityGenerationHash,
       }),
-    ).pipe(Effect.mapError((cause) => recoveryError('blocked generation OBSERVE successor hashing failed', cause)))
+    ).pipe(Effect.mapError((cause) => recoveryError('terminal generation OBSERVE successor hashing failed', cause)))
     const authority = yield* input.authorityStore
       .ensureAuthorityGeneration({ generationHash: successorGenerationHash, maximum: Authority.Observe })
-      .pipe(Effect.mapError((cause) => recoveryError('blocked generation OBSERVE rollover failed', cause)))
+      .pipe(Effect.mapError((cause) => recoveryError('terminal generation OBSERVE rollover failed', cause)))
     if (
       authority.generationHash !== successorGenerationHash ||
       authority.maximum !== Authority.Observe ||
       authority.effective !== Authority.Observe ||
       authority.kill !== KillState.Clear
     ) {
-      return yield* recoveryError('blocked generation rollover did not return clear OBSERVE authority')
+      return yield* recoveryError('terminal generation rollover did not return clear OBSERVE authority')
     }
 
-    yield* Effect.logInfo('Bayn completed blocked generation rollover to clear OBSERVE').pipe(
+    yield* Effect.logInfo('Bayn completed terminal generation rollover to clear OBSERVE').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         previousGenerationHash: settlement.authorityGenerationHash,

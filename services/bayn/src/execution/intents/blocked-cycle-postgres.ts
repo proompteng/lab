@@ -3,13 +3,14 @@ import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
+import { paperActivationExpiredRestrictionReason, paperEpisodeCompletedRestrictionReason } from '../../paper-episode'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreError,
   type BlockedCycleIntentStoreShape,
   type BlockedCycleIntentTerminalizationInput,
-  type CurrentBlockedGenerationSettlementInput,
-  type CurrentBlockedGenerationSettlementReceipt,
+  type CurrentTerminalGenerationSettlementInput,
+  type CurrentTerminalGenerationSettlementReceipt,
 } from './blocked-cycle'
 
 const InputSchema = Schema.Struct({
@@ -155,7 +156,7 @@ const terminalizeUntouchedApproved = (sql: PgClient.PgClient, candidate: Blocked
     Effect.mapError(classifyCause),
   )
 
-const settleCurrentBlockedGeneration = (sql: PgClient.PgClient, candidate: CurrentBlockedGenerationSettlementInput) =>
+const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: CurrentTerminalGenerationSettlementInput) =>
   Schema.decodeUnknownEffect(
     CurrentSettlementInputSchema,
     strictParseOptions,
@@ -173,7 +174,20 @@ const settleCurrentBlockedGeneration = (sql: PgClient.PgClient, candidate: Curre
             AND state.maximum = 'PAPER'
             AND state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
-            AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+            AND (
+              state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              OR (
+                state.reason IN (
+                  ${paperEpisodeCompletedRestrictionReason},
+                  ${paperActivationExpiredRestrictionReason}
+                )
+                AND EXISTS (
+                  SELECT 1
+                  FROM autonomous_forward_performance_receipts AS receipt
+                  WHERE receipt.authority_generation_hash = state.generation_hash
+                )
+              )
+            )
             AND generation.maximum = 'PAPER'
             AND generation.activation_schema_version IN (
               'bayn.paper-authority-generation.v2',
@@ -259,9 +273,9 @@ const settleCurrentBlockedGeneration = (sql: PgClient.PgClient, candidate: Curre
       `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(CurrentSettlementRows, strictParseOptions))),
     ),
     Effect.flatMap(
-      ([receipt]): Effect.Effect<CurrentBlockedGenerationSettlementReceipt, BlockedCycleIntentStoreError> => {
+      ([receipt]): Effect.Effect<CurrentTerminalGenerationSettlementReceipt, BlockedCycleIntentStoreError> => {
         if (receipt.authority_generation_hash === null) {
-          return Effect.succeed({ _tag: 'NoBlockedGeneration' as const })
+          return Effect.succeed({ _tag: 'NoTerminalGeneration' as const })
         }
         if (receipt.nonterminal_intent_count !== 0) {
           return Effect.fail(
@@ -272,7 +286,7 @@ const settleCurrentBlockedGeneration = (sql: PgClient.PgClient, candidate: Curre
           )
         }
         return Effect.succeed({
-          _tag: 'BlockedGenerationSettled' as const,
+          _tag: 'TerminalGenerationSettled' as const,
           authorityGenerationHash: receipt.authority_generation_hash,
           blockedCycleCount: receipt.blocked_cycle_count,
           blockedIntentCount: receipt.blocked_intent_count,
@@ -289,7 +303,7 @@ const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   return {
     terminalizeUntouchedApproved: (input) => terminalizeUntouchedApproved(sql, input),
-    settleCurrentBlockedGeneration: (input) => settleCurrentBlockedGeneration(sql, input),
+    settleCurrentTerminalGeneration: (input) => settleCurrentTerminalGeneration(sql, input),
   } satisfies BlockedCycleIntentStoreShape
 })
 

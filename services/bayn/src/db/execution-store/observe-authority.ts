@@ -13,6 +13,7 @@ import {
   type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../../execution/contracts'
+import { paperActivationExpiredRestrictionReason, paperEpisodeCompletedRestrictionReason } from '../../paper-episode'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -233,7 +234,20 @@ const makeObserveAuthorityInterpreterDataFirst = (
           (
             state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
-            AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+            AND (
+              state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              OR (
+                state.reason IN (
+                  ${paperEpisodeCompletedRestrictionReason},
+                  ${paperActivationExpiredRestrictionReason}
+                )
+                AND EXISTS (
+                  SELECT 1
+                  FROM autonomous_forward_performance_receipts AS receipt
+                  WHERE receipt.authority_generation_hash = state.generation_hash
+                )
+              )
+            )
           )
           OR (
             state.effective = 'PAPER'
@@ -341,7 +355,20 @@ const makeObserveAuthorityInterpreterDataFirst = (
               (
                 state.effective = 'OBSERVE'
                 AND state.kill_state = 'ACTIVE'
-                AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                AND (
+                  state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                  OR (
+                    state.reason IN (
+                      ${paperEpisodeCompletedRestrictionReason},
+                      ${paperActivationExpiredRestrictionReason}
+                    )
+                    AND EXISTS (
+                      SELECT 1
+                      FROM autonomous_forward_performance_receipts AS receipt
+                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    )
+                  )
+                )
                 AND previous_generation.activation_schema_version IN (
                   'bayn.paper-authority-generation.v2',
                   'bayn.paper-authority-generation.v3'

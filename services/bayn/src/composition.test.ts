@@ -20,7 +20,7 @@ import { TestClock } from 'effect/testing'
 import { config, fixtureRuntime } from './app-test-support'
 import {
   paperObserveSuccessorGenerationHash,
-  recoverBlockedGenerationToObserve,
+  recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
@@ -809,11 +809,11 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
     const blockedIntents: BlockedCycleIntentStoreShape = {
       terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
-      settleCurrentBlockedGeneration: () =>
+      settleCurrentTerminalGeneration: () =>
         Effect.sync(() => {
           operations.push('settle')
           return {
-            _tag: 'BlockedGenerationSettled' as const,
+            _tag: 'TerminalGenerationSettled' as const,
             authorityGenerationHash: previousGenerationHash,
             blockedCycleCount: 1,
             blockedIntentCount: 0,
@@ -847,7 +847,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const receipt = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-10T19:00:00.000Z'))
-        return yield* recoverBlockedGenerationToObserve({
+        return yield* recoverTerminalGenerationToObserve({
           accountId: 'paper-account',
           blockedIntents,
           authorityStore,
@@ -884,22 +884,22 @@ describe('Bayn PAPER startup recovery boundary', () => {
     expect(nextEpisode).not.toBe(first)
   })
 
-  test('does not reconcile or rotate when no blocked generation exists', async () => {
+  test('does not reconcile or rotate when no terminal generation exists', async () => {
     const blockedIntents: BlockedCycleIntentStoreShape = {
       terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
-      settleCurrentBlockedGeneration: () => Effect.succeed({ _tag: 'NoBlockedGeneration' }),
+      settleCurrentTerminalGeneration: () => Effect.succeed({ _tag: 'NoTerminalGeneration' }),
     }
     const authorityStore: AuthorityGenerationStoreShape = {
-      ensureAuthorityGeneration: () => Effect.die(new Error('no blocked generation must not rotate authority')),
+      ensureAuthorityGeneration: () => Effect.die(new Error('no terminal generation must not rotate authority')),
     }
 
     const receipt = await Effect.runPromise(
-      recoverBlockedGenerationToObserve({
+      recoverTerminalGenerationToObserve({
         accountId: 'paper-account',
         blockedIntents,
         authorityStore,
         writerFence: unusedWriterFence,
-        reconcileAfterSettlement: Effect.die(new Error('no blocked generation must not reconcile')),
+        reconcileAfterSettlement: Effect.die(new Error('no terminal generation must not reconcile')),
       }),
     )
 
@@ -923,7 +923,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
             ? Effect.fail(
                 new OperationalError({
                   component: 'strategy',
-                  operation: 'blocked-generation-recovery',
+                  operation: 'terminal-generation-recovery',
                   message: 'blocked generation intent settlement failed',
                   retryable: false,
                   cause: new BlockedCycleIntentStoreError({
@@ -972,7 +972,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(advances).toBe(1)
-    expect(failure.message).toBe('restricted generation recovery found no blocked generation to roll over')
+    expect(failure.message).toBe('restricted generation recovery found no terminal generation to roll over')
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {

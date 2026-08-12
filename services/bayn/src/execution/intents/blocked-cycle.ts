@@ -12,15 +12,15 @@ export interface BlockedCycleIntentTerminalizationReceipt {
   readonly terminalIntentCount: number
 }
 
-export interface CurrentBlockedGenerationSettlementInput {
+export interface CurrentTerminalGenerationSettlementInput {
   readonly accountId: string
   readonly observedAt: string
 }
 
-export type CurrentBlockedGenerationSettlementReceipt =
-  | { readonly _tag: 'NoBlockedGeneration' }
+export type CurrentTerminalGenerationSettlementReceipt =
+  | { readonly _tag: 'NoTerminalGeneration' }
   | {
-      readonly _tag: 'BlockedGenerationSettled'
+      readonly _tag: 'TerminalGenerationSettled'
       readonly authorityGenerationHash: string
       readonly blockedCycleCount: number
       readonly blockedIntentCount: number
@@ -50,9 +50,9 @@ export interface BlockedCycleIntentStoreShape {
    * run this operation inside the process-owned WriterFence transaction. A later, separate exact reconciliation is
    * deliberately required before OBSERVE generation rollover can clear the kill.
    */
-  readonly settleCurrentBlockedGeneration: (
-    input: CurrentBlockedGenerationSettlementInput,
-  ) => Effect.Effect<CurrentBlockedGenerationSettlementReceipt, BlockedCycleIntentStoreError>
+  readonly settleCurrentTerminalGeneration: (
+    input: CurrentTerminalGenerationSettlementInput,
+  ) => Effect.Effect<CurrentTerminalGenerationSettlementReceipt, BlockedCycleIntentStoreError>
 }
 
 export class BlockedCycleIntentStore extends Context.Service<BlockedCycleIntentStore, BlockedCycleIntentStoreShape>()(
