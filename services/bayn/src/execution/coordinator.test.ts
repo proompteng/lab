@@ -1265,6 +1265,7 @@ const completeEvidence = (response: PartialMutationEvidence | undefined): Mutati
     : undefined
 
 interface HarnessOptions {
+  readonly afterBeginSubmit?: Effect.Effect<void>
   readonly crashAfterSubmit?: boolean
   readonly lostFence?: boolean
   readonly lostFenceAfterSubmit?: boolean
@@ -1353,7 +1354,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         occurredAt,
       )
       setState(IntentState.IoStarted, occurredAt)
-      return Effect.succeed({ event: started, started: true })
+      return (options.afterBeginSubmit ?? Effect.void).pipe(Effect.as({ event: started, started: true }))
     },
     submitAccepted: (_intentId, requestHash, brokerOrderId, response, terminal) => {
       const accepted = event(
@@ -1696,6 +1697,15 @@ describe('paper execution coordinator', () => {
     })
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Approved)
+  })
+
+  test('records a durable no-send outcome when the decision expires after SUBMIT_STARTED but before broker I/O', async () => {
+    const harness = makeHarness({ afterBeginSubmit: TestClock.adjust(600_000) })
+    const denied = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
+
+    expect(denied).toMatchObject({ eventType: MutationEventType.SubmitDenied })
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    expect(harness.intent()).toMatchObject({ state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Rejected })
   })
 
   test('records before submission and never calls the broker again for a replayed intent', async () => {
