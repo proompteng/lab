@@ -39,6 +39,7 @@ import {
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
 import {
+  buildPaperDecision,
   buildObserveShadowDecision,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
@@ -160,7 +161,9 @@ const position = (symbol: string): Position => ({
   observedAt: brokerObservedAt,
 })
 
-const makeBrokerState = () => {
+const defaultPositions = (): readonly Position[] => [position('AMD'), position('NVDA')]
+
+const makeBrokerState = (positions: readonly Position[] = defaultPositions()) => {
   const account: AccountSnapshot = {
     schemaVersion: 'bayn.paper-account-snapshot.v1',
     accountId,
@@ -171,7 +174,6 @@ const makeBrokerState = () => {
     buyingPowerMicros: '1000000000',
     observedAt: brokerObservedAt,
   }
-  const positions = [position('AMD'), position('NVDA')]
   const orders = [] as const
   const stateHash = Result.getOrThrow(
     reconciledStateHash({
@@ -268,8 +270,9 @@ const makePlannerInput = (
   decision: DecisionPlan,
   policy: Policy,
   maximumInputAgeMs = 1_800_000,
+  positions: readonly Position[] = defaultPositions(),
 ): TargetPlannerInput => {
-  const brokerState = makeBrokerState()
+  const brokerState = makeBrokerState(positions)
   return {
     schemaVersion: 'bayn.paper-target-planner-input.v1',
     strategyName: 'risk-balanced-trend',
@@ -297,8 +300,12 @@ const makePlannerInput = (
   }
 }
 
-const makeRiskState = (cycle: AutonomousCycle, symbol: string): State => {
-  const brokerState = makeBrokerState()
+const makeRiskState = (
+  cycle: AutonomousCycle,
+  symbol: string,
+  positions: readonly Position[] = defaultPositions(),
+): State => {
+  const brokerState = makeBrokerState(positions)
   const calendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -365,25 +372,24 @@ const makeRiskState = (cycle: AutonomousCycle, symbol: string): State => {
 
 const makeInput = (
   targetWeights: Readonly<Record<string, number>> = { AMD: 0.4, NVDA: 0.6 },
+  positions: readonly Position[] = defaultPositions(),
+  policy: Policy = makePolicy(),
 ): ObserveShadowDecisionInput => {
   const cycle = makeCycle()
   const compiledDecision = makeDecision(targetWeights)
-  const policy = makePolicy()
-  const plannerInput = makePlannerInput(cycle, compiledDecision, policy)
-  const quantities: Readonly<Record<string, string>> = {
-    AMD: '3000000',
-    NVDA: '5000000',
-  }
+  const plannerInput = makePlannerInput(cycle, compiledDecision, policy, 1_800_000, positions)
+  const targetPlan = planTargetsSuccess(plannerInput)
   const riskInputs: ShadowDeltaRiskInput[] =
-    targetWeights['AMD'] === 0.4 && targetWeights['NVDA'] === 0.6
-      ? ['AMD', 'NVDA'].map((symbol) => ({
-          symbol,
-          notionalLimitMicros: (
-            (BigInt(quantities[symbol]) * BigInt(plannerInput.referencePrices.priceMicros[symbol])) /
-            1_000_000n
-          ).toString(),
-          state: makeRiskState(cycle, symbol),
-        }))
+    targetPlan.status === TargetPlanStatus.Planned
+      ? targetPlan.intentTargets.map((target) => {
+          const referencePrice = plannerInput.referencePrices.priceMicros[target.symbol]
+          if (referencePrice === undefined) throw new Error(`missing fixture reference price for ${target.symbol}`)
+          return {
+            symbol: target.symbol,
+            notionalLimitMicros: ((BigInt(target.quantityMicros) * BigInt(referencePrice)) / 1_000_000n).toString(),
+            state: makeRiskState(cycle, target.symbol, positions),
+          }
+        })
       : []
   return {
     cycle,
@@ -394,7 +400,7 @@ const makeInput = (
     },
     compiledDecision,
     plannerInput,
-    targetPlan: planTargetsSuccess(plannerInput),
+    targetPlan,
     policy,
     riskInputs,
   }
@@ -434,6 +440,7 @@ describe('OBSERVE shadow decision', () => {
         residualBuyingPowerMicros: '200000000',
       },
     })
+
     expect(
       first.targetPlan.targets.map(({ symbol, currentQuantityMicros, targetQuantityMicros }) => [
         symbol,
@@ -515,6 +522,56 @@ describe('OBSERVE shadow decision', () => {
     ).toThrow()
   })
 
+  test('revalues unchanged holdings at the Signal reference basis before cumulative PAPER risk', async () => {
+    const inflatedNvda = {
+      ...position('NVDA'),
+      marketPriceMicros: '300000000',
+      marketValueMicros: '300000000',
+      unrealizedPnlMicros: '200000000',
+    }
+    const input = makeInput(
+      { AMD: 0.4, NVDA: 0.1 },
+      [position('AMD'), inflatedNvda],
+      decodePolicy({
+        ...makePolicy(),
+        maxGrossExposureMicros: '550000000',
+        maxNetExposureMicros: '550000000',
+      }),
+    )
+    const generationHash = hash('6')
+    const paperRiskInputs = input.riskInputs.map((riskInput) => ({
+      ...riskInput,
+      state: decodeState({
+        ...riskInput.state,
+        authority: {
+          ...riskInput.state.authority,
+          generationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+        },
+      }),
+    }))
+    const executionSession = paperRiskInputs[0]?.state.executionSession
+    if (executionSession === undefined) throw new Error('fixture requires one PAPER risk delta')
+
+    const document = await Effect.runPromise(
+      buildPaperDecision({
+        ...input,
+        riskInputs: paperRiskInputs,
+        authorityGenerationHash: generationHash,
+        executionSession,
+      }),
+    )
+
+    expect(document.targetPlan.intentTargets.map(({ symbol }) => symbol)).toEqual(['AMD'])
+    expect(document.deltaRisk).toHaveLength(1)
+    expect(document.deltaRisk[0]?.evaluation.metrics.postTradeGrossExposureMicros).toBe('500000000')
+    expect(document.deltaRisk[0]?.evaluation.metrics.postTradeNetExposureMicros).toBe('500000000')
+    expect(document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(document.dispatchable).toBe(true)
+    expect(document).not.toHaveProperty('riskBlock')
+  })
+
   test('persists deterministic NO_TRADE and pre-cutoff blocked planner results without ignored risk input', async () => {
     const noTrade = await build(makeInput({ AMD: 0.1, NVDA: 0.1 }))
     const staleInput = makeInput()
@@ -541,6 +598,20 @@ describe('OBSERVE shadow decision', () => {
     expect(stale.deltaRisk).toEqual([])
     expect(noTrade.expiresAt).toBe(noTrade.submissionCutoffAt)
     expect(stale.expiresAt).toBe(stale.submissionCutoffAt)
+  })
+
+  test('persists identity mismatch without valuing an out-of-universe held position', async () => {
+    const input = makeInput({ AMD: 0.4, NVDA: 0.6 }, [position('GLD')])
+
+    expect(input.targetPlan).toMatchObject({
+      status: TargetPlanStatus.Blocked,
+      reason: TargetPlanReason.IdentityMismatch,
+    })
+    const document = await build(input)
+
+    expect(document.targetPlan).toEqual(input.targetPlan)
+    expect(document.deltaRisk).toEqual([])
+    expect(document.dispatchable).toBe(false)
   })
 
   test('clamps blocked risk evidence at the last instant before the exclusive cycle cutoff', async () => {
