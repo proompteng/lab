@@ -31,6 +31,7 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
+import { isPaperEpisodeFailureRestriction } from '../paper-episode'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
@@ -201,6 +202,12 @@ const attempt = <A>(
     catch: (cause) => storeError(operation, 'invariant', `paper reconciliation ${operation} invariant failed`, cause),
   })
 
+const isTransientReconciliationRestriction = (reason: string | null): boolean =>
+  reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
+
+const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
+  isTransientReconciliationRestriction(currentReason) && isPaperEpisodeFailureRestriction(nextReason)
+
 const fromDecision = <A>(
   operation: ReconciliationStoreError['operation'],
   decision: Result.Result<A, ReconciliationAlgebraFailure>,
@@ -219,18 +226,54 @@ const restrictAuthorityDataFirst = (
 ): Effect.Effect<void, ReconciliationStoreError> =>
   runStore(
     'restrict-authority',
-    sql`
-      UPDATE authority_state
-      SET
-        effective = 'OBSERVE',
-        kill_state = 'ACTIVE',
-        reason = ${reason},
-        version = version + 1,
-        updated_at = ${updatedAt}
-      WHERE singleton
-        AND maximum = 'PAPER'
-        AND (effective <> 'OBSERVE' OR kill_state <> 'ACTIVE')
-    `.pipe(Effect.asVoid),
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended('bayn.paper-authority-generation.v1', 0)
+          )
+        `
+        const existing = yield* sql<{
+          effective: Authority
+          kill_state: KillState
+          reason: string | null
+        }>`
+          SELECT effective, kill_state, reason
+          FROM authority_state
+          WHERE singleton
+          FOR UPDATE
+        `
+        const state = existing[0]
+        if (state === undefined) {
+          return yield* storeError(
+            'restrict-authority',
+            'invariant',
+            'authority restriction requires initialized durable authority state',
+          )
+        }
+        const isRestricted = state.effective === Authority.Observe && state.kill_state === KillState.Active
+        const promoteReason = isRestricted && shouldPromoteRestrictionReason(state.reason, reason)
+        if (isRestricted && !promoteReason) return
+
+        const restricted = yield* sql<Record<string, unknown>>`
+          UPDATE authority_state
+          SET
+            effective = 'OBSERVE',
+            kill_state = 'ACTIVE',
+            reason = ${reason},
+            version = version + 1,
+            updated_at = greatest(
+              ${updatedAt}::timestamptz,
+              updated_at + interval '1 millisecond'
+            )
+          WHERE singleton
+          RETURNING singleton
+        `
+        if (restricted.length !== 1) {
+          return yield* storeError('restrict-authority', 'invariant', 'authority restriction was not durably applied')
+        }
+      }),
+    ),
   )
 
 export const restrictAuthority = Pipeable.dual(3, restrictAuthorityDataFirst)

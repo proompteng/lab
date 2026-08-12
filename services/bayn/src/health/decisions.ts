@@ -346,9 +346,7 @@ const deriveCycleStatus = (
       deriveCycleOperationsStatusResult(
         result.value,
         clock.checkedAtMs,
-        runtime.paperActivation?._tag === 'Realized' || runtime.paperActivation?._tag === 'Completed'
-          ? Authority.Paper
-          : historicalSandboxAuthority(config.execution),
+        runtime.paperActivation?._tag === 'Realized' ? Authority.Paper : historicalSandboxAuthority(config.execution),
         config,
       ),
       {

@@ -40,6 +40,7 @@ import {
   validatePaperGenerationFreshness,
   validatePaperGenerationReplay,
   validatePaperPrepareGeneration,
+  validatePreparedPaperActivation,
   validatePaperSourceAuthority,
   validateResearchCapitalGrantProof,
   validateResearchPaperGenerationReplay,
@@ -605,9 +606,38 @@ describe('PAPER authority algebra', () => {
       message: 'durable authority version is not a safe positive integer',
     })
     expect(successOf(validateDerivedPaperGeneration(derived.generation, activationBinding))).toBeUndefined()
+    const prepared = {
+      generationHash: derived.generation.generationHash,
+      sourceGenerationHash: observeAuthority.generationHash,
+    }
+    expect(successOf(validatePreparedPaperActivation(observeAuthority, activationBinding, prepared))).toBeUndefined()
     expect(successOf(decidePaperActivation(capitalGrant, activationBinding))).toEqual({
       _tag: 'ReplayPaperGeneration',
       current: capitalGrant,
+    })
+    expect(successOf(validatePreparedPaperActivation(capitalGrant, activationBinding, prepared))).toBeUndefined()
+    expect(
+      failureOf(
+        validatePreparedPaperActivation(
+          { ...observeAuthority, generationHash: hash('post-prepare-observe-generation') },
+          activationBinding,
+          prepared,
+        ),
+      ),
+    ).toMatchObject({
+      _tag: 'PaperPrepareGenerationMismatch',
+      configuredGenerationHash: observeAuthority.generationHash,
+    })
+    expect(
+      failureOf(
+        validatePreparedPaperActivation(observeAuthority, activationBinding, {
+          ...prepared,
+          generationHash: hash('different-prepared-generation'),
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'DerivedPaperGenerationMismatch',
+      configuredGenerationHash: activationBinding.configuredGenerationHash,
     })
     expect(
       failureOf(

@@ -35,6 +35,11 @@ export interface PaperGenerationRuntimeBinding {
   readonly qualificationRunId: string
 }
 
+export interface PreparedPaperActivationBinding {
+  readonly generationHash: string
+  readonly sourceGenerationHash: string
+}
+
 export interface PaperGenerationRuntimeFacts {
   readonly maximumAuthority: Authority
   readonly alpaca:
@@ -502,6 +507,27 @@ const validatePaperPrepareGenerationDataFirst = (
       })
 
 export const validatePaperPrepareGeneration = Pipeable.dual(2, validatePaperPrepareGenerationDataFirst)
+
+const validatePreparedPaperActivationDataFirst = (
+  current: AuthorityState,
+  runtime: PaperGenerationRuntimeBinding,
+  prepared: PreparedPaperActivationBinding,
+): Result.Result<void, CapitalGrantAlgebraFailure> => {
+  if (prepared.generationHash !== runtime.configuredGenerationHash) {
+    return fail({
+      _tag: 'DerivedPaperGenerationMismatch',
+      derivedGenerationHash: prepared.generationHash,
+      configuredGenerationHash: runtime.configuredGenerationHash,
+    })
+  }
+  if (current.maximum === Authority.Paper) return Result.succeed(undefined)
+  return validatePaperPrepareGenerationDataFirst(current, {
+    ...runtime,
+    configuredGenerationHash: prepared.sourceGenerationHash,
+  })
+}
+
+export const validatePreparedPaperActivation = Pipeable.dual(3, validatePreparedPaperActivationDataFirst)
 
 const readQualificationEvidenceVerificationFacts = (
   evidence: PaperGenerationEvidenceFacts,

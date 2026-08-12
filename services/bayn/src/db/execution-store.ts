@@ -31,6 +31,7 @@ export {
   type EventReceipt,
   type FillAccountingStoreShape,
   type PositionSnapshotReceipt,
+  type PreparedCapitalGrantActivation,
   type ReconciliationPersistence,
   type ReconciliationStoreShape,
   type ValuationStoreShape,

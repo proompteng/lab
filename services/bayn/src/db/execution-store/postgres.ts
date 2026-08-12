@@ -45,6 +45,7 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
       capitalGrantLifecycle: {
         prepareCapitalGrant: capitalGrant.prepareCapitalGrant,
         activateCapitalGrant: capitalGrant.activateCapitalGrant,
+        activatePreparedCapitalGrant: capitalGrant.activatePreparedCapitalGrant,
         activateResearchCapitalGrant: capitalGrant.activateResearchCapitalGrant,
       },
       authorityRestriction: {

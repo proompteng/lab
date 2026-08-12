@@ -33,6 +33,11 @@ export interface EnsureAuthorityGenerationInput {
   readonly maximum: Authority
 }
 
+export interface PreparedCapitalGrantActivation {
+  readonly generationHash: string
+  readonly sourceGenerationHash: string
+}
+
 export interface AuthorityGenerationLineage {
   readonly generationHash: string
   readonly previousGenerationHash: string | null
@@ -111,6 +116,14 @@ export interface CapitalGrantLifecycleStoreShape {
    * authority_generations.
    */
   readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  /**
+   * Activates an application PREPARE result. Both the prepared generation and its OBSERVE source are checked while
+   * the authority row is locked, before any PAPER history or authority write can commit.
+   */
+  readonly activatePreparedCapitalGrant: (
+    proof: CapitalGrantProofBinding,
+    prepared: PreparedCapitalGrantActivation,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /**
    * Atomically derives a reconciliation-bound research generation, records it, and activates PAPER authority. The
    * static request intentionally cannot predict this generation hash because reconciliation continues until the
