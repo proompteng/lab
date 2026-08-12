@@ -21,9 +21,10 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after adding the Restate SDK.
-    x86_64-linux = "sha256-MBfmsLhO8voqDByn07GjN2ggruwGnM2iL3gvESXIYuI=";
-    aarch64-linux = "sha256-jIYq6UCJfpBolkHaG+jOGD887NW/DUn1lCHKKtEJWnU=";
+    # Refreshed from the two authoritative Linux image builders after the Bayn package manifest
+    # moved autonomous-cycle integration test entrypoints into the cycle module.
+    x86_64-linux = "sha256-NxBkwl2pmHiTSEchtuczU3NIrSeR8vaq3RI/tP8LD2I=";
+    aarch64-linux = "sha256-W0Av36EWGpfhOL7G0mTHGv3TTYpCtw5O6e5VhnRMd2o=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
