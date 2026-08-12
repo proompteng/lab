@@ -4,6 +4,7 @@ import { Result } from 'effect'
 import {
   decidePaperEpisodeAuthority,
   decidePaperEpisodeCycleTerminalization,
+  isPaperEpisodeFailureRestriction,
   paperEpisodeAllocationCapitalMicros,
   paperGrantFromGeneration,
   paperGrantKey,
@@ -71,6 +72,38 @@ describe('paperEpisodeAllocationCapitalMicros', () => {
 })
 
 describe('paper episode decisions', () => {
+  test('recognizes only canonical and exact legacy system failure restrictions', () => {
+    const cycleId = 'a'.repeat(64)
+    const intentId = 'b'.repeat(64)
+
+    expect(
+      isPaperEpisodeFailureRestriction(
+        'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_RISK',
+      ),
+    ).toBe(true)
+    expect(
+      isPaperEpisodeFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} submit settled denied`,
+      ),
+    ).toBe(true)
+    expect(
+      isPaperEpisodeFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended REJECTED`,
+      ),
+    ).toBe(true)
+    expect(isPaperEpisodeFailureRestriction('operator requested PAPER stop')).toBe(false)
+    expect(
+      isPaperEpisodeFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended FILLED`,
+      ),
+    ).toBe(false)
+    expect(
+      isPaperEpisodeFailureRestriction(
+        `bound PAPER cycle ${cycleId.slice(1)} restricted effective authority: intent ${intentId} submit settled denied`,
+      ),
+    ).toBe(false)
+  })
+
   test('adapts legacy qualification history and research history to one grant boundary', () => {
     const qualified = paperGrantFromGeneration({
       schemaVersion: 'bayn.paper-authority-generation.v2',
@@ -174,6 +207,17 @@ describe('paper episode decisions', () => {
         kill: 'ACTIVE',
         currentGenerationMatchesRequest: true,
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decidePaperEpisodeAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: `bound PAPER cycle ${'c'.repeat(64)} restricted effective authority: intent ${'d'.repeat(64)} submit settled denied`,
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(

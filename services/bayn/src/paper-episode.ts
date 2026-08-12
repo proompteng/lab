@@ -153,6 +153,15 @@ export interface PaperEpisodeAuthorityFacts {
 }
 
 export const paperEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
+export const legacyPaperEpisodeFailureRestrictionPattern =
+  '^bound PAPER cycle [0-9a-f]{64} restricted effective authority: intent [0-9a-f]{64} (submit settled (denied|rejected)|ended (BLOCKED|CANCELED|EXPIRED|REJECTED|without outcome))$'
+const legacyPaperEpisodeFailureRestriction = new RegExp(legacyPaperEpisodeFailureRestrictionPattern)
+
+/** Accepts only system-authored failure restrictions; operator kills and malformed legacy reasons stay fail-closed. */
+export const isPaperEpisodeFailureRestriction = (reason: string | undefined): boolean =>
+  reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true ||
+  (reason !== undefined && legacyPaperEpisodeFailureRestriction.test(reason))
+
 export const paperEpisodeCompletedRestrictionReason =
   'PAPER episode restricted effective authority: flat exact receipt finalized'
 export const paperActivationExpiredRestrictionReason =
@@ -197,7 +206,7 @@ export const decidePaperEpisodeAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash &&
-    facts.reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true
+    isPaperEpisodeFailureRestriction(facts.reason)
   ) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }

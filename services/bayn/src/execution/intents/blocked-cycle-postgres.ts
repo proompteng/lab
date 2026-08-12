@@ -3,7 +3,12 @@ import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
-import { paperActivationExpiredRestrictionReason, paperEpisodeCompletedRestrictionReason } from '../../paper-episode'
+import {
+  legacyPaperEpisodeFailureRestrictionPattern,
+  paperActivationExpiredRestrictionReason,
+  paperEpisodeCompletedRestrictionReason,
+  paperEpisodeFailureRestrictionPrefix,
+} from '../../paper-episode'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreError,
@@ -166,7 +171,8 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         WITH current_generation AS MATERIALIZED (
           SELECT
             state.generation_hash,
-            generation.account_id
+            generation.account_id,
+            state.reason ~ ${legacyPaperEpisodeFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
           JOIN authority_generations AS generation
             ON generation.generation_hash = state.generation_hash
@@ -176,6 +182,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND state.kill_state = 'ACTIVE'
             AND (
               state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              OR state.reason ~ ${legacyPaperEpisodeFailureRestrictionPattern}
               OR (
                 state.reason IN (
                   ${paperEpisodeCompletedRestrictionReason},
@@ -260,6 +267,20 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           LEFT JOIN intents AS intent
             ON intent.authority_generation_hash = generation.generation_hash
           LEFT JOIN terminalized ON terminalized.intent_id = intent.intent_id
+        ), canonicalized_authority AS (
+          UPDATE authority_state AS state
+          SET
+            reason = ${paperEpisodeFailureRestrictionPrefix} || ' ' || state.reason,
+            version = state.version + 1,
+            updated_at = GREATEST(
+              ${input.observedAt}::timestamptz,
+              state.updated_at + interval '1 millisecond'
+            )
+          FROM current_generation AS generation
+          WHERE state.singleton
+            AND state.generation_hash = generation.generation_hash
+            AND generation.legacy_failure_restriction
+          RETURNING state.generation_hash
         )
         SELECT
           (SELECT generation_hash FROM current_generation) AS authority_generation_hash,

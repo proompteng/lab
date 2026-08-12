@@ -119,7 +119,7 @@ import { Journal, JournalLive } from './ledger'
 import { MarketData, MarketDataLive } from './market-data'
 import {
   decidePaperEpisodeAuthority,
-  paperEpisodeFailureRestrictionPrefix,
+  isPaperEpisodeFailureRestriction,
   paperGrantFromGeneration,
   paperGrantKey,
   validatePaperEpisodeCloseWindow,
@@ -2002,7 +2002,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                 authorityState.maximum === Authority.Paper &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
-                                authorityState.reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true
+                                isPaperEpisodeFailureRestriction(authorityState.reason)
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }

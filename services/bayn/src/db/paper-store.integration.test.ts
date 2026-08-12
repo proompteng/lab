@@ -2747,6 +2747,125 @@ describePostgres('paper accounting persistence', () => {
     15_000,
   )
 
+  test.each([
+    [
+      'a legacy broker-denial restriction',
+      `bound PAPER cycle ${hash('legacy-denial-cycle')} restricted effective authority: intent ${hash('legacy-denial-intent')} submit settled denied`,
+      'RolledOver',
+    ],
+    ['an operator kill', 'operator requested PAPER stop', 'NotRequired'],
+    [
+      'a malformed legacy restriction',
+      `bound PAPER cycle short restricted effective authority: intent ${hash('malformed-legacy-intent')} submit settled denied`,
+      'NotRequired',
+    ],
+  ] as const)(
+    'handles %s through the durable terminal-generation recovery boundary',
+    async (_fixture, reason, expectedTag) => {
+      const configuredObserveGenerationHash = hash(`restriction-classification-${_fixture}-observe`)
+      const activationReconciliation = exactReconciliation(`restriction-classification-${_fixture}-activation`)
+      const activation = makeResearchActivation(configuredObserveGenerationHash, activationReconciliation)
+      const runtime = makeStoreRuntime(
+        { fail: false, planHashes: [] },
+        researchRuntimeConfig(configuredObserveGenerationHash),
+      )
+      try {
+        const result = await runtime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* ExecutionStore
+            const blockedIntents = yield* BlockedCycleIntentStore
+            const sql = yield* PgClient.PgClient
+            const writerFence = yield* WriterFence
+            const activateResearch = store.activateResearchCapitalGrant
+            assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+            yield* seedExactReconciliation(activationReconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: configuredObserveGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+            const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+            if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+            yield* store.restrictAuthority(reason, restrictionTime.updated_at.toISOString())
+            const reconciliation = exactReconciliation(`restriction-classification-${_fixture}-settlement`)
+            const reconcileAfterSettlement = Effect.gen(function* () {
+              const stateHash = hash(`restriction-classification-${_fixture}-state`)
+              yield* sql`
+                INSERT INTO reconciliations (
+                  reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+                  content_hash, status, discrepancies, reconciled_at
+                )
+                SELECT
+                  ${reconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+                  ${stateHash}, ${stateHash}, ${reconciliation.contentHash}, 'EXACT',
+                  ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+                FROM authority_state AS state
+                WHERE state.singleton
+              `
+            }).pipe(
+              Effect.mapError((cause) =>
+                operationalError({
+                  component: 'database',
+                  operation: 'test-legacy-restriction-recovery',
+                  message: 'test reconciliation write failed',
+                  cause,
+                }),
+              ),
+            )
+            const recovery = yield* recoverTerminalGenerationToObserve({
+              accountId,
+              blockedIntents,
+              authorityStore: store,
+              writerFence,
+              reconcileAfterSettlement,
+            })
+            const [authority] = yield* sql<{
+              effective: Authority
+              generation_hash: string
+              kill_state: KillState
+              maximum: Authority
+              reason: string | null
+            }>`
+              SELECT generation_hash, maximum, effective, kill_state, reason
+              FROM authority_state
+              WHERE singleton
+            `
+            if (authority === undefined) return yield* Effect.die(new Error('authority state is unavailable'))
+            return { authority, paper, recovery }
+          }),
+        )
+
+        expect(result.recovery._tag).toBe(expectedTag)
+        if (result.recovery._tag === 'RolledOver') {
+          expect(result.recovery.previousGenerationHash).toBe(result.paper.generationHash)
+          expect(result.authority).toEqual({
+            effective: Authority.Observe,
+            generation_hash: result.recovery.generationHash,
+            kill_state: KillState.Clear,
+            maximum: Authority.Observe,
+            reason: null,
+          })
+        } else {
+          expect(result.authority).toMatchObject({
+            effective: Authority.Observe,
+            generation_hash: result.paper.generationHash,
+            kill_state: KillState.Active,
+            maximum: Authority.Paper,
+            reason,
+          })
+        }
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    15_000,
+  )
+
   test('rotates a non-rearm research PAPER kill to OBSERVE without clearing it', async () => {
     const sourceGenerationHash = hash('operator-killed-research-paper-source')
     const nextSourceGenerationHash = hash('operator-killed-research-paper-next-source')

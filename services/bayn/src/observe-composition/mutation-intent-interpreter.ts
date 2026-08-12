@@ -553,8 +553,8 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
             unsuccessfulIntentFound = true
             yield* dependencies.restrictAuthority(
-              `bound PAPER cycle ${cycle.identity.cycleId}`,
-              `intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
+              'PAPER autonomous cycle loop',
+              `bound cycle ${cycle.identity.cycleId}: intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
             continue
           }
