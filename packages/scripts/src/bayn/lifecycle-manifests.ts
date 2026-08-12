@@ -5,6 +5,7 @@ const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 export const baynLifecycleOperationTimeoutMs = 30_000
+export const baynLifecycleRegistrationActiveDeadlineSeconds = 720
 
 export const baynLifecycleCurrentPath = 'argocd/applications/bayn/lifecycle-current.yaml'
 export const baynLifecyclePreviousPath = 'argocd/applications/bayn/lifecycle-previous.yaml'
@@ -508,7 +509,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 6
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: ${baynLifecycleRegistrationActiveDeadlineSeconds.toString()}
   ttlSecondsAfterFinished: 300
   template:
     metadata:
@@ -541,6 +542,8 @@ spec:
               value: ${pin.sourceSha}
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "${baynLifecycleOperationTimeoutMs.toString()}"
             - name: BAYN_RESTATE_ENDPOINT_URI
               value: http://${name}.bayn.svc.cluster.local:9080
             - name: RESTATE_ADMIN_ORIGIN

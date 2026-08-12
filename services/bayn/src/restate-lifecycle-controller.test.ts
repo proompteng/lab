@@ -2,11 +2,14 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
+import { maximumConsistencyDelayMs } from './execution/mutations'
 import { lifecycleCommandId } from './lifecycle-command-contract'
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
   lifecycleActivationAwaitTimeoutMs,
+  lifecycleActivationHandlerTimeouts,
   lifecycleActivationIdempotencyRetentionMs,
+  lifecycleActivationMaximumAttempts,
   lifecycleActivationRetryPolicy,
   lifecycleBootstrapRetryPolicy,
   lifecycleCommandFinalizationHeadroomMs,
@@ -34,10 +37,14 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}): Response => {
 }
 
 describe('Restate lifecycle command client', () => {
-  test('keeps bounded finalization headroom beyond every accepted Bayn pass timeout', () => {
-    expect(lifecycleCommandRequestTimeoutMs(1_000)).toBe(1_000 + lifecycleCommandFinalizationHeadroomMs)
-    expect(lifecycleCommandRequestTimeoutMs(30_000)).toBe(60_000)
-    expect(lifecycleCommandRequestTimeoutMs(86_400_000)).toBe(86_400_000 + lifecycleCommandFinalizationHeadroomMs)
+  test('bounds every external advance phase and retains durable finalization headroom', () => {
+    expect(lifecycleCommandRequestTimeoutMs(1_000)).toBe(
+      3_000 + maximumConsistencyDelayMs + lifecycleCommandFinalizationHeadroomMs,
+    )
+    expect(lifecycleCommandRequestTimeoutMs(30_000)).toBe(420_000)
+    expect(lifecycleCommandRequestTimeoutMs(86_400_000)).toBe(
+      259_200_000 + maximumConsistencyDelayMs + lifecycleCommandFinalizationHeadroomMs,
+    )
   })
 
   test('keeps Restate inactivity and abort limits beyond every accepted command request', () => {
@@ -45,7 +52,8 @@ describe('Restate lifecycle command client', () => {
       const expected = lifecycleHandlerTimeouts(operationTimeoutMs)
 
       expect(expected).toEqual({
-        inactivityTimeout: operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs * 2,
+        inactivityTimeout:
+          operationTimeoutMs * 3 + maximumConsistencyDelayMs + lifecycleCommandFinalizationHeadroomMs * 2,
         abortTimeout: lifecycleCommandFinalizationHeadroomMs,
       })
       expect(expected.inactivityTimeout).toBeGreaterThan(lifecycleCommandRequestTimeoutMs(operationTimeoutMs))
@@ -63,9 +71,19 @@ describe('Restate lifecycle command client', () => {
     expect(lifecycleBootstrapRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
     expect(lifecycleActivationIdempotencyRetentionMs).toBe(600_000)
     expect(lifecycleCursorRequestTimeoutMs).toBe(10_000)
-    expect(lifecycleActivationAwaitTimeoutMs).toBe(201_000)
-    expect(lifecycleActivationAwaitTimeoutMs).toBeGreaterThan(
-      lifecycleHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout,
+    expect(lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs)).toBe(621_000)
+    expect(lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs)).toBe(
+      lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs) +
+        lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
+        91_000 +
+        lifecycleCommandFinalizationHeadroomMs,
+    )
+    expect(lifecycleActivationHandlerTimeouts(config.operationTimeoutMs)).toEqual({
+      inactivityTimeout: 651_000,
+      abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+    })
+    expect(lifecycleActivationHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout).toBeGreaterThan(
+      lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs),
     )
   })
 

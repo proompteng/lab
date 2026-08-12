@@ -1,6 +1,7 @@
 import * as restate from '@restatedev/restate-sdk'
 import { Effect, Logger, Result } from 'effect'
 
+import { maximumConsistencyDelayMs } from './execution/mutations'
 import {
   completeRestateLifecycleTick,
   decodeLifecycleCommandCursorResponse,
@@ -100,8 +101,11 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   }
 }
 
+// One externally driven advance can run a bounded reconciliation preflight and cycle pass. A successful mutation can
+// then require the maximum schema-valid consistency delay and one separately bounded reconciliation. Retain a final
+// window for the durable command receipt and response rather than interrupting an accepted broker mutation mid-settle.
 export const lifecycleCommandRequestTimeoutMs = (operationTimeoutMs: number): number =>
-  operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs
+  operationTimeoutMs * 3 + maximumConsistencyDelayMs + lifecycleCommandFinalizationHeadroomMs
 
 const lifecycleActivationRetryDelayMs = (): number => {
   let interval = lifecycleActivationInitialRetryIntervalMs
@@ -113,7 +117,11 @@ const lifecycleActivationRetryDelayMs = (): number => {
   return total
 }
 
-export const lifecycleActivationAwaitTimeoutMs =
+// Activation is an exclusive virtual-object command. A rollout request can therefore wait behind one already-running
+// advance before its own bounded cursor recovery begins. Keep the ingress waiter alive for both phases and a separate
+// response-finalization window; otherwise a healthy activation can be abandoned while Restate is still progressing.
+export const lifecycleActivationAwaitTimeoutMs = (operationTimeoutMs: number): number =>
+  lifecycleCommandRequestTimeoutMs(operationTimeoutMs) +
   lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
   lifecycleActivationRetryDelayMs() +
   lifecycleCommandFinalizationHeadroomMs
@@ -124,6 +132,13 @@ export const lifecycleHandlerTimeouts = (
   operationTimeoutMs: number,
 ): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
   inactivityTimeout: lifecycleCommandRequestTimeoutMs(operationTimeoutMs) + lifecycleCommandFinalizationHeadroomMs,
+  abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+})
+
+export const lifecycleActivationHandlerTimeouts = (
+  operationTimeoutMs: number,
+): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
+  inactivityTimeout: lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) + lifecycleCommandFinalizationHeadroomMs,
   abortTimeout: lifecycleCommandFinalizationHeadroomMs,
 })
 
@@ -351,6 +366,6 @@ export const makeBaynLifecycleBootstrap = (
       ),
     },
     options: {
-      ...lifecycleHandlerTimeouts(config.operationTimeoutMs),
+      ...lifecycleActivationHandlerTimeouts(config.operationTimeoutMs),
     },
   })

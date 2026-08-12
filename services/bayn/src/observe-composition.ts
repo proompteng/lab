@@ -2034,6 +2034,19 @@ const attemptMutationIdleReconciliation = (
     ),
   )
 
+const reconcileMutationBeforeExternallyDrivenAdvance = (
+  input: ObserveAutonomousCycleInput,
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  Effect.gen(function* () {
+    const nowNanos = yield* Clock.currentTimeNanos
+    const state = yield* Ref.get(cadence)
+    const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
+    if (decision._tag === 'RECONCILE') yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    else if (state.lastFailure !== undefined) return yield* state.lastFailure
+  })
+
 const reconcileMutationNotDuePass = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -2231,7 +2244,7 @@ const makeRecoveryFirstCycleDriver = (
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
-    const advance = Effect.gen(function* () {
+    const advanceCycle = Effect.gen(function* () {
       const context: CycleRunContext<ObserveDecisionRuntime> = {
         qualificationRunId: startup.qualificationRunId,
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
@@ -2270,6 +2283,21 @@ const makeRecoveryFirstCycleDriver = (
           ),
       }),
     )
+    const advance =
+      input.interpretCycleDriver === undefined
+        ? advanceCycle
+        : reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
+            Effect.matchEffect({
+              onFailure: (error) =>
+                currentUtcInstant.pipe(
+                  Effect.flatMap((observedAt) =>
+                    observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }),
+                  ),
+                  Effect.map((observation) => ({ observation })),
+                ),
+              onSuccess: () => advanceCycle,
+            }),
+          )
     return {
       advance,
       nextDelayMs: recoveryFirstCycleNextDelayMs(input),

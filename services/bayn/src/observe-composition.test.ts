@@ -4056,6 +4056,135 @@ describe('OBSERVE runtime composition', () => {
     mutationEvents.length = 0
     mutationReconciliations = 0
     publicationReads = 0
+    const externalObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    let externalNextDelayMs: number | undefined
+    const externalStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 100,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureRuntime,
+      executionProgram: sandboxExecutionProgram(),
+      interpretCycleDriver: (driver) =>
+        Effect.gen(function* () {
+          externalNextDelayMs = driver.nextDelayMs
+          yield* driver.advance.pipe(Effect.orDie)
+          yield* TestClock.adjust(100)
+          yield* driver.advance.pipe(Effect.orDie)
+        }),
+    })
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reconciledAt))
+        const loop = yield* externalStartup({
+          qualificationRunId: 'c'.repeat(64),
+          recordPass: (observation) =>
+            Effect.sync(() => {
+              externalObservations.push(observation)
+              mutationEvents.push(`external-observe:${externalObservations.length.toString()}`)
+            }),
+        })
+        yield* loop.pipe(
+          Effect.provideService(BrokerRead, brokerRead),
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(MarketData, missingPublicationMarketData),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
+          Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(IntentStore, intentStore),
+          Effect.provideService(MutationStore, mutationStore),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(externalNextDelayMs).toBe(100)
+    expect(externalObservations).toHaveLength(2)
+    expect(externalObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(externalObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(mutationReconciliations).toBe(2)
+    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
+    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
+    nextReconciliationFailure = new ExecutionStoreError({
+      operation: 'reconciliation',
+      failure: 'query',
+      message: 'external lifecycle reconciliation persistence failed',
+    })
+    const externalFailureObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    const externalFailureStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 100,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureRuntime,
+      executionProgram: sandboxExecutionProgram(),
+      interpretCycleDriver: (driver) =>
+        Effect.gen(function* () {
+          yield* driver.advance.pipe(Effect.orDie)
+          yield* TestClock.adjust(100)
+          yield* driver.advance.pipe(Effect.orDie)
+        }),
+    })
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reconciledAt))
+        const loop = yield* externalFailureStartup({
+          qualificationRunId: 'c'.repeat(64),
+          recordPass: (observation) =>
+            Effect.sync(() => {
+              externalFailureObservations.push(observation)
+              mutationEvents.push(`external-failure-observe:${externalFailureObservations.length.toString()}`)
+            }),
+        })
+        yield* loop.pipe(
+          Effect.provideService(BrokerRead, brokerRead),
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(MarketData, missingPublicationMarketData),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
+          Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(IntentStore, intentStore),
+          Effect.provideService(MutationStore, mutationStore),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(externalFailureObservations).toHaveLength(2)
+    expect(externalFailureObservations[0]).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation store operation failed: external lifecycle reconciliation persistence failed',
+    })
+    expect(externalFailureObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(publicationReads).toBe(1)
+    expect(mutationReconciliations).toBe(1)
+    expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(
+      mutationEvents.indexOf('external-failure-observe:1'),
+    )
+    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
+    expect(authorityRestrictions).toBe(1)
+    authorityRestrictions = 0
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
     nextReconciliationFailure = new ExecutionStoreError({
       operation: 'reconciliation',
       failure: 'query',
