@@ -26,6 +26,7 @@ import {
   validatePaperGenerationFreshness,
   validatePaperGenerationReplay,
   validatePaperPrepareGeneration,
+  validatePreparedPaperActivation,
   validatePaperSourceAuthority,
   validateResearchCapitalGrantProof,
   validateResearchPaperGenerationReplay,
@@ -35,6 +36,7 @@ import {
   type PaperActivationDecision,
   type PaperGenerationEvidenceFacts,
   type PaperGenerationRuntimeBinding,
+  type PreparedPaperActivationBinding,
 } from '../capital-grant-algebra'
 import {
   authorityStateFromRow,
@@ -42,7 +44,7 @@ import {
   researchPaperGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
+import type { ExecutionStoreError, ExecutionStoreRuntimeConfig, PreparedCapitalGrantActivation } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeActivationEvidenceRows,
@@ -59,6 +61,10 @@ export interface CapitalGrantInterpreter {
     proof: CapitalGrantProofBinding,
   ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError>
   readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly activatePreparedCapitalGrant: (
+    proof: CapitalGrantProofBinding,
+    prepared: PreparedCapitalGrantActivation,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
     sourceGenerationHash: string,
@@ -465,9 +471,13 @@ const makeCapitalGrantInterpreterDataFirst = (
   const activatePaperGenerationTransaction = (
     proof: CapitalGrantProofBinding,
     binding: PaperGenerationRuntimeBinding,
+    prepared?: PreparedPaperActivationBinding,
   ) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
+      if (prepared !== undefined) {
+        yield* liftAuthorityDecision(validatePreparedPaperActivation(locked.current, binding, prepared))
+      }
       const decision = yield* liftAuthorityDecision(decidePaperActivation(locked.current, binding))
       if (decision._tag === 'ReplayPaperGeneration') {
         return yield* replayPaperGeneration(decision.current, locked.history, proof, binding)
@@ -487,6 +497,19 @@ const makeCapitalGrantInterpreterDataFirst = (
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
         const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
         return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding))
+      }),
+    )
+
+  const activatePreparedCapitalGrant = (
+    candidate: CapitalGrantProofBinding,
+    prepared: PreparedCapitalGrantActivation,
+  ) =>
+    runExecutionOperation(
+      'authority',
+      Effect.gen(function* () {
+        const proof = yield* decodeCapitalGrantProofBinding(candidate)
+        const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
+        return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding, prepared))
       }),
     )
 
@@ -618,7 +641,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       }),
     )
 
-  return { prepareCapitalGrant, activateCapitalGrant, activateResearchCapitalGrant }
+  return { prepareCapitalGrant, activateCapitalGrant, activatePreparedCapitalGrant, activateResearchCapitalGrant }
 }
 
 export const makeCapitalGrantInterpreter = Pipeable.dual(4, makeCapitalGrantInterpreterDataFirst)

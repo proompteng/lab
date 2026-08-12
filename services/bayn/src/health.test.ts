@@ -863,6 +863,55 @@ describe('Bayn continuous health', () => {
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
   })
 
+  test('projects a completed PAPER episode against returned OBSERVE authority', () => {
+    const checkedAt = '2026-08-12T16:00:00.000Z'
+    const generationHash = 'b'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      paperActivation: {
+        _tag: 'Completed',
+        requestHash: 'a'.repeat(64),
+        generationHash,
+        grant: 'Qualified',
+        receiptHash: 'c'.repeat(64),
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            authority: {
+              generationHash: 'd'.repeat(64),
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition.next.status).toBe('READY')
+    expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
+    expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.KillActive)
+    expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+    expect(transition.next.cycle.alerts.killActive).toBe(false)
+  })
+
   test('recovers readiness after an exact stale research bootstrap wait and preserves immutable failure evidence', () => {
     const checkedAt = '2026-08-11T17:30:00.000Z'
     const terminalAt = '2026-08-11T17:12:00.000Z'

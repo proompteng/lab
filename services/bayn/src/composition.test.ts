@@ -28,6 +28,7 @@ import { provideTestLayer } from './effect-test-support'
 
 import {
   ApplicationPlatformLive,
+  activatePreparedQualifiedPaperGeneration,
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
   finalizePaperEpisode,
@@ -270,6 +271,8 @@ const continuationAuthorityStore = (
 const unusedCapitalGrantLifecycle: CapitalGrantLifecycleStoreShape = {
   prepareCapitalGrant: () => Effect.die(new Error('build continuation must not prepare authority')),
   activateCapitalGrant: () => Effect.die(new Error('build continuation must not activate qualified authority')),
+  activatePreparedCapitalGrant: () =>
+    Effect.die(new Error('build continuation must not activate prepared qualified authority')),
   activateResearchCapitalGrant: () => Effect.die(new Error('build continuation must not activate research authority')),
 }
 
@@ -314,6 +317,58 @@ describe('Bayn application platform', () => {
     const context = await Effect.runPromise(Effect.scoped(Layer.build(ApplicationPlatformLive)))
 
     expect(Context.get(context, FileSystem.FileSystem)).toBeDefined()
+  })
+
+  test('activates and verifies durable qualified PAPER authority before runtime realization', async () => {
+    const generationHash = hash('1')
+    const proof = {
+      schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
+      riskPolicyHash: hash('2'),
+      proofPlanHash: hash('3'),
+    }
+    let activationCalls = 0
+    const sourceGenerationHash = hash('source-generation')
+    const lifecycle: Pick<CapitalGrantLifecycleStoreShape, 'activatePreparedCapitalGrant'> = {
+      activatePreparedCapitalGrant: (observedProof, observedPrepared) =>
+        Effect.sync(() => {
+          activationCalls += 1
+          expect(observedProof).toEqual(proof)
+          expect(observedPrepared).toEqual({ generationHash, sourceGenerationHash })
+          return {
+            schemaVersion: 'bayn.paper-authority.v1' as const,
+            generationHash,
+            maximum: Authority.Paper,
+            effective: Authority.Paper,
+            kill: KillState.Clear,
+            version: 2,
+            updatedAt: '2026-08-12T16:00:00.000Z',
+          }
+        }),
+    }
+
+    const activated = await Effect.runPromise(
+      activatePreparedQualifiedPaperGeneration(lifecycle, proof, { generationHash, sourceGenerationHash }),
+    )
+    expect(activationCalls).toBe(1)
+    expect(activated).toMatchObject({
+      generationHash,
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
+      kill: KillState.Clear,
+    })
+
+    const mismatch = await Effect.runPromise(
+      Effect.flip(
+        activatePreparedQualifiedPaperGeneration(
+          {
+            activatePreparedCapitalGrant: () => Effect.succeed({ ...activated, generationHash: hash('4') }),
+          },
+          proof,
+          { generationHash, sourceGenerationHash },
+        ),
+      ),
+    )
+    expect(mismatch.message).toBe('qualified PAPER durable authority does not match the prepared generation')
   })
 
   test('owns the Restate reconciliation guardian for exactly the service scope', async () => {
@@ -717,6 +772,8 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const lifecycle: CapitalGrantLifecycleStoreShape = {
       prepareCapitalGrant: () => Effect.die(new Error('research activation must not prepare qualified authority')),
       activateCapitalGrant: () => Effect.die(new Error('research activation must not activate qualified authority')),
+      activatePreparedCapitalGrant: () =>
+        Effect.die(new Error('research activation must not activate prepared qualified authority')),
       activateResearchCapitalGrant: (_proof, sourceGenerationHash) =>
         Effect.sync(() => {
           operations.push(`activate:${sourceGenerationHash}`)

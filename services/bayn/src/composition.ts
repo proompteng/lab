@@ -74,6 +74,7 @@ import {
   type AuthorityGenerationStoreShape,
   type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,
+  type PreparedCapitalGrantActivation,
 } from './db/execution-store'
 import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capital-grant'
 import { BrokerAccess, CapitalAuthorityKind, noCapitalAuthority } from './execution/authority'
@@ -82,6 +83,7 @@ import {
   KillState,
   type AuthorityState,
   type CapitalGrantGeneration,
+  type CapitalGrantProofBinding,
   type ResearchCapitalGrantGeneration,
 } from './execution/contracts'
 import {
@@ -274,6 +276,13 @@ export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<
   return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
     Layer.provideMerge(ApplicationPlatformLive),
   )
+}
+
+const QualifiedPaperActivationResourcesLive = (config: LoadedRuntimeConfig) => {
+  const postgres = sqlResource(PostgresClientResourceLive(config))
+  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
+  const lifecycle = ExecutionPrepareStoreLive(config).pipe(Layer.provide(writerFence), Layer.provide(postgres))
+  return Layer.mergeAll(postgres, writerFence, lifecycle).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
 // Kept for the existing entrypoint export; validation uses the separate layer above.
@@ -488,6 +497,32 @@ const paperActivationOperationalError = (message: string, cause?: unknown): Oper
     message,
     retryable: false,
     cause: cause === undefined ? { _tag: 'PaperActivationPreparationRejected' } : cause,
+  })
+
+export const activatePreparedQualifiedPaperGeneration = (
+  lifecycle: Pick<CapitalGrantLifecycleStoreShape, 'activatePreparedCapitalGrant'>,
+  proof: CapitalGrantProofBinding,
+  prepared: PreparedCapitalGrantActivation,
+): Effect.Effect<AuthorityState, OperationalError> =>
+  Effect.gen(function* () {
+    const activated = yield* lifecycle
+      .activatePreparedCapitalGrant(proof, prepared)
+      .pipe(
+        Effect.mapError((cause) =>
+          paperActivationOperationalError('qualified PAPER generation activation failed', cause),
+        ),
+      )
+    if (
+      activated.generationHash !== prepared.generationHash ||
+      activated.maximum !== Authority.Paper ||
+      (activated.kill === KillState.Clear && activated.effective !== Authority.Paper) ||
+      (activated.kill === KillState.Active && activated.effective !== Authority.Observe)
+    ) {
+      return yield* paperActivationOperationalError(
+        'qualified PAPER durable authority does not match the prepared generation',
+      )
+    }
+    return activated
   })
 
 interface ConfiguredPaperActivation {
@@ -980,6 +1015,50 @@ const preparePaperActivation = (
     )
     yield* Effect.fromResult(preparedPaperActivationIsBound(request, plan, prepared)).pipe(
       Effect.mapError((message) => paperActivationOperationalError(message)),
+    )
+    const authenticated = yield* authenticateValidatedExecutionPrepare(
+      validated,
+      validated.request.discoveryReceipt,
+    ).pipe(
+      Effect.mapError(executionPrepareOperationalError),
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('execution activation proof validation failed', cause),
+      ),
+    )
+    const activationPolicy = yield* Effect.fromResult(
+      resolveExecutionPolicy({
+        brokerIdentity: plan.config.alpaca.identity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        authorityGenerationHash: prepared.generation.generationHash,
+        liveCapitalGrantHash: undefined,
+      }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('qualified PAPER activation policy is invalid', cause),
+      ),
+    )
+    const activationConfig = {
+      ...prepareConfig.config,
+      execution: activationPolicy,
+      alpaca: {
+        ...prepareConfig.config.alpaca,
+        authorityGenerationHash: prepared.generation.generationHash,
+      },
+    } as LoadedRuntimeConfig
+    yield* Effect.flatMap(CapitalGrantLifecycleStore, (lifecycle) =>
+      activatePreparedQualifiedPaperGeneration(lifecycle, authenticated.proof, {
+        generationHash: prepared.generation.generationHash,
+        sourceGenerationHash: plan.config.alpaca.authorityGenerationHash,
+      }),
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- dynamic qualified activation boundary owns this layer
+      Effect.provide(QualifiedPaperActivationResourcesLive(activationConfig)),
+      Effect.mapError((cause) =>
+        cause instanceof OperationalError
+          ? cause
+          : paperActivationOperationalError('qualified PAPER activation resource failed', cause),
+      ),
     )
     return prepared
   })

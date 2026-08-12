@@ -708,7 +708,8 @@ describe('EXECUTION_PREPARE pure validation', () => {
 
 const unusedResearchCapitalGrantLifecycle = {
   activateResearchCapitalGrant: () => Effect.die(new Error('research activation must remain unreachable')),
-} satisfies Pick<CapitalGrantLifecycleStoreShape, 'activateResearchCapitalGrant'>
+  activatePreparedCapitalGrant: () => Effect.die(new Error('prepared activation must remain unreachable')),
+} satisfies Pick<CapitalGrantLifecycleStoreShape, 'activatePreparedCapitalGrant' | 'activateResearchCapitalGrant'>
 
 const runProgram = (
   lifecycle: CapitalGrantLifecycleStoreShape,

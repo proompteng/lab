@@ -1135,7 +1135,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('keeps OBSERVE read-only after reconciliation failures and recovers only the legacy transient kill', async () => {
+  test('persists OBSERVE reconciliation failures and recovers only the legacy transient kill', async () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     try {
       const result = await runtime.runPromise(
@@ -1165,16 +1165,6 @@ describePostgres('paper accounting persistence', () => {
             WHERE singleton
           `
 
-          yield* sql`
-            UPDATE authority_state
-            SET
-              effective = 'OBSERVE',
-              kill_state = 'ACTIVE',
-              reason = ${incompletePassReason},
-              version = version + 1,
-              updated_at = ${failedAt.updated_at.toISOString()}
-            WHERE singleton
-          `
           const preservedWithoutReconciliation = yield* store.ensureAuthorityGeneration({
             generationHash: hash('observe-recovery-generation-b'),
             maximum: Authority.Observe,
@@ -1232,9 +1222,9 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.afterReadOnlyFailure).toEqual({
         generation_hash: result.initial.generationHash,
-        kill_state: KillState.Clear,
-        reason: null,
-        version: result.initial.version,
+        kill_state: KillState.Active,
+        reason: incompletePassReason,
+        version: result.initial.version + 1,
       })
       expect(result.preservedWithoutReconciliation).toMatchObject({
         maximum: Authority.Observe,
@@ -1716,6 +1706,145 @@ describePostgres('paper accounting persistence', () => {
       expect(result.states.every((state) => state.version === 1)).toBe(true)
       expect(new Set(result.states.map((state) => JSON.stringify(state))).size).toBe(1)
       expect(result.stored).toEqual({ rows: 1, version: 1 })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('fails an absent-row restriction and persists a restriction once OBSERVE authority is initialized', async () => {
+    const generationHash = hash('restriction-initialization-generation')
+    const reason = 'operator requested fail-closed initialization'
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const [databaseTime] = yield* sql<{ updated_at: Date }>`SELECT clock_timestamp() AS updated_at`
+          if (databaseTime === undefined) return yield* Effect.die(new Error('database time is unavailable'))
+          const beforeInitialization = yield* Effect.flip(
+            store.restrictAuthority(reason, databaseTime.updated_at.toISOString()),
+          )
+          const initialized = yield* store.ensureAuthorityGeneration({
+            generationHash,
+            maximum: Authority.Observe,
+          })
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(reason, restrictionTime.updated_at.toISOString())
+          const readAuthorityState = store.readAuthorityState
+          assert(readAuthorityState !== undefined, 'authority reads must be available')
+          const restricted = yield* readAuthorityState
+          return { beforeInitialization, initialized, restricted }
+        }),
+      )
+
+      expect(result.beforeInitialization).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+      })
+      expect(result.beforeInitialization.message).toContain(
+        'authority restriction requires initialized durable authority state',
+      )
+      expect(result.initialized).toMatchObject({
+        generationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+      expect(result.restricted).toMatchObject({
+        generationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason,
+        version: 2,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('preserves the first terminal PAPER restriction when reconciliation restricts authority again', async () => {
+    const sourceGenerationHash = hash('terminal-restriction-source-generation')
+    const activationReconciliation = exactReconciliation('terminal-restriction-activation')
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
+    const terminalReason = `${paperEpisodeFailureRestrictionPrefix} build-decision failed`
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.activateResearchCapitalGrant(researchProofBinding(activation), sourceGenerationHash)
+          const [firstRestrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (firstRestrictionTime === undefined) {
+            return yield* Effect.die(new Error('first restriction time is unavailable'))
+          }
+          yield* store.restrictAuthority(terminalReason, firstRestrictionTime.updated_at.toISOString())
+          const [first] = yield* sql<{
+            effective: Authority
+            kill_state: KillState
+            reason: string | null
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT
+              effective, kill_state, reason, xmin::text AS tuple_id,
+              updated_at, version::integer
+            FROM authority_state
+            WHERE singleton
+          `
+          const [secondRestrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (secondRestrictionTime === undefined) {
+            return yield* Effect.die(new Error('second restriction time is unavailable'))
+          }
+          yield* store.restrictAuthority(
+            `reconciliation discrepancy ${hash('later-reconciliation-discrepancy')}`,
+            secondRestrictionTime.updated_at.toISOString(),
+          )
+          const [second] = yield* sql<{
+            effective: Authority
+            kill_state: KillState
+            reason: string | null
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT
+              effective, kill_state, reason, xmin::text AS tuple_id,
+              updated_at, version::integer
+            FROM authority_state
+            WHERE singleton
+          `
+          return { first, second }
+        }),
+      )
+
+      expect(result.first).toMatchObject({
+        effective: Authority.Observe,
+        kill_state: KillState.Active,
+        reason: terminalReason,
+      })
+      expect(result.second).toEqual(result.first)
     } finally {
       await runtime.dispose()
     }
@@ -2254,7 +2383,11 @@ describePostgres('paper accounting persistence', () => {
             FROM timing
             WHERE cycle.cycle_id = ${cycleId}
           `
+          // Activation timestamps are deliberately monotonic and may lead the wall clock by one millisecond.
+          // Sample reconciliation only after that boundary, then let the rollover take a strictly later timestamp.
+          yield* sql`SELECT pg_sleep(0.01)`
           yield* seedExactReconciliation(exactReconciliation('clear-research-paper-rearm-before-rollover'))
+          yield* sql`SELECT pg_sleep(0.01)`
           const rearmed = yield* store.ensureAuthorityGeneration({
             generationHash: nextSourceGenerationHash,
             maximum: Authority.Observe,
@@ -3141,7 +3274,12 @@ describePostgres('paper accounting persistence', () => {
         Effect.gen(function* () {
           const store = yield* ExecutionStore
           const before = yield* readAuthorityTupleEvidence
-          const failure = yield* Effect.flip(store.activateCapitalGrant(proofBinding(prepared)))
+          const failure = yield* Effect.flip(
+            store.activatePreparedCapitalGrant(proofBinding(prepared), {
+              generationHash: prepared.generationHash,
+              sourceGenerationHash: initialGenerationHash,
+            }),
+          )
           const after = yield* readAuthorityTupleEvidence
           return { after, before, failure }
         }),
@@ -3149,7 +3287,7 @@ describePostgres('paper accounting persistence', () => {
       expect(result.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'derived PAPER generation differs from the configured generation',
+        message: 'PAPER PREPARE current authority differs from the configured OBSERVE generation',
       })
       expect(result.after).toEqual(result.before)
     } finally {
@@ -4417,6 +4555,15 @@ describePostgres('paper accounting persistence', () => {
             )
           `
           yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${authorityGenerationHash},
+              'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, ${occurredAt}
+            )
+          `
+          yield* sql`
             INSERT INTO intents (
               intent_id, schema_version, authority_generation_hash, account_id, client_order_id, symbol, side,
               order_type, time_in_force, quantity_micros, notional_limit_micros,
@@ -4484,8 +4631,13 @@ describePostgres('paper accounting persistence', () => {
       expect(result.metrics.oldestUnknownMutationAgeMs).toBe(3_000)
       expect(result.riskContext).toMatchObject({
         tradingDate: '2026-07-22',
-        authority: null,
-        authorityObservedAt: null,
+        authority: {
+          generationHash: hash('mutation-ordering-authority'),
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Active,
+        },
+        authorityObservedAt: expect.any(String),
         unknownMutationCount: 1,
         dailyTradedNotionalMicros: '0',
         dayStartEquityMicros: accountEvent().account.cashMicros,

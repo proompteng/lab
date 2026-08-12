@@ -219,18 +219,49 @@ const restrictAuthorityDataFirst = (
 ): Effect.Effect<void, ReconciliationStoreError> =>
   runStore(
     'restrict-authority',
-    sql`
-      UPDATE authority_state
-      SET
-        effective = 'OBSERVE',
-        kill_state = 'ACTIVE',
-        reason = ${reason},
-        version = version + 1,
-        updated_at = ${updatedAt}
-      WHERE singleton
-        AND maximum = 'PAPER'
-        AND (effective <> 'OBSERVE' OR kill_state <> 'ACTIVE')
-    `.pipe(Effect.asVoid),
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended('bayn.paper-authority-generation.v1', 0)
+          )
+        `
+        const restricted = yield* sql<Record<string, unknown>>`
+          UPDATE authority_state
+          SET
+            effective = 'OBSERVE',
+            kill_state = 'ACTIVE',
+            reason = ${reason},
+            version = version + 1,
+            updated_at = ${updatedAt}
+          WHERE singleton
+            AND (
+              effective <> 'OBSERVE'
+              OR kill_state <> 'ACTIVE'
+            )
+          RETURNING singleton
+        `
+        if (restricted.length > 0) return
+
+        const existing = yield* sql<{ effective: Authority; kill_state: KillState }>`
+          SELECT effective, kill_state
+          FROM authority_state
+          WHERE singleton
+          FOR UPDATE
+        `
+        const state = existing[0]
+        if (state === undefined) {
+          return yield* storeError(
+            'restrict-authority',
+            'invariant',
+            'authority restriction requires initialized durable authority state',
+          )
+        }
+        if (state.effective !== Authority.Observe || state.kill_state !== KillState.Active) {
+          return yield* storeError('restrict-authority', 'invariant', 'authority restriction was not durably applied')
+        }
+      }),
+    ),
   )
 
 export const restrictAuthority = Pipeable.dual(3, restrictAuthorityDataFirst)
