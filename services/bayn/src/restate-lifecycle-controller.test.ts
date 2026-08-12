@@ -7,7 +7,9 @@ import { lifecycleCommandId } from './lifecycle-command-contract'
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
   lifecycleActivationAwaitTimeoutMs,
+  lifecycleActivationHandlerTimeouts,
   lifecycleActivationIdempotencyRetentionMs,
+  lifecycleActivationMaximumAttempts,
   lifecycleActivationRetryPolicy,
   lifecycleBootstrapRetryPolicy,
   lifecycleCommandFinalizationHeadroomMs,
@@ -69,9 +71,19 @@ describe('Restate lifecycle command client', () => {
     expect(lifecycleBootstrapRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
     expect(lifecycleActivationIdempotencyRetentionMs).toBe(600_000)
     expect(lifecycleCursorRequestTimeoutMs).toBe(10_000)
-    expect(lifecycleActivationAwaitTimeoutMs).toBe(501_000)
-    expect(lifecycleActivationAwaitTimeoutMs).toBeGreaterThan(
-      lifecycleHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout,
+    expect(lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs)).toBe(621_000)
+    expect(lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs)).toBe(
+      lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs) +
+        lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
+        91_000 +
+        lifecycleCommandFinalizationHeadroomMs,
+    )
+    expect(lifecycleActivationHandlerTimeouts(config.operationTimeoutMs)).toEqual({
+      inactivityTimeout: 651_000,
+      abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+    })
+    expect(lifecycleActivationHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout).toBeGreaterThan(
+      lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs),
     )
   })
 

@@ -6,7 +6,7 @@ import { sha256 } from './hash'
 import { AutonomousCyclePassObservationSchema } from './runtime-state'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 
-const OperationalThresholdSchema = Schema.Int.check(
+export const OperationalThresholdSchema = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
 )
 const NextDelayMsSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maximumOperationalThresholdMs }))

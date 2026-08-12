@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import {
   advanceBaynLifecycleManifests,
+  baynLifecycleRegistrationActiveDeadlineSeconds,
   baynLifecycleIsActive,
   parseBaynLifecycleCurrent,
   parseBaynLifecyclePrevious,
@@ -47,7 +48,8 @@ describe('Bayn lifecycle release manifests', () => {
     expect(current).toContain('name: bayn-lifecycle-token-reviewer')
     expect(current).toContain('- tokenreviews')
     expect(current).toContain('cidr: 10.96.0.1/32')
-    expect(current).toContain('name: BAYN_OPERATION_TIMEOUT_MS')
+    expect(current.match(/name: BAYN_OPERATION_TIMEOUT_MS/g)).toHaveLength(2)
+    expect(current).toContain(`activeDeadlineSeconds: ${baynLifecycleRegistrationActiveDeadlineSeconds.toString()}`)
     expect(current.match(/enableServiceLinks: false/g)).toHaveLength(2)
     expect(current).not.toContain('secretKeyRef:')
     expect(current).not.toContain('BAYN_ALPACA_')

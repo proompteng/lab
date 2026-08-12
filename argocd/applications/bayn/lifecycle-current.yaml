@@ -348,7 +348,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 6
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: 720
   ttlSecondsAfterFinished: 300
   template:
     metadata:
@@ -381,6 +381,8 @@ spec:
               value: 23448de7ce3f2f3cf5ca8be9728802e2dbb0f60d
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
             - name: BAYN_RESTATE_ENDPOINT_URI
               value: http://bayn-lifecycle-23448de7ce3f.bayn.svc.cluster.local:9080
             - name: RESTATE_ADMIN_ORIGIN

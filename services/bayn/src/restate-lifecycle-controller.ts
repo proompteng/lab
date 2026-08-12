@@ -117,10 +117,13 @@ const lifecycleActivationRetryDelayMs = (): number => {
   return total
 }
 
-export const lifecycleActivationAwaitTimeoutMs =
+// Activation is an exclusive virtual-object command. A rollout request can therefore wait behind one already-running
+// advance before its own bounded cursor recovery begins. Keep the ingress waiter alive for both phases and a separate
+// response-finalization window; otherwise a healthy activation can be abandoned while Restate is still progressing.
+export const lifecycleActivationAwaitTimeoutMs = (operationTimeoutMs: number): number =>
+  lifecycleCommandRequestTimeoutMs(operationTimeoutMs) +
   lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
   lifecycleActivationRetryDelayMs() +
-  maximumConsistencyDelayMs +
   lifecycleCommandFinalizationHeadroomMs
 
 // Let the bounded HTTP request finish and give Restate one additional journal-finalization window before requesting
@@ -129,6 +132,13 @@ export const lifecycleHandlerTimeouts = (
   operationTimeoutMs: number,
 ): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
   inactivityTimeout: lifecycleCommandRequestTimeoutMs(operationTimeoutMs) + lifecycleCommandFinalizationHeadroomMs,
+  abortTimeout: lifecycleCommandFinalizationHeadroomMs,
+})
+
+export const lifecycleActivationHandlerTimeouts = (
+  operationTimeoutMs: number,
+): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
+  inactivityTimeout: lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) + lifecycleCommandFinalizationHeadroomMs,
   abortTimeout: lifecycleCommandFinalizationHeadroomMs,
 })
 
@@ -356,6 +366,6 @@ export const makeBaynLifecycleBootstrap = (
       ),
     },
     options: {
-      ...lifecycleHandlerTimeouts(config.operationTimeoutMs),
+      ...lifecycleActivationHandlerTimeouts(config.operationTimeoutMs),
     },
   })

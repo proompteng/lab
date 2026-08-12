@@ -3,6 +3,7 @@ import { Config, Data, Effect, Logger, Option, Schema, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
+import { OperationalThresholdSchema } from './restate-lifecycle'
 import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 import { GitSourceRevisionSchema } from './schemas'
 
@@ -44,6 +45,9 @@ const config = Config.all({
   ),
   controllerKey: Config.schema(LifecycleControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
     Config.withDefault('primary'),
+  ),
+  operationTimeoutMs: Config.schema(OperationalThresholdSchema, 'BAYN_OPERATION_TIMEOUT_MS').pipe(
+    Config.withDefault(30_000),
   ),
   configuredSourceRevision: Config.option(Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')),
 })
@@ -92,7 +96,11 @@ export const restateDeploymentRegistration = (endpointUri: string, sourceRevisio
 export const restateLifecycleActivationIdempotencyKey = (sourceRevision: string, controllerKey: string): string =>
   `bayn-lifecycle-${sourceRevision}-${controllerKey}`
 
-export const restateLifecycleActivationRequest = (sourceRevision: string, controllerKey: string) => ({
+export const restateLifecycleActivationRequest = (
+  sourceRevision: string,
+  controllerKey: string,
+  operationTimeoutMs: number,
+) => ({
   body: {
     schemaVersion: 'bayn.restate-lifecycle-activation.v1',
     controllerKey,
@@ -100,7 +108,7 @@ export const restateLifecycleActivationRequest = (sourceRevision: string, contro
   headers: {
     'idempotency-key': restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey),
   },
-  timeoutMs: lifecycleActivationAwaitTimeoutMs,
+  timeoutMs: lifecycleActivationAwaitTimeoutMs(operationTimeoutMs),
 })
 
 const program = Effect.gen(function* () {
@@ -137,7 +145,7 @@ const program = Effect.gen(function* () {
       sourceRevision,
     }),
   )
-  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey)
+  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey, loaded.operationTimeoutMs)
   const activationStatus = yield* postJson(
     'activate',
     `${loaded.ingressOrigin}/BaynLifecycleBootstrap/start`,

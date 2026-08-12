@@ -31,7 +31,7 @@ describe('Restate lifecycle deployment registration', () => {
     expect(restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey)).toBe(
       `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
     )
-    expect(restateLifecycleActivationRequest(sourceRevision, controllerKey)).toEqual({
+    expect(restateLifecycleActivationRequest(sourceRevision, controllerKey, 30_000)).toEqual({
       body: {
         schemaVersion: 'bayn.restate-lifecycle-activation.v1',
         controllerKey,
@@ -39,8 +39,8 @@ describe('Restate lifecycle deployment registration', () => {
       headers: {
         'idempotency-key': `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
       },
-      timeoutMs: lifecycleActivationAwaitTimeoutMs,
+      timeoutMs: lifecycleActivationAwaitTimeoutMs(30_000),
     })
-    expect(lifecycleActivationAwaitTimeoutMs).toBe(501_000)
+    expect(lifecycleActivationAwaitTimeoutMs(30_000)).toBe(621_000)
   })
 })
