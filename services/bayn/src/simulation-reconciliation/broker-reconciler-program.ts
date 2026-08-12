@@ -3,6 +3,7 @@ import { Effect } from 'effect'
 import type { BrokerReadShape } from '../broker/alpaca'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { WriterFenceService } from '../execution/writer-fence'
+import { withObservedSpan } from '../telemetry'
 import { containRuntimeFailure } from './broker-containment'
 import { readStableBrokerSnapshot } from './broker-history'
 import { persistStableSnapshot } from './broker-persistence'
@@ -28,4 +29,6 @@ const run = (
 export const runReconciliation = (
   dependencies: ReconciliationDependencies,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError> =>
-  containRuntimeFailure(run(dependencies), dependencies.store, dependencies.fence, dependencies.now)
+  containRuntimeFailure(run(dependencies), dependencies.store, dependencies.fence, dependencies.now).pipe(
+    withObservedSpan('bayn.reconciliation.run', { 'bayn.component': 'reconciliation' }),
+  )

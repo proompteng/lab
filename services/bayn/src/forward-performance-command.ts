@@ -1,10 +1,11 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, Logger, Stdio, Stream } from 'effect'
+import { Effect, Layer, Stdio, Stream } from 'effect'
 
 import { loadConfig } from './config'
 import { PostgresClientLive } from './db/evidence-store'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformance, ForwardPerformanceProgramError } from './forward-performance'
+import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 export { runForwardPerformance } from './forward-performance'
 
@@ -33,9 +34,9 @@ const runProof = Effect.scoped(
     const stdio = yield* Stdio.Stdio
     yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())
   }),
-)
+).pipe(withObservedSpan('bayn.forward-performance.prove'))
 
-const runtime = Layer.mergeAll(Logger.layer([Logger.consoleJson]), NodeServices.layer)
+const runtime = Layer.mergeAll(makeConfiguredTelemetryRuntimeLayer('bayn-forward-performance'), NodeServices.layer)
 const main = process.argv.slice(2).includes('--help') ? printUsage : runProof
 // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the runtime layer
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn-forward-performance' }), Effect.provide(runtime))

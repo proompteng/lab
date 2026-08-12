@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import {
   advanceBaynLifecycleManifests,
+  baynLifecycleOtlpTracesEndpoint,
   baynLifecycleRegistrationActiveDeadlineSeconds,
   baynLifecycleIsActive,
   parseBaynLifecycleCurrent,
@@ -29,6 +30,7 @@ const pin = (character: string): BaynLifecycleImagePin => {
 
 const inactiveKustomization = 'resources:\n  - deployment.yaml\n'
 const activeKustomization = `${inactiveKustomization}  - lifecycle-current.yaml\n  - lifecycle-previous.yaml\n`
+const occurrences = (source: string, value: string): number => source.split(value).length - 1
 
 describe('Bayn lifecycle release manifests', () => {
   test('renders canonical source-versioned current and empty previous endpoints', () => {
@@ -49,11 +51,20 @@ describe('Bayn lifecycle release manifests', () => {
     expect(current).toContain('- tokenreviews')
     expect(current).toContain('cidr: 10.96.0.1/32')
     expect(current.match(/name: BAYN_OPERATION_TIMEOUT_MS/g)).toHaveLength(2)
+    expect(occurrences(current, baynLifecycleOtlpTracesEndpoint)).toBe(2)
+    expect(current.match(/name: POD_NAMESPACE/g)).toHaveLength(2)
+    expect(current.match(/kubernetes\.io\/metadata\.name: observability/g)).toHaveLength(2)
+    expect(current.match(/app\.kubernetes\.io\/component: distributor/g)).toHaveLength(2)
+    expect(current.match(/port: 4318/g)).toHaveLength(2)
     expect(current).toContain(`activeDeadlineSeconds: ${baynLifecycleRegistrationActiveDeadlineSeconds.toString()}`)
     expect(current.match(/enableServiceLinks: false/g)).toHaveLength(2)
     expect(current).not.toContain('secretKeyRef:')
     expect(current).not.toContain('BAYN_ALPACA_')
     expect(current).not.toContain('DATABASE_URL')
+
+    const previous = renderBaynLifecyclePrevious(pin('a'))
+    expect(occurrences(previous, baynLifecycleOtlpTracesEndpoint)).toBe(1)
+    expect(previous.match(/name: POD_NAMESPACE/g)).toHaveLength(1)
   })
 
   test('keeps the checked-in initial Restate endpoint canonical and atomically active', () => {

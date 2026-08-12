@@ -52,6 +52,17 @@ spec:
         - port: 8123
           protocol: TCP
     - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
+    - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: ledger

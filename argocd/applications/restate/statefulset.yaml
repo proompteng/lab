@@ -84,6 +84,10 @@ spec:
               value: http://$(POD_NAME).$(SERVICE_NAME):5122
             - name: RESTATE_LOG_FORMAT
               value: json
+            - name: RESTATE_TRACING_ENDPOINT
+              value: otlp+http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: RESTATE_TRACING_FILTER
+              value: info
             - name: RESTATE_CLUSTER_NAME
               value: proompteng-self-hosted
             - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE

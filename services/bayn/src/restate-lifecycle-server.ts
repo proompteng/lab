@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Logger, Option, Result, Schema, Scope, pipe } from 'effect'
+import { Config, Data, Effect, Option, Result, Schema, Scope, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
@@ -13,7 +13,9 @@ import {
   makeBaynLifecycleBootstrap,
   makeLifecycleCommandClient,
 } from './restate-lifecycle-controller'
+import { acquireRestateTelemetry } from './restate-telemetry'
 import { GitSourceRevisionSchema } from './schemas'
+import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from './telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
   Schema.makeFilter(
@@ -169,11 +171,17 @@ const program = Effect.gen(function* () {
     })
   }
   const config = decoded.success
+  const telemetryOptions = {
+    ...(yield* telemetryRuntimeConfig('bayn-lifecycle')),
+    serviceVersion: sourceRevision,
+  }
+  const telemetry = yield* acquireRestateTelemetry(telemetryOptions)
   const lifecycle = makeBaynLifecycle(
     config,
-    makeLifecycleCommandClient(config, commandCredential(loaded.commandTokenPath)),
+    makeLifecycleCommandClient(config, commandCredential(loaded.commandTokenPath), fetch, telemetry.traceHeaders),
+    telemetry.hooks,
   )
-  const bootstrap = makeBaynLifecycleBootstrap(config, lifecycle)
+  const bootstrap = makeBaynLifecycleBootstrap(config, lifecycle, telemetry.hooks)
   const server = createServer(restate.createEndpointHandler({ services: [lifecycle, bootstrap] }))
   yield* acquireRestateLifecycleHttp2Server(server, config.port)
   yield* Effect.logInfo('Bayn Restate lifecycle endpoint is listening').pipe(
@@ -192,8 +200,8 @@ if (import.meta.main) {
     pipe(
       program,
       Effect.annotateLogs({ service: 'bayn-lifecycle' }),
-      // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the logger layer
-      Effect.provide(Logger.layer([Logger.consoleJson])),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the telemetry layer
+      Effect.provide(makeConfiguredTelemetryRuntimeLayer('bayn-lifecycle')),
     ),
   )
 }
