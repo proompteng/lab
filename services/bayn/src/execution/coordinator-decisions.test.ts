@@ -5,6 +5,8 @@ import { Option, Result } from 'effect'
 import {
   MutationOperation,
   cancelRequestHash,
+  legacyBoundedLimitOrderRequestBody,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
 } from '../broker/alpaca-mutations'
@@ -226,6 +228,34 @@ describe('execution coordinator decisions', () => {
     expect(
       Result.getOrThrow(ensureRecoveryDelay(MutationOperation.Submit, submit, Date.parse(submit.occurredAt) + 1_000)),
     ).toEqual(submit)
+  })
+
+  test('recovers an interrupted pre-upgrade bounded-limit submit from its durable request hash', () => {
+    const unknownIntent = { ...intent, state: IntentState.Unknown }
+    const legacyRequest = Result.getOrThrow(legacyBoundedLimitOrderRequestBody(unknownIntent))
+    const legacyEvent = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+    const { notionalMicros: _notionalMicros, ...currentOrder } = order()
+    const legacyOrder: Order = {
+      ...currentOrder,
+      quantityMicros: intent.quantityMicros,
+      orderType: BrokerOrderType.Limit,
+      limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(intent)).toString(),
+    }
+
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
+    expect(
+      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
+        value: legacyOrder,
+        evidence,
+      }),
+    ).toEqual({
+      _tag: 'RecoveryFound',
+      brokerOrderId,
+      evidence,
+    })
   })
 
   test('does not append another mutation event for the same known open recovery', () => {

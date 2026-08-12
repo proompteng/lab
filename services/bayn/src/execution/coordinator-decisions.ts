@@ -2,10 +2,13 @@ import { Option, Result, Schema } from 'effect'
 
 import {
   type BrokerMutationError,
+  type CompatibleOrderRequestBody,
   MutationEvidenceSchema,
   MutationFailure,
   MutationOperation,
   cancelRequestHash,
+  compatibleOrderRequestBody,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
   type OrderRequestBody,
@@ -318,7 +321,9 @@ export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefine
   }
 }
 
-const exactOrderDataFirst = (intent: Intent, request: EncodedOrder['request'], order: Order): boolean => {
+const exactOrderDataFirst = (intent: Intent, request: CompatibleOrderRequestBody, order: Order): boolean => {
+  const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
+  if (Result.isFailure(limitPrice)) return false
   const representationMatches =
     'notional' in request
       ? order.notionalMicros === intent.notionalLimitMicros && order.quantityMicros === undefined
@@ -331,7 +336,7 @@ const exactOrderDataFirst = (intent: Intent, request: EncodedOrder['request'], o
     order.orderType === request.type &&
     order.timeInForce === request.time_in_force &&
     representationMatches &&
-    order.limitPriceMicros === undefined &&
+    order.limitPriceMicros === (limitPrice.success === undefined ? undefined : limitPrice.success.toString()) &&
     order.extendedHours === false
   )
 }
@@ -459,7 +464,17 @@ const recoveryRequestHash = (
   event: MutationEvent,
 ): Result.Result<string | undefined, ExecutionDecisionFailure> =>
   event.operation === MutationOperation.Submit
-    ? encodeOrder(event.operation, intent).pipe(Result.map(({ requestHash }) => requestHash))
+    ? compatibleOrderRequestBody(intent, event.requestHash).pipe(
+        Result.map(() => event.requestHash),
+        Result.mapError(
+          (cause): ExecutionDecisionFailure => ({
+            _tag: 'OrderCanonicalizationFailed',
+            operation: event.operation,
+            message: 'durable submit request cannot be represented by a compatible Alpaca paper order',
+            cause,
+          }),
+        ),
+      )
     : Result.succeed(event.brokerOrderId === undefined ? undefined : cancelRequestHash(event.brokerOrderId))
 
 const validateRecoveryDataFirst = (
@@ -547,8 +562,11 @@ const decideRecoverySuccessDataFirst = (
     outcome !== TerminalOutcome.Filled
   const exactBrokerOrderId =
     interrupted.brokerOrderId === undefined || interrupted.brokerOrderId === result.value.brokerOrderId
-  const request = encodeOrder(operation, intent)
-  const matchesIntent = Result.isSuccess(request) && exactOrder(intent, request.success.request, result.value)
+  const request =
+    operation === MutationOperation.Submit
+      ? compatibleOrderRequestBody(intent, interrupted.requestHash)
+      : orderRequestBody(intent)
+  const matchesIntent = Result.isSuccess(request) && exactOrder(intent, request.success, result.value)
 
   return (!exactBrokerOrderId || !matchesIntent) && !neutralizedMismatchedOrder
     ? { _tag: 'RecoveryUnknown', evidence }
