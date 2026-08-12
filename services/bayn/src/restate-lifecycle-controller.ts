@@ -2,6 +2,7 @@ import * as restate from '@restatedev/restate-sdk'
 import { Effect, Logger, Result } from 'effect'
 
 import { maximumConsistencyDelayMs } from './execution/mutations'
+import { currentOpenTelemetryLogAnnotations, type TraceContextHeaders } from './restate-telemetry'
 import {
   beginRestateLifecycleTick,
   completeRestateLifecycleTick,
@@ -73,6 +74,7 @@ export const lifecycleLog = (
 ): Promise<void> =>
   Effect.logInfo(message).pipe(
     Effect.annotateLogs(annotations),
+    Effect.annotateLogs(currentOpenTelemetryLogAnnotations()),
     Effect.annotateLogs({ service: 'bayn-lifecycle' }),
     // @effect-diagnostics-next-line strictEffectProvide:off -- Restate owns this isolated worker process
     Effect.provide(Logger.layer([Logger.consoleJson])),
@@ -169,6 +171,7 @@ export const makeLifecycleCommandClient = (
   config: RestateLifecycleConfig,
   credential: LifecycleCommandCredential,
   request: HttpRequest = fetch,
+  traceHeaders: () => TraceContextHeaders = () => ({}),
 ): LifecycleCommandClient => {
   const commandRequestTimeoutMs = lifecycleCommandRequestTimeoutMs(config.operationTimeoutMs)
   return {
@@ -182,7 +185,7 @@ export const makeLifecycleCommandClient = (
             `${config.commandBaseUrl}/v1/lifecycle/cursor`,
             {
               method: 'GET',
-              headers: { authorization: `Bearer ${token}` },
+              headers: { ...traceHeaders(), authorization: `Bearer ${token}` },
             },
             signal,
           ),
@@ -200,7 +203,11 @@ export const makeLifecycleCommandClient = (
             `${config.commandBaseUrl}/v1/lifecycle/advance`,
             {
               method: 'POST',
-              headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+              headers: {
+                ...traceHeaders(),
+                authorization: `Bearer ${token}`,
+                'content-type': 'application/json',
+              },
               body: JSON.stringify({
                 schemaVersion: 'bayn.lifecycle-command.v1',
                 ...command,
@@ -249,7 +256,11 @@ const scheduleTick = (
 export const lifecycleTickIdempotencyKey = (epoch: number, sequence: number, deliveryAttempt: number): string =>
   `bayn-lifecycle-${epoch}-${sequence}-${deliveryAttempt}`
 
-export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: LifecycleCommandClient) =>
+export const makeBaynLifecycle = (
+  config: RestateLifecycleConfig,
+  client: LifecycleCommandClient,
+  hooks: readonly restate.HooksProvider[] = [],
+) =>
   restate.object({
     name: 'BaynLifecycle',
     handlers: {
@@ -377,6 +388,7 @@ export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: Lifecy
     options: {
       ingressPrivate: true,
       enableLazyState: true,
+      hooks: [...hooks],
       ...lifecycleHandlerTimeouts(config.operationTimeoutMs),
     },
   })
@@ -384,6 +396,7 @@ export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: Lifecy
 export const makeBaynLifecycleBootstrap = (
   config: RestateLifecycleConfig,
   lifecycle: ReturnType<typeof makeBaynLifecycle>,
+  hooks: readonly restate.HooksProvider[] = [],
 ) =>
   restate.service({
     name: 'BaynLifecycleBootstrap',
@@ -406,6 +419,7 @@ export const makeBaynLifecycleBootstrap = (
       ),
     },
     options: {
+      hooks: [...hooks],
       ...lifecycleActivationHandlerTimeouts(config.operationTimeoutMs),
     },
   })

@@ -1,9 +1,14 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Effect, Logger, pipe } from 'effect'
+import { Effect, pipe } from 'effect'
 
 import { program } from './entrypoint'
+import { makeConfiguredTelemetryRuntimeLayer } from './telemetry'
 
 NodeRuntime.runMain(
-  // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the logger layer
-  pipe(program, Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson]))),
+  pipe(
+    program,
+    Effect.annotateLogs({ service: 'bayn' }),
+    // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the telemetry layer
+    Effect.provide(makeConfiguredTelemetryRuntimeLayer('bayn')),
+  ),
 )

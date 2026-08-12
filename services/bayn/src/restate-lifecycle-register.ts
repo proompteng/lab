@@ -1,11 +1,12 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Config, Data, Duration, Effect, Logger, Option, Result, Schema, pipe } from 'effect'
+import { Config, Data, Duration, Effect, Option, Result, Schema, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
 import { OperationalThresholdSchema } from './restate-lifecycle'
 import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 import { GitSourceRevisionSchema } from './schemas'
+import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
   Schema.makeFilter(
@@ -274,15 +275,15 @@ const program = Effect.gen(function* () {
       sourceRevision,
     }),
   )
-})
+}).pipe(withObservedSpan('bayn.lifecycle.register'))
 
 if (import.meta.main) {
   NodeRuntime.runMain(
     pipe(
       program,
       Effect.annotateLogs({ service: 'bayn-lifecycle-register' }),
-      // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the logger layer
-      Effect.provide(Logger.layer([Logger.consoleJson])),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the telemetry layer
+      Effect.provide(makeConfiguredTelemetryRuntimeLayer('bayn-lifecycle-register')),
     ),
   )
 }

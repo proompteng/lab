@@ -3,7 +3,7 @@ import type { Socket } from 'node:net'
 
 import { NodeHttpServer } from '@effect/platform-node'
 import { Cause, Data, Effect, Exit, FileSystem, Scope, Semaphore } from 'effect'
-import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { HttpMiddleware, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 import type { ServeError } from 'effect/unstable/http/HttpServerError'
 
 import type { LifecycleCommandStoreShape } from './db/lifecycle-command'
@@ -11,6 +11,7 @@ import type { WriterFenceService } from './execution/writer-fence'
 import { bearerToken, type LifecycleCommandAuthenticator } from './lifecycle-command-auth'
 import { decideLifecycleCommand } from './lifecycle-command-contract'
 import type { AutonomousCyclePassObservation } from './runtime-state'
+import { withObservedSpan } from './telemetry'
 import { currentUtcInstant } from './time'
 import type { CycleRunnerError } from './cycle/runner'
 
@@ -90,6 +91,7 @@ export const executeLifecycleCommand = <E, R>(
         ),
       )
     }),
+    withObservedSpan('bayn.lifecycle.advance', { 'bayn.component': 'lifecycle' }),
   )
 
 class LifecycleCommandHttpError extends Data.TaggedError('LifecycleCommandHttpError')<{
@@ -276,7 +278,7 @@ export const serveLifecycleCommands = <R>(
     const requestScope = yield* Scope.make('parallel')
     const handler = yield* NodeHttpServer.makeHandler(
       handleRequest(config, store, fence, commandPermit, authenticate, advance),
-      { scope: requestScope },
+      { scope: requestScope, middleware: HttpMiddleware.tracer },
     )
     nodeServer.on('request', handler)
     yield* Effect.logInfo('Bayn lifecycle command server is listening').pipe(

@@ -51,6 +51,13 @@ spec:
           env:
             - name: BAYN_CODE_REVISION
               value: 6cec88e89559bda203b6b8091f5b7562692e9200
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
             - name: BAYN_LIFECYCLE_COMMAND_URL

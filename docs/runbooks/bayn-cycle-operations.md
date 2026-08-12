@@ -11,6 +11,16 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 4. Compare the durable mutation event count before and after the observation window. Do not infer zero mutation from
    readiness alone.
 
+## Trace one lifecycle pass
+
+1. Query Tempo for `resource.service.name = "restate"`, `"bayn-lifecycle"`, and `"bayn"` over the same bounded window.
+2. Follow the Restate invocation attempt into the lifecycle command HTTP request, then the `bayn.lifecycle.advance`
+   and `bayn.reconciliation.run` spans. Broker and mutation spans remain children of the Bayn command trace.
+3. Use the emitted `trace_id` and `span_id` fields to move between Tempo and the correlated JSON logs in Loki. Never
+   use account identifiers, credentials, order payloads, or other high-cardinality business data as trace attributes.
+4. Treat a missing segment as an observability failure: verify the workload's exact source revision, its OTLP endpoint,
+   and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not lifecycle proof.
+
 ## Alert actions
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.

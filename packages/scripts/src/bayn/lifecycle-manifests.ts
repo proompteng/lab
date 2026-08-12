@@ -6,6 +6,8 @@ const digestPattern = /^sha256:[0-9a-f]{64}$/
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 export const baynLifecycleOperationTimeoutMs = 30_000
 export const baynLifecycleRegistrationActiveDeadlineSeconds = 720
+export const baynLifecycleOtlpTracesEndpoint =
+  'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces'
 
 export const baynLifecycleCurrentPath = 'argocd/applications/bayn/lifecycle-current.yaml'
 export const baynLifecyclePreviousPath = 'argocd/applications/bayn/lifecycle-previous.yaml'
@@ -206,6 +208,13 @@ spec:
           env:
             - name: BAYN_CODE_REVISION
               value: ${pin.sourceSha}
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: ${baynLifecycleOtlpTracesEndpoint}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
             - name: BAYN_LIFECYCLE_COMMAND_URL
@@ -454,6 +463,17 @@ spec:
       ports:
         - port: lifecycle-cmd
           protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -492,6 +512,17 @@ spec:
         - port: 9070
           protocol: TCP
         - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
           protocol: TCP
 ---
 apiVersion: batch/v1
@@ -550,6 +581,13 @@ spec:
               value: http://restate.restate.svc.cluster.local:9070
             - name: RESTATE_INGRESS_ORIGIN
               value: http://restate.restate.svc.cluster.local:8080
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: ${baynLifecycleOtlpTracesEndpoint}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
             - name: NODE_ENV
               value: production
           resources:

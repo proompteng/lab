@@ -302,6 +302,10 @@ describe('Restate lifecycle command client', () => {
         return 'projected-worker-token'
       },
       request,
+      () => ({
+        traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+        tracestate: 'bayn=test',
+      }),
     )
 
     expect(await client.readCursor()).toMatchObject({ cursor: { _tag: 'Next', sequence: 4 } })
@@ -322,6 +326,11 @@ describe('Restate lifecycle command client', () => {
       'Bearer projected-worker-token',
       'Bearer projected-worker-token',
     ])
+    expect(requests.map(({ init }) => new Headers(init.headers).get('traceparent'))).toEqual([
+      '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+    ])
+    expect(requests.map(({ init }) => new Headers(init.headers).get('tracestate'))).toEqual(['bayn=test', 'bayn=test'])
     expect(requests.every(({ init }) => init.signal instanceof AbortSignal && !init.signal.aborted)).toBe(true)
     expect(requests.map(({ init }) => init.signal)).toEqual(credentialSignals)
     const advanceBody = requests[1]?.init.body
