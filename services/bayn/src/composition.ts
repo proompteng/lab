@@ -302,6 +302,18 @@ const runtimeBroker = (
   executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
 })
 
+export const runRestateLifecycleWithReconciliationGuardian = <A, E, R, GuardianR>(
+  maintainReconciliation: Effect.Effect<void, never, R>,
+  intervalMs: number,
+  lifecycle: Effect.Effect<A, E, GuardianR>,
+): Effect.Effect<A, E, R | GuardianR> =>
+  Effect.zipWith(
+    Effect.forever(maintainReconciliation.pipe(Effect.andThen(Effect.sleep(Duration.millis(intervalMs))))),
+    lifecycle,
+    (_guardian, result) => result,
+    { concurrent: true },
+  )
+
 const lifecycleDriverInterpreter = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   store: import('./db/lifecycle-command').LifecycleCommandStoreShape,
@@ -311,19 +323,29 @@ const lifecycleDriverInterpreter = (
     ? (((driver) =>
         Effect.gen(function* () {
           const authenticate = yield* acquireKubernetesLifecycleCommandAuthenticator()
-          return yield* serveLifecycleCommands(
-            {
-              host: plan.config.host,
-              port: plan.config.lifecycleCommandPort,
+          yield* Effect.logInfo('Bayn Restate reconciliation guardian started').pipe(
+            Effect.annotateLogs({
               controllerKey: plan.config.lifecycleControllerKey,
-              sourceRevision: plan.config.build.sourceRevision,
-              previousSourceRevision: plan.config.lifecyclePreviousSourceRevision,
-              nextDelayMs: driver.nextDelayMs,
-            },
-            store,
-            writerFence,
-            authenticate,
-            driver.advance,
+              reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+            }),
+          )
+          return yield* runRestateLifecycleWithReconciliationGuardian(
+            driver.maintainReconciliation,
+            driver.nextDelayMs,
+            serveLifecycleCommands(
+              {
+                host: plan.config.host,
+                port: plan.config.lifecycleCommandPort,
+                controllerKey: plan.config.lifecycleControllerKey,
+                sourceRevision: plan.config.build.sourceRevision,
+                previousSourceRevision: plan.config.lifecyclePreviousSourceRevision,
+                nextDelayMs: driver.nextDelayMs,
+              },
+              store,
+              writerFence,
+              authenticate,
+              driver.advance,
+            ),
           )
         }).pipe(Effect.scoped, Effect.orDie)) satisfies RecoveryFirstCycleDriverInterpreter)
     : undefined

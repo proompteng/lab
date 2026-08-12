@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
+import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result, Semaphore } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -2169,7 +2169,7 @@ const waitAfterMutationPass = (
     }),
   )
 
-const waitAfterMutationFailure = (
+const maintainMutationReconciliation = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -2187,6 +2187,8 @@ const waitAfterMutationFailure = (
       ),
     ),
   )
+
+const waitAfterMutationFailure = maintainMutationReconciliation
 
 const observeMutationCycleResult = (
   input: ObserveAutonomousCycleInput,
@@ -2216,6 +2218,8 @@ export type RecoveryFirstCycleAdvance = {
 
 export type RecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
+  /** Keeps broker/accounting truth fresh while an external lifecycle owner is delayed between commands. */
+  readonly maintainReconciliation: Effect.Effect<void, never, RecoveryFirstRuntime>
   /** The external owner must not delay the next command beyond either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
   readonly wait: (advance: RecoveryFirstCycleAdvance) => Effect.Effect<void, never, RecoveryFirstRuntime>
@@ -2240,6 +2244,7 @@ const makeRecoveryFirstCycleDriver = (
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    const operationPermit = yield* Semaphore.make(1)
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
@@ -2283,7 +2288,7 @@ const makeRecoveryFirstCycleDriver = (
           ),
       }),
     )
-    const advance =
+    const advance = operationPermit.withPermit(
       input.interpretCycleDriver === undefined
         ? advanceCycle
         : reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
@@ -2297,9 +2302,25 @@ const makeRecoveryFirstCycleDriver = (
                 ),
               onSuccess: () => advanceCycle,
             }),
-          )
+          ),
+    )
+    const maintainReconciliation = operationPermit.withPermit(
+      reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
+        Effect.catch((error) =>
+          // Reconciliation persistence owns guardian readiness; do not replace Restate lifecycle progress.
+          Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
+            Effect.annotateLogs({
+              operation: error.operation,
+              failure: error.failure,
+              reason: error.message,
+            }),
+          ),
+        ),
+      ),
+    )
     return {
       advance,
+      maintainReconciliation,
       nextDelayMs: recoveryFirstCycleNextDelayMs(input),
       wait: (completed) =>
         completed.result === undefined

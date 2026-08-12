@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
@@ -3670,6 +3670,8 @@ describe('OBSERVE runtime composition', () => {
     let mutationCalendarReads = 0
     let mutationReconciliations = 0
     let nextReconciliationFailure: ExecutionStoreError | undefined
+    let reconciliationEntered: Deferred.Deferred<void> | undefined
+    let reconciliationGate: Deferred.Deferred<void> | undefined
     let secondMutationCalendarRead: Deferred.Deferred<void> | undefined
     const mutationEvents: string[] = []
     const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
@@ -3795,14 +3797,24 @@ describe('OBSERVE runtime composition', () => {
             mutationEvents.push('reconcile-failed')
             return Effect.fail(failure)
           }
-          return Effect.sync(() => {
-            reconciledSnapshots.push(brokerSnapshot)
-            if (mutationPhase) {
-              mutationReconciliations += 1
-              mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
-            }
-            return persisted
-          })
+          const entered = reconciliationEntered
+          const gate = reconciliationGate
+          return (
+            entered === undefined || gate === undefined
+              ? Effect.void
+              : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(gate)))
+          ).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                reconciledSnapshots.push(brokerSnapshot)
+                if (mutationPhase) {
+                  mutationReconciliations += 1
+                  mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
+                }
+                return persisted
+              }),
+            ),
+          )
         }),
       ensureAuthorityGeneration: () => {
         const authority = exact.riskContext.authority
@@ -4072,6 +4084,24 @@ describe('OBSERVE runtime composition', () => {
           yield* driver.advance.pipe(Effect.orDie)
           yield* TestClock.adjust(100)
           yield* driver.advance.pipe(Effect.orDie)
+          const entered = yield* Deferred.make<void>()
+          const gate = yield* Deferred.make<void>()
+          reconciliationEntered = entered
+          reconciliationGate = gate
+          yield* TestClock.adjust(100)
+          const guardian = yield* driver.maintainReconciliation.pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          const overlappingAdvance = yield* driver.advance.pipe(
+            Effect.orDie,
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* Effect.yieldNow
+          expect(publicationReads).toBe(2)
+          yield* Deferred.succeed(gate, undefined)
+          yield* Fiber.join(guardian)
+          yield* Fiber.join(overlappingAdvance)
+          reconciliationEntered = undefined
+          reconciliationGate = undefined
         }),
     })
     mutationPhase = true
@@ -4105,12 +4135,15 @@ describe('OBSERVE runtime composition', () => {
     mutationPhase = false
 
     expect(externalNextDelayMs).toBe(100)
-    expect(externalObservations).toHaveLength(2)
+    expect(externalObservations).toHaveLength(3)
     expect(externalObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(externalObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(mutationReconciliations).toBe(2)
+    expect(externalObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(mutationReconciliations).toBe(3)
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
+    expect(mutationEvents.indexOf('reconcile:3')).toBeLessThan(mutationEvents.indexOf('publication:3'))
+    expect(mutationEvents.filter((event) => event.startsWith('publication:'))).toHaveLength(3)
 
     mutationEvents.length = 0
     mutationReconciliations = 0
@@ -4180,6 +4213,97 @@ describe('OBSERVE runtime composition', () => {
     )
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(authorityRestrictions).toBe(1)
+    authorityRestrictions = 0
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
+    const guardianRecoveryObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    const guardianRecoveryLogs: unknown[] = []
+    const guardianRecoveryLogger = Logger.make<unknown, void>((entry) => {
+      guardianRecoveryLogs.push(entry.message)
+    })
+    const guardianRecoveryStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 100,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureRuntime,
+      executionProgram: sandboxExecutionProgram(),
+      interpretCycleDriver: (driver) =>
+        Effect.gen(function* () {
+          yield* driver.advance.pipe(Effect.orDie)
+          nextReconciliationFailure = new ExecutionStoreError({
+            operation: 'reconciliation',
+            failure: 'query',
+            message: 'guardian reconciliation persistence failed',
+          })
+          yield* TestClock.adjust(100)
+          yield* driver.maintainReconciliation
+          yield* TestClock.adjust(100)
+          yield* driver.maintainReconciliation
+        }),
+    })
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reconciledAt))
+        const loop = yield* guardianRecoveryStartup({
+          qualificationRunId: 'd'.repeat(64),
+          recordPass: (observation) =>
+            Effect.sync(() => {
+              guardianRecoveryObservations.push(observation)
+              mutationEvents.push(`guardian-recovery-observe:${guardianRecoveryObservations.length.toString()}`)
+            }),
+        })
+        yield* loop.pipe(
+          Effect.provideService(BrokerRead, brokerRead),
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(MarketData, missingPublicationMarketData),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
+          Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(IntentStore, intentStore),
+          Effect.provideService(MutationStore, mutationStore),
+        )
+      }).pipe(Effect.provide(Layer.merge(Logger.layer([guardianRecoveryLogger]), TestClock.layer()))),
+    )
+    mutationPhase = false
+
+    expect(guardianRecoveryObservations).toEqual([
+      expect.objectContaining({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' }),
+    ])
+    expect(mutationEvents).toContain('reconcile-failed')
+    expect(mutationEvents.indexOf('reconcile-failed')).toBeGreaterThan(
+      mutationEvents.indexOf('guardian-recovery-observe:1'),
+    )
+    expect(mutationEvents.indexOf('reconcile:2')).toBeGreaterThan(mutationEvents.indexOf('reconcile-failed'))
+    expect(publicationReads).toBe(1)
+    expect(mutationReconciliations).toBe(2)
+    expect(authorityRestrictions).toBe(1)
+    expect(guardianRecoveryLogs).toContainEqual([
+      'Bayn Restate reconciliation guardian failed',
+      expect.objectContaining({
+        _tag: 'CycleRunnerError',
+        operation: 'reconcile-not-due',
+        cause: expect.objectContaining({
+          _tag: 'CycleNotDueReconciliationError',
+          cause: expect.objectContaining({
+            _tag: 'OperationalError',
+            cause: expect.objectContaining({
+              _tag: 'ExecutionStoreError',
+              operation: 'reconciliation',
+              failure: 'query',
+            }),
+          }),
+        }),
+      }),
+    ])
     authorityRestrictions = 0
 
     mutationEvents.length = 0
