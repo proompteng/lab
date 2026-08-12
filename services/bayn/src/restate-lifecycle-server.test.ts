@@ -77,7 +77,7 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
     expect(client?.destroyed).toBe(true)
   })
 
-  test('publishes bounded activation retries without changing recurring lifecycle retries', async () => {
+  test('publishes bounded activation and recurring lifecycle retries', async () => {
     const decoded = decodeRestateLifecycleConfig({
       schemaVersion: 'bayn.restate-lifecycle-config.v1',
       controllerKey: 'primary',
@@ -123,8 +123,10 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
             retryPolicyMaxAttempts: 8,
             retryPolicyOnMaxAttempts: 'KILL',
           })
-          expect(advance).not.toHaveProperty('retryPolicyMaxAttempts')
-          expect(advance).not.toHaveProperty('retryPolicyOnMaxAttempts')
+          expect(advance).toMatchObject({
+            retryPolicyMaxAttempts: 1,
+            retryPolicyOnMaxAttempts: 'KILL',
+          })
           expect(start).toMatchObject({
             idempotencyRetention: 600_000,
             retryPolicyMaxAttempts: 1,

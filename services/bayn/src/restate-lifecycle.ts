@@ -12,6 +12,7 @@ export const OperationalThresholdSchema = Schema.Int.check(
 const NextDelayMsSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maximumOperationalThresholdMs }))
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))
 const EpochSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
+const DeliveryAttemptSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 
 export const RestateLifecycleConfigSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.restate-lifecycle-config.v1'),
@@ -99,6 +100,7 @@ export const RestateLifecycleTickSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.restate-lifecycle-tick.v1'),
   epoch: EpochSchema,
   sequence: LifecycleSequenceSchema,
+  deliveryAttempt: Schema.optional(DeliveryAttemptSchema),
 })
 
 export type RestateLifecycleTick = typeof RestateLifecycleTickSchema.Type

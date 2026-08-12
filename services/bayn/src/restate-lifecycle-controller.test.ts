@@ -6,6 +6,7 @@ import { maximumConsistencyDelayMs } from './execution/mutations'
 import { lifecycleCommandId } from './lifecycle-command-contract'
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
+  lifecycleAdvanceRetryPolicy,
   lifecycleActivationAwaitTimeoutMs,
   lifecycleActivationHandlerTimeouts,
   lifecycleActivationIdempotencyRetentionMs,
@@ -16,6 +17,7 @@ import {
   lifecycleCommandRequestTimeoutMs,
   lifecycleCursorRequestTimeoutMs,
   lifecycleHandlerTimeouts,
+  lifecycleTickIdempotencyKey,
   makeLifecycleCommandClient,
 } from './restate-lifecycle-controller'
 
@@ -69,6 +71,7 @@ describe('Restate lifecycle command client', () => {
       exponentiationFactor: 2,
     })
     expect(lifecycleBootstrapRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
+    expect(lifecycleAdvanceRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'kill' })
     expect(lifecycleActivationIdempotencyRetentionMs).toBe(600_000)
     expect(lifecycleCursorRequestTimeoutMs).toBe(10_000)
     expect(lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs)).toBe(621_000)
@@ -85,6 +88,12 @@ describe('Restate lifecycle command client', () => {
     expect(lifecycleActivationHandlerTimeouts(config.operationTimeoutMs).inactivityTimeout).toBeGreaterThan(
       lifecycleActivationAwaitTimeoutMs(config.operationTimeoutMs),
     )
+  })
+
+  test('gives each detached retry a distinct durable invocation identity', () => {
+    expect(lifecycleTickIdempotencyKey(5, 2307, 0)).toBe('bayn-lifecycle-5-2307-0')
+    expect(lifecycleTickIdempotencyKey(5, 2307, 1)).toBe('bayn-lifecycle-5-2307-1')
+    expect(lifecycleTickIdempotencyKey(6, 2307, 0)).toBe('bayn-lifecycle-6-2307-0')
   })
 
   test('uses only the bound command origin and exact typed contracts', async () => {

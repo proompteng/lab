@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  decodeRestateAcceptedInvocation,
   restateDeploymentRegistration,
+  restateLifecycleActivationAcceptTimeoutMs,
   restateLifecycleActivationIdempotencyKey,
   restateLifecycleActivationRequest,
 } from './restate-lifecycle-register'
-import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
+import { Result } from 'effect'
 
 describe('Restate lifecycle deployment registration', () => {
   test('registers one immutable HTTP/2 endpoint without forcing replacement', () => {
@@ -24,14 +26,15 @@ describe('Restate lifecycle deployment registration', () => {
     })
   })
 
-  test('deduplicates pod retries while waiting for the bounded activation result', () => {
+  test('deduplicates pod retries while accepting a detached activation', () => {
     const sourceRevision = 'b'.repeat(40)
     const controllerKey = 'primary'
 
     expect(restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey)).toBe(
       `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
     )
-    expect(restateLifecycleActivationRequest(sourceRevision, controllerKey, 30_000)).toEqual({
+    expect(restateLifecycleActivationRequest(sourceRevision, controllerKey)).toEqual({
+      path: '/restate/send/BaynLifecycleBootstrap/start',
       body: {
         schemaVersion: 'bayn.restate-lifecycle-activation.v1',
         controllerKey,
@@ -39,8 +42,30 @@ describe('Restate lifecycle deployment registration', () => {
       headers: {
         'idempotency-key': `bayn-lifecycle-${sourceRevision}-${controllerKey}`,
       },
-      timeoutMs: lifecycleActivationAwaitTimeoutMs(30_000),
+      timeoutMs: restateLifecycleActivationAcceptTimeoutMs,
     })
-    expect(lifecycleActivationAwaitTimeoutMs(30_000)).toBe(621_000)
+  })
+
+  test('accepts only a closed Restate send receipt', () => {
+    expect(
+      Result.isSuccess(
+        decodeRestateAcceptedInvocation({ invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5', status: 'Accepted' }),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(decodeRestateAcceptedInvocation({ invocationId: 'other', status: 'Accepted' }))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeRestateAcceptedInvocation({ invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5', status: 'Done' }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeRestateAcceptedInvocation({
+          invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5',
+          status: 'Accepted',
+          extra: true,
+        }),
+      ),
+    ).toBe(true)
   })
 })

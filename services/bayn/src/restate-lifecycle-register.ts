@@ -1,10 +1,8 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Config, Data, Effect, Logger, Option, Schema, pipe } from 'effect'
+import { Config, Data, Effect, Logger, Option, Result, Schema, pipe } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { LifecycleControllerKeySchema } from './lifecycle-command-contract'
-import { OperationalThresholdSchema } from './restate-lifecycle'
-import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 import { GitSourceRevisionSchema } from './schemas'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
@@ -46,9 +44,6 @@ const config = Config.all({
   controllerKey: Config.schema(LifecycleControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
     Config.withDefault('primary'),
   ),
-  operationTimeoutMs: Config.schema(OperationalThresholdSchema, 'BAYN_OPERATION_TIMEOUT_MS').pipe(
-    Config.withDefault(30_000),
-  ),
   configuredSourceRevision: Config.option(Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')),
 })
 
@@ -57,8 +52,20 @@ interface JsonPostOptions {
   readonly timeoutMs: number
 }
 
+const maximumInvocationReceiptBytes = 16 * 1024
+export const restateLifecycleActivationAcceptTimeoutMs = 30_000
+const RestateAcceptedInvocationSchema = Schema.Struct({
+  invocationId: Schema.Trim.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/)),
+  status: Schema.Literal('Accepted'),
+})
+
+export const decodeRestateAcceptedInvocation = Schema.decodeUnknownResult(RestateAcceptedInvocationSchema, {
+  errors: 'all',
+  onExcessProperty: 'error',
+})
+
 const postJson = (
-  operation: 'register' | 'activate',
+  operation: 'register',
   url: string,
   body: unknown,
   options: JsonPostOptions,
@@ -83,6 +90,44 @@ const postJson = (
       }),
   })
 
+const postAcceptedInvocation = (
+  url: string,
+  body: unknown,
+  options: JsonPostOptions,
+): Effect.Effect<typeof RestateAcceptedInvocationSchema.Type, RestateRegistrationError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...options.headers },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(options.timeoutMs),
+      })
+      if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
+      const contentType = response.headers.get('content-type') ?? ''
+      if (!contentType.toLowerCase().startsWith('application/json')) {
+        throw new Error(`${url} returned a non-JSON invocation receipt`)
+      }
+      const declaredLength = Number.parseInt(response.headers.get('content-length') ?? '0', 10)
+      if (Number.isFinite(declaredLength) && declaredLength > maximumInvocationReceiptBytes) {
+        throw new Error(`${url} returned an oversized invocation receipt`)
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      if (bytes.byteLength > maximumInvocationReceiptBytes) {
+        throw new Error(`${url} returned an oversized invocation receipt`)
+      }
+      const decoded = decodeRestateAcceptedInvocation(JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+      if (Result.isFailure(decoded)) throw new Error(`${url} returned an invalid invocation receipt`)
+      return decoded.success
+    },
+    catch: (cause) =>
+      new RestateRegistrationError({
+        operation: 'activate',
+        message: 'Bayn Restate lifecycle activate request failed',
+        cause,
+      }),
+  })
+
 export const restateDeploymentRegistration = (endpointUri: string, sourceRevision: string) => ({
   uri: endpointUri,
   force: false,
@@ -96,11 +141,8 @@ export const restateDeploymentRegistration = (endpointUri: string, sourceRevisio
 export const restateLifecycleActivationIdempotencyKey = (sourceRevision: string, controllerKey: string): string =>
   `bayn-lifecycle-${sourceRevision}-${controllerKey}`
 
-export const restateLifecycleActivationRequest = (
-  sourceRevision: string,
-  controllerKey: string,
-  operationTimeoutMs: number,
-) => ({
+export const restateLifecycleActivationRequest = (sourceRevision: string, controllerKey: string) => ({
+  path: '/restate/send/BaynLifecycleBootstrap/start',
   body: {
     schemaVersion: 'bayn.restate-lifecycle-activation.v1',
     controllerKey,
@@ -108,7 +150,7 @@ export const restateLifecycleActivationRequest = (
   headers: {
     'idempotency-key': restateLifecycleActivationIdempotencyKey(sourceRevision, controllerKey),
   },
-  timeoutMs: lifecycleActivationAwaitTimeoutMs(operationTimeoutMs),
+  timeoutMs: restateLifecycleActivationAcceptTimeoutMs,
 })
 
 const program = Effect.gen(function* () {
@@ -145,17 +187,16 @@ const program = Effect.gen(function* () {
       sourceRevision,
     }),
   )
-  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey, loaded.operationTimeoutMs)
-  const activationStatus = yield* postJson(
-    'activate',
-    `${loaded.ingressOrigin}/BaynLifecycleBootstrap/start`,
+  const activation = restateLifecycleActivationRequest(sourceRevision, loaded.controllerKey)
+  const activationReceipt = yield* postAcceptedInvocation(
+    `${loaded.ingressOrigin}${activation.path}`,
     activation.body,
     { headers: activation.headers, timeoutMs: activation.timeoutMs },
   )
-  yield* Effect.logInfo('Bayn Restate lifecycle activated through ingress').pipe(
+  yield* Effect.logInfo('Bayn Restate lifecycle activation accepted through ingress').pipe(
     Effect.annotateLogs({
-      activationStatus,
       controllerKey: loaded.controllerKey,
+      invocationId: activationReceipt.invocationId,
       sourceRevision,
     }),
   )

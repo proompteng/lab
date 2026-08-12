@@ -6,6 +6,7 @@ import {
   completeRestateLifecycleTick,
   decodeLifecycleCommandResponse,
   decodeRestateLifecycleConfig,
+  decodeRestateLifecycleTick,
   initialRestateLifecycleState,
   lifecycleCommandFromCursor,
 } from './restate-lifecycle'
@@ -63,6 +64,19 @@ describe('Restate lifecycle domain', () => {
     expect(Result.isSuccess(decodeLifecycleCommandResponse({ ...response, nextDelayMs: 86_400_000 }))).toBe(true)
     expect(Result.isFailure(decodeLifecycleCommandResponse({ ...response, nextDelayMs: 0 }))).toBe(true)
     expect(Result.isFailure(decodeLifecycleCommandResponse({ ...response, nextDelayMs: 86_400_001 }))).toBe(true)
+  })
+
+  test('decodes legacy ticks and bounded delivery attempts without widening the wire contract', () => {
+    const legacyTick = {
+      schemaVersion: 'bayn.restate-lifecycle-tick.v1',
+      epoch: 5,
+      sequence: 2307,
+    }
+    expect(Result.isSuccess(decodeRestateLifecycleTick(legacyTick))).toBe(true)
+    expect(Result.isSuccess(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: 1 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: -1 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: 0.5 }))).toBe(true)
+    expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, extra: true }))).toBe(true)
   })
 
   test('rejects credentialed, routed, or non-HTTP command URLs', () => {
