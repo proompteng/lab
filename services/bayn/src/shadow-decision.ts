@@ -162,6 +162,31 @@ const projectTargetPosition = (
   return [...retained, projected].sort(compareSymbols)
 }
 
+const revaluePositionAtReferencePrice = (position: Position, referencePriceMicros: string): Position => {
+  const quantity = BigInt(position.quantityMicros)
+  const referencePrice = BigInt(referencePriceMicros)
+  const averageEntryPrice = BigInt(position.averageEntryPriceMicros)
+  return {
+    ...position,
+    marketPriceMicros: referencePriceMicros,
+    marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
+    unrealizedPnlMicros: divideAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
+  }
+}
+
+const revalueInitialPositions = (
+  positions: readonly Position[],
+  referencePrices: Readonly<Record<string, string>>,
+): Result.Result<readonly Position[], ShadowDecisionError> =>
+  Result.all(
+    positions.map((position) => {
+      const referencePrice = referencePrices[position.symbol]
+      return referencePrice === undefined
+        ? Result.fail(error('binding', `held symbol ${position.symbol} has no target-planning reference price`))
+        : Result.succeed(revaluePositionAtReferencePrice(position, referencePrice))
+    }),
+  ).pipe(Result.map((revalued) => revalued.sort(compareSymbols)))
+
 const plannerBrokerStateMaterial = (input: TargetPlannerInput) => ({
   account: input.brokerState.account,
   positions: input.brokerState.positions,
@@ -586,6 +611,15 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
   }
 
   const targetsBySymbol = new Map(input.targetPlan.targets.map((target) => [target.symbol, target]))
+  let initialPositions: readonly Position[] = []
+  if (input.targetPlan.status === TargetPlanStatus.Planned) {
+    const revalued = revalueInitialPositions(
+      firstRiskInput?.state.positions ?? input.plannerInput.brokerState.positions,
+      input.plannerInput.referencePrices.priceMicros,
+    )
+    if (Result.isFailure(revalued)) return Result.fail(revalued.failure)
+    initialPositions = revalued.success
+  }
   return Result.succeed({
     input,
     policyHash: context.policyHash,
@@ -593,7 +627,7 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
     targetsBySymbol,
     baseReservedBuyingPower,
     baseDailyTradedNotional,
-    initialPositions: firstRiskInput?.state.positions ?? [],
+    initialPositions,
   })
 }
 
