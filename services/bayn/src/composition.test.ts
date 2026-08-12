@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { PgClient } from '@effect/sql-pg'
 import {
   Cause,
   Context,
@@ -28,6 +29,7 @@ import { provideTestLayer } from './effect-test-support'
 
 import {
   ApplicationPlatformLive,
+  QualifiedPaperActivationStoreLive,
   activatePreparedQualifiedPaperGeneration,
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
@@ -46,10 +48,11 @@ import { makeApplicationPlan, type ApplicationPlanFor } from './app'
 import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import { makeStrategyProtocolHash } from './contracts'
-import type {
-  AuthorityGenerationStoreShape,
-  AuthorityRestrictionStoreShape,
-  CapitalGrantLifecycleStoreShape,
+import {
+  CapitalGrantLifecycleStore,
+  type AuthorityGenerationStoreShape,
+  type AuthorityRestrictionStoreShape,
+  type CapitalGrantLifecycleStoreShape,
 } from './db/execution-store'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import {
@@ -317,6 +320,24 @@ describe('Bayn application platform', () => {
     const context = await Effect.runPromise(Effect.scoped(Layer.build(ApplicationPlatformLive)))
 
     expect(Context.get(context, FileSystem.FileSystem)).toBeDefined()
+  })
+
+  test('builds qualified activation from the runtime PostgreSQL client and already-held writer fence', async () => {
+    const sql = (() =>
+      Effect.die(new Error('qualified activation store build must not execute SQL'))) as unknown as PgClient.PgClient
+    const writerFence: WriterFenceService = {
+      backendPid: 42,
+      check: Effect.void,
+      transaction: (effect) => effect,
+    }
+
+    const context = await Effect.runPromise(
+      Effect.scoped(
+        Layer.build(QualifiedPaperActivationStoreLive(continuationApplicationPlan.config, sql, writerFence)),
+      ),
+    )
+
+    expect(Context.get(context, CapitalGrantLifecycleStore)).toBeDefined()
   })
 
   test('activates and verifies durable qualified PAPER authority before runtime realization', async () => {

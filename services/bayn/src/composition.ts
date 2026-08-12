@@ -278,12 +278,14 @@ export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<
   )
 }
 
-const QualifiedPaperActivationResourcesLive = (config: LoadedRuntimeConfig) => {
-  const postgres = sqlResource(PostgresClientResourceLive(config))
-  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
-  const lifecycle = ExecutionPrepareStoreLive(config).pipe(Layer.provide(writerFence), Layer.provide(postgres))
-  return Layer.mergeAll(postgres, writerFence, lifecycle).pipe(Layer.provideMerge(ApplicationPlatformLive))
-}
+export const QualifiedPaperActivationStoreLive = (
+  config: LoadedRuntimeConfig,
+  sql: PgClient.PgClient,
+  writerFence: WriterFenceService,
+) =>
+  ExecutionPrepareStoreLive(config).pipe(
+    Layer.provide(Layer.mergeAll(Layer.succeed(PgClient.PgClient, sql), Layer.succeed(WriterFence, writerFence))),
+  )
 
 // Kept for the existing entrypoint export; validation uses the separate layer above.
 export const ExecutionPrepareResourcesLive = ExecutionPrepareExecutionResourcesLive
@@ -958,6 +960,8 @@ const preparePaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   evidence: RuntimeEvidence,
   request: QualifiedPaperActivationRequest,
+  runtimeSql: PgClient.PgClient,
+  runtimeWriterFence: WriterFenceService,
 ): Effect.Effect<ExecutionPrepareOutput, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
@@ -1053,7 +1057,7 @@ const preparePaperActivation = (
       }),
     ).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- dynamic qualified activation boundary owns this layer
-      Effect.provide(QualifiedPaperActivationResourcesLive(activationConfig)),
+      Effect.provide(QualifiedPaperActivationStoreLive(activationConfig, runtimeSql, runtimeWriterFence)),
       Effect.mapError((cause) =>
         cause instanceof OperationalError
           ? cause
@@ -1953,7 +1957,13 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                               'qualified PAPER activation evidence is unavailable',
                                             ),
                                           )
-                                        : preparePaperActivation(observePlan, evidence, request).pipe(
+                                        : preparePaperActivation(
+                                            observePlan,
+                                            evidence,
+                                            request,
+                                            runtimeServices.pgClient,
+                                            runtimeServices.writerFence,
+                                          ).pipe(
                                             Effect.map(({ generation }) => ({ _tag: 'Mutation' as const, generation })),
                                           ),
                             ),

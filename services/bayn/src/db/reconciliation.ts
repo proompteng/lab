@@ -31,6 +31,7 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
+import { isPaperEpisodeFailureRestriction } from '../paper-episode'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
@@ -201,6 +202,12 @@ const attempt = <A>(
     catch: (cause) => storeError(operation, 'invariant', `paper reconciliation ${operation} invariant failed`, cause),
   })
 
+const isTransientReconciliationRestriction = (reason: string | null): boolean =>
+  reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
+
+const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
+  isTransientReconciliationRestriction(currentReason) && isPaperEpisodeFailureRestriction(nextReason)
+
 const fromDecision = <A>(
   operation: ReconciliationStoreError['operation'],
   decision: Result.Result<A, ReconciliationAlgebraFailure>,
@@ -226,25 +233,12 @@ const restrictAuthorityDataFirst = (
             hashtextextended('bayn.paper-authority-generation.v1', 0)
           )
         `
-        const restricted = yield* sql<Record<string, unknown>>`
-          UPDATE authority_state
-          SET
-            effective = 'OBSERVE',
-            kill_state = 'ACTIVE',
-            reason = ${reason},
-            version = version + 1,
-            updated_at = ${updatedAt}
-          WHERE singleton
-            AND (
-              effective <> 'OBSERVE'
-              OR kill_state <> 'ACTIVE'
-            )
-          RETURNING singleton
-        `
-        if (restricted.length > 0) return
-
-        const existing = yield* sql<{ effective: Authority; kill_state: KillState }>`
-          SELECT effective, kill_state
+        const existing = yield* sql<{
+          effective: Authority
+          kill_state: KillState
+          reason: string | null
+        }>`
+          SELECT effective, kill_state, reason
           FROM authority_state
           WHERE singleton
           FOR UPDATE
@@ -257,7 +251,28 @@ const restrictAuthorityDataFirst = (
             'authority restriction requires initialized durable authority state',
           )
         }
-        if (state.effective !== Authority.Observe || state.kill_state !== KillState.Active) {
+        const isRestricted = state.effective === Authority.Observe && state.kill_state === KillState.Active
+        const promoteReason = isRestricted && shouldPromoteRestrictionReason(state.reason, reason)
+        if (isRestricted && !promoteReason) return
+
+        const restricted = yield* sql<Record<string, unknown>>`
+          UPDATE authority_state
+          SET
+            effective = 'OBSERVE',
+            kill_state = 'ACTIVE',
+            reason = ${reason},
+            version = version + 1,
+            updated_at = CASE
+              WHEN ${promoteReason} THEN greatest(
+                ${updatedAt}::timestamptz,
+                updated_at + interval '1 millisecond'
+              )
+              ELSE ${updatedAt}::timestamptz
+            END
+          WHERE singleton
+          RETURNING singleton
+        `
+        if (restricted.length !== 1) {
           return yield* storeError('restrict-authority', 'invariant', 'authority restriction was not durably applied')
         }
       }),

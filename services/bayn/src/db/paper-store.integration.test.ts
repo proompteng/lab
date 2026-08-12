@@ -1850,6 +1850,59 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('promotes a terminal PAPER restriction over an earlier reconciliation discrepancy', async () => {
+    const sourceGenerationHash = hash('promoted-terminal-restriction-source-generation')
+    const activationReconciliation = exactReconciliation('promoted-terminal-restriction-activation')
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
+    const discrepancyReason = `reconciliation discrepancy ${hash('earlier-reconciliation-discrepancy')}`
+    const terminalReason = `${paperEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.activateResearchCapitalGrant(researchProofBinding(activation), sourceGenerationHash)
+          const readAuthorityState = store.readAuthorityState
+          assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) {
+            return yield* Effect.die(new Error('restriction time is unavailable'))
+          }
+          yield* store.restrictAuthority(discrepancyReason, restrictionTime.updated_at.toISOString())
+          const first = yield* readAuthorityState
+          yield* store.restrictAuthority(terminalReason, restrictionTime.updated_at.toISOString())
+          const second = yield* readAuthorityState
+          return { first, second }
+        }),
+      )
+
+      expect(result.first).toMatchObject({
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: discrepancyReason,
+      })
+      expect(result.second).toMatchObject({
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: terminalReason,
+        version: result.first.version + 1,
+      })
+      expect(Date.parse(result.second.updatedAt)).toBeGreaterThan(Date.parse(result.first.updatedAt))
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('rotates monotonically while preserving an active kill exactly', async () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     try {
