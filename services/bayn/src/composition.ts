@@ -11,8 +11,8 @@ import {
   Redacted,
   Ref,
   Result,
-  Schedule,
   Schema,
+  Semaphore,
   Scope,
   Stdio,
   Stream,
@@ -26,6 +26,7 @@ import {
   type ApplicationIdentity,
   type ApplicationPlan,
   type ApplicationPlanFor,
+  type AutonomousCycleStartup,
   type AutonomousCycleStartupInput,
   type AutonomousRuntime,
   type AutonomousRuntimeResolver,
@@ -34,6 +35,7 @@ import {
   paperObserveSuccessorGenerationHash,
   recoverBlockedGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
+  type BlockedGenerationRolloverReceipt,
 } from './blocked-generation-recovery'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
 import {
@@ -49,6 +51,7 @@ import { BrokerEnvironment } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
 import { CycleObservability, CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStore, CycleStoreLive } from './db/cycle-store'
+import { CycleRunnerError } from './cycle-runner'
 import { LifecycleCommandStore } from './db/lifecycle-command'
 import { LifecycleCommandStoreLive } from './db/lifecycle-command-postgres'
 import {
@@ -127,7 +130,11 @@ import {
   makeObserveAutonomousCycleStartup,
   paperEpisodeCloseExpiresAt,
   paperEpisodeReceiptFinalizationExpiresAt,
+  interpretRecoveryFirstCycleInProcess,
+  type LifecycleAdvanceDisposition,
+  type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverInterpreter,
+  type RecoveryFirstRuntime,
 } from './observe-composition'
 import { restrictMutationAuthority } from './observe-composition/mutation-interpreter'
 import { acquireKubernetesLifecycleCommandAuthenticator } from './lifecycle-command-auth'
@@ -153,7 +160,7 @@ import {
   type PrevalidatedExecutionPrepareInput,
 } from './execution-prepare'
 import { currentUtcInstant } from './time'
-import type { RuntimeEvidence, RuntimeState } from './runtime-state'
+import type { AutonomousCyclePassObservation, RuntimeEvidence, RuntimeState } from './runtime-state'
 import { scopedAcquisition } from './resource-boundary'
 import { strategyApplication } from './strategy'
 import { Pipeable } from './pipeable'
@@ -350,6 +357,57 @@ const lifecycleDriverInterpreter = (
         }).pipe(Effect.scoped, Effect.orDie)) satisfies RecoveryFirstCycleDriverInterpreter)
     : undefined
 
+const lifecycleMaintenanceCycle =
+  (
+    plan: ApplicationPlanFor<'AutonomousService'>,
+    store: import('./db/lifecycle-command').LifecycleCommandStoreShape,
+    writerFence: WriterFenceService,
+    maintainReconciliation: Effect.Effect<void>,
+    maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+  ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
+  (startup) =>
+    Semaphore.make(1).pipe(
+      Effect.map((operationPermit) => {
+        const nextDelayMs = Math.min(plan.config.cyclePollIntervalMs, plan.config.alpaca.reconciliationIntervalMs)
+        const observeSuccess = currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) => {
+            const observation: AutonomousCyclePassObservation = {
+              result: 'SUCCESS',
+              observedAt,
+              outcome: 'RECOVERED',
+            }
+            return startup.recordPass(observation).pipe(Effect.as({ observation }))
+          }),
+        )
+        const advance = operationPermit.withPermit(
+          maintainLifecycle.pipe(
+            Effect.andThen(observeSuccess),
+            Effect.catch((error) =>
+              currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) => {
+                  const observation: AutonomousCyclePassObservation = {
+                    result: 'FAILURE',
+                    observedAt,
+                    operation: error.operation,
+                    failure: error.failure,
+                    message: error.message,
+                  }
+                  return startup.recordPass(observation).pipe(Effect.andThen(Effect.fail(error)))
+                }),
+              ),
+            ),
+          ),
+        )
+        const driver: RecoveryFirstCycleDriver = {
+          advance,
+          maintainReconciliation: operationPermit.withPermit(maintainReconciliation),
+          nextDelayMs,
+          wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
+        }
+        return (lifecycleDriverInterpreter(plan, store, writerFence) ?? interpretRecoveryFirstCycleInProcess)(driver)
+      }),
+    )
+
 export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
   authority.maximum === Authority.Observe && authority.effective === Authority.Observe
     ? Result.succeed(authority.generationHash)
@@ -382,6 +440,7 @@ const mutationCycle = (
   lifecycleCommandStore: import('./db/lifecycle-command').LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
+  beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
   interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
 ) => {
   const interpretCycleDriver =
@@ -404,6 +463,7 @@ const mutationCycle = (
     paperEpisodeCutoffAt: paperEpisode.cutoffAt,
     paperEpisodeCloseSubmitCutoffAt: paperEpisode.expiresAt,
     paperEpisodeExpiresAt: paperEpisodeCloseExpiresAt(paperEpisode.expiresAt),
+    ...(beforeLifecycleAdvance === undefined ? {} : { beforeLifecycleAdvance }),
     ...(interpretCycleDriver === undefined ? {} : { interpretCycleDriver }),
   })
 }
@@ -1195,28 +1255,89 @@ const restrictExpiredPaperActivationDataFirst = (
 
 export const restrictExpiredPaperActivation = Pipeable.dual(2, restrictExpiredPaperActivationDataFirst)
 
-const restrictPaperAtExpiry = (
-  expiresAt: string,
+export type ExecutionLifecycleMaintenanceDecision = {
+  readonly restrictExpiredAuthority: boolean
+  readonly attemptReceiptFinalization: boolean
+}
+
+export const decideExecutionLifecycleMaintenance = (input: {
+  readonly cutoffAt: string
+  readonly closeExpiresAt: string
+  readonly finalizationExpiresAt: string
+  readonly observedAt: string
+}): ExecutionLifecycleMaintenanceDecision => {
+  const observedMs = Date.parse(input.observedAt)
+  const cutoffMs = Date.parse(input.cutoffAt)
+  const closeExpiresMs = Date.parse(input.closeExpiresAt)
+  const finalizationExpiresMs = Date.parse(input.finalizationExpiresAt)
+  if (
+    !Number.isFinite(observedMs) ||
+    !Number.isFinite(cutoffMs) ||
+    !Number.isFinite(closeExpiresMs) ||
+    !Number.isFinite(finalizationExpiresMs)
+  ) {
+    return { restrictExpiredAuthority: true, attemptReceiptFinalization: false }
+  }
+  return {
+    restrictExpiredAuthority: observedMs >= closeExpiresMs,
+    attemptReceiptFinalization: observedMs >= cutoffMs && observedMs <= finalizationExpiresMs,
+  }
+}
+
+export const runExecutionLifecycleMaintenance = (
+  request: PaperActivationRequest,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,
-): Effect.Effect<void, never> =>
-  Effect.gen(function* () {
-    const observedAt = yield* currentUtcInstant
-    const remainingMs = Date.parse(expiresAt) - Date.parse(observedAt)
-    if (remainingMs > 0) yield* Effect.sleep(Duration.millis(remainingMs))
-    yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence).pipe(
-      Effect.retry({
-        times: 4,
-        schedule: Schedule.spaced(Duration.seconds(1)),
-      }),
-      Effect.tapError((cause) =>
-        Effect.logError('Bayn PAPER activation expiry restriction exhausted retries').pipe(
-          Effect.annotateLogs({ reason: cause instanceof Error ? cause.message : String(cause) }),
+  finalizeReceipt: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean, CycleRunnerError>,
+): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
+  currentUtcInstant.pipe(
+    Effect.flatMap((observedAt) => {
+      const decision = decideExecutionLifecycleMaintenance({
+        cutoffAt: request.cutoffAt,
+        closeExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+        finalizationExpiresAt: paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
+        observedAt,
+      })
+      const restrict = decision.restrictExpiredAuthority
+        ? restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
+            Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+            Effect.provideService(WriterFence, writerFence),
+          )
+        : Effect.void
+      return restrict.pipe(
+        Effect.andThen(
+          decision.attemptReceiptFinalization
+            ? finalizeReceipt(undefined, observedAt).pipe(
+                Effect.map((completed) => (completed ? ('COMPLETED' as const) : ('CONTINUE' as const))),
+              )
+            : Effect.succeed('CONTINUE' as const),
         ),
-      ),
-      Effect.orDie,
-    )
-  })
+      )
+    }),
+  )
+
+const completeExecutionLifecycle = <A, E, R, RolloverR>(
+  finalization: Effect.Effect<boolean, E, R>,
+  rollover: Effect.Effect<A, OperationalError, RolloverR>,
+): Effect.Effect<boolean, E | CycleRunnerError, R | RolloverR> =>
+  finalization.pipe(
+    Effect.flatMap((finalized) =>
+      finalized
+        ? rollover.pipe(
+            Effect.mapError(
+              (cause) =>
+                new CycleRunnerError({
+                  operation: 'recover-cycle',
+                  failure: 'operational',
+                  message: 'terminal execution generation rollover failed',
+                  cause,
+                }),
+            ),
+            Effect.as(true),
+          )
+        : Effect.succeed(false),
+    ),
+  )
 
 const signedMicros = (value: string | null): bigint | undefined =>
   value !== null && /^-?(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
@@ -1352,33 +1473,6 @@ const finalizePaperEpisodeDataFirst = (
   )
 
 export const finalizePaperEpisode = Pipeable.dual(8, finalizePaperEpisodeDataFirst)
-
-const retryClosedCycleReceiptsDataFirst = (
-  emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
-  cutoffAt: string,
-  retryUntilAt: string,
-  intervalMs: number,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const interval = Math.max(1_000, intervalMs)
-    const cutoffMs = Date.parse(cutoffAt)
-    const retryUntilMs = Date.parse(retryUntilAt)
-    if (!Number.isFinite(cutoffMs) || !Number.isFinite(retryUntilMs) || retryUntilMs < cutoffMs) return
-    while (true) {
-      const observedAt = yield* currentUtcInstant
-      const observedMs = Date.parse(observedAt)
-      const untilCutoff = cutoffMs - observedMs
-      if (untilCutoff > 0) {
-        yield* Effect.sleep(Duration.millis(Math.min(interval, untilCutoff)))
-        continue
-      }
-      if (yield* emit(undefined, observedAt)) return
-      if (observedMs >= retryUntilMs) return
-      yield* Effect.sleep(Duration.millis(Math.min(interval, retryUntilMs - observedMs)))
-    }
-  })
-
-export const retryClosedCycleReceipts = Pipeable.dual(4, retryClosedCycleReceiptsDataFirst)
 
 const closedCycleReceiptEmissionAllowedDataFirst = (cutoffAt: string, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(cutoffAt)
@@ -1570,6 +1664,42 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             observePlan.config.operationTimeoutMs,
                           ),
                         })
+                        const recoverTerminalExecutionGeneration: Effect.Effect<
+                          BlockedGenerationRolloverReceipt,
+                          OperationalError
+                        > = recoverBlockedGeneration.pipe(
+                          Effect.flatMap(
+                            (receipt): Effect.Effect<BlockedGenerationRolloverReceipt, OperationalError> => {
+                              if (receipt._tag === 'RolledOver') return Effect.succeed(receipt)
+                              if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
+                                return Effect.fail(
+                                  paperActivationOperationalError(
+                                    'terminal execution rollover requires durable authority state reads',
+                                  ),
+                                )
+                              }
+                              return runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
+                                Effect.mapError((cause) =>
+                                  paperActivationOperationalError(
+                                    'terminal execution rollover authority read failed',
+                                    cause,
+                                  ),
+                                ),
+                                Effect.flatMap((authority) =>
+                                  authority.maximum === Authority.Observe &&
+                                  authority.effective === Authority.Observe &&
+                                  authority.kill === KillState.Clear
+                                    ? Effect.succeed(receipt)
+                                    : Effect.fail(
+                                        paperActivationOperationalError(
+                                          'terminal execution rollover did not reach clear OBSERVE authority',
+                                        ),
+                                      ),
+                                ),
+                              )
+                            },
+                          ),
+                        )
                         if (request === null) return recoverBlockedGeneration.pipe(Effect.as(readRuntime()))
                         const evidence = validated.success.evidence
                         if (evidence === null && !isResearchPaperActivationRequest(request)) {
@@ -1652,6 +1782,11 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                               cycleId,
                               observedAt,
                             )
+                          const finalizeExecutionLifecycleReceipt = (cycleId: string | undefined, observedAt: string) =>
+                            completeExecutionLifecycle(
+                              finalizeClosedCycleReceipt(cycleId, observedAt),
+                              recoverTerminalExecutionGeneration,
+                            )
                           return Effect.gen(function* () {
                             yield* pendingPaperActivation(state, request, 'REQUEST_EXPIRED')
                             const observedAt = yield* currentUtcInstant
@@ -1667,28 +1802,66 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   ),
                                 )
                               if (Option.isSome(existing)) {
-                                yield* finalizePaperEpisode(
-                                  state,
-                                  request,
-                                  prepared.generation.generationHash,
-                                  runtimeServices.authorityRestrictionStore,
-                                  runtimeServices.writerFence,
-                                  () => Effect.succeed(existing.value.receiptHash),
-                                  existing.value.cycleId,
-                                  observedAt,
+                                yield* completeExecutionLifecycle(
+                                  finalizePaperEpisode(
+                                    state,
+                                    request,
+                                    prepared.generation.generationHash,
+                                    runtimeServices.authorityRestrictionStore,
+                                    runtimeServices.writerFence,
+                                    () => Effect.succeed(existing.value.receiptHash),
+                                    existing.value.cycleId,
+                                    observedAt,
+                                  ),
+                                  recoverTerminalExecutionGeneration,
+                                ).pipe(
+                                  Effect.mapError((cause) =>
+                                    paperActivationOperationalError(
+                                      'durable PAPER receipt terminal rollover failed',
+                                      cause,
+                                    ),
+                                  ),
                                 )
                               }
                               return readRuntime()
                             }
-                            yield* Effect.forkScoped(
-                              retryClosedCycleReceipts(
-                                finalizeClosedCycleReceipt,
-                                request.cutoffAt,
-                                paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
-                                observePlan.config.alpaca.reconciliationIntervalMs,
+                            const maintainReconciliation = runOnce.pipe(
+                              // @effect-diagnostics-next-line strictEffectProvide:off -- value-only reconciliation services have no resource lifetime
+                              Effect.provide(cycleResources),
+                              Effect.asVoid,
+                              Effect.catch((cause) =>
+                                Effect.logError('Bayn receipt-finalization reconciliation guardian failed', cause),
                               ),
                             )
-                            return readRuntime()
+                            const maintainLifecycle = runExecutionLifecycleMaintenance(
+                              request,
+                              runtimeServices.authorityRestrictionStore,
+                              runtimeServices.writerFence,
+                              finalizeExecutionLifecycleReceipt,
+                            )
+                            const startCycle: AutonomousCycleStartup = (startup) =>
+                              lifecycleMaintenanceCycle(
+                                observePlan,
+                                runtimeServices.lifecycleCommandStore,
+                                runtimeServices.writerFence,
+                                maintainReconciliation,
+                                maintainLifecycle,
+                              )(startup).pipe(
+                                // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
+                                Effect.provide(cycleResources),
+                                Effect.map((loop) =>
+                                  loop.pipe(
+                                    // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
+                                    Effect.provide(cycleResources),
+                                  ),
+                                ),
+                              )
+                            return {
+                              ...readRuntime(),
+                              cycleBindingId: prepared.generation.generationHash,
+                              cycleObservationId: prepared.generation.generationHash,
+                              startCycle,
+                            }
                           })
                         }
                         const resolvePrepared = (
@@ -1790,10 +1963,24 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       cycleId,
                                       observedAt,
                                     )
+                                  const finalizeExecutionLifecycleReceipt = (
+                                    cycleId: string | undefined,
+                                    observedAt: string,
+                                  ) =>
+                                    completeExecutionLifecycle(
+                                      finalizeClosedCycleReceipt(cycleId, observedAt),
+                                      recoverTerminalExecutionGeneration,
+                                    )
                                   const onClosedCycle = (cycleId: string, observedAt: string) =>
                                     closedCycleReceiptEmissionAllowed(request.cutoffAt, observedAt)
                                       ? finalizeClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
                                       : Effect.void
+                                  const maintainExecutionLifecycle = runExecutionLifecycleMaintenance(
+                                    request,
+                                    runtimeServices.authorityRestrictionStore,
+                                    runtimeServices.writerFence,
+                                    finalizeExecutionLifecycleReceipt,
+                                  )
                                   return makeMutation(
                                     runtimeServices.session,
                                     authority,
@@ -1845,6 +2032,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.lifecycleCommandStore,
                                           runtimeServices.writerFence,
                                           onClosedCycle,
+                                          maintainExecutionLifecycle,
                                           interpretCycleDriver,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
@@ -1872,28 +2060,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                         request,
                                         prepared.generation.generationHash,
                                         paperGrant._tag,
-                                      ).pipe(
-                                        Effect.andThen(
-                                          Effect.forkScoped(
-                                            retryClosedCycleReceipts(
-                                              finalizeClosedCycleReceipt,
-                                              request.cutoffAt,
-                                              paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
-                                              realizedPlan.config.alpaca.reconciliationIntervalMs,
-                                            ),
-                                          ),
-                                        ),
-                                        Effect.andThen(
-                                          Effect.forkScoped(
-                                            restrictPaperAtExpiry(
-                                              paperEpisodeCloseExpiresAt(request.expiresAt),
-                                              runtimeServices.authorityRestrictionStore,
-                                              runtimeServices.writerFence,
-                                            ),
-                                          ),
-                                        ),
-                                        Effect.as(runtime),
-                                      )
+                                      ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
                                       const recover: RecoveryFirstCycleDriverInterpreter = (driver) =>
