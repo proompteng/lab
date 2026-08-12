@@ -73,6 +73,12 @@ export const restateLifecycleActivationCompletionMaximumAttempts = (operationTim
   Math.ceil(
     lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) / restateLifecycleActivationCompletionPollIntervalMs,
   ) + 1
+
+export enum RestateSendStatus {
+  Accepted = 'Accepted',
+  PreviouslyAccepted = 'PreviouslyAccepted',
+}
+
 const RestateAcceptedInvocationSchema = Schema.Struct({
   invocationId: Schema.Trim.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/)),
   executionTime: Schema.optional(
@@ -82,7 +88,7 @@ const RestateAcceptedInvocationSchema = Schema.Struct({
       }),
     ),
   ),
-  status: Schema.Literals(['Accepted', 'PreviouslyAccepted']),
+  status: Schema.Enum(RestateSendStatus),
 })
 
 export const decodeRestateAcceptedInvocation = Schema.decodeUnknownResult(RestateAcceptedInvocationSchema, {
