@@ -1,13 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bayn-lifecycle-df500668c6df
+  name: bayn-lifecycle-1c19bedfe651
   labels:
     app.kubernetes.io/name: bayn-lifecycle
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: df500668c6df
+    app.kubernetes.io/version: 1c19bedfe651
   annotations:
-    bayn.proompteng.ai/source-revision: df500668c6dfe137fde8e47231f39c3e64e47841
+    bayn.proompteng.ai/source-revision: 1c19bedfe651b3cd8c7df219c9d7468be1ec13b0
 spec:
   replicas: 1
   revisionHistoryLimit: 1
@@ -17,13 +17,13 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-lifecycle
-      app.kubernetes.io/version: df500668c6df
+      app.kubernetes.io/version: 1c19bedfe651
   template:
     metadata:
       labels:
         app.kubernetes.io/name: bayn-lifecycle
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: df500668c6df
+        app.kubernetes.io/version: 1c19bedfe651
     spec:
       serviceAccountName: bayn-lifecycle
       automountServiceAccountToken: false
@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: lifecycle
-          image: registry.ide-newton.ts.net/lab/bayn:sha-df500668c6dfe137fde8e47231f39c3e64e47841@sha256:763ec6b492f688c66a792f64ac1e283c25588b68086c32c8a38a2e22d281e142
+          image: registry.ide-newton.ts.net/lab/bayn:sha-1c19bedfe651b3cd8c7df219c9d7468be1ec13b0@sha256:dbb0ab1d4c407e98d28c073b674f8e22ed605a64a4da0a2d307f70b062d0ffaf
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -50,7 +50,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: df500668c6dfe137fde8e47231f39c3e64e47841
+              value: 1c19bedfe651b3cd8c7df219c9d7468be1ec13b0
             - name: BAYN_LIFECYCLE_CONTROLLER_KEY
               value: primary
             - name: BAYN_LIFECYCLE_COMMAND_URL
@@ -117,18 +117,18 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: bayn-lifecycle-df500668c6df
+  name: bayn-lifecycle-1c19bedfe651
   labels:
     app.kubernetes.io/name: bayn-lifecycle
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: df500668c6df
+    app.kubernetes.io/version: 1c19bedfe651
   annotations:
-    bayn.proompteng.ai/source-revision: df500668c6dfe137fde8e47231f39c3e64e47841
+    bayn.proompteng.ai/source-revision: 1c19bedfe651b3cd8c7df219c9d7468be1ec13b0
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: bayn-lifecycle
-    app.kubernetes.io/version: df500668c6df
+    app.kubernetes.io/version: 1c19bedfe651
   ports:
     - name: restate
       port: 9080
