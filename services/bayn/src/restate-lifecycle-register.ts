@@ -75,7 +75,14 @@ export const restateLifecycleActivationCompletionMaximumAttempts = (operationTim
   ) + 1
 const RestateAcceptedInvocationSchema = Schema.Struct({
   invocationId: Schema.Trim.check(Schema.isPattern(/^inv_[A-Za-z0-9]+$/)),
-  status: Schema.Literal('Accepted'),
+  executionTime: Schema.optional(
+    Schema.Trim.check(
+      Schema.makeFilter((candidate: string) => !Number.isNaN(Date.parse(candidate)), {
+        expected: 'a valid Restate execution timestamp',
+      }),
+    ),
+  ),
+  status: Schema.Literals(['Accepted', 'PreviouslyAccepted']),
 })
 
 export const decodeRestateAcceptedInvocation = Schema.decodeUnknownResult(RestateAcceptedInvocationSchema, {
