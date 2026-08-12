@@ -72,11 +72,11 @@ spec:
                       name: bayn-universe-v2
                       key: HISTORY_FEED
                 - name: SIGNAL_CODE_REVISION
-                  value: "72006ac26afef02e42fc1af8d434e49835cc40d6"
+                  value: "8bf866d2a3b5f2019eb670291f003e1afcb002ea"
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
-                  value: sha256:2561a79d2baaa998036344c121cc3986aedec365881911dd592d334163d82729
+                  value: sha256:89f010bbeabe260427f6aaa14c8826f01ec3cd4aadc8ad963e0279344a89bc18
                 - name: SIGNAL_CLICKHOUSE_URL
                   value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
                 - name: SIGNAL_CLICKHOUSE_USERNAME
