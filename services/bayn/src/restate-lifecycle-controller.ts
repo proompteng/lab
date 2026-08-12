@@ -100,8 +100,10 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   }
 }
 
+// One externally driven advance can run a reconciliation preflight and then a cycle pass. Each phase is independently
+// bounded by operationTimeoutMs; retain a separate finalization window for the durable command receipt and response.
 export const lifecycleCommandRequestTimeoutMs = (operationTimeoutMs: number): number =>
-  operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs
+  operationTimeoutMs * 2 + lifecycleCommandFinalizationHeadroomMs
 
 const lifecycleActivationRetryDelayMs = (): number => {
   let interval = lifecycleActivationInitialRetryIntervalMs

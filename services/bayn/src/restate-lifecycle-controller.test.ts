@@ -34,10 +34,10 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}): Response => {
 }
 
 describe('Restate lifecycle command client', () => {
-  test('keeps bounded finalization headroom beyond every accepted Bayn pass timeout', () => {
-    expect(lifecycleCommandRequestTimeoutMs(1_000)).toBe(1_000 + lifecycleCommandFinalizationHeadroomMs)
-    expect(lifecycleCommandRequestTimeoutMs(30_000)).toBe(60_000)
-    expect(lifecycleCommandRequestTimeoutMs(86_400_000)).toBe(86_400_000 + lifecycleCommandFinalizationHeadroomMs)
+  test('bounds both external advance phases and retains durable finalization headroom', () => {
+    expect(lifecycleCommandRequestTimeoutMs(1_000)).toBe(2_000 + lifecycleCommandFinalizationHeadroomMs)
+    expect(lifecycleCommandRequestTimeoutMs(30_000)).toBe(90_000)
+    expect(lifecycleCommandRequestTimeoutMs(86_400_000)).toBe(172_800_000 + lifecycleCommandFinalizationHeadroomMs)
   })
 
   test('keeps Restate inactivity and abort limits beyond every accepted command request', () => {
@@ -45,7 +45,7 @@ describe('Restate lifecycle command client', () => {
       const expected = lifecycleHandlerTimeouts(operationTimeoutMs)
 
       expect(expected).toEqual({
-        inactivityTimeout: operationTimeoutMs + lifecycleCommandFinalizationHeadroomMs * 2,
+        inactivityTimeout: operationTimeoutMs * 2 + lifecycleCommandFinalizationHeadroomMs * 2,
         abortTimeout: lifecycleCommandFinalizationHeadroomMs,
       })
       expect(expected.inactivityTimeout).toBeGreaterThan(lifecycleCommandRequestTimeoutMs(operationTimeoutMs))
