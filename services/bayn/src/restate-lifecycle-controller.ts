@@ -3,6 +3,7 @@ import { Effect, Logger, Result } from 'effect'
 
 import { maximumConsistencyDelayMs } from './execution/mutations'
 import {
+  beginRestateLifecycleTick,
   completeRestateLifecycleTick,
   decodeLifecycleCommandCursorResponse,
   decodeLifecycleCommandResponse,
@@ -10,7 +11,6 @@ import {
   decodeRestateLifecycleState,
   decodeRestateLifecycleTick,
   initialRestateLifecycleState,
-  lifecycleCommandFromCursor,
   type LifecycleCommandCursorResponse,
   type LifecycleCommandResponse,
   type RestateLifecycleConfig,
@@ -38,6 +38,14 @@ export const lifecycleBootstrapRetryPolicy = {
   maxAttempts: 1,
   onMaxAttempts: 'kill',
 } as const satisfies restate.RetryPolicy
+export const lifecycleAdvanceRetryPolicy = {
+  maxAttempts: 1,
+  onMaxAttempts: 'kill',
+} as const satisfies restate.RetryPolicy
+export const lifecycleAdvanceRunRetryPolicy = {
+  maxRetryAttempts: 0,
+} as const satisfies restate.RunOptions<LifecycleCommandResponse>
+export const lifecycleAdvanceMaximumDeliveryAttempts = 3
 const lifecycleTickSerde = restate.serde.json.schema<RestateLifecycleTick>({
   type: 'object',
   required: ['schemaVersion', 'epoch', 'sequence'],
@@ -219,18 +227,27 @@ const scheduleTick = (
   ctx: restate.ObjectContext<LifecycleObjectState>,
   state: RestateLifecycleState,
   delay: number,
+  deliveryAttempt = 0,
 ): void => {
   const sequence = state.cursor._tag === 'Pending' ? state.cursor.command.sequence : state.cursor.sequence
   ctx.genericSend({
     service: 'BaynLifecycle',
     method: 'advance',
     key: ctx.key,
-    parameter: { schemaVersion: 'bayn.restate-lifecycle-tick.v1', epoch: state.epoch, sequence },
+    parameter: {
+      schemaVersion: 'bayn.restate-lifecycle-tick.v1',
+      epoch: state.epoch,
+      sequence,
+      deliveryAttempt,
+    },
     inputSerde: lifecycleTickSerde,
     delay,
-    idempotencyKey: `bayn-lifecycle-${state.epoch}-${sequence}`,
+    idempotencyKey: lifecycleTickIdempotencyKey(state.epoch, sequence, deliveryAttempt),
   })
 }
+
+export const lifecycleTickIdempotencyKey = (epoch: number, sequence: number, deliveryAttempt: number): string =>
+  `bayn-lifecycle-${epoch}-${sequence}-${deliveryAttempt}`
 
 export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: LifecycleCommandClient) =>
   restate.object({
@@ -270,40 +287,63 @@ export const makeBaynLifecycle = (config: RestateLifecycleConfig, client: Lifecy
         },
       ),
 
-      advance: async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown): Promise<void> => {
-        const tick = decodeOrTerminal(decodeRestateLifecycleTick(candidate), 'Restate lifecycle tick failed validation')
-        const state = await readState(ctx)
-        if (state === null || !state.active || tick.epoch !== state.epoch) return
-        const expectedSequence = state.cursor._tag === 'Pending' ? state.cursor.command.sequence : state.cursor.sequence
-        if (tick.sequence !== expectedSequence) return
+      advance: restate.handlers.object.exclusive(
+        { retryPolicy: lifecycleAdvanceRetryPolicy },
+        async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown): Promise<void> => {
+          const tick = decodeOrTerminal(
+            decodeRestateLifecycleTick(candidate),
+            'Restate lifecycle tick failed validation',
+          )
+          const state = await readState(ctx)
+          if (state === null || !state.active || tick.epoch !== state.epoch) return
+          const expectedSequence =
+            state.cursor._tag === 'Pending' ? state.cursor.command.sequence : state.cursor.sequence
+          if (tick.sequence !== expectedSequence) return
 
-        const issuedAt = await ctx.date.toJSON()
-        const command = lifecycleCommandFromCursor(config.controllerKey, state.cursor, issuedAt)
-        const response = await ctx.run('advance Bayn lifecycle', () => client.advance(command))
-        if (
-          response.commandId !== command.commandId ||
-          response.sequence !== command.sequence ||
-          response.sourceRevision !== config.sourceRevision
-        ) {
-          throw terminal('Bayn lifecycle command response identity does not match its request')
-        }
-        const completedAt = await ctx.date.toJSON()
-        const completed = completeRestateLifecycleTick(state, response, completedAt)
-        ctx.set(stateKey, completed)
-        scheduleTick(ctx, completed, response.nextDelayMs)
-        await lifecycleLog('Bayn Restate lifecycle command completed', {
-          commandId: response.commandId,
-          commandSequence: response.sequence,
-          controllerKey: ctx.key,
-          epoch: state.epoch,
-          outcome:
-            response.observation.result === 'SUCCESS'
-              ? response.observation.outcome
-              : `${response.observation.operation}/${response.observation.failure}`,
-          replayed: response.replayed,
-          result: response.observation.result,
-        })
-      },
+          const deliveryAttempt = tick.deliveryAttempt ?? 0
+          if (deliveryAttempt >= lifecycleAdvanceMaximumDeliveryAttempts) {
+            throw terminal('Bayn lifecycle tick exhausted its delivery attempt range')
+          }
+          const issuedAt = await ctx.date.toJSON()
+          const started = beginRestateLifecycleTick(state, config.controllerKey, issuedAt)
+          // Persist the exact command identity before external I/O, including issuedAt. If the response is lost after
+          // Bayn starts the command, the detached retry must replay that identity rather than conflict with PostgreSQL.
+          ctx.set(stateKey, started.state)
+          if (deliveryAttempt + 1 < lifecycleAdvanceMaximumDeliveryAttempts) {
+            scheduleTick(ctx, started.state, config.pollIntervalMs, deliveryAttempt + 1)
+          }
+
+          const response = await ctx.run(
+            'advance Bayn lifecycle',
+            () => client.advance(started.command),
+            lifecycleAdvanceRunRetryPolicy,
+          )
+          if (
+            response.commandId !== started.command.commandId ||
+            response.sequence !== started.command.sequence ||
+            response.sourceRevision !== config.sourceRevision
+          ) {
+            throw terminal('Bayn lifecycle command response identity does not match its request')
+          }
+          const completedAt = await ctx.date.toJSON()
+          const completed = completeRestateLifecycleTick(started.state, response, completedAt)
+          ctx.set(stateKey, completed)
+          scheduleTick(ctx, completed, response.nextDelayMs)
+          await lifecycleLog('Bayn Restate lifecycle command completed', {
+            commandId: response.commandId,
+            commandSequence: response.sequence,
+            controllerKey: ctx.key,
+            deliveryAttempt,
+            epoch: state.epoch,
+            outcome:
+              response.observation.result === 'SUCCESS'
+                ? response.observation.outcome
+                : `${response.observation.operation}/${response.observation.failure}`,
+            replayed: response.replayed,
+            result: response.observation.result,
+          })
+        },
+      ),
 
       deactivate: async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown) => {
         const request = decodeOrTerminal(
