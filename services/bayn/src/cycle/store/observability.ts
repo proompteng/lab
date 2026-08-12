@@ -325,21 +325,11 @@ const makeCycleObservability = Effect.gen(function* () {
             FROM mutation_events AS events
             JOIN account_intents AS intents ON intents.intent_id = events.intent_id
           ),
-          latest_mutations AS (
-            SELECT DISTINCT ON (events.mutation_id)
-              events.event_type,
-              events.occurred_at,
-              events.operation,
-              events.state
-            FROM account_mutation_events AS events
-            ORDER BY events.mutation_id, events.sequence DESC
-          ),
-          unresolved_mutations AS (
-            SELECT occurred_at
-            FROM latest_mutations
-            WHERE state <> 'TERMINAL'
-              AND (
-                event_type IN (
+          classified_mutation_events AS (
+            SELECT
+              events.*,
+              (
+                events.event_type IN (
                   'SUBMIT_STARTED',
                   'SUBMIT_UNKNOWN',
                   'RECOVERY_NOT_FOUND',
@@ -349,10 +339,45 @@ const makeCycleObservability = Effect.gen(function* () {
                   'CANCEL_UNKNOWN'
                 )
                 OR (
-                  operation = 'CANCEL'
-                  AND event_type = 'RECOVERY_FOUND'
+                  events.operation = 'CANCEL'
+                  AND events.event_type = 'RECOVERY_FOUND'
                 )
-              )
+              ) AS is_unresolved
+            FROM account_mutation_events AS events
+          ),
+          mutation_event_streaks AS (
+            SELECT
+              events.*,
+              count(*) FILTER (WHERE NOT events.is_unresolved) OVER (
+                PARTITION BY events.mutation_id
+                ORDER BY events.sequence
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+              ) AS resolved_epoch
+            FROM classified_mutation_events AS events
+          ),
+          latest_mutations AS (
+            SELECT DISTINCT ON (events.mutation_id)
+              events.mutation_id,
+              events.event_type,
+              events.operation,
+              events.state,
+              events.is_unresolved,
+              events.resolved_epoch
+            FROM mutation_event_streaks AS events
+            ORDER BY events.mutation_id, events.sequence DESC
+          ),
+          unresolved_mutations AS (
+            SELECT
+              latest.mutation_id,
+              min(events.occurred_at) AS occurred_at
+            FROM latest_mutations AS latest
+            JOIN mutation_event_streaks AS events
+              ON events.mutation_id = latest.mutation_id
+              AND events.resolved_epoch = latest.resolved_epoch
+              AND events.is_unresolved
+            WHERE latest.state <> 'TERMINAL'
+              AND latest.is_unresolved
+            GROUP BY latest.mutation_id
           )
           SELECT
             current.cycle_id AS current_cycle_id,

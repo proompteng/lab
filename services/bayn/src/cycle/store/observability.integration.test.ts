@@ -204,6 +204,33 @@ const seedUnresolvedMutation = (mutationAccountId = accountId) =>
   `
   })
 
+const seedRepeatedUnresolvedRecovery = Effect.gen(function* () {
+  yield* seedUnresolvedMutation()
+  const sql = yield* PgClient.PgClient
+  yield* sql`
+    INSERT INTO mutation_events (
+      event_id, schema_version, mutation_id, intent_id, sequence, operation,
+      event_type, request_hash, consistency_delay_ms, broker_order_id,
+      request_id, response_status, response_content_hash, occurred_at
+    ) VALUES
+      (
+        ${'6'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 2,
+        'SUBMIT', 'SUBMIT_UNKNOWN', ${'5'.repeat(64)}, 1000, NULL,
+        'unknown-submit', 503, ${'7'.repeat(64)}, '2026-03-06T21:03:00.000Z'
+      ),
+      (
+        ${'8'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 3,
+        'SUBMIT', 'RECOVERY_NOT_FOUND', ${'5'.repeat(64)}, 1000, NULL,
+        'not-found-1', 404, ${'9'.repeat(64)}, '2026-03-06T21:08:00.000Z'
+      ),
+      (
+        ${'a'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 4,
+        'SUBMIT', 'RECOVERY_UNKNOWN', ${'5'.repeat(64)}, 1000, NULL,
+        'unknown-recovery', 503, ${'b'.repeat(64)}, '2026-03-06T21:13:00.000Z'
+      )
+  `
+})
+
 const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -229,6 +256,79 @@ const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
       ${occurredAt}
     )
   `
+  })
+
+const seedReopenedUnresolvedRecovery = (resolvedEventType: 'SUBMIT_ACCEPTED' | 'RECOVERY_FOUND') =>
+  Effect.gen(function* () {
+    yield* seedUnresolvedMutation()
+    const sql = yield* PgClient.PgClient
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+      INSERT INTO risk_decisions (
+        decision_id, schema_version, input_hash, intent_id, policy_hash,
+        outcome, reason_codes, decided_at, expires_at
+      ) VALUES (
+        ${'1'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'0'.repeat(64)}, ${'2'.repeat(64)},
+        ${'a'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
+        '2026-03-06T21:02:00.001Z', '2099-01-01T00:00:00.000Z'
+      )
+    `
+        yield* sql`
+      UPDATE intents
+      SET risk_decision_id = ${'1'.repeat(64)}, state = 'APPROVED', state_version = 2,
+        updated_at = '2026-03-06T21:02:00.002Z'
+      WHERE intent_id = ${'2'.repeat(64)}
+    `
+        yield* sql`
+      UPDATE intents
+      SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-06T21:02:00.003Z'
+      WHERE intent_id = ${'2'.repeat(64)}
+    `
+        yield* sql`
+      INSERT INTO mutation_events (
+        event_id, schema_version, mutation_id, intent_id, sequence, operation,
+        event_type, request_hash, consistency_delay_ms, broker_order_id,
+        request_id, response_status, response_content_hash, occurred_at
+      ) VALUES (
+        ${'6'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 2,
+        'SUBMIT', 'SUBMIT_ACCEPTED', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
+        'resolved-submit', 200, ${'7'.repeat(64)}, '2026-03-06T21:03:00.000Z'
+      )
+    `
+        yield* sql`
+      UPDATE intents
+      SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = '2026-03-06T21:03:00.000Z'
+      WHERE intent_id = ${'2'.repeat(64)}
+    `
+      }),
+    )
+    if (resolvedEventType === 'RECOVERY_FOUND') {
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'8'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 3,
+          'SUBMIT', 'RECOVERY_FOUND', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
+          'recovered-submit', 200, ${'9'.repeat(64)}, '2026-03-06T21:04:00.000Z'
+        )
+      `
+    }
+    const reopenedSequence = resolvedEventType === 'RECOVERY_FOUND' ? 4 : 3
+    yield* sql`
+      INSERT INTO mutation_events (
+        event_id, schema_version, mutation_id, intent_id, sequence, operation,
+        event_type, request_hash, consistency_delay_ms, broker_order_id,
+        request_id, response_status, response_content_hash, occurred_at
+      ) VALUES (
+        ${'b'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)},
+        ${reopenedSequence},
+        'SUBMIT', 'RECOVERY_NOT_FOUND', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
+        'reopened-submit', 404, ${'c'.repeat(64)}, '2026-03-06T21:12:00.000Z'
+      )
+    `
   })
 
 const seedOpenRecoveryAndApprovedIntent = Effect.gen(function* () {
@@ -781,6 +881,45 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       message: `configured account ${accountId} differs from the projected current or last cycle`,
     })
   })
+
+  test('keeps unresolved mutation age anchored to the first unresolved event across recovery retries', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        yield* seedSafetyState('2026-03-06T21:14:00.000Z')
+        yield* seedRepeatedUnresolvedRecovery
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.mutations).toMatchObject({
+      eventCount: 4,
+      unresolvedCount: 1,
+      oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
+      latestOccurredAt: '2026-03-06T21:13:00.000Z',
+    })
+  })
+
+  test.each(['SUBMIT_ACCEPTED', 'RECOVERY_FOUND'] as const)(
+    'resets unresolved mutation age when recovery reopens after %s',
+    async (resolvedEventType) => {
+      const projection = await runtime.runPromise(
+        Effect.gen(function* () {
+          const observability = yield* CycleObservability
+          yield* seedSafetyState('2026-03-06T21:14:00.000Z')
+          yield* seedReopenedUnresolvedRecovery(resolvedEventType)
+          return yield* observability.read(qualificationRunId, accountId)
+        }),
+      )
+
+      expect(projection.mutations).toMatchObject({
+        eventCount: resolvedEventType === 'RECOVERY_FOUND' ? 4 : 3,
+        unresolvedCount: 1,
+        oldestUnresolvedAt: '2026-03-06T21:12:00.000Z',
+        latestOccurredAt: '2026-03-06T21:12:00.000Z',
+      })
+    },
+  )
 
   test('uses the canonical reconciliation-id tie-break for equal timestamps', async () => {
     const higherReconciliationId = 'f'.repeat(64)

@@ -6,8 +6,10 @@ import {
   Cause,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
+  Fiber,
   Layer,
   ManagedRuntime,
   Option,
@@ -17,6 +19,7 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import qualifiedCycleSnapshotBinding from '../../../migrations/0036_qualified_cycle_snapshot_binding'
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
@@ -112,6 +115,7 @@ import {
 } from '../../types'
 import { PostgresClientLive } from '../../db/evidence-store'
 import { migrationLoader } from '../../db/migrations'
+import { ensureSnapshotReference } from '../../db/snapshot-reference'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
@@ -965,6 +969,72 @@ const insertSnapshotReference = (
     `
   })
 
+const seedTerminalQualifiedSnapshot = (draft: CycleDraft, snapshotId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const lockId = '1'.repeat(64)
+    const sourceRevision = '2'.repeat(40)
+    const imageRepository = 'registry.example.test/lab/bayn'
+    const imageDigest = `sha256:${'3'.repeat(64)}`
+    const resultHash = '4'.repeat(64)
+    const analysisHash = '5'.repeat(64)
+
+    yield* ensureSnapshotReference(sql, makeInputManifest(snapshotId))
+    yield* sql`
+      INSERT INTO protocol_locks (
+        protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+      ) VALUES (
+        ${draft.identity.strategyProtocolHash}, 'bayn.risk-balanced-trend.protocol.v4',
+        'risk-balanced-trend', ${'6'.repeat(64)}, ${'7'.repeat(64)}, ${sql.json({ fixture: true })}
+      )
+    `
+    yield* sql`
+      INSERT INTO evaluation_runs (
+        run_id, protocol_hash, snapshot_id, evaluation_schema_version, source_revision,
+        image_repository, image_digest, strategy_name, initial_capital_micros,
+        expected_artifact_count, expected_event_count, expected_gate_count, status, completed_at
+      ) VALUES (
+        ${draft.identity.qualificationRunId}, ${draft.identity.strategyProtocolHash}, ${snapshotId},
+        'bayn.evaluation.v6', ${sourceRevision}, ${imageRepository}, ${imageDigest}, 'risk-balanced-trend',
+        1000000000, 1, 0, 1, 'COMPLETE', '2026-03-06T20:58:00.000Z'
+      )
+    `
+    yield* sql`
+      INSERT INTO qualification_locks (
+        lock_id, schema_version, candidate_run_id, protocol_hash, snapshot_id,
+        source_revision, image_repository, image_digest, payload
+      ) VALUES (
+        ${lockId}, 'bayn.qualification-lock.v3', ${draft.identity.qualificationRunId},
+        ${draft.identity.strategyProtocolHash}, ${snapshotId}, ${sourceRevision}, ${imageRepository}, ${imageDigest},
+        ${sql.json({
+          schemaVersion: 'bayn.qualification-lock.v3',
+          lockId,
+          candidateRunId: draft.identity.qualificationRunId,
+          protocolHash: draft.identity.strategyProtocolHash,
+          sourceRevision,
+          image: { repository: imageRepository, digest: imageDigest },
+          data: { snapshotId },
+        })}
+      )
+    `
+    yield* sql`
+      INSERT INTO qualification_results (
+        lock_id, schema_version, run_id, verdict, committed_at, analysis_hash, result_hash, payload
+      ) VALUES (
+        ${lockId}, 'bayn.qualification-result.v2', ${draft.identity.qualificationRunId}, 'QUALIFIED',
+        '2026-03-06T20:58:30.000Z', ${analysisHash}, ${resultHash},
+        ${sql.json({
+          schemaVersion: 'bayn.qualification-result.v2',
+          lockId,
+          runId: draft.identity.qualificationRunId,
+          verdict: 'QUALIFIED',
+          analysis: { analysisHash },
+          resultHash,
+        })}
+      )
+    `
+  })
+
 const makeInputManifest = (
   snapshotId: string,
   options: {
@@ -1427,6 +1497,43 @@ const buildPlannedPaperDecision = (
     }).pipe(
       Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
       Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId, options.snapshotFinalizedAt)),
+    )
+    return { document, reconciliation }
+  })
+
+const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: string) =>
+  Effect.gen(function* () {
+    const evaluatedAt = plannedDecisionAt
+    const policy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
+    const paperReconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
+    const authority = paperReconciliation.riskContext.authority
+    if (authority === null) return yield* Effect.die(new Error('planned OBSERVE fixture requires authority'))
+    const reconciliation: ReconciliationPassResult = {
+      ...paperReconciliation,
+      riskContext: {
+        ...paperReconciliation.riskContext,
+        authority: {
+          ...authority,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+        },
+      },
+    }
+    const decision = plannedPaperDecisionPlan(cycle)
+    yield* TestClock.setTime(Date.parse(evaluatedAt))
+    const document = yield* buildObserveCycleDecision({
+      authorityGenerationHash: plannedPaperGenerationHash,
+      cycle,
+      executionModel: fixtureProtocol.executionModel,
+      policy,
+      reconcile: Effect.succeed(reconciliation),
+      strategy: {
+        definition: { ...dueStrategy.definition, decide: () => Result.succeed(decision) },
+        provenance: dueStrategy.provenance,
+      },
+    }).pipe(
+      Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
+      Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId)),
     )
     return { document, reconciliation }
   })
@@ -2919,6 +3026,272 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     if (reboundSnapshotId === undefined) throw new Error('successful binding must retain its snapshot ID')
     expect(result.references.map((row) => row.snapshot_id)).toContain(reboundSnapshotId)
   })
+
+  test('binds a qualified cycle only to the exact snapshot sealed by its terminal qualification', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+
+        yield* store.acquire(draft, acquireAt)
+        const wrongSnapshot = yield* Effect.exit(
+          store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt),
+        )
+        const afterWrong = yield* store.read(draft.identity.cycleId)
+        const exactSnapshot = yield* store.bindSnapshot(
+          draft.identity.cycleId,
+          makeInputManifest(snapshotA),
+          snapshotAt,
+        )
+        const [wrongReference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM snapshot_references WHERE snapshot_id = ${snapshotB}
+        `
+        return { afterWrong, exactSnapshot, wrongReferenceCount: wrongReference.count, wrongSnapshot }
+      }),
+    )
+
+    expect(Exit.isFailure(result.wrongSnapshot)).toBe(true)
+    if (Exit.isFailure(result.wrongSnapshot)) {
+      expect(Cause.pretty(result.wrongSnapshot.cause)).toContain(
+        'autonomous cycle snapshot does not match its terminal qualified dataset',
+      )
+    }
+    expect(result.wrongReferenceCount).toBe(0)
+    expect(Option.isSome(result.afterWrong)).toBe(true)
+    if (Option.isSome(result.afterWrong)) expect(result.afterWrong.value.bindings).toEqual({})
+    expect(result.exactSnapshot).toMatchObject({ changed: true, cycle: { bindings: { snapshotId: snapshotA } } })
+  })
+
+  test('refuses to install qualified snapshot enforcement over incompatible pending history', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot-migration')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+
+        const migration = yield* Effect.exit(qualifiedCycleSnapshotBinding)
+        const [history] = yield* sql<{ snapshot_id: string; state: string }>`
+          SELECT snapshot_id, state FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { history, installed: installed.installed, migration }
+      }),
+    )
+
+    expect(Exit.isFailure(result.migration)).toBe(true)
+    if (Exit.isFailure(result.migration)) {
+      expect(Cause.pretty(result.migration.cause)).toContain(
+        'qualified cycle snapshot binding migration found incompatible history',
+      )
+    }
+    expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Pending })
+    expect(result.installed).toBe(false)
+  })
+
+  test('refuses to install qualified snapshot enforcement over incompatible completed history', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makePlannedDraft('paper-account-qualified-snapshot-completed-migration', executionPolicy)
+    const completedAt = utcInstantFromEpochMillis(Date.parse(plannedDecisionAt) + 1_000)
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedObserveDecision(activated.cycle, snapshotB)
+        if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+          return yield* Effect.die(new Error('completed migration fixture requires a planned OBSERVE decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
+        yield* store.finish(draft.identity.cycleId, CycleState.Completed, completedAt)
+
+        const migration = yield* Effect.exit(qualifiedCycleSnapshotBinding)
+        const [history] = yield* sql<{ snapshot_id: string; state: string }>`
+          SELECT snapshot_id, state FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { history, installed: installed.installed, migration }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.migration)).toBe(true)
+    if (Exit.isFailure(result.migration)) {
+      expect(Cause.pretty(result.migration.cause)).toContain(
+        'qualified cycle snapshot binding migration found incompatible history',
+      )
+    }
+    expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Completed })
+    expect(result.installed).toBe(false)
+  })
+
+  test('locks cycle writers from qualified-history validation through trigger installation', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot-migration-race')
+    const blocker = makeRuntime()
+    const writer = makeRuntime()
+
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* CycleStore
+          const sql = yield* PgClient.PgClient
+
+          yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+          yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+          yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+          yield* store.acquire(draft, acquireAt)
+
+          const qualificationLockHeld = yield* Deferred.make<void>()
+          const releaseQualificationLock = yield* Deferred.make<void>()
+          const blockerFiber = yield* Effect.forkChild(
+            Effect.promise(() =>
+              blocker.runPromise(
+                Effect.gen(function* () {
+                  const blockerSql = yield* PgClient.PgClient
+                  yield* blockerSql.withTransaction(
+                    Effect.gen(function* () {
+                      yield* blockerSql`LOCK TABLE qualification_results IN ACCESS EXCLUSIVE MODE`
+                      yield* Deferred.succeed(qualificationLockHeld, undefined)
+                      yield* Deferred.await(releaseQualificationLock)
+                    }),
+                  )
+                }),
+              ),
+            ),
+            { startImmediately: true },
+          )
+          yield* Deferred.await(qualificationLockHeld)
+
+          return yield* Effect.gen(function* () {
+            const migrationFiber = yield* Effect.forkChild(Effect.exit(qualifiedCycleSnapshotBinding), {
+              startImmediately: true,
+            })
+
+            let migrationLockHeld = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const [lock] = yield* sql<{ held: boolean }>`
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM pg_locks AS held_lock
+                  JOIN pg_class AS relation ON relation.oid = held_lock.relation
+                  WHERE held_lock.pid <> pg_backend_pid()
+                    AND held_lock.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    AND relation.relname = 'autonomous_cycles'
+                    AND held_lock.mode = 'ShareRowExclusiveLock'
+                    AND held_lock.granted
+                ) AS held
+              `
+              if (lock.held) {
+                migrationLockHeld = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!migrationLockHeld) {
+              return yield* Effect.die(
+                new Error('qualified snapshot migration did not lock cycle writers before validating history'),
+              )
+            }
+
+            const writerFiber = yield* Effect.forkChild(
+              Effect.promise(() =>
+                writer.runPromiseExit(
+                  Effect.flatMap(CycleStore, (writerStore) =>
+                    writerStore.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt),
+                  ),
+                ),
+              ),
+              { startImmediately: true },
+            )
+
+            let writerBlocked = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const [activity] = yield* sql<{ blocked: boolean }>`
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM pg_stat_activity
+                  WHERE pid <> pg_backend_pid()
+                    AND datname = current_database()
+                    AND wait_event_type = 'Lock'
+                    AND query ILIKE '%UPDATE autonomous_cycles%'
+                ) AS blocked
+              `
+              if (activity.blocked) {
+                writerBlocked = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!writerBlocked) {
+              return yield* Effect.die(new Error('concurrent cycle writer did not wait for migration enforcement'))
+            }
+
+            yield* Deferred.succeed(releaseQualificationLock, undefined)
+            yield* Fiber.join(blockerFiber)
+            const migration = yield* Fiber.join(migrationFiber)
+            const write = yield* Fiber.join(writerFiber)
+            const [history] = yield* sql<{ snapshot_id: string | null }>`
+              SELECT snapshot_id FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+            `
+            const [wrongReference] = yield* sql<{ count: number }>`
+              SELECT count(*)::integer AS count FROM snapshot_references WHERE snapshot_id = ${snapshotB}
+            `
+            const [trigger] = yield* sql<{ installed: boolean }>`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+              ) AS installed
+            `
+            return {
+              history,
+              migration,
+              triggerInstalled: trigger.installed,
+              write,
+              wrongReferenceCount: wrongReference.count,
+            }
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseQualificationLock, undefined).pipe(Effect.ignore)))
+        }),
+      )
+
+      expect(Exit.isSuccess(result.migration)).toBe(true)
+      expect(Exit.isFailure(result.write)).toBe(true)
+      if (Exit.isFailure(result.write)) {
+        expect(Cause.pretty(result.write.cause)).toContain(
+          'autonomous cycle snapshot does not match its terminal qualified dataset',
+        )
+      }
+      expect(result.history.snapshot_id).toBeNull()
+      expect(result.wrongReferenceCount).toBe(0)
+      expect(result.triggerInstalled).toBe(true)
+    } finally {
+      await blocker.dispose()
+      await writer.dispose()
+    }
+  }, 15_000)
 
   test('rolls back snapshot persistence when publication as-of identity differs from the cycle session', async () => {
     const draft = makeDraft('paper-account-as-of-mismatch')
