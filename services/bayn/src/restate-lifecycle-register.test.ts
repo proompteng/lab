@@ -67,10 +67,19 @@ describe('Restate lifecycle deployment registration', () => {
     }
   })
 
-  test('accepts only a closed Restate send receipt', () => {
+  test('accepts only a closed Restate send receipt, including idempotent hook replays', () => {
     expect(
       Result.isSuccess(
         decodeRestateAcceptedInvocation({ invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5', status: 'Accepted' }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeRestateAcceptedInvocation({
+          invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5',
+          executionTime: '2026-08-13T13:30:00Z',
+          status: 'PreviouslyAccepted',
+        }),
       ),
     ).toBe(true)
     expect(Result.isFailure(decodeRestateAcceptedInvocation({ invocationId: 'other', status: 'Accepted' }))).toBe(true)
@@ -85,6 +94,15 @@ describe('Restate lifecycle deployment registration', () => {
           invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5',
           status: 'Accepted',
           extra: true,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeRestateAcceptedInvocation({
+          invocationId: 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5',
+          executionTime: 'not-a-timestamp',
+          status: 'PreviouslyAccepted',
         }),
       ),
     ).toBe(true)
