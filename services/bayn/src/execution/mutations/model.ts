@@ -31,7 +31,8 @@ export enum MutationEventType {
 
 export const Sequence = Schema.Int.check(Schema.isGreaterThan(0))
 export const HttpStatus = Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))
-export const ConsistencyDelay = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 300_000 }))
+export const maximumConsistencyDelayMs = 300_000
+export const ConsistencyDelay = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maximumConsistencyDelayMs }))
 export const BrokerOrderId = NonEmptyString.check(Schema.isMaxLength(256))
 export const MutationEventSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-mutation-event.v1'),

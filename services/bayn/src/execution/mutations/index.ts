@@ -1,4 +1,4 @@
-export { MutationEventType, MutationStore, MutationStoreError } from './model'
+export { maximumConsistencyDelayMs, MutationEventType, MutationStore, MutationStoreError } from './model'
 export type {
   MutationAuthorityBinding,
   MutationAuthoritySnapshot,

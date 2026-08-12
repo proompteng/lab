@@ -1,6 +1,7 @@
 import * as restate from '@restatedev/restate-sdk'
 import { Effect, Logger, Result } from 'effect'
 
+import { maximumConsistencyDelayMs } from './execution/mutations'
 import {
   completeRestateLifecycleTick,
   decodeLifecycleCommandCursorResponse,
@@ -100,10 +101,11 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   }
 }
 
-// One externally driven advance can run a reconciliation preflight and then a cycle pass. Each phase is independently
-// bounded by operationTimeoutMs; retain a separate finalization window for the durable command receipt and response.
+// One externally driven advance can run a bounded reconciliation preflight and cycle pass. A successful mutation can
+// then require the maximum schema-valid consistency delay and one separately bounded reconciliation. Retain a final
+// window for the durable command receipt and response rather than interrupting an accepted broker mutation mid-settle.
 export const lifecycleCommandRequestTimeoutMs = (operationTimeoutMs: number): number =>
-  operationTimeoutMs * 2 + lifecycleCommandFinalizationHeadroomMs
+  operationTimeoutMs * 3 + maximumConsistencyDelayMs + lifecycleCommandFinalizationHeadroomMs
 
 const lifecycleActivationRetryDelayMs = (): number => {
   let interval = lifecycleActivationInitialRetryIntervalMs
@@ -118,6 +120,7 @@ const lifecycleActivationRetryDelayMs = (): number => {
 export const lifecycleActivationAwaitTimeoutMs =
   lifecycleCursorRequestTimeoutMs * lifecycleActivationMaximumAttempts +
   lifecycleActivationRetryDelayMs() +
+  maximumConsistencyDelayMs +
   lifecycleCommandFinalizationHeadroomMs
 
 // Let the bounded HTTP request finish and give Restate one additional journal-finalization window before requesting

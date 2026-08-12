@@ -41,6 +41,6 @@ describe('Restate lifecycle deployment registration', () => {
       },
       timeoutMs: lifecycleActivationAwaitTimeoutMs,
     })
-    expect(lifecycleActivationAwaitTimeoutMs).toBe(201_000)
+    expect(lifecycleActivationAwaitTimeoutMs).toBe(501_000)
   })
 })
