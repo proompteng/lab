@@ -3,7 +3,7 @@ import { HttpServer } from 'effect/unstable/http'
 
 import type { LoadedRuntimeConfig, RuntimeConfig } from './config'
 import type { CausalProtocol } from './protocol'
-import type { CycleObservabilityShape } from './db/cycle-observability'
+import type { CycleObservabilityShape } from './cycle/store'
 import type { EvidenceStoreService } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
 import { runHealthMonitor, type BrokerProbe, type HealthDependencies } from './health'

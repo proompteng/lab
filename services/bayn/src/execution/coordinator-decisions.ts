@@ -26,7 +26,7 @@ import type {
   InterruptedStartDecision,
   RecoveryPersistenceDecision,
   RecoverySelection,
-} from '../cycle-runner/execution-recovery-model'
+} from '../cycle/runner/execution-recovery-model'
 import { IntentState, MutationOutcome, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
 import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
@@ -127,7 +127,7 @@ export type {
   InterruptedStartDecision,
   RecoveryPersistenceDecision,
   RecoverySelection,
-} from '../cycle-runner/execution-recovery-model'
+} from '../cycle/runner/execution-recovery-model'
 
 interface SubmitReceipt {
   readonly requestHash: string

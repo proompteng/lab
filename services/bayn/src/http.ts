@@ -14,9 +14,9 @@ import {
   projectAutonomousCycleCadenceObservation,
   retainedAutonomousCycleCadenceDecision,
   type AutonomousCycleCadenceFreshness,
-} from './cycle-observability'
+} from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle'
-import { CycleNotDueReason } from './cycle-runner/model'
+import { CycleNotDueReason } from './cycle/runner/model'
 import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'

@@ -8,7 +8,7 @@ import {
   MonthEndCadenceDecisionSchema,
   type AutonomousCyclePassObservation,
 } from '../runtime-state'
-import { CycleNotDueReason } from '../cycle-runner/model'
+import { CycleNotDueReason } from '../cycle/runner/model'
 import {
   LifecycleCommandStore,
   LifecycleCommandStoreError,

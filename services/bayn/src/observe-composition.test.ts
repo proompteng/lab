@@ -30,9 +30,9 @@ import {
   makeExecutionCalendarObservation,
 } from './cycle'
 import { makeStrategyProtocolHash } from './contracts'
-import { CycleStore, CycleStoreError, type CycleStoreShape } from './db/cycle-store'
-import { decideCompletion, validateCompletionDocument } from './db/cycle-store/decisions'
-import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from './db/cycle-store/model'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from './cycle/store'
+import { decideCompletion, validateCompletionDocument } from './cycle/store/decisions'
+import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from './cycle/store/model'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import {
   BrokerEventStore,

@@ -2,7 +2,7 @@ import { Effect, Option, Result } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import { CycleRunnerError } from '../cycle-runner'
+import { CycleRunnerError } from '../cycle/runner'
 import { IntentStore, planPaperIntent, type StoredIntent } from '../execution/intents'
 import {
   Authority,

@@ -22,11 +22,11 @@ import {
   type CycleRunContext,
   type CyclePassObservation,
   type CycleRunResult,
-} from './cycle-runner'
-import { validateCycleLoopInterval } from './cycle-runner/decisions'
-import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
-import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from './cycle-runner/model'
-import { CycleStore } from './db/cycle-store'
+} from './cycle/runner'
+import { validateCycleLoopInterval } from './cycle/runner/decisions'
+import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from './cycle/runner/model'
+import { retainAutonomousCyclePassObservation } from './cycle/runner/pass-decisions'
+import { CycleStore } from './cycle/store'
 import {
   makePaperCycleClosure,
   type PaperCycleClosure,
