@@ -67,11 +67,13 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
         return sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_micros, filled_quantity_micros, limit_price_micros, status
+            side, order_type, time_in_force, quantity_micros, notional_micros,
+            filled_quantity_micros, limit_price_micros, status
           ) VALUES (
             ${eventId}, ${input.order.accountId}, ${input.order.schemaVersion}, ${input.order.brokerOrderId},
             ${input.order.clientOrderId}, ${input.order.intentId ?? null}, ${input.order.symbol}, ${input.order.side},
-            ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityMicros},
+            ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityMicros ?? null},
+            ${input.order.notionalMicros ?? null},
             ${input.order.filledQuantityMicros}, ${input.order.limitPriceMicros ?? null}, ${input.order.status}
           )
         `.pipe(Effect.asVoid)

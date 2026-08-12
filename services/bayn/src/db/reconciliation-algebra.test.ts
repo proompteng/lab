@@ -3,7 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
-import { MutationOperation, historicalMarketOrderRequestBody, orderRequestBody } from '../broker/alpaca-mutations'
+import {
+  MutationOperation,
+  historicalMarketOrderRequestBody,
+  legacyBoundedLimitOrderRequestBody,
+  orderRequestBody,
+} from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1 } from '../hash'
 import {
@@ -151,8 +156,9 @@ const requestIntent = {
   timeInForce: TimeInForce.Day,
 } as const
 
-const boundedSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
+const boundedSubmitRequestHash = canonicalHashV1(Result.getOrThrow(legacyBoundedLimitOrderRequestBody(requestIntent)))
 const historicalSubmitRequestHash = canonicalHashV1(Result.getOrThrow(historicalMarketOrderRequestBody(requestIntent)))
+const currentSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
 
 const intentRow = {
   intent_id: fill.intentId ?? hash('missing-intent'),
@@ -260,17 +266,33 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(projection.intents[1]?.unknownSince).toBeUndefined()
   })
 
-  test('projects historical MARKET and bounded LIMIT representations from exact durable request hashes', () => {
+  test('projects current notional MARKET, historical quantity MARKET, and bounded LIMIT request hashes', () => {
     const projection = successOf(
-      projectIntentExpectations([{ ...intentRow, submit_request_hash: historicalSubmitRequestHash }, intentRow]),
+      projectIntentExpectations([
+        { ...intentRow, submit_request_hash: currentSubmitRequestHash },
+        { ...intentRow, submit_request_hash: historicalSubmitRequestHash },
+        intentRow,
+      ]),
     )
 
-    expect(projection.intents[0]).toMatchObject({ submittedOrderType: OrderType.Market })
-    expect(projection.intents[0]?.submittedLimitPriceMicros).toBeUndefined()
+    expect(projection.intents[0]).toMatchObject({
+      submittedOrderType: OrderType.Market,
+      submittedNotionalMicros: fill.priceMicros,
+    })
     expect(projection.intents[1]).toMatchObject({
+      submittedOrderType: OrderType.Market,
+      submittedQuantityMicros: fill.quantityMicros,
+    })
+    expect(projection.intents[2]).toMatchObject({
       submittedOrderType: OrderType.Limit,
+      submittedQuantityMicros: fill.quantityMicros,
       submittedLimitPriceMicros: fill.priceMicros,
     })
+    for (const expectation of projection.intents) {
+      expect(expectation.submittedLimitPriceMicros).toBe(
+        expectation.submittedOrderType === OrderType.Limit ? fill.priceMicros : undefined,
+      )
+    }
   })
 
   test('verifies ledger plans, receipt material, and exact accounting bindings', () => {

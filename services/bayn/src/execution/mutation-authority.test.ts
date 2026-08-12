@@ -225,11 +225,7 @@ interface ScenarioInput {
   readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
   readonly proposedIntent?: Intent
-  readonly freshBidPriceMicros?: string
-  readonly freshAskPriceMicros?: string
-  readonly freshPricesBySymbol?: Readonly<Record<string, { readonly bid: string; readonly ask: string }>>
-  readonly quotedAt?: string
-  readonly persistedAtRead?: (priceReads: number) => LiveCapitalAuthority | undefined
+  readonly persistedAtRead?: (positionReads: number) => LiveCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
 }
 
@@ -238,7 +234,6 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   const trace: string[] = []
   let submits = 0
   let grantReads = 0
-  let priceReads = 0
   let positionReads = 0
   let orderLimit: number | undefined
   const unusedRead = Effect.die(new Error('unused broker read in mutation authority test'))
@@ -283,23 +278,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       Effect.sync(() => {
         trace.push('grant')
         grantReads += 1
-        if (input.persistedAtRead !== undefined) return input.persistedAtRead(priceReads)
+        if (input.persistedAtRead !== undefined) return input.persistedAtRead(positionReads)
         return input.persisted === undefined && !('persisted' in input) ? liveCapitalAuthority(grant) : input.persisted
       }),
   }
-  const freshBrokerPrice = (symbol: string) =>
-    Effect.sync(() => {
-      trace.push('price')
-      priceReads += 1
-      const quote = input.freshPricesBySymbol?.[symbol]
-      return {
-        symbol,
-        bidPriceMicros: quote?.bid ?? input.freshBidPriceMicros ?? '100000000',
-        askPriceMicros: quote?.ask ?? input.freshAskPriceMicros ?? '100000000',
-        quotedAt: input.quotedAt ?? activeAt,
-        observedAt: input.observedAt ?? activeAt,
-      }
-    })
   const currentUtcInstant = Effect.sync(() => {
     trace.push('clock')
     return input.observedAt ?? activeAt
@@ -310,7 +292,6 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       Effect.gen(function* () {
         const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(grant.limits, proposedIntent, {
           brokerRead,
-          freshBrokerPrice,
         })
         const persisted = yield* liveCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
@@ -334,7 +315,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     finalSubmitAuthorization,
   })
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
-  return { exit, grant, grantReads, orderLimit, positionReads, priceReads, submits, trace }
+  return { exit, grant, grantReads, orderLimit, positionReads, submits, trace }
 }
 
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
@@ -351,10 +332,8 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.positionReads).toBe(2)
-    expect(observed.priceReads).toBe(1)
     expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
-    expect(observed.trace.indexOf('price')).toBeGreaterThan(observed.trace.indexOf('orders'))
-    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('price'))
+    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))
     expect(observed.trace.at(-1)).toBe('submit')
@@ -369,7 +348,6 @@ describe('final broker mutation authority', () => {
 
     expect(failureTag(observed.exit)).toBe('BrokerPositionSnapshotChanged')
     expect(observed.positionReads).toBe(2)
-    expect(observed.priceReads).toBe(0)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
     expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
@@ -408,7 +386,7 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('observes a revocation that lands while live quotes are collected', async () => {
+  test('observes a revocation that lands while broker state is collected', async () => {
     const grant = liveGrant()
     const active = liveCapitalAuthority(grant)
     const revoked = liveCapitalAuthority(grant, {
@@ -419,10 +397,10 @@ describe('final broker mutation authority', () => {
     })
     const observed = await runLiveSubmit({
       grant,
-      persistedAtRead: (priceReads) => (priceReads === 0 ? active : revoked),
+      persistedAtRead: (positionReads) => (positionReads < 2 ? active : revoked),
     })
 
-    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('price'))
+    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(failureTag(observed.exit)).toBe('LiveGrantRevoked')
     expect(observed.submits).toBe(0)
   })
@@ -433,7 +411,6 @@ describe('final broker mutation authority', () => {
     })
 
     expect(failureTag(observed.exit)).toBe('ExpiredRiskDecision')
-    expect(observed.priceReads).toBe(0)
     expect(observed.grantReads).toBe(0)
     expect(observed.positionReads).toBe(0)
     expect(observed.submits).toBe(0)
@@ -495,7 +472,6 @@ describe('final broker mutation authority', () => {
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderNotionalUnavailable')
-    expect(observed.priceReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
@@ -508,25 +484,16 @@ describe('final broker mutation authority', () => {
       },
       ['notionalMicros', 'limitPriceMicros', 'stopPriceMicros', 'filledAveragePriceMicros'],
     )
-    const observed = await runLiveSubmit({
-      openOrders: [queued],
-      freshPricesBySymbol: {
-        AMD: { bid: '100000000', ask: '100000000' },
-        NVDA: { bid: '50000000', ask: '50000000' },
-      },
-    })
+    const observed = await runLiveSubmit({ openOrders: [queued] })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
-    expect(observed.priceReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
-  test('admits an ordinary sell exit using the adverse proceeds floor rather than the ask', async () => {
+  test('admits an ordinary sell exit using its durable notional cap', async () => {
     const observed = await runLiveSubmit({
       positions: [position()],
       proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
-      freshBidPriceMicros: '100000000',
-      freshAskPriceMicros: '101000000',
     })
 
     expect(observed.exit._tag).toBe('Success')
@@ -616,13 +583,7 @@ describe('final broker mutation authority', () => {
       },
       ['notionalMicros'],
     )
-    const observed = await runLiveSubmit({
-      openOrders: [uncoveredSell],
-      freshPricesBySymbol: {
-        AMD: { bid: '100000000', ask: '100000000' },
-        NVDA: { bid: '100000000', ask: '100000000' },
-      },
-    })
+    const observed = await runLiveSubmit({ openOrders: [uncoveredSell] })
 
     expect(failureTag(observed.exit)).toBe('PendingSellUncovered')
     expect(observed.submits).toBe(0)
@@ -671,12 +632,9 @@ describe('final broker mutation authority', () => {
       positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
       openOrders: [partialMarketBuy],
       proposedIntent: intent({ quantityMicros: '50000', notionalLimitMicros: '10000000' }),
-      freshBidPriceMicros: '200000000',
-      freshAskPriceMicros: '200000000',
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
-    expect(observed.priceReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
@@ -718,47 +676,16 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('values a marketable sell at the higher fresh bid for the order-notional cap', async () => {
+  test('uses the durable notional cap rather than an unavailable broker quote', async () => {
     const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '100000000' })
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
       proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '90000000' }),
-      freshBidPriceMicros: '120000000',
-      freshAskPriceMicros: '121000000',
     })
 
-    expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
-    expect(observed.submits).toBe(0)
-  })
-
-  test('rejects a buy when the fresh ask is above the broker-enforced price ceiling', async () => {
-    const observed = await runLiveSubmit({ freshAskPriceMicros: '100000001' })
-
-    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceGap')
-    expect(observed.priceReads).toBe(1)
-    expect(observed.submits).toBe(0)
-  })
-
-  test('rejects a sell when the fresh bid is below the broker-enforced proceeds floor', async () => {
-    const observed = await runLiveSubmit({
-      positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
-      freshBidPriceMicros: '98999999',
-      freshAskPriceMicros: '100000000',
-    })
-
-    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceGap')
-    expect(observed.priceReads).toBe(1)
-    expect(observed.submits).toBe(0)
-  })
-
-  test('rejects a stale broker quote before transmitting the order', async () => {
-    const observed = await runLiveSubmit({ quotedAt: '2026-07-28T07:59:54.999Z' })
-
-    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceStale')
-    expect(observed.priceReads).toBe(1)
-    expect(observed.submits).toBe(0)
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
   })
 
   test.each([

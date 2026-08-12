@@ -187,7 +187,7 @@ const riskGateDefinitionByName: RiskGateDefinitionByName = {
 export const orderedRiskGateDefinitions: ReadonlyArray<RiskGateDefinition> = Object.values(riskGateDefinitionByName)
 
 export const PolicySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-policy.v1'),
+  schemaVersion: Schema.Literal('bayn.paper-risk-policy.v2'),
   accountId: NonEmptyString,
   brokerMode: Schema.Literal(BrokerMode.Paper),
   allowedSymbols: Schema.Array(SymbolName).check(Schema.isMinLength(1), Schema.isUnique(), SortedUniqueStrings),
@@ -208,7 +208,7 @@ export const PolicySchema = Schema.Struct({
   maxBrokerStateAgeMs: AgeMilliseconds,
   maxMarketDataAgeMs: AgeMilliseconds,
   maxAdverseSlippageBps: BasisPointLimit,
-  maxUnresolvedOrders: Schema.Literal(0),
+  maxOpenOrders: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
   decisionTtlMs: AgeMilliseconds,
 })
 export type Policy = typeof PolicySchema.Type
@@ -886,9 +886,9 @@ const buildAuthorityAndStateGates = (
     makeGate(Gate.UnknownMutations, state.unknownMutationCount === 0, state.unknownMutationCount, 0),
     makeGate(
       Gate.UnresolvedOrders,
-      metrics.unresolvedOrderCount <= policy.maxUnresolvedOrders,
+      metrics.unresolvedOrderCount < policy.maxOpenOrders,
       metrics.unresolvedOrderCount,
-      `<=${policy.maxUnresolvedOrders}`,
+      `<${policy.maxOpenOrders}`,
     ),
   ]
 }

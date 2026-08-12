@@ -384,6 +384,93 @@ describe('forward performance domain', () => {
     expect(first.observedCapacity.evidenceHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  test('measures a notional BUY from actual broker fills when price improvement yields more shares than planned', () => {
+    const [baseExecution] = exactExecutionEvidence()
+    const [firstFill, secondFill] = baseExecution?.fills ?? []
+    if (baseExecution === undefined || firstFill === undefined || secondFill === undefined) {
+      throw new Error('execution fixture missing')
+    }
+    const terminalOrder = baseExecution.terminalOrder
+    const baseIntent = baseExecution.intent
+    if (terminalOrder === undefined || baseIntent === undefined) throw new Error('execution identity fixture missing')
+    const { quantityMicros: _quantityMicros, ...notionalOrder } = terminalOrder
+    const executionEvidence: ForwardPerformanceExecutionEvidence = {
+      ...baseExecution,
+      side: 'BUY',
+      intent: {
+        ...baseIntent,
+        side: 'BUY',
+        notionalLimitMicros: '110000000',
+      },
+      terminalOrder: {
+        ...notionalOrder,
+        side: 'BUY',
+        notionalMicros: '110000000',
+        filledQuantityMicros: '1100000',
+      },
+      fills: [
+        {
+          ...firstFill,
+          side: 'BUY',
+          quantityMicros: '500000',
+          priceMicros: '100000000',
+        },
+        {
+          ...secondFill,
+          side: 'BUY',
+          quantityMicros: '600000',
+          priceMicros: '99000000',
+        },
+      ],
+    }
+    const transactions = [
+      transaction('1', '0', '10', {
+        brokerEventId: hash('b'),
+        side: 'BUY',
+        quantityMicros: '500000',
+        priceMicros: '100000000',
+        notionalMicros: '50000000',
+        occurredAt: '2026-07-20T20:00:00.000Z',
+      }),
+      transaction('2', '0', '10', {
+        brokerEventId: hash('d'),
+        side: 'BUY',
+        quantityMicros: '600000',
+        priceMicros: '99000000',
+        notionalMicros: '59400000',
+        occurredAt: '2026-07-20T20:00:01.000Z',
+      }),
+    ]
+
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions,
+          executionEvidence: [executionEvidence],
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '20',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      reasonCodes: [],
+      implementationShortfall: {
+        plannedQuantityMicros: '1000000',
+        filledQuantityMicros: '1100000',
+        unfilledQuantityMicros: '0',
+        executedNotionalMicros: '109400000',
+      },
+    })
+  })
+
   test('orders terminal fills by broker occurrence even when fill observation completes after order observation', () => {
     const [execution] = exactExecutionEvidence()
     if (execution === undefined) throw new Error('execution fixture missing')

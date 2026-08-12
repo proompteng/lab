@@ -52,7 +52,7 @@ const strategy: ExecutionStrategyIdentity = {
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
 const riskPolicy: Policy = {
-  schemaVersion: 'bayn.paper-risk-policy.v1',
+  schemaVersion: 'bayn.paper-risk-policy.v2',
   accountId,
   brokerMode: BrokerMode.Paper,
   allowedSymbols: ['AMD'],
@@ -69,7 +69,7 @@ const riskPolicy: Policy = {
   maxBrokerStateAgeMs: 300_000,
   maxMarketDataAgeMs: 300_000,
   maxAdverseSlippageBps: 10,
-  maxUnresolvedOrders: 0,
+  maxOpenOrders: 1,
   decisionTtlMs: 300_000,
 }
 const riskPolicyHash = Result.getOrThrow(canonicalHashV1Result(riskPolicy))
@@ -97,14 +97,6 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
     lockForSubmit: () => Effect.die(new Error(`${label} live grant lock must not run during composition proof`)),
     read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
   },
-  freshBrokerPrice: (symbol) =>
-    Effect.succeed({
-      symbol,
-      bidPriceMicros: '100000000',
-      askPriceMicros: '100000000',
-      quotedAt: observedAt,
-      observedAt,
-    }),
   currentUtcInstant: Effect.succeed(observedAt),
 })
 
@@ -390,14 +382,6 @@ describe('same-code execution program composition', () => {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(liveCapitalAuthority(fixture.grant)),
       },
-      freshBrokerPrice: (symbol) =>
-        Effect.succeed({
-          symbol,
-          bidPriceMicros: '100000000',
-          askPriceMicros: '100000000',
-          quotedAt: fixture.grant.validUntil,
-          observedAt: fixture.grant.validUntil,
-        }),
       currentUtcInstant: Effect.sync(() => {
         instantReads += 1
         return instantReads === 1 ? observedAt : fixture.grant.validUntil
@@ -448,14 +432,6 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      freshBrokerPrice: (symbol) =>
-        Effect.succeed({
-          symbol,
-          bidPriceMicros: '100000000',
-          askPriceMicros: '100000000',
-          quotedAt: brokerObservedAt,
-          observedAt: brokerObservedAt,
-        }),
       currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
       entrySubmitExpiresAt: expiresAt,
       isCloseOnlyIntent: () => Effect.succeed(false),
@@ -563,14 +539,6 @@ describe('same-code execution program composition', () => {
         transaction: (effect) => effect,
       },
       currentUtcInstant: Effect.succeed(afterEntryBeforeClose),
-      freshBrokerPrice: (symbol) =>
-        Effect.succeed({
-          symbol,
-          bidPriceMicros: '100000000',
-          askPriceMicros: '100000000',
-          quotedAt: afterEntryBeforeClose,
-          observedAt: afterEntryBeforeClose,
-        }),
       entrySubmitExpiresAt: episodeExpiresAt,
       closeSubmitExpiresAt: closeExpiresAt,
     }
@@ -942,7 +910,6 @@ describe('same-code execution program composition', () => {
             return liveCapitalAuthority(grant)
           }),
       },
-      freshBrokerPrice: () => Effect.die(new Error('changed positions must fail before quote refresh')),
       currentUtcInstant: Effect.succeed(observedAt),
     }
 
@@ -962,7 +929,7 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
-  test('rejects a stale post-lock quote with zero broker posts', async () => {
+  test('does not require an unavailable quote after the broker snapshot is stable', async () => {
     const { authority, grant, intent, stored } = finalLiveFixture()
     const trace: string[] = []
     let posts = 0
@@ -988,7 +955,7 @@ describe('same-code execution program composition', () => {
       fillActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
-    const staleObservedAt = '2026-07-28T08:00:06.000Z'
+    const authorizationObservedAt = '2026-07-28T08:00:06.000Z'
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('post-lock-quote'),
       brokerRead,
@@ -1006,18 +973,7 @@ describe('same-code execution program composition', () => {
             return liveCapitalAuthority(grant)
           }),
       },
-      freshBrokerPrice: (symbol) =>
-        Effect.sync(() => {
-          trace.push('price')
-          return {
-            symbol,
-            bidPriceMicros: '100000000',
-            askPriceMicros: '100000000',
-            quotedAt: observedAt,
-            observedAt,
-          }
-        }),
-      currentUtcInstant: Effect.succeed(staleObservedAt),
+      currentUtcInstant: Effect.succeed(authorizationObservedAt),
     }
 
     const exit = await Effect.runPromise(
@@ -1031,9 +987,9 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(exit)).toBe('FreshBrokerPriceStale')
-    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions', 'price'])
-    expect(posts).toBe(0)
+    expect(exit._tag).toBe('Success')
+    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions'])
+    expect(posts).toBe(1)
   })
 
   test('keeps a post-transmit transaction failure unknown for broker recovery', async () => {

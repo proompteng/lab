@@ -14,10 +14,8 @@ import {
   BrokerMutationError,
   MutationOperation,
   invalidRequest,
-  orderPriceBoundaryMicros,
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations'
-import type { OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { OrderSide as IntentOrderSide, type Intent } from '../paper'
 import type { Policy } from '../risk'
@@ -147,27 +145,6 @@ export type ExecutionCapitalLimitFailure =
       readonly cause: unknown
     }
   | {
-      readonly _tag: 'FreshBrokerPriceInvalid'
-      readonly symbol: string
-      readonly priceMicros: string
-      readonly quotedAt: string
-      readonly observedAt: string
-    }
-  | {
-      readonly _tag: 'FreshBrokerPriceStale'
-      readonly symbol: string
-      readonly quotedAt: string
-      readonly observedAt: string
-      readonly maximumAgeMs: number
-    }
-  | {
-      readonly _tag: 'FreshBrokerPriceGap'
-      readonly symbol: string
-      readonly side: IntentOrderSide
-      readonly boundaryMicros: string
-      readonly observedMicros: string
-    }
-  | {
       readonly _tag: 'IncreasingSellUnsupported'
       readonly symbol: string
       readonly currentQuantityMicros: string
@@ -190,14 +167,6 @@ export interface ExecutionCapitalSnapshot {
   readonly openOrders: readonly Order[]
 }
 
-export interface FreshBrokerQuote {
-  readonly symbol: string
-  readonly bidPriceMicros: string
-  readonly askPriceMicros: string
-  readonly quotedAt: string
-  readonly observedAt: string
-}
-
 export interface FinalSubmitAuthorizationFailure {
   readonly _tag: string
 }
@@ -211,13 +180,10 @@ export interface MutationAuthorityDependencies {
   readonly finalSubmitAuthorization: FinalSubmitAuthorization
 }
 
-export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot {
-  readonly quotes: ReadonlyMap<string, FreshBrokerQuote>
-}
+export type ExecutionBrokerSubmitSnapshot = ExecutionCapitalSnapshot
 
 export interface BrokerSubmitRefreshDependencies {
   readonly brokerRead: BrokerReadShape
-  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
 }
 
 export interface ExecutionCapitalLimitContext {
@@ -226,7 +192,6 @@ export interface ExecutionCapitalLimitContext {
 }
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
-const freshBrokerPriceMaximumAgeMs = 5_000
 const microsPerUnit = 1_000_000n
 
 export const executionCapitalLimitsFromPolicy = (policy: Policy): ExecutionCapitalLimits => ({
@@ -234,7 +199,7 @@ export const executionCapitalLimitsFromPolicy = (policy: Policy): ExecutionCapit
   maxOrderNotionalMicros: policy.maxOrderNotionalMicros,
   maxPositionNotionalMicros: policy.maxSymbolExposureMicros,
   maxDailyLossMicros: policy.maxDailyLossMicros,
-  maxOpenOrders: policy.maxUnresolvedOrders + 1,
+  maxOpenOrders: policy.maxOpenOrders,
 })
 
 const minimumMicros = (left: string, right: string): string => {
@@ -336,122 +301,22 @@ const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
 const parseCanonicalPositiveMicros = (value: string): bigint | undefined =>
   /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
 
-const freshSidePrice = (
-  symbol: string,
-  side: IntentOrderSide | BrokerOrderSide,
-  quote: FreshBrokerQuote,
-  observedAt: string,
-): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
-  const priceText =
-    side === IntentOrderSide.Buy || side === BrokerOrderSide.Buy ? quote.askPriceMicros : quote.bidPriceMicros
-  const priceMicros = parseCanonicalPositiveMicros(priceText)
-  const quotedAtMs = Date.parse(quote.quotedAt)
-  const priceObservedAtMs = Date.parse(quote.observedAt)
-  const observedAtMs = Date.parse(observedAt)
-  if (
-    quote.symbol !== symbol ||
-    priceMicros === undefined ||
-    !Number.isFinite(quotedAtMs) ||
-    !Number.isFinite(priceObservedAtMs) ||
-    !Number.isFinite(observedAtMs) ||
-    quotedAtMs > priceObservedAtMs ||
-    priceObservedAtMs > observedAtMs
-  ) {
-    return Result.fail({
-      _tag: 'FreshBrokerPriceInvalid',
-      symbol: quote.symbol,
-      priceMicros: priceText,
-      quotedAt: quote.quotedAt,
-      observedAt: quote.observedAt,
-    })
-  }
-  if (observedAtMs - quotedAtMs > freshBrokerPriceMaximumAgeMs) {
-    return Result.fail({
-      _tag: 'FreshBrokerPriceStale',
-      symbol: quote.symbol,
-      quotedAt: quote.quotedAt,
-      observedAt,
-      maximumAgeMs: freshBrokerPriceMaximumAgeMs,
-    })
-  }
-  return Result.succeed(priceMicros)
-}
-
 export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
-  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
-  const priceBoundary = orderPriceBoundaryMicros(intent)
-  if (quantityMicros === undefined || Result.isFailure(priceBoundary)) {
+  const notionalLimitMicros = parseCanonicalPositiveMicros(intent.notionalLimitMicros)
+  if (notionalLimitMicros === undefined) {
     return Result.fail({
       _tag: 'BoundedBrokerOrderInvalid',
       symbol: intent.symbol,
     })
   }
-  return Result.succeed((quantityMicros * priceBoundary.success + microsPerUnit - 1n) / microsPerUnit)
+  return Result.succeed(notionalLimitMicros)
 }
-
-const orderCapNotionalDataFirst = (
-  intent: Intent,
-  quote: FreshBrokerQuote,
-  observedAt: string,
-): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
-  if (intent.side === IntentOrderSide.Buy) return boundedBrokerOrderNotional(intent)
-  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
-  const freshBid = freshSidePrice(intent.symbol, intent.side, quote, observedAt)
-  if (quantityMicros === undefined || Result.isFailure(freshBid)) {
-    return Result.isFailure(freshBid)
-      ? Result.fail(freshBid.failure)
-      : Result.fail({
-          _tag: 'BoundedBrokerOrderInvalid',
-          symbol: intent.symbol,
-        })
-  }
-  return Result.succeed((quantityMicros * freshBid.success + microsPerUnit - 1n) / microsPerUnit)
-}
-
-export const orderCapNotional = Pipeable.dual(3, orderCapNotionalDataFirst)
-
-const validateBrokerPriceBoundaryDataFirst = (
-  intent: Intent,
-  quote: FreshBrokerQuote,
-  observedAt: string,
-): Result.Result<void, ExecutionCapitalLimitFailure> => {
-  const observedPrice = freshSidePrice(intent.symbol, intent.side, quote, observedAt)
-  if (Result.isFailure(observedPrice)) return Result.fail(observedPrice.failure)
-  const boundary = orderPriceBoundaryMicros(intent)
-  if (Result.isFailure(boundary)) {
-    return Result.fail({
-      _tag: 'BoundedBrokerOrderInvalid',
-      symbol: intent.symbol,
-    })
-  }
-  const marketable =
-    intent.side === IntentOrderSide.Buy
-      ? observedPrice.success <= boundary.success
-      : observedPrice.success >= boundary.success
-  return marketable
-    ? Result.succeed(undefined)
-    : Result.fail({
-        _tag: 'FreshBrokerPriceGap',
-        symbol: intent.symbol,
-        side: intent.side,
-        boundaryMicros: boundary.success.toString(),
-        observedMicros: observedPrice.success.toString(),
-      })
-}
-
-export const validateBrokerPriceBoundary = Pipeable.dual(3, validateBrokerPriceBoundaryDataFirst)
 
 const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
   order.notionalMicros === undefined &&
   order.quantityMicros !== undefined &&
   order.limitPriceMicros === undefined &&
   (order.orderType === BrokerOrderType.Stop || order.orderType === BrokerOrderType.TrailingStop)
-
-const quoteSymbolsForExposureDataFirst = (intent: Intent, _openOrders: readonly Order[]): readonly string[] => [
-  intent.symbol,
-]
-
-export const quoteSymbolsForExposure = Pipeable.dual(2, quoteSymbolsForExposureDataFirst)
 
 const signedOrderNotional = (order: Order): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
   const remainingQuantity = unfilledOrderQuantity(order)
@@ -486,6 +351,9 @@ const signedOrderNotional = (order: Order): Result.Result<bigint, ExecutionCapit
     order.limitPriceMicros === undefined &&
     order.stopPriceMicros === undefined
   if (quantityMarketRemainder) {
+    // A quantity-based market sell cannot increase long-only exposure. Give it no exposure-reduction credit until
+    // it fills; pending-sell quantity coverage is verified separately against the broker position snapshot.
+    if (order.side === BrokerOrderSide.Sell) return Result.succeed(0n)
     return Result.fail({
       _tag: 'OpenOrderMarketPriceUnbounded',
       brokerOrderId: order.brokerOrderId,
@@ -839,7 +707,7 @@ const mutationAuthorizationError = (message: string, cause: unknown) =>
 
 const refreshExecutionBrokerSubmitSnapshotDataFirst = (
   limits: ExecutionCapitalLimits,
-  intent: Intent,
+  _intent: Intent,
   dependencies: BrokerSubmitRefreshDependencies,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
@@ -875,20 +743,10 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         stablePositions.failure,
       )
     }
-    const quoteSymbols = quoteSymbolsForExposure(intent, openOrders.value)
-    const quoteEntries = yield* Effect.forEach(quoteSymbols, (symbol) =>
-      dependencies.freshBrokerPrice(symbol).pipe(
-        Effect.map((quote) => [symbol, quote] as const),
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('fresh broker price could not be refreshed before submit', cause),
-        ),
-      ),
-    )
     return {
       account: account.value,
       positions: stablePositions.success,
       openOrders: openOrders.value,
-      quotes: new Map(quoteEntries),
     }
   })
 
@@ -935,34 +793,18 @@ const validateLiveGrantForSubmitDataFirst = (
 
 export const validateLiveGrantForSubmit = Pipeable.dual(3, validateLiveGrantForSubmitDataFirst)
 
-export type BrokerSubmitValidationFailure =
-  | ExecutionCapitalLimitFailure
-  | {
-      readonly _tag: 'FreshBrokerPriceMissing'
-      readonly symbol: string
-    }
+export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure
 
 const validateExecutionBrokerSubmitSnapshotDataFirst = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
   snapshot: ExecutionBrokerSubmitSnapshot,
-  observedAt: string,
+  _observedAt: string,
   context: ExecutionCapitalLimitContext,
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
-  const intentQuote = snapshot.quotes.get(intent.symbol)
-  if (intentQuote === undefined) {
-    return Result.fail({
-      _tag: 'FreshBrokerPriceMissing',
-      symbol: intent.symbol,
-    })
-  }
-  const priceBoundary = validateBrokerPriceBoundary(intent, intentQuote, observedAt)
-  if (Result.isFailure(priceBoundary)) return Result.fail(priceBoundary.failure)
   const requestedNotional = boundedBrokerOrderNotional(intent)
   if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
-  const proposedOrderCapNotional = orderCapNotional(intent, intentQuote, observedAt)
-  if (Result.isFailure(proposedOrderCapNotional)) return Result.fail(proposedOrderCapNotional.failure)
   const openOrderNotionals = priceOpenOrders(snapshot.openOrders)
   if (Result.isFailure(openOrderNotionals)) return Result.fail(openOrderNotionals.failure)
   return validateExecutionCapitalLimits(
@@ -971,7 +813,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
     intent,
     snapshot,
     requestedNotional.success,
-    proposedOrderCapNotional.success,
+    requestedNotional.success,
     openOrderNotionals.success,
     context,
   )

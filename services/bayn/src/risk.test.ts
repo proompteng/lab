@@ -130,7 +130,7 @@ const changeExecutionWindow = (
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
-    schemaVersion: 'bayn.paper-risk-policy.v1',
+    schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId: 'paper-account-1',
     brokerMode: BrokerMode.Paper,
     allowedSymbols: ['AMD', 'NVDA'],
@@ -147,7 +147,7 @@ const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
     maxBrokerStateAgeMs: 60_000,
     maxMarketDataAgeMs: 60_000,
     maxAdverseSlippageBps: 100,
-    maxUnresolvedOrders: 0,
+    maxOpenOrders: 2,
     decisionTtlMs: 30_000,
     ...overrides,
   })
@@ -388,7 +388,7 @@ describe('bounded paper risk', () => {
   })
 
   test('strictly decodes complete policy and coherent state', () => {
-    expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v1')
+    expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v2')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
 
     const rawPolicy = { ...makePolicy() }
@@ -401,7 +401,7 @@ describe('bounded paper risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '01' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '9223372036854775808' })).toThrow()
-    expect(() => decodePolicy({ ...rawPolicy, maxUnresolvedOrders: 1 })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, maxOpenOrders: 0 })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, decisionTtlMs: 86_400_001 })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, extra: true })).toThrow()
 
@@ -462,8 +462,8 @@ describe('bounded paper risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: 'e5579076394f86be2dbd61b7a4e6d65133f52568c2af1642a7a04e9726fe0c61',
-      decisionId: 'c7b20a3346071c31182bc7799709676e6e33d4418a51bde1f880465d0d09e8d0',
+      inputHash: '05511db005507dd4c17270d0fda9292622696d9e3b772188c39924dd6f80735a',
+      decisionId: 'fdf698292d85c19082f22d533b782cd01b1b46c330e4448d974ed448868af7f4',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T21:00:30.000Z')
     expect(first.metrics).toEqual({
@@ -613,7 +613,7 @@ describe('bounded paper risk', () => {
     expectBlocked(Reason.BuyingPowerExceeded, makeIntent(), makeState({ reservedBuyingPowerMicros: '1' }), makePolicy())
   })
 
-  test('blocks adverse slippage and any unresolved order', () => {
+  test('blocks adverse slippage and an open-order count beyond the explicit cap', () => {
     const slippageState = makeState({
       account: { ...baseState().account, buyingPowerMicros: '101000000' },
       expectedExecutionPriceMicros: '101000000',
@@ -635,8 +635,8 @@ describe('bounded paper risk', () => {
       makePolicy({ ...slippagePolicy, maxAdverseSlippageBps: 99 }),
     )
 
-    const oneOrder = makeState({ orders: [openOrder('broker-1')] })
-    expectBlocked(Reason.UnresolvedOrdersExceeded, makeIntent(), oneOrder, makePolicy())
+    const atOrderCap = makeState({ orders: [openOrder('broker-1'), openOrder('broker-2')] })
+    expectBlocked(Reason.UnresolvedOrdersExceeded, makeIntent(), atOrderCap, makePolicy({ maxOpenOrders: 2 }))
   })
 
   test('does not require buying power for a position-reducing sell', () => {

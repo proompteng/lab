@@ -45,7 +45,7 @@ import {
   type BrokerSessionShape,
   type ReadPreflight,
 } from './broker/alpaca'
-import { AlpacaHttpClient, makeFreshBrokerPriceReader } from './broker/alpaca/http'
+import { AlpacaHttpClient } from './broker/alpaca/http'
 import { BrokerMutationError, makeMutation } from './broker/alpaca-mutations'
 import { BrokerEnvironment } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
@@ -2115,10 +2115,6 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                               brokerRead: runtimeServices.session.read,
                                               liveCapitalGrants: runtimeServices.liveCapitalGrants,
                                               riskPolicy,
-                                              freshBrokerPrice: makeFreshBrokerPriceReader(
-                                                runtimeServices.session.connection,
-                                                runtimeServices.alpacaHttpClient,
-                                              ),
                                               currentUtcInstant,
                                               entrySubmitExpiresAt: request.cutoffAt,
                                               closeSubmitExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),

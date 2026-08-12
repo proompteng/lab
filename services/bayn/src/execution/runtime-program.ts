@@ -4,7 +4,6 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
-import type { OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import type { Policy } from '../risk'
 import { MutationOperation } from '../broker/alpaca-mutations'
@@ -29,7 +28,6 @@ import {
   validateExecutionBrokerSubmitSnapshot,
   validateLiveGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
-  type FreshBrokerQuote,
 } from './mutation-authority'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
 import { Pipeable } from '../pipeable'
@@ -42,7 +40,6 @@ export interface ExecutionProgramDependencies {
   readonly writerFence: WriterFenceService
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly riskPolicy: Policy
-  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed entry lease, checked at the final writer fence. */
   readonly entrySubmitExpiresAt?: string

@@ -6,6 +6,7 @@ import type { AccountingTransaction } from '../accounting/schema'
 import {
   MutationOperation,
   historicalMarketOrderRequestBody,
+  legacyBoundedLimitOrderRequestBody,
   orderPriceBoundaryMicros,
   orderRequestBody,
 } from '../broker/alpaca-mutations'
@@ -230,7 +231,10 @@ export const projectIntentExpectations = (
         timeInForce: row.time_in_force,
       }
       const representation = (): Result.Result<
-        Pick<IntentExpectation, 'submittedLimitPriceMicros' | 'submittedOrderType'>,
+        Pick<
+          IntentExpectation,
+          'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
+        >,
         ReconciliationAlgebraFailure
       > => {
         if (row.broker_order_id === null) {
@@ -244,7 +248,16 @@ export const projectIntentExpectations = (
             cause: 'accepted broker order is missing its durable submit request hash',
           })
         }
-        const boundedBody = orderRequestBody(requestIntent)
+        const currentBody = orderRequestBody(requestIntent)
+        if (Result.isFailure(currentBody)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: currentBody.failure,
+          })
+        }
+        const boundedBody = legacyBoundedLimitOrderRequestBody(requestIntent)
         if (Result.isFailure(boundedBody)) {
           return Result.fail({
             _tag: 'IntentSubmitRepresentationInvalid',
@@ -271,6 +284,15 @@ export const projectIntentExpectations = (
             cause: boundary.failure,
           })
         }
+        const currentHash = canonicalHashV1Result(currentBody.success)
+        if (Result.isFailure(currentHash)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: currentHash.failure,
+          })
+        }
         const boundedHash = canonicalHashV1Result(boundedBody.success)
         if (Result.isFailure(boundedHash)) {
           return Result.fail({
@@ -289,19 +311,32 @@ export const projectIntentExpectations = (
             cause: historicalHash.failure,
           })
         }
+        if (row.submit_request_hash === currentHash.success) {
+          return Result.succeed({
+            submittedOrderType: OrderType.Market,
+            ...(row.side === OrderSide.Buy
+              ? { submittedNotionalMicros: row.notional_limit_micros }
+              : { submittedQuantityMicros: row.quantity_micros }),
+          })
+        }
         if (row.submit_request_hash === boundedHash.success) {
           return Result.succeed({
             submittedOrderType: OrderType.Limit,
+            submittedQuantityMicros: row.quantity_micros,
             submittedLimitPriceMicros: boundary.success.toString(),
           })
         }
         return row.submit_request_hash === historicalHash.success
-          ? Result.succeed({ submittedOrderType: OrderType.Market })
+          ? Result.succeed({
+              submittedOrderType: OrderType.Market,
+              submittedQuantityMicros: row.quantity_micros,
+            })
           : Result.fail({
               _tag: 'IntentSubmitRepresentationInvalid',
               intentId: row.intent_id,
               requestHash: row.submit_request_hash,
               cause: {
+                expectedCurrentHash: currentHash.success,
                 expectedBoundedHash: boundedHash.success,
                 expectedHistoricalHash: historicalHash.success,
               },

@@ -18,7 +18,7 @@ import {
   type Position as AlpacaPosition,
   type ReadEvidence,
 } from './alpaca'
-import { AccountStatus, OrderSide, OrderStatus } from '../paper'
+import { AccountStatus, OrderSide, OrderStatus, OrderType } from '../paper'
 import {
   accountObservation,
   fillObservation,
@@ -191,6 +191,32 @@ describe('paper broker observations', () => {
       _tag: 'OrderUpdatedAtMissing',
       brokerOrderId: order.brokerOrderId,
     })
+  })
+
+  test('preserves a notional market BUY as a first-class v2 order observation', () => {
+    const {
+      quantityMicros: _omittedQuantityMicros,
+      filledAveragePriceMicros: _omittedFilledAveragePriceMicros,
+      ...notionalOrderBase
+    } = order
+    const notionalOrder: AlpacaOrder = {
+      ...notionalOrderBase,
+      notionalMicros: '200000000',
+      filledQuantityMicros: '0',
+      status: AlpacaOrderStatus.Accepted,
+    }
+    const event = success(orderObservation(notionalOrder, evidence, 'c'.repeat(64)))
+
+    expect(event._tag).toBe('Order')
+    if (event._tag !== 'Order') throw new Error('expected order observation')
+    expect(event.order).toMatchObject({
+      schemaVersion: 'bayn.paper-order.v2',
+      orderType: OrderType.Market,
+      notionalMicros: '200000000',
+      filledQuantityMicros: '0',
+      status: OrderStatus.Pending,
+    })
+    expect(event.order.quantityMicros).toBeUndefined()
   })
 
   test('binds a fill to its order and defaults paper fees to zero', () => {

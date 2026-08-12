@@ -182,18 +182,18 @@ const observeRiskLimits = {
   maxBrokerStateAgeMs: 300_000,
   maxMarketDataAgeMs: 300_000,
   maxAdverseSlippageBps: 10,
-  maxUnresolvedOrders: 0,
   decisionTtlMs: 300_000,
 } as const
 
 const loadObserveRiskPolicyDataFirst = (accountId: string, allowedSymbols: readonly string[]) =>
   decodePolicy({
-    schemaVersion: 'bayn.paper-risk-policy.v1',
+    schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId,
     brokerMode: BrokerMode.Paper,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [OrderType.Market],
     allowedTimeInForce: [TimeInForce.Day],
+    maxOpenOrders: allowedSymbols.length,
     ...observeRiskLimits,
   })
 

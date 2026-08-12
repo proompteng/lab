@@ -180,7 +180,7 @@ export const PositionSchema = Schema.Struct({
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-order.v1'),
+  schemaVersion: Schema.Literals(['bayn.paper-order.v1', 'bayn.paper-order.v2']),
   accountId: NonEmptyString,
   brokerOrderId: NonEmptyString,
   clientOrderId: NonEmptyString,
@@ -189,7 +189,8 @@ const OrderBase = Schema.Struct({
   side: Schema.Enum(OrderSide),
   orderType: Schema.Enum(OrderType),
   timeInForce: Schema.Enum(TimeInForce),
-  quantityMicros: PositiveMicros,
+  quantityMicros: Schema.optionalKey(PositiveMicros),
+  notionalMicros: Schema.optionalKey(PositiveMicros),
   filledQuantityMicros: UnsignedMicros,
   limitPriceMicros: Schema.optionalKey(PositiveMicros),
   status: Schema.Enum(OrderStatus),
@@ -199,39 +200,60 @@ const OrderBase = Schema.Struct({
 export const OrderSchema = OrderBase.check(
   Schema.makeFilter((order: typeof OrderBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
-    if (BigInt(order.filledQuantityMicros) > BigInt(order.quantityMicros)) {
-      issues.push({ path: ['filledQuantityMicros'], issue: 'must not exceed quantityMicros' })
+    const hasQuantity = order.quantityMicros !== undefined
+    const hasNotional = order.notionalMicros !== undefined
+    if (order.schemaVersion === 'bayn.paper-order.v1' && (!hasQuantity || hasNotional)) {
+      issues.push({ path: ['schemaVersion'], issue: 'v1 orders must contain quantityMicros only' })
+    }
+    if (order.schemaVersion === 'bayn.paper-order.v2' && hasQuantity === hasNotional) {
+      issues.push({
+        path: ['quantityMicros'],
+        issue: 'v2 orders must contain exactly one of quantityMicros or notionalMicros',
+      })
     }
     const filledQuantity = BigInt(order.filledQuantityMicros)
-    const quantity = BigInt(order.quantityMicros)
-    if (order.status === OrderStatus.Filled && filledQuantity !== quantity) {
-      issues.push({ path: ['filledQuantityMicros'], issue: 'must equal quantityMicros for a filled order' })
-    }
-    if (order.status === OrderStatus.PartiallyFilled && (filledQuantity === 0n || filledQuantity >= quantity)) {
-      issues.push({
-        path: ['filledQuantityMicros'],
-        issue: 'must be between zero and quantityMicros for a partial fill',
-      })
+    if (order.quantityMicros !== undefined) {
+      const quantity = BigInt(order.quantityMicros)
+      if (filledQuantity > quantity) {
+        issues.push({ path: ['filledQuantityMicros'], issue: 'must not exceed quantityMicros' })
+      }
+      if (order.status === OrderStatus.Filled && filledQuantity !== quantity) {
+        issues.push({ path: ['filledQuantityMicros'], issue: 'must equal quantityMicros for a filled order' })
+      }
+      if (order.status === OrderStatus.PartiallyFilled && (filledQuantity === 0n || filledQuantity >= quantity)) {
+        issues.push({
+          path: ['filledQuantityMicros'],
+          issue: 'must be between zero and quantityMicros for a partial fill',
+        })
+      }
+      if (
+        (order.status === OrderStatus.Canceled ||
+          order.status === OrderStatus.Expired ||
+          order.status === OrderStatus.Rejected) &&
+        filledQuantity >= quantity
+      ) {
+        issues.push({
+          path: ['filledQuantityMicros'],
+          issue: 'must be less than quantityMicros for an unfilled terminal order',
+        })
+      }
+    } else if (
+      (order.status === OrderStatus.Filled || order.status === OrderStatus.PartiallyFilled) &&
+      filledQuantity === 0n
+    ) {
+      issues.push({ path: ['filledQuantityMicros'], issue: 'must be positive for a filled notional order' })
     }
     if ((order.status === OrderStatus.New || order.status === OrderStatus.Pending) && filledQuantity !== 0n) {
       issues.push({ path: ['filledQuantityMicros'], issue: 'must be zero before any fill' })
-    }
-    if (
-      (order.status === OrderStatus.Canceled ||
-        order.status === OrderStatus.Expired ||
-        order.status === OrderStatus.Rejected) &&
-      filledQuantity >= quantity
-    ) {
-      issues.push({
-        path: ['filledQuantityMicros'],
-        issue: 'must be less than quantityMicros for an unfilled terminal order',
-      })
     }
     if (order.orderType === OrderType.Limit && order.limitPriceMicros === undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'is required for a limit order' })
     }
     if (order.orderType === OrderType.Market && order.limitPriceMicros !== undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'must be absent for a market order' })
+    }
+    if (hasNotional && order.orderType !== OrderType.Market) {
+      issues.push({ path: ['notionalMicros'], issue: 'is supported only for market orders' })
     }
     return issues
   }),

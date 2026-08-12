@@ -166,6 +166,12 @@ const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean =>
   const intent = evidence.intent
   const order = evidence.terminalOrder
   if (intent === undefined || order === undefined) return false
+  const representationMatches =
+    order.quantityMicros !== undefined
+      ? order.quantityMicros === evidence.plannedQuantityMicros && order.notionalMicros === undefined
+      : order.notionalMicros !== undefined &&
+        intent.notionalLimitMicros !== undefined &&
+        order.notionalMicros === intent.notionalLimitMicros
   return (
     SHA256_PATTERN.test(order.eventId) &&
     order.intentId === evidence.intentId &&
@@ -173,7 +179,7 @@ const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean =>
     order.clientOrderId === intent.clientOrderId &&
     order.symbol === evidence.symbol &&
     order.side === evidence.side &&
-    order.quantityMicros === evidence.plannedQuantityMicros &&
+    representationMatches &&
     ((order.status === 'FILLED' && intent.terminalOutcome === 'FILLED') ||
       (order.status === 'CANCELED' && intent.terminalOutcome === 'CANCELED') ||
       (order.status === 'EXPIRED' && intent.terminalOutcome === 'EXPIRED') ||
@@ -496,14 +502,23 @@ const measureExecutionQuality = (
       }
 
       const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityMicros, false)
-      const orderQuantity = blocked ? planned : parseUnsigned(order?.quantityMicros, true)
+      const orderQuantity = blocked
+        ? planned
+        : order?.quantityMicros === undefined
+          ? undefined
+          : parseUnsigned(order.quantityMicros, true)
+      const orderNotional = order?.notionalMicros === undefined ? undefined : parseUnsigned(order.notionalMicros, true)
+      const representationMatches = blocked
+        ? true
+        : orderQuantity !== undefined
+          ? orderQuantity === planned && orderNotional === undefined
+          : orderNotional !== undefined && orderNotional === parseUnsigned(evidence.intent?.notionalLimitMicros, true)
       if (
         orderFilled === undefined ||
-        orderQuantity === undefined ||
-        orderQuantity !== planned ||
+        !representationMatches ||
         orderFilled !== executionFilledQuantity ||
-        executionFilledQuantity > planned ||
-        (order?.status === 'FILLED' && executionFilledQuantity !== planned)
+        (orderQuantity !== undefined && executionFilledQuantity > planned) ||
+        (orderQuantity !== undefined && order?.status === 'FILLED' && executionFilledQuantity !== planned)
       ) {
         reasons.add('FILL_QUANTITY_MISMATCH')
       }
@@ -623,7 +638,7 @@ const measureExecutionQuality = (
         fillCount,
         plannedQuantityMicros: plannedQuantity.toString(),
         filledQuantityMicros: filledQuantity.toString(),
-        unfilledQuantityMicros: (plannedQuantity - filledQuantity).toString(),
+        unfilledQuantityMicros: (plannedQuantity >= filledQuantity ? plannedQuantity - filledQuantity : 0n).toString(),
         plannedReferenceNotionalMicros: plannedReferenceNotional.toString(),
         executedNotionalMicros: executedNotional.toString(),
         executionPriceShortfallMicros: executionPriceShortfall.toString(),

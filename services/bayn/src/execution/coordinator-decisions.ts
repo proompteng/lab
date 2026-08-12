@@ -6,7 +6,6 @@ import {
   MutationFailure,
   MutationOperation,
   cancelRequestHash,
-  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
   type OrderRequestBody,
@@ -319,21 +318,23 @@ export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefine
   }
 }
 
-const exactOrderDataFirst = (intent: Intent, request: EncodedOrder['request'], order: Order): boolean =>
-  Result.match(orderPriceBoundaryMicros(intent), {
-    onFailure: () => false,
-    onSuccess: (limitPriceMicros) =>
-      order.accountId === intent.accountId &&
-      order.clientOrderId === intent.clientOrderId &&
-      order.symbol === intent.symbol &&
-      order.side === request.side &&
-      order.orderType === request.type &&
-      order.timeInForce === request.time_in_force &&
-      order.quantityMicros === intent.quantityMicros &&
-      order.limitPriceMicros === limitPriceMicros.toString() &&
-      (order.status !== OrderStatus.Filled || order.filledQuantityMicros === intent.quantityMicros) &&
-      order.extendedHours === false,
-  })
+const exactOrderDataFirst = (intent: Intent, request: EncodedOrder['request'], order: Order): boolean => {
+  const representationMatches =
+    'notional' in request
+      ? order.notionalMicros === intent.notionalLimitMicros && order.quantityMicros === undefined
+      : order.quantityMicros === intent.quantityMicros && order.notionalMicros === undefined
+  return (
+    order.accountId === intent.accountId &&
+    order.clientOrderId === intent.clientOrderId &&
+    order.symbol === intent.symbol &&
+    order.side === request.side &&
+    order.orderType === request.type &&
+    order.timeInForce === request.time_in_force &&
+    representationMatches &&
+    order.limitPriceMicros === undefined &&
+    order.extendedHours === false
+  )
+}
 
 export const exactOrder = Pipeable.dual(3, exactOrderDataFirst)
 

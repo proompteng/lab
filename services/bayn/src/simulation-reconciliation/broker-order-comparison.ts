@@ -90,7 +90,8 @@ const compareObservedOrder = (
         intent.side,
         intent.submittedOrderType,
         intent.timeInForce,
-        intent.quantityMicros,
+        intent.submittedQuantityMicros ?? absent,
+        intent.submittedNotionalMicros ?? absent,
         intent.submittedLimitPriceMicros ?? absent,
       ].join(':')
       const observedOrder = [
@@ -99,7 +100,8 @@ const compareObservedOrder = (
         order.side,
         order.orderType,
         order.timeInForce,
-        order.quantityMicros,
+        order.quantityMicros ?? absent,
+        order.notionalMicros ?? absent,
         order.limitPriceMicros ?? absent,
       ].join(':')
       return pipe(

@@ -926,6 +926,24 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
   },
 })
 
+const notionalOrderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => {
+  const baseEvent = orderEvent()
+  const { quantityMicros: _omittedQuantityMicros, ...baseOrder } = baseEvent.order
+
+  return {
+    ...baseEvent,
+    sourceEventId: 'order-notional-1:2026-07-22T15:30:00.000Z',
+    contentHash: hash('order-notional-1'),
+    order: {
+      ...baseOrder,
+      schemaVersion: 'bayn.paper-order.v2',
+      brokerOrderId: 'order-notional-1',
+      clientOrderId: 'client-order-notional-1',
+      notionalMicros: '300000000',
+    },
+  }
+}
+
 const fillEvent = (
   id: string,
   side: OrderSide,
@@ -4159,6 +4177,7 @@ describePostgres('paper accounting persistence', () => {
           const baselineAfter = yield* store.hasAccountBaseline(accountId)
           const replay = yield* store.ingest(accountEvent())
           const order = yield* store.ingest(orderEvent())
+          const notionalOrder = yield* store.ingest(notionalOrderEvent())
           const conflict = yield* Effect.exit(
             store.ingest({ ...accountEvent(), contentHash: hash('conflicting-account-response') }),
           )
@@ -4169,7 +4188,26 @@ describePostgres('paper accounting persistence', () => {
               (SELECT count(*)::integer FROM account_snapshots) AS accounts,
               (SELECT count(*)::integer FROM orders) AS orders
           `
-          return { baselineAfter, baselineBefore, first, replay, order, conflict, counts }
+          const [storedNotional] = yield* sql<{
+            schema_version: string
+            quantity_micros: string | null
+            notional_micros: string | null
+          }>`
+            SELECT schema_version, quantity_micros::text, notional_micros::text
+            FROM orders
+            WHERE broker_order_id = ${notionalOrderEvent().order.brokerOrderId}
+          `
+          return {
+            baselineAfter,
+            baselineBefore,
+            first,
+            replay,
+            order,
+            notionalOrder,
+            conflict,
+            counts,
+            storedNotional,
+          }
         }),
       )
 
@@ -4178,9 +4216,15 @@ describePostgres('paper accounting persistence', () => {
       expect(result.baselineAfter).toBe(true)
       expect(result.replay).toEqual({ ...result.first, deduplicated: true })
       expect(result.order).toMatchObject({ sourceSequence: '1', deduplicated: false })
+      expect(result.notionalOrder).toMatchObject({ sourceSequence: '2', deduplicated: false })
+      expect(result.storedNotional).toEqual({
+        schema_version: 'bayn.paper-order.v2',
+        quantity_micros: null,
+        notional_micros: '300000000',
+      })
       expect(Exit.isFailure(result.conflict)).toBe(true)
       if (Exit.isFailure(result.conflict)) expect(Cause.pretty(result.conflict.cause)).toContain('different content')
-      expect(result.counts).toEqual({ events: 2, accounts: 1, orders: 1 })
+      expect(result.counts).toEqual({ events: 3, accounts: 1, orders: 2 })
     } finally {
       await runtime.dispose()
     }
@@ -4190,6 +4234,7 @@ describePostgres('paper accounting persistence', () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     const intentId = 'a'.repeat(64)
     const brokerOrderId = orderEvent().order.brokerOrderId
+    const { quantityMicros: _omittedQuantityMicros, ...currentOrderBase } = orderEvent().order
     const submitRequestHash = canonicalHashV1(
       Result.getOrThrow(
         orderRequestBody({
@@ -4275,10 +4320,10 @@ describePostgres('paper accounting persistence', () => {
             positionsObservedAt: observedAt,
             orders: [
               {
-                ...orderEvent().order,
+                ...currentOrderBase,
+                schemaVersion: 'bayn.paper-order.v2',
                 intentId,
-                orderType: OrderType.Limit,
-                limitPriceMicros: '100000000',
+                notionalMicros: '300000000',
               },
             ],
             ordersObservedAt: observedAt,

@@ -38,7 +38,6 @@ import {
   BrokerMutation,
   MutationOperation,
   cancelRequestHash,
-  orderPriceBoundaryMicros,
   orderRequestBody,
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations'
@@ -1221,6 +1220,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 32, name: 'lifecycle_commands' },
       { migration_id: 33, name: 'lifecycle_command_not_due_reason' },
       { migration_id: 34, name: 'terminal_paper_generation_rollover' },
+      { migration_id: 35, name: 'notional_market_orders' },
     ])
   })
 
@@ -2658,11 +2658,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               assetId: fixtureHash('mutation-concurrent-broker-asset').slice(0, 36),
               symbol: submitted.symbol,
               assetClass: AssetClass.UsEquity,
-              quantityMicros: submitted.quantityMicros,
+              notionalMicros: submitted.notionalLimitMicros,
               filledQuantityMicros: '0',
               orderClass: OrderClass.Simple,
-              orderType: BrokerOrderType.Limit,
-              limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(submitted)).toString(),
+              orderType: BrokerOrderType.Market,
               side: BrokerOrderSide.Buy,
               timeInForce: BrokerTimeInForce.Day,
               status: OrderStatus.Accepted,
