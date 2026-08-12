@@ -19,7 +19,7 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { config, fixtureRuntime } from './app-test-support'
+import { config, fixtureRuntime, readyState } from './app-test-support'
 import {
   paperObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
@@ -36,6 +36,7 @@ import {
   finalizePaperEpisode,
   observeCycleGenerationHash,
   paperReceiptFinalizationWindowOpen,
+  prepareOrRecoverQualifiedPaperActivation,
   prepareOrRecoverResearchPaperActivation,
   readCompletedExecutionLifecycle,
   recoverPaperActivationGeneration,
@@ -57,12 +58,14 @@ import {
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import {
   makeResearchPaperActivationRequest,
+  makePaperActivationRequest,
   makeResearchPaperBuildContinuation,
   makeResearchPaperPlanHash,
 } from './execution/configuration'
 import {
   Authority,
   KillState,
+  makeCapitalGrantGenerationResult,
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
 } from './execution/contracts'
@@ -71,7 +74,7 @@ import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
-import { initialState } from './runtime-state'
+import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
 
 const hash = (value: string) => value.repeat(64).slice(0, 64)
@@ -564,6 +567,114 @@ describe('Bayn PAPER startup recovery boundary', () => {
         effective: Authority.Paper,
       }),
     ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+  })
+
+  test('recovers a committed qualified generation before rerunning candidate discovery', async () => {
+    const baseEvidence = readyState().evidence
+    if (baseEvidence === null) throw new Error('qualified activation recovery requires runtime evidence')
+    const qualifiedEvidence: RuntimeEvidence = {
+      ...baseEvidence,
+      qualification: {
+        ...baseEvidence.qualification,
+        verdict: 'QUALIFIED',
+        evaluationVerdict: {
+          ...baseEvidence.qualification.evaluationVerdict,
+          status: 'PASS',
+          gates: baseEvidence.qualification.evaluationVerdict.gates.map((gate) => ({ ...gate, passed: true })),
+        },
+        analysis: {
+          ...baseEvidence.qualification.analysis,
+          status: 'PASS',
+          reasonCodes: [],
+        },
+        reasonCodes: [],
+      },
+    }
+    const request = Result.getOrThrow(
+      makePaperActivationRequest({
+        schemaVersion: 'bayn.paper-activation-request.v1',
+        qualification: {
+          runId: qualifiedEvidence.qualification.runId,
+          lockId: qualifiedEvidence.qualification.lockId,
+          resultHash: qualifiedEvidence.qualification.resultHash,
+          sourceRevision: qualifiedEvidence.provenance.sourceRevision,
+          imageRepository: qualifiedEvidence.provenance.image.repository,
+          imageDigest: qualifiedEvidence.provenance.image.digest,
+        },
+        activation: continuationApplicationPlan.config.build,
+        strategy: {
+          name: continuationApplicationPlan.strategy.provenance.strategy.name,
+          behaviorHash: continuationApplicationPlan.strategy.provenance.strategy.behaviorHash,
+          parameterHash: continuationApplicationPlan.strategy.provenance.strategy.parameterHash,
+          parameterSchemaVersion: continuationApplicationPlan.strategy.provenance.strategy.parameterSchemaVersion,
+          protocolHash: continuationApplicationPlan.strategyProtocolHash,
+        },
+        limits: { maxOpenOrders: 0, maxPositions: 0 },
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-01T20:00:00.000Z',
+      }),
+    )
+    const generation = Result.getOrThrow(
+      makeCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v2',
+        maximum: Authority.Paper,
+        previousGenerationHash: continuationApplicationPlan.config.alpaca.authorityGenerationHash,
+        qualificationRunId: request.qualification.runId,
+        qualificationLockId: request.qualification.lockId,
+        qualificationResultHash: request.qualification.resultHash,
+        protocolHash: request.strategy.protocolHash,
+        qualificationExecutionPolicyHash: hash('1'),
+        qualificationSourceRevision: request.qualification.sourceRevision,
+        qualificationImageRepository: request.qualification.imageRepository,
+        qualificationImageDigest: request.qualification.imageDigest,
+        activationSourceRevision: request.activation.sourceRevision,
+        activationImageRepository: request.activation.imageRepository,
+        activationImageDigest: request.activation.imageDigest,
+        strategyName: request.strategy.name,
+        strategyBehaviorHash: request.strategy.behaviorHash,
+        strategyParameterHash: request.strategy.parameterHash,
+        strategyParameterSchemaVersion: request.strategy.parameterSchemaVersion,
+        accountId: continuationApplicationPlan.config.alpaca.expectedAccountId,
+        riskPolicyHash: hash('2'),
+        proofPlanHash: hash('3'),
+        reconciliationId: hash('4'),
+        reconciliationContentHash: hash('5'),
+      }),
+    )
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () => Effect.die(new Error('qualified recovery must not rotate authority')),
+      readAuthorityState: Effect.succeed({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: generation.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+        version: 2,
+        updatedAt: '2026-08-12T19:00:00.000Z',
+      }),
+      readAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === generation.generationHash ? generation : undefined),
+    }
+    let preparationStarted = false
+    const prepare = Effect.sync(() => {
+      preparationStarted = true
+    }).pipe(Effect.andThen(Effect.die(new Error('qualified recovery must not rerun candidate discovery'))))
+
+    const recovered = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-12T19:30:00.000Z'))
+        return yield* prepareOrRecoverQualifiedPaperActivation(
+          continuationApplicationPlan,
+          qualifiedEvidence,
+          request,
+          authorityStore,
+          prepare,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(recovered).toEqual(generation)
+    expect(preparationStarted).toBe(false)
   })
 
   test('recognizes the receipt-completed OBSERVE successor before retrying PAPER recovery on restart', async () => {

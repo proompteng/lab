@@ -1067,6 +1067,30 @@ const preparePaperActivation = (
     return prepared
   })
 
+export const prepareOrRecoverQualifiedPaperActivation = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  evidence: RuntimeEvidence,
+  request: QualifiedPaperActivationRequest,
+  authorityStore: AuthorityGenerationStoreShape,
+  prepare: Effect.Effect<ExecutionPrepareOutput, OperationalError>,
+): Effect.Effect<PaperAuthorityGeneration, OperationalError> =>
+  Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(paperActivationRequestIsCurrent(request, plan, evidence, observedAt)).pipe(
+      Effect.mapError((message) => paperActivationOperationalError(message)),
+    )
+    if (authorityStore.readAuthorityState === undefined) {
+      return yield* paperActivationOperationalError('qualified PAPER startup requires durable authority state reads')
+    }
+    const authority = yield* authorityStore.readAuthorityState.pipe(
+      Effect.mapError((cause) => paperActivationOperationalError('qualified PAPER authority read failed', cause)),
+    )
+    if (authority.maximum === Authority.Paper) {
+      return yield* readBoundPaperActivationGeneration(plan, request, null, authorityStore)
+    }
+    return (yield* prepare).generation
+  })
+
 const validateResearchPaperPreflight = (
   request: ResearchPaperActivationRequest,
   preflight: ReadPreflight,
@@ -1957,14 +1981,20 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                               'qualified PAPER activation evidence is unavailable',
                                             ),
                                           )
-                                        : preparePaperActivation(
+                                        : prepareOrRecoverQualifiedPaperActivation(
                                             observePlan,
                                             evidence,
                                             request,
-                                            runtimeServices.pgClient,
-                                            runtimeServices.writerFence,
+                                            runtimeServices.authorityGenerationStore,
+                                            preparePaperActivation(
+                                              observePlan,
+                                              evidence,
+                                              request,
+                                              runtimeServices.pgClient,
+                                              runtimeServices.writerFence,
+                                            ),
                                           ).pipe(
-                                            Effect.map(({ generation }) => ({ _tag: 'Mutation' as const, generation })),
+                                            Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })),
                                           ),
                             ),
                           )
