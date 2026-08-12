@@ -6,8 +6,10 @@ import {
   Cause,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
+  Fiber,
   Layer,
   ManagedRuntime,
   Option,
@@ -113,6 +115,7 @@ import {
 } from '../../types'
 import { PostgresClientLive } from '../../db/evidence-store'
 import { migrationLoader } from '../../db/migrations'
+import { ensureSnapshotReference } from '../../db/snapshot-reference'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
@@ -976,7 +979,7 @@ const seedTerminalQualifiedSnapshot = (draft: CycleDraft, snapshotId: string) =>
     const resultHash = '4'.repeat(64)
     const analysisHash = '5'.repeat(64)
 
-    yield* insertSnapshotReference(snapshotId)
+    yield* ensureSnapshotReference(sql, makeInputManifest(snapshotId))
     yield* sql`
       INSERT INTO protocol_locks (
         protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
@@ -3062,6 +3065,149 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Pending })
     expect(result.installed).toBe(false)
   })
+
+  test('locks cycle writers from qualified-history validation through trigger installation', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot-migration-race')
+    const blocker = makeRuntime()
+    const writer = makeRuntime()
+
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* CycleStore
+          const sql = yield* PgClient.PgClient
+
+          yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+          yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+          yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+          yield* store.acquire(draft, acquireAt)
+
+          const qualificationLockHeld = yield* Deferred.make<void>()
+          const releaseQualificationLock = yield* Deferred.make<void>()
+          const blockerFiber = yield* Effect.forkChild(
+            Effect.promise(() =>
+              blocker.runPromise(
+                Effect.gen(function* () {
+                  const blockerSql = yield* PgClient.PgClient
+                  yield* blockerSql.withTransaction(
+                    Effect.gen(function* () {
+                      yield* blockerSql`LOCK TABLE qualification_results IN ACCESS EXCLUSIVE MODE`
+                      yield* Deferred.succeed(qualificationLockHeld, undefined)
+                      yield* Deferred.await(releaseQualificationLock)
+                    }),
+                  )
+                }),
+              ),
+            ),
+            { startImmediately: true },
+          )
+          yield* Deferred.await(qualificationLockHeld)
+
+          return yield* Effect.gen(function* () {
+            const migrationFiber = yield* Effect.forkChild(Effect.exit(qualifiedCycleSnapshotBinding), {
+              startImmediately: true,
+            })
+
+            let migrationLockHeld = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const [lock] = yield* sql<{ held: boolean }>`
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM pg_locks AS held_lock
+                  JOIN pg_class AS relation ON relation.oid = held_lock.relation
+                  WHERE held_lock.pid <> pg_backend_pid()
+                    AND held_lock.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    AND relation.relname = 'autonomous_cycles'
+                    AND held_lock.mode = 'ShareRowExclusiveLock'
+                    AND held_lock.granted
+                ) AS held
+              `
+              if (lock.held) {
+                migrationLockHeld = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!migrationLockHeld) {
+              return yield* Effect.die(
+                new Error('qualified snapshot migration did not lock cycle writers before validating history'),
+              )
+            }
+
+            const writerFiber = yield* Effect.forkChild(
+              Effect.promise(() =>
+                writer.runPromiseExit(
+                  Effect.flatMap(CycleStore, (writerStore) =>
+                    writerStore.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt),
+                  ),
+                ),
+              ),
+              { startImmediately: true },
+            )
+
+            let writerBlocked = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const [activity] = yield* sql<{ blocked: boolean }>`
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM pg_stat_activity
+                  WHERE pid <> pg_backend_pid()
+                    AND datname = current_database()
+                    AND wait_event_type = 'Lock'
+                    AND query ILIKE '%UPDATE autonomous_cycles%'
+                ) AS blocked
+              `
+              if (activity.blocked) {
+                writerBlocked = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!writerBlocked) {
+              return yield* Effect.die(new Error('concurrent cycle writer did not wait for migration enforcement'))
+            }
+
+            yield* Deferred.succeed(releaseQualificationLock, undefined)
+            yield* Fiber.join(blockerFiber)
+            const migration = yield* Fiber.join(migrationFiber)
+            const write = yield* Fiber.join(writerFiber)
+            const [history] = yield* sql<{ snapshot_id: string | null }>`
+              SELECT snapshot_id FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+            `
+            const [wrongReference] = yield* sql<{ count: number }>`
+              SELECT count(*)::integer AS count FROM snapshot_references WHERE snapshot_id = ${snapshotB}
+            `
+            const [trigger] = yield* sql<{ installed: boolean }>`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+              ) AS installed
+            `
+            return {
+              history,
+              migration,
+              triggerInstalled: trigger.installed,
+              write,
+              wrongReferenceCount: wrongReference.count,
+            }
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseQualificationLock, undefined).pipe(Effect.ignore)))
+        }),
+      )
+
+      expect(Exit.isSuccess(result.migration)).toBe(true)
+      expect(Exit.isFailure(result.write)).toBe(true)
+      if (Exit.isFailure(result.write)) {
+        expect(Cause.pretty(result.write.cause)).toContain(
+          'autonomous cycle snapshot does not match its terminal qualified dataset',
+        )
+      }
+      expect(result.history.snapshot_id).toBeNull()
+      expect(result.wrongReferenceCount).toBe(0)
+      expect(result.triggerInstalled).toBe(true)
+    } finally {
+      await blocker.dispose()
+      await writer.dispose()
+    }
+  }, 15_000)
 
   test('rolls back snapshot persistence when publication as-of identity differs from the cycle session', async () => {
     const draft = makeDraft('paper-account-as-of-mismatch')
