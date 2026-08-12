@@ -17,6 +17,7 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import qualifiedCycleSnapshotBinding from '../../../migrations/0036_qualified_cycle_snapshot_binding'
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
@@ -960,6 +961,72 @@ const insertSnapshotReference = (
           firstSession: lastSession,
           lastSession,
           rowCount: 1,
+        })}
+      )
+    `
+  })
+
+const seedTerminalQualifiedSnapshot = (draft: CycleDraft, snapshotId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const lockId = '1'.repeat(64)
+    const sourceRevision = '2'.repeat(40)
+    const imageRepository = 'registry.example.test/lab/bayn'
+    const imageDigest = `sha256:${'3'.repeat(64)}`
+    const resultHash = '4'.repeat(64)
+    const analysisHash = '5'.repeat(64)
+
+    yield* insertSnapshotReference(snapshotId)
+    yield* sql`
+      INSERT INTO protocol_locks (
+        protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+      ) VALUES (
+        ${draft.identity.strategyProtocolHash}, 'bayn.risk-balanced-trend.protocol.v4',
+        'risk-balanced-trend', ${'6'.repeat(64)}, ${'7'.repeat(64)}, ${sql.json({ fixture: true })}
+      )
+    `
+    yield* sql`
+      INSERT INTO evaluation_runs (
+        run_id, protocol_hash, snapshot_id, evaluation_schema_version, source_revision,
+        image_repository, image_digest, strategy_name, initial_capital_micros,
+        expected_artifact_count, expected_event_count, expected_gate_count, status, completed_at
+      ) VALUES (
+        ${draft.identity.qualificationRunId}, ${draft.identity.strategyProtocolHash}, ${snapshotId},
+        'bayn.evaluation.v6', ${sourceRevision}, ${imageRepository}, ${imageDigest}, 'risk-balanced-trend',
+        1000000000, 1, 0, 1, 'COMPLETE', '2026-03-06T20:58:00.000Z'
+      )
+    `
+    yield* sql`
+      INSERT INTO qualification_locks (
+        lock_id, schema_version, candidate_run_id, protocol_hash, snapshot_id,
+        source_revision, image_repository, image_digest, payload
+      ) VALUES (
+        ${lockId}, 'bayn.qualification-lock.v3', ${draft.identity.qualificationRunId},
+        ${draft.identity.strategyProtocolHash}, ${snapshotId}, ${sourceRevision}, ${imageRepository}, ${imageDigest},
+        ${sql.json({
+          schemaVersion: 'bayn.qualification-lock.v3',
+          lockId,
+          candidateRunId: draft.identity.qualificationRunId,
+          protocolHash: draft.identity.strategyProtocolHash,
+          sourceRevision,
+          image: { repository: imageRepository, digest: imageDigest },
+          data: { snapshotId },
+        })}
+      )
+    `
+    yield* sql`
+      INSERT INTO qualification_results (
+        lock_id, schema_version, run_id, verdict, committed_at, analysis_hash, result_hash, payload
+      ) VALUES (
+        ${lockId}, 'bayn.qualification-result.v2', ${draft.identity.qualificationRunId}, 'QUALIFIED',
+        '2026-03-06T20:58:30.000Z', ${analysisHash}, ${resultHash},
+        ${sql.json({
+          schemaVersion: 'bayn.qualification-result.v2',
+          lockId,
+          runId: draft.identity.qualificationRunId,
+          verdict: 'QUALIFIED',
+          analysis: { analysisHash },
+          resultHash,
         })}
       )
     `
@@ -2918,6 +2985,82 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const reboundSnapshotId = result.rebound.cycle.bindings.snapshotId
     if (reboundSnapshotId === undefined) throw new Error('successful binding must retain its snapshot ID')
     expect(result.references.map((row) => row.snapshot_id)).toContain(reboundSnapshotId)
+  })
+
+  test('binds a qualified cycle only to the exact snapshot sealed by its terminal qualification', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+
+        yield* store.acquire(draft, acquireAt)
+        const wrongSnapshot = yield* Effect.exit(
+          store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt),
+        )
+        const afterWrong = yield* store.read(draft.identity.cycleId)
+        const exactSnapshot = yield* store.bindSnapshot(
+          draft.identity.cycleId,
+          makeInputManifest(snapshotA),
+          snapshotAt,
+        )
+        const [wrongReference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM snapshot_references WHERE snapshot_id = ${snapshotB}
+        `
+        return { afterWrong, exactSnapshot, wrongReferenceCount: wrongReference.count, wrongSnapshot }
+      }),
+    )
+
+    expect(Exit.isFailure(result.wrongSnapshot)).toBe(true)
+    if (Exit.isFailure(result.wrongSnapshot)) {
+      expect(Cause.pretty(result.wrongSnapshot.cause)).toContain(
+        'autonomous cycle snapshot does not match its terminal qualified dataset',
+      )
+    }
+    expect(result.wrongReferenceCount).toBe(0)
+    expect(Option.isSome(result.afterWrong)).toBe(true)
+    if (Option.isSome(result.afterWrong)) expect(result.afterWrong.value.bindings).toEqual({})
+    expect(result.exactSnapshot).toMatchObject({ changed: true, cycle: { bindings: { snapshotId: snapshotA } } })
+  })
+
+  test('refuses to install qualified snapshot enforcement over incompatible nonterminal history', async () => {
+    const draft = makeDraft('paper-account-qualified-snapshot-migration')
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+
+        yield* seedTerminalQualifiedSnapshot(draft, snapshotA)
+        yield* sql`DROP TRIGGER autonomous_cycle_qualified_snapshot_binding ON autonomous_cycles`
+        yield* sql`DROP FUNCTION enforce_qualified_cycle_snapshot_binding()`
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+
+        const migration = yield* Effect.exit(qualifiedCycleSnapshotBinding)
+        const [history] = yield* sql<{ snapshot_id: string; state: string }>`
+          SELECT snapshot_id, state FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const [installed] = yield* sql<{ installed: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'autonomous_cycle_qualified_snapshot_binding'
+          ) AS installed
+        `
+        return { history, installed: installed.installed, migration }
+      }),
+    )
+
+    expect(Exit.isFailure(result.migration)).toBe(true)
+    if (Exit.isFailure(result.migration)) {
+      expect(Cause.pretty(result.migration.cause)).toContain(
+        'qualified cycle snapshot binding migration found incompatible nonterminal history',
+      )
+    }
+    expect(result.history).toEqual({ snapshot_id: snapshotB, state: CycleState.Pending })
+    expect(result.installed).toBe(false)
   })
 
   test('rolls back snapshot persistence when publication as-of identity differs from the cycle session', async () => {

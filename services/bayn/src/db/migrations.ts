@@ -35,6 +35,7 @@ import lifecycleCommands from '../../migrations/0032_lifecycle_commands'
 import lifecycleCommandNotDueReason from '../../migrations/0033_lifecycle_command_not_due_reason'
 import terminalPaperGenerationRollover from '../../migrations/0034_terminal_paper_generation_rollover'
 import notionalMarketOrders from '../../migrations/0035_notional_market_orders'
+import qualifiedCycleSnapshotBinding from '../../migrations/0036_qualified_cycle_snapshot_binding'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -72,4 +73,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '33_lifecycle_command_not_due_reason': lifecycleCommandNotDueReason,
   '34_terminal_paper_generation_rollover': terminalPaperGenerationRollover,
   '35_notional_market_orders': notionalMarketOrders,
+  '36_qualified_cycle_snapshot_binding': qualifiedCycleSnapshotBinding,
 })

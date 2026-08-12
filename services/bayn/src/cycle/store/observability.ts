@@ -327,19 +327,41 @@ const makeCycleObservability = Effect.gen(function* () {
           ),
           latest_mutations AS (
             SELECT DISTINCT ON (events.mutation_id)
+              events.mutation_id,
               events.event_type,
-              events.occurred_at,
               events.operation,
               events.state
             FROM account_mutation_events AS events
             ORDER BY events.mutation_id, events.sequence DESC
           ),
+          first_unresolved_mutation_events AS (
+            SELECT
+              events.mutation_id,
+              min(events.occurred_at) AS occurred_at
+            FROM account_mutation_events AS events
+            WHERE
+              events.event_type IN (
+                'SUBMIT_STARTED',
+                'SUBMIT_UNKNOWN',
+                'RECOVERY_NOT_FOUND',
+                'RECOVERY_UNKNOWN',
+                'CANCEL_STARTED',
+                'CANCEL_ACCEPTED',
+                'CANCEL_UNKNOWN'
+              )
+              OR (
+                events.operation = 'CANCEL'
+                AND events.event_type = 'RECOVERY_FOUND'
+              )
+            GROUP BY events.mutation_id
+          ),
           unresolved_mutations AS (
-            SELECT occurred_at
-            FROM latest_mutations
-            WHERE state <> 'TERMINAL'
+            SELECT first.occurred_at
+            FROM latest_mutations AS latest
+            JOIN first_unresolved_mutation_events AS first USING (mutation_id)
+            WHERE latest.state <> 'TERMINAL'
               AND (
-                event_type IN (
+                latest.event_type IN (
                   'SUBMIT_STARTED',
                   'SUBMIT_UNKNOWN',
                   'RECOVERY_NOT_FOUND',
@@ -349,8 +371,8 @@ const makeCycleObservability = Effect.gen(function* () {
                   'CANCEL_UNKNOWN'
                 )
                 OR (
-                  operation = 'CANCEL'
-                  AND event_type = 'RECOVERY_FOUND'
+                  latest.operation = 'CANCEL'
+                  AND latest.event_type = 'RECOVERY_FOUND'
                 )
               )
           )

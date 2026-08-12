@@ -204,6 +204,33 @@ const seedUnresolvedMutation = (mutationAccountId = accountId) =>
   `
   })
 
+const seedRepeatedUnresolvedRecovery = Effect.gen(function* () {
+  yield* seedUnresolvedMutation()
+  const sql = yield* PgClient.PgClient
+  yield* sql`
+    INSERT INTO mutation_events (
+      event_id, schema_version, mutation_id, intent_id, sequence, operation,
+      event_type, request_hash, consistency_delay_ms, broker_order_id,
+      request_id, response_status, response_content_hash, occurred_at
+    ) VALUES
+      (
+        ${'6'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 2,
+        'SUBMIT', 'SUBMIT_UNKNOWN', ${'5'.repeat(64)}, 1000, NULL,
+        'unknown-submit', 503, ${'7'.repeat(64)}, '2026-03-06T21:03:00.000Z'
+      ),
+      (
+        ${'8'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 3,
+        'SUBMIT', 'RECOVERY_NOT_FOUND', ${'5'.repeat(64)}, 1000, NULL,
+        'not-found-1', 404, ${'9'.repeat(64)}, '2026-03-06T21:08:00.000Z'
+      ),
+      (
+        ${'a'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 4,
+        'SUBMIT', 'RECOVERY_UNKNOWN', ${'5'.repeat(64)}, 1000, NULL,
+        'unknown-recovery', 503, ${'b'.repeat(64)}, '2026-03-06T21:13:00.000Z'
+      )
+  `
+})
+
 const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -779,6 +806,24 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       operation: 'read',
       failure: 'invariant',
       message: `configured account ${accountId} differs from the projected current or last cycle`,
+    })
+  })
+
+  test('keeps unresolved mutation age anchored to the first unresolved event across recovery retries', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        yield* seedSafetyState('2026-03-06T21:14:00.000Z')
+        yield* seedRepeatedUnresolvedRecovery
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.mutations).toMatchObject({
+      eventCount: 4,
+      unresolvedCount: 1,
+      oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
+      latestOccurredAt: '2026-03-06T21:13:00.000Z',
     })
   })
 
