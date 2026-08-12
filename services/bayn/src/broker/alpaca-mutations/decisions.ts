@@ -546,8 +546,11 @@ const canonicalCancelResponseHash = (facts: CancelResponseFacts): Result.Result<
     )
   }
   const decoded = decodeJsonResponseBody(facts.body)
-  const material = Result.isSuccess(decoded) ? decoded.success : facts.body
-  return Result.mapError(canonicalHashV1Result(material), (cause) =>
+  if (Result.isSuccess(decoded)) {
+    const canonical = canonicalHashV1Result(decoded.success)
+    if (Result.isSuccess(canonical)) return Result.succeed(canonical.success)
+  }
+  return Result.mapError(canonicalHashV1Result(facts.body), (cause) =>
     unknownOutcome({
       operation: MutationOperation.Cancel,
       message: 'Alpaca cancel response cannot be canonically hashed',

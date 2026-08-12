@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Undici } from '@effect/platform-node'
-import { Effect, Fiber, Layer, Redacted, Result, Schema } from 'effect'
+import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
@@ -1489,6 +1489,18 @@ describe('Alpaca paper reads', () => {
     })
     expect(JSON.stringify(failure.cause)).not.toContain('paper-key')
     expect(JSON.stringify(failure.cause)).not.toContain('paper-secret')
+  })
+
+  test('preserves an underlying HttpClient defect as a Cause defect', async () => {
+    const defect = new Error('unexpected HttpClient defect')
+    const client = HttpClient.make(() => Effect.die(defect))
+
+    const exit = await Effect.runPromiseExit(
+      withClient(client, (read) => read.account, { ...options, retryAttempts: 0 }),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect)
   })
 
   test('acquires one verified session and publishes its exact read capability once', async () => {

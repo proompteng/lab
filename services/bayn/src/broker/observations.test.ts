@@ -169,6 +169,56 @@ describe('paper broker observations', () => {
     expect(success(positionSnapshot(account.id, { value: [], evidence })).positions).toEqual([])
   })
 
+  test('orders ticker symbols canonically without consulting the process locale', () => {
+    const originalLocaleCompare = Object.getOwnPropertyDescriptor(String.prototype, 'localeCompare')
+    if (originalLocaleCompare === undefined) throw new Error('String.localeCompare descriptor is unavailable')
+    Object.defineProperty(String.prototype, 'localeCompare', {
+      ...originalLocaleCompare,
+      value(this: string, other: string): number {
+        return String(this) < other ? 1 : String(this) > other ? -1 : 0
+      },
+    })
+    try {
+      const positions: readonly AlpacaPosition[] = [
+        {
+          accountId: account.id,
+          assetId: 'asset-aa',
+          symbol: 'AA',
+          exchange: AssetExchange.Nasdaq,
+          assetClass: AssetClass.UsEquity,
+          side: PositionSide.Long,
+          quantityMicros: '1000000',
+          averageEntryPriceMicros: '100000000',
+          marketPriceMicros: '100000000',
+          marketValueMicros: '100000000',
+          unrealizedPnlMicros: '0',
+          observedAt,
+        },
+        {
+          accountId: account.id,
+          assetId: 'asset-ab',
+          symbol: 'AB',
+          exchange: AssetExchange.Nasdaq,
+          assetClass: AssetClass.UsEquity,
+          side: PositionSide.Long,
+          quantityMicros: '1000000',
+          averageEntryPriceMicros: '100000000',
+          marketPriceMicros: '100000000',
+          marketValueMicros: '100000000',
+          unrealizedPnlMicros: '0',
+          observedAt,
+        },
+      ]
+      const snapshot = success(positionSnapshot(account.id, { value: positions.toReversed(), evidence }))
+      expect(snapshot.positions.map((event) => (event._tag === 'Position' ? event.position.symbol : ''))).toEqual([
+        'AA',
+        'AB',
+      ])
+    } finally {
+      Object.defineProperty(String.prototype, 'localeCompare', originalLocaleCompare)
+    }
+  })
+
   test('maps a partially filled pending order without discarding fill state', () => {
     const event = success(orderObservation(order, evidence, 'b'.repeat(64)))
 

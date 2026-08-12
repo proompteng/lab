@@ -378,7 +378,9 @@ const positionSnapshotDataFirst = (
 ): Result.Result<PositionSnapshotInput, BrokerObservationError> => {
   const accountIds = [...new Set(result.value.map((position) => position.accountId))].sort()
   const accountMismatch = accountIds.some((observedAccountId) => observedAccountId !== accountId)
-  const ordered = [...result.value].sort((left, right) => left.symbol.localeCompare(right.symbol))
+  const ordered = [...result.value].sort((left, right) =>
+    left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0,
+  )
   const duplicate = duplicatePosition(ordered)
   return accountMismatch
     ? fail({ _tag: 'PositionAccountMismatch', expectedAccountId: accountId, accountIds })

@@ -21,6 +21,7 @@ import {
   selectStoredIntent,
   validateActiveSubmitRiskDecision,
   validateRecovery,
+  validateStartedSubmitRiskDecision,
   type CancelPersistenceDecision,
   type DryRunSubmitDecision,
   type ExecutionDecisionFailure,
@@ -28,8 +29,8 @@ import {
   type SubmitPersistenceDecision,
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
-import { MutationStore, type MutationEvent } from './mutations'
-import { WriterFence } from './writer-fence'
+import { MutationStore, MutationStoreError, type MutationEvent } from './mutations'
+import { WriterFence, WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'
 
@@ -210,6 +211,36 @@ const submitToBroker = (
   )
 }
 
+const continueStartedSubmit = (
+  services: MutationServices,
+  intentId: string,
+  requestHash: string,
+  request: DryRunSubmitDecision['request'],
+): Effect.Effect<
+  MutationEvent,
+  ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
+  IntentStore
+> =>
+  readIntent(MutationOperation.Submit, intentId).pipe(
+    Effect.flatMap((startedIntent) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap(
+          (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
+            const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
+            if (Result.isSuccess(validation)) {
+              return submitToBroker(services, validation.success, requestHash, request)
+            }
+            return validation.failure._tag === 'ExpiredRiskDecision'
+              ? currentInstant.pipe(
+                  Effect.flatMap((occurredAt) => services.mutations.submitDenied(intentId, requestHash, occurredAt)),
+                )
+              : Effect.fail(executionError(validation.failure))
+          },
+        ),
+      ),
+    ),
+  )
+
 const startSubmit = (
   services: MutationServices,
   stored: StoredIntent,
@@ -234,9 +265,10 @@ const startSubmit = (
         ),
       ),
     ),
-    Effect.flatMap((started) =>
-      started.started ? submitToBroker(services, stored, requestHash, request) : Effect.succeed(started.event),
-    ),
+    Effect.flatMap((started) => {
+      if (!started.started) return Effect.succeed(started.event)
+      return continueStartedSubmit(services, stored.intent.intentId, requestHash, request)
+    }),
   )
 
 const runSubmit = (services: MutationServices, intentId: string, consistencyDelayMs: number, closeOnly: boolean) =>
