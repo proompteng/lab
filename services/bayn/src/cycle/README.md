@@ -14,4 +14,4 @@ This directory owns the complete autonomous-cycle subsystem. Internal filenames 
 
 Prefer `model/construction/transitions/recovery-decisions -> observability/readiness -> runner -> composition`. Persistence is an infrastructure dependency consumed by orchestration, not a home for domain decisions. Internal cycle code should import the narrow file it needs; consumers outside this directory should use `./cycle`, `./cycle/runner`, `./cycle/observability`, or `./cycle/store` as the intended boundaries.
 
-The architecture test protects the module from import cycles and from reintroducing the retired top-level `cycle-*`, `cycle-runner`, or `db/cycle-*` implementation paths.
+The architecture test protects the module from import cycles and layer back-edges: the pure cycle core cannot depend on runner/store infrastructure, and persistence cannot depend on runner orchestration.

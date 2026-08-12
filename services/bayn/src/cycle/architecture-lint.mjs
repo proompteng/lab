@@ -10,6 +10,14 @@ const configFile = resolve(serviceRoot, 'tsconfig.json')
 
 const normalizePath = (file) => resolve(file).replaceAll('\\', '/')
 const sourceRootPrefix = `${normalizePath(sourceRoot)}/`
+const cycleRoot = normalizePath(resolve(sourceRoot, 'cycle'))
+const cycleRunnerPrefix = `${cycleRoot}/runner/`
+const cycleStorePrefix = `${cycleRoot}/store/`
+const pureCycleFiles = new Set(
+  ['model.ts', 'construction.ts', 'transitions.ts', 'observability.ts', 'recovery-decisions.ts'].map((file) =>
+    normalizePath(resolve(cycleRoot, file)),
+  ),
+)
 const sourceFiles = (program) =>
   new Set(
     program
@@ -98,6 +106,34 @@ const stronglyConnectedComponents = (graph) => {
   return components
 }
 
+const architectureLayerViolations = (graph) => {
+  const violations = []
+  for (const [file, dependencies] of graph) {
+    for (const dependency of dependencies) {
+      if (
+        pureCycleFiles.has(file) &&
+        (dependency.startsWith(cycleRunnerPrefix) || dependency.startsWith(cycleStorePrefix))
+      ) {
+        violations.push({
+          from: relative(sourceRoot, file).replaceAll('\\', '/'),
+          rule: 'cycle-pure-core-must-not-depend-on-runtime',
+          to: relative(sourceRoot, dependency).replaceAll('\\', '/'),
+        })
+      }
+      if (file.startsWith(cycleStorePrefix) && dependency.startsWith(cycleRunnerPrefix)) {
+        violations.push({
+          from: relative(sourceRoot, file).replaceAll('\\', '/'),
+          rule: 'cycle-store-must-not-depend-on-runner',
+          to: relative(sourceRoot, dependency).replaceAll('\\', '/'),
+        })
+      }
+    }
+  }
+  return violations.sort((left, right) =>
+    `${left.rule}:${left.from}:${left.to}`.localeCompare(`${right.rule}:${right.from}:${right.to}`),
+  )
+}
+
 const api = new API({ cwd: serviceRoot })
 try {
   const snapshot = api.updateSnapshot({ openProjects: [configFile] })
@@ -107,12 +143,14 @@ try {
       .find((candidate) => normalizePath(candidate.configFileName) === normalizePath(configFile))
     if (project === undefined) throw new Error(`TypeScript project was not loaded from ${configFile}`)
 
-    const cycles = stronglyConnectedComponents(sourceDependencyGraph(project.program)).map((component) =>
+    const graph = sourceDependencyGraph(project.program)
+    const cycles = stronglyConnectedComponents(graph).map((component) =>
       component.map((file) => relative(sourceRoot, file).replaceAll('\\', '/')).sort(),
     )
+    const layerViolations = architectureLayerViolations(graph)
 
-    const result = { cycles }
-    if (cycles.length > 0) {
+    const result = { cycles, layerViolations }
+    if (cycles.length > 0 || layerViolations.length > 0) {
       console.error(JSON.stringify(result, null, 2))
       process.exitCode = 1
     } else {
