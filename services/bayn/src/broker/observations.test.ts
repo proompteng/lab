@@ -175,6 +175,7 @@ describe('paper broker observations', () => {
     expect(event._tag).toBe('Order')
     if (event._tag !== 'Order') throw new Error('expected order observation')
     expect(event.order).toMatchObject({
+      schemaVersion: 'bayn.paper-order.v2',
       side: OrderSide.Buy,
       status: OrderStatus.PartiallyFilled,
       filledQuantityMicros: '1000000',
@@ -182,6 +183,7 @@ describe('paper broker observations', () => {
     })
     expect(event.occurredAt).toBe('2026-07-22T15:30:00.500Z')
     expect(event.sourceEventId).toBe(`order:${order.brokerOrderId}:${order.updatedAt}`)
+    expect(event.contentHash).toBe('5ba77fe241959988a7b35d2b2f39e474651237b4f91a5c36678e20eb1ffe5ac9')
     expect(failure(orderObservation({ ...order, extendedHours: true }, evidence))).toEqual({
       _tag: 'ExtendedHoursUnsupported',
       brokerOrderId: order.brokerOrderId,

@@ -461,10 +461,17 @@ const orderObservationDataFirst = (
             status,
             observedAt: validated.observedAt,
           }
+          const sourceOrder =
+            validated.quantityMicros === undefined
+              ? order
+              : {
+                  ...order,
+                  schemaVersion: 'bayn.paper-order.v1' as const,
+                }
           return pipe(
             canonicalHash('order', {
               schemaVersion: 'bayn.paper-order-source.v1',
-              order: withoutObservedAt(order),
+              order: withoutObservedAt(sourceOrder),
               brokerUpdatedAt: validated.updatedAt,
             }),
             Result.flatMap((contentHash) =>
