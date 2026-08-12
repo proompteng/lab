@@ -10,6 +10,7 @@ import {
   FileSystem,
   Layer,
   Logger,
+  Option,
   Redacted,
   Ref,
   References,
@@ -20,7 +21,7 @@ import { TestClock } from 'effect/testing'
 import { config, fixtureRuntime } from './app-test-support'
 import {
   paperObserveSuccessorGenerationHash,
-  recoverBlockedGenerationToObserve,
+  recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
@@ -28,14 +29,16 @@ import { provideTestLayer } from './effect-test-support'
 import {
   ApplicationPlatformLive,
   closedCycleReceiptEmissionAllowed,
+  decideExecutionLifecycleMaintenance,
   finalizePaperEpisode,
   observeCycleGenerationHash,
   paperReceiptFinalizationWindowOpen,
   prepareOrRecoverResearchPaperActivation,
+  readCompletedExecutionLifecycle,
   recoverPaperActivationGeneration,
   refreshResearchPaperActivationReconciliation,
   restrictExpiredPaperActivation,
-  retryClosedCycleReceipts,
+  runExecutionLifecycleMaintenance,
   runRestateLifecycleWithReconciliationGuardian,
 } from './composition'
 import { makeApplicationPlan, type ApplicationPlanFor } from './app'
@@ -63,7 +66,6 @@ import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from 
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
-import { utcInstantFromEpochMillis } from './time'
 import { loadObserveRiskPolicy, paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
@@ -373,90 +375,82 @@ describe('Bayn PAPER receipt retry boundary', () => {
     expect(closedCycleReceiptEmissionAllowed(cutoffAt, cutoffAt)).toBe(true)
   })
 
-  test('keeps retrying through the close lease instead of a fixed attempt count', async () => {
-    const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
-    const observedAt: string[] = []
+  test('derives due expiry and receipt work from immutable episode deadlines', () => {
+    const cutoffAt = '2026-08-03T12:00:00.000Z'
+    const closeExpiresAt = '2026-08-03T12:15:00.000Z'
+    const finalizationExpiresAt = '2026-08-03T12:30:00.000Z'
 
-    await Effect.runPromise(
+    expect(
+      decideExecutionLifecycleMaintenance({
+        cutoffAt,
+        closeExpiresAt,
+        finalizationExpiresAt,
+        observedAt: '2026-08-03T11:59:59.999Z',
+      }),
+    ).toEqual({ restrictExpiredAuthority: false, attemptReceiptFinalization: false })
+    expect(
+      decideExecutionLifecycleMaintenance({
+        cutoffAt,
+        closeExpiresAt,
+        finalizationExpiresAt,
+        observedAt: cutoffAt,
+      }),
+    ).toEqual({ restrictExpiredAuthority: false, attemptReceiptFinalization: true })
+    expect(
+      decideExecutionLifecycleMaintenance({
+        cutoffAt,
+        closeExpiresAt,
+        finalizationExpiresAt,
+        observedAt: closeExpiresAt,
+      }),
+    ).toEqual({ restrictExpiredAuthority: true, attemptReceiptFinalization: true })
+    expect(
+      decideExecutionLifecycleMaintenance({
+        cutoffAt,
+        closeExpiresAt,
+        finalizationExpiresAt,
+        observedAt: '2026-08-03T12:30:00.001Z',
+      }),
+    ).toEqual({ restrictExpiredAuthority: true, attemptReceiptFinalization: false })
+  })
+
+  test('executes due expiry and receipt work in one writer-fenced lifecycle command', async () => {
+    const operations: string[] = []
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          operations.push('restrict')
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.sync(() => {
+          operations.push('fence')
+        }).pipe(Effect.andThen(effect)),
+    }
+
+    const disposition = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* TestClock.setTime(startAt)
-        const retry = yield* retryClosedCycleReceipts(
-          (cycleId, current) =>
+        yield* TestClock.setTime(Date.parse('2026-09-03T20:15:00.000Z'))
+        return yield* runExecutionLifecycleMaintenance(
+          researchRequest,
+          authorityRestrictionStore,
+          writerFence,
+          (cycleId, observedAt) =>
             Effect.sync(() => {
               expect(cycleId).toBeUndefined()
-              observedAt.push(current)
-              return observedAt.length >= 17
+              expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
+              operations.push('finalize')
+              return true
             }),
-          cutoffAt,
-          utcInstantFromEpochMillis(startAt + 17_000),
-          1_000,
-        ).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* Effect.yieldNow
-        yield* TestClock.adjust(17_000)
-        yield* Fiber.join(retry)
+        )
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(observedAt).toHaveLength(17)
-    expect(observedAt.at(-1)).toBe(utcInstantFromEpochMillis(startAt + 17_000))
-  })
-
-  test('keeps retrying until close settlement and reconciliation produce a receipt', async () => {
-    const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
-    const observedAt: string[] = []
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(startAt)
-        const retry = yield* retryClosedCycleReceipts(
-          (_cycleId, current) =>
-            Effect.sync(() => {
-              observedAt.push(current)
-              return observedAt.length >= 8
-            }),
-          cutoffAt,
-          utcInstantFromEpochMillis(startAt + 8_000),
-          1_000,
-        ).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* Effect.yieldNow
-        yield* TestClock.adjust(8_000)
-        yield* Fiber.join(retry)
-      }).pipe(provideTestLayer(TestClock.layer())),
-    )
-
-    expect(observedAt).toHaveLength(8)
-    expect(observedAt.at(-1)).toBe(utcInstantFromEpochMillis(startAt + 8_000))
-  })
-
-  test('stops receipt retries at the bounded finalization lease when evidence never becomes eligible', async () => {
-    const startAt = Date.parse('2026-08-03T12:00:00.000Z')
-    const cutoffAt = utcInstantFromEpochMillis(startAt + 1_000)
-    const retryUntilAt = utcInstantFromEpochMillis(startAt + 4_000)
-    const observedAt: string[] = []
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(startAt)
-        const retry = yield* retryClosedCycleReceipts(
-          (_cycleId, current) =>
-            Effect.sync(() => {
-              observedAt.push(current)
-              return false
-            }),
-          cutoffAt,
-          retryUntilAt,
-          1_000,
-        ).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* Effect.yieldNow
-        yield* TestClock.adjust(10_000)
-        yield* Fiber.join(retry)
-      }).pipe(provideTestLayer(TestClock.layer())),
-    )
-
-    expect(observedAt).toHaveLength(4)
-    expect(observedAt.at(-1)).toBe(retryUntilAt)
+    expect(operations).toEqual(['fence', 'restrict', 'finalize'])
+    expect(disposition).toBe('COMPLETED')
   })
 
   test('leaves a bounded post-close finalization window for late settlement', () => {
@@ -494,6 +488,68 @@ describe('Bayn PAPER startup recovery boundary', () => {
         effective: Authority.Paper,
       }),
     ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+  })
+
+  test('recognizes the receipt-completed OBSERVE successor before retrying PAPER recovery on restart', async () => {
+    const successorGenerationHash = Result.getOrThrow(
+      paperObserveSuccessorGenerationHash({
+        previousPaperGenerationHash: continuationGeneration.generationHash,
+      }),
+    )
+    const receiptHash = hash('receipt')
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () => Effect.die(new Error('completed execution must not mutate authority')),
+      readAuthorityState: Effect.succeed({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: successorGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 3,
+        updatedAt: '2026-09-03T20:01:00.000Z',
+      }),
+      readAuthorityGenerationLineage: (generationHash) =>
+        Effect.succeed(
+          generationHash === successorGenerationHash
+            ? {
+                generationHash,
+                previousGenerationHash: continuationGeneration.generationHash,
+                maximum: Authority.Observe,
+              }
+            : undefined,
+        ),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === continuationGeneration.generationHash ? continuationGeneration : undefined),
+    }
+    const readReceiptHash = (generationHash: string) =>
+      Effect.succeed(
+        generationHash === continuationGeneration.generationHash ? Option.some(receiptHash) : Option.none<string>(),
+      )
+
+    const completed = await Effect.runPromise(
+      readCompletedExecutionLifecycle(
+        continuationApplicationPlan,
+        continuationRequest,
+        researchBuildContinuation,
+        authorityStore,
+        readReceiptHash,
+      ),
+    )
+    const withoutReceipt = await Effect.runPromise(
+      readCompletedExecutionLifecycle(
+        continuationApplicationPlan,
+        continuationRequest,
+        researchBuildContinuation,
+        authorityStore,
+        () => Effect.succeed(Option.none()),
+      ),
+    )
+
+    expect(completed).toEqual({
+      authorityGenerationHash: continuationGeneration.generationHash,
+      receiptHash,
+    })
+    expect(withoutReceipt).toBeUndefined()
   })
 
   test('resumes only the exact active research generation across a reviewed build change', async () => {
@@ -817,11 +873,11 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
     const blockedIntents: BlockedCycleIntentStoreShape = {
       terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
-      settleCurrentBlockedGeneration: () =>
+      settleCurrentTerminalGeneration: () =>
         Effect.sync(() => {
           operations.push('settle')
           return {
-            _tag: 'BlockedGenerationSettled' as const,
+            _tag: 'TerminalGenerationSettled' as const,
             authorityGenerationHash: previousGenerationHash,
             blockedCycleCount: 1,
             blockedIntentCount: 0,
@@ -855,7 +911,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const receipt = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-10T19:00:00.000Z'))
-        return yield* recoverBlockedGenerationToObserve({
+        return yield* recoverTerminalGenerationToObserve({
           accountId: 'paper-account',
           blockedIntents,
           authorityStore,
@@ -892,22 +948,22 @@ describe('Bayn PAPER startup recovery boundary', () => {
     expect(nextEpisode).not.toBe(first)
   })
 
-  test('does not reconcile or rotate when no blocked generation exists', async () => {
+  test('does not reconcile or rotate when no terminal generation exists', async () => {
     const blockedIntents: BlockedCycleIntentStoreShape = {
       terminalizeUntouchedApproved: () => Effect.die(new Error('cycle terminalization is outside startup recovery')),
-      settleCurrentBlockedGeneration: () => Effect.succeed({ _tag: 'NoBlockedGeneration' }),
+      settleCurrentTerminalGeneration: () => Effect.succeed({ _tag: 'NoTerminalGeneration' }),
     }
     const authorityStore: AuthorityGenerationStoreShape = {
-      ensureAuthorityGeneration: () => Effect.die(new Error('no blocked generation must not rotate authority')),
+      ensureAuthorityGeneration: () => Effect.die(new Error('no terminal generation must not rotate authority')),
     }
 
     const receipt = await Effect.runPromise(
-      recoverBlockedGenerationToObserve({
+      recoverTerminalGenerationToObserve({
         accountId: 'paper-account',
         blockedIntents,
         authorityStore,
         writerFence: unusedWriterFence,
-        reconcileAfterSettlement: Effect.die(new Error('no blocked generation must not reconcile')),
+        reconcileAfterSettlement: Effect.die(new Error('no terminal generation must not reconcile')),
       }),
     )
 
@@ -931,7 +987,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
             ? Effect.fail(
                 new OperationalError({
                   component: 'strategy',
-                  operation: 'blocked-generation-recovery',
+                  operation: 'terminal-generation-recovery',
                   message: 'blocked generation intent settlement failed',
                   retryable: false,
                   cause: new BlockedCycleIntentStoreError({
@@ -980,7 +1036,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(advances).toBe(1)
-    expect(failure.message).toBe('restricted generation recovery found no blocked generation to roll over')
+    expect(failure.message).toBe('restricted generation recovery found no terminal generation to roll over')
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {

@@ -3642,13 +3642,13 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             ),
           )
           const settlement = yield* writerFence.transaction(
-            blockedCycleIntentStore.settleCurrentBlockedGeneration({
+            blockedCycleIntentStore.settleCurrentTerminalGeneration({
               accountId: draft.identity.accountId,
               observedAt: staleTiming.observed_at,
             }),
           )
           const replay = yield* writerFence.transaction(
-            blockedCycleIntentStore.settleCurrentBlockedGeneration({
+            blockedCycleIntentStore.settleCurrentTerminalGeneration({
               accountId: draft.identity.accountId,
               observedAt: utcInstantFromEpochMillis(Date.parse(staleTiming.observed_at) + 1),
             }),
@@ -3708,7 +3708,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `bound cycle ${result.committed.cycle.identity.cycleId} blocked: BLOCKED_RISK`,
       )
       expect(result.settlement).toMatchObject({
-        _tag: 'BlockedGenerationSettled',
+        _tag: 'TerminalGenerationSettled',
         authorityGenerationHash: plannedPaperGenerationHash,
         blockedCycleCount: 1,
         blockedIntentCount: 0,
@@ -3717,7 +3717,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         terminalIntentCount: 2,
       })
       expect(result.replay).toMatchObject({
-        _tag: 'BlockedGenerationSettled',
+        _tag: 'TerminalGenerationSettled',
         blockedIntentCount: 0,
         expiredIntentCount: 0,
         intentCount: 2,

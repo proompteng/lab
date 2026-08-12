@@ -1115,8 +1115,12 @@ export type ObserveAutonomousCycleInput = {
   readonly paperEpisodeCloseSubmitCutoffAt?: string
   readonly paperEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
+  /** Runs due lifecycle maintenance inside the same serialized command as the cycle pass. */
+  readonly beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
   readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
+
+export type LifecycleAdvanceDisposition = 'CONTINUE' | 'COMPLETED'
 
 export const paperEpisodeCloseGraceMs = 15 * 60_000
 
@@ -2288,7 +2292,7 @@ const makeRecoveryFirstCycleDriver = (
           ),
       }),
     )
-    const advance = operationPermit.withPermit(
+    const runCycleAdvance =
       input.interpretCycleDriver === undefined
         ? advanceCycle
         : reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
@@ -2302,6 +2306,25 @@ const makeRecoveryFirstCycleDriver = (
                 ),
               onSuccess: () => advanceCycle,
             }),
+          )
+    const advance = operationPermit.withPermit(
+      input.beforeLifecycleAdvance === undefined
+        ? runCycleAdvance
+        : input.beforeLifecycleAdvance.pipe(
+            Effect.flatMap((disposition) =>
+              disposition === 'CONTINUE'
+                ? runCycleAdvance
+                : currentUtcInstant.pipe(
+                    Effect.flatMap((observedAt) => {
+                      const observation: AutonomousCyclePassObservation = {
+                        result: 'SUCCESS',
+                        observedAt,
+                        outcome: 'RECOVERED',
+                      }
+                      return startup.recordPass(observation).pipe(Effect.as({ observation }))
+                    }),
+                  ),
+            ),
           ),
     )
     const maintainReconciliation = operationPermit.withPermit(
@@ -2329,7 +2352,7 @@ const makeRecoveryFirstCycleDriver = (
     }
   })
 
-const interpretRecoveryFirstCycleInProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
+export const interpretRecoveryFirstCycleInProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
   const run = (): Effect.Effect<void, never, RecoveryFirstRuntime> =>
     Effect.suspend(() =>
       driver.advance.pipe(

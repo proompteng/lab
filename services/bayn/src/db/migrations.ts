@@ -33,6 +33,7 @@ import clearUnusedResearchPaperRearm from '../../migrations/0030_clear_unused_re
 import blockedPaperGenerationRollover from '../../migrations/0031_blocked_paper_generation_rollover'
 import lifecycleCommands from '../../migrations/0032_lifecycle_commands'
 import lifecycleCommandNotDueReason from '../../migrations/0033_lifecycle_command_not_due_reason'
+import terminalPaperGenerationRollover from '../../migrations/0034_terminal_paper_generation_rollover'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -68,4 +69,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '31_blocked_paper_generation_rollover': blockedPaperGenerationRollover,
   '32_lifecycle_commands': lifecycleCommands,
   '33_lifecycle_command_not_due_reason': lifecycleCommandNotDueReason,
+  '34_terminal_paper_generation_rollover': terminalPaperGenerationRollover,
 })

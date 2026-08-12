@@ -13,6 +13,7 @@ import {
   type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../../execution/contracts'
+import { paperActivationExpiredRestrictionReason, paperEpisodeCompletedRestrictionReason } from '../../paper-episode'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -27,7 +28,7 @@ import {
   researchPaperGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
@@ -130,6 +131,9 @@ export interface ObserveAuthorityInterpreter {
   readonly readResearchAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
+  readonly readAuthorityGenerationLineage: (
+    generationHash: string,
+  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }
 
 const makeObserveAuthorityInterpreterDataFirst = (
@@ -233,7 +237,20 @@ const makeObserveAuthorityInterpreterDataFirst = (
           (
             state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
-            AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+            AND (
+              state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              OR (
+                state.reason IN (
+                  ${paperEpisodeCompletedRestrictionReason},
+                  ${paperActivationExpiredRestrictionReason}
+                )
+                AND EXISTS (
+                  SELECT 1
+                  FROM autonomous_forward_performance_receipts AS receipt
+                  WHERE receipt.authority_generation_hash = state.generation_hash
+                )
+              )
+            )
           )
           OR (
             state.effective = 'PAPER'
@@ -341,7 +358,20 @@ const makeObserveAuthorityInterpreterDataFirst = (
               (
                 state.effective = 'OBSERVE'
                 AND state.kill_state = 'ACTIVE'
-                AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                AND (
+                  state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                  OR (
+                    state.reason IN (
+                      ${paperEpisodeCompletedRestrictionReason},
+                      ${paperActivationExpiredRestrictionReason}
+                    )
+                    AND EXISTS (
+                      SELECT 1
+                      FROM autonomous_forward_performance_receipts AS receipt
+                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    )
+                  )
+                )
                 AND previous_generation.activation_schema_version IN (
                   'bayn.paper-authority-generation.v2',
                   'bayn.paper-authority-generation.v3'
@@ -485,7 +515,30 @@ const makeObserveAuthorityInterpreterDataFirst = (
       ),
     )
 
-  return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration, readResearchAuthorityGeneration }
+  const readAuthorityGenerationLineage = (generationHash: string) =>
+    runExecutionOperation(
+      'authority',
+      authority.readGeneration(generationHash).pipe(
+        Effect.map((rows) => {
+          const row = rows[0]
+          return row === undefined
+            ? undefined
+            : {
+                generationHash: row.generation_hash,
+                previousGenerationHash: row.previous_generation_hash,
+                maximum: row.maximum,
+              }
+        }),
+      ),
+    )
+
+  return {
+    ensureAuthorityGeneration,
+    readAuthorityState,
+    readAuthorityGeneration,
+    readResearchAuthorityGeneration,
+    readAuthorityGenerationLineage,
+  }
 }
 
 export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)

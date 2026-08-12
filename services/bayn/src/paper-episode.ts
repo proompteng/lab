@@ -153,6 +153,10 @@ export interface PaperEpisodeAuthorityFacts {
 }
 
 export const paperEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
+export const paperEpisodeCompletedRestrictionReason =
+  'PAPER episode restricted effective authority: flat exact receipt finalized'
+export const paperActivationExpiredRestrictionReason =
+  'PAPER activation lease restricted effective authority: immutable activation request expired'
 
 export type PaperEpisodeAuthorityDecision =
   | { readonly _tag: 'Activate' }
