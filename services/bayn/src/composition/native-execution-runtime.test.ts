@@ -231,7 +231,7 @@ describe('native execution runtime', () => {
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })
 
-  test('does not acquire execution resources until the first tick and releases them exactly once', async () => {
+  test('keeps recovery-capable execution resources dormant until the first tick and releases them exactly once', async () => {
     let acquired = 0
     let released = 0
     let publishedSlot: RecoveryFirstCycleDriverSlot | undefined
@@ -255,18 +255,32 @@ describe('native execution runtime', () => {
         statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
       ),
     )
-    const managed = ManagedRuntime.make(executionResources)
-    const runtime = makeManagedNativeExecutionRuntimeAdapter(managed, {
-      runPromise: (effect, options) => Effect.runPromise(effect, options),
-    })
+    const hostRunner = {
+      runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
+        Effect.runPromise(effect, options),
+    }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const managed = yield* ScopedRef.fromAcquire(
+            Effect.acquireRelease(
+              Effect.succeed(ManagedRuntime.make(executionResources)),
+              (runtime) => runtime.disposeEffect,
+            ),
+          )
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(managed, executionResources, hostRunner)
 
-    expect(acquired).toBe(0)
-    await runtime.log('info', 'inactive worker discovery', {})
-    expect(acquired).toBe(0)
-    await runtime.advance(command, new AbortController().signal)
-    await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
-    expect(acquired).toBe(1)
-    await managed.dispose()
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
+          yield* Effect.promise(() =>
+            runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
+          )
+          expect(acquired).toBe(1)
+        }),
+      ),
+    )
     expect(released).toBe(1)
     if (publishedSlot === undefined) throw new Error('production driver layer did not publish its slot')
     expect(await Effect.runPromise(Ref.get(publishedSlot.state))).toEqual({ _tag: 'Pending' })
