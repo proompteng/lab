@@ -3,26 +3,26 @@ import { Effect, Layer, Option, Schema } from 'effect'
 
 import { WriterFence } from '../execution/writer-fence'
 import {
-  PaperCycleClosureStore,
-  PaperCycleClosureStoreError,
-  decodePaperCycleClosureResult,
-  type PaperCycleClosure,
-  type PaperCycleClosureStoreShape,
-} from './paper-cycle-closure'
+  ExecutionCycleClosureStore,
+  ExecutionCycleClosureStoreError,
+  decodeExecutionCycleClosureResult,
+  type ExecutionCycleClosure,
+  type ExecutionCycleClosureStoreShape,
+} from './execution-cycle-closure'
 
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Schema.Unknown).check(Schema.isMaxLength(1)))
 
 const storeError = (
-  operation: PaperCycleClosureStoreError['operation'],
-  failure: PaperCycleClosureStoreError['failure'],
+  operation: ExecutionCycleClosureStoreError['operation'],
+  failure: ExecutionCycleClosureStoreError['failure'],
   message: string,
   cause?: unknown,
-): PaperCycleClosureStoreError => new PaperCycleClosureStoreError({ operation, failure, message, cause })
+): ExecutionCycleClosureStoreError => new ExecutionCycleClosureStoreError({ operation, failure, message, cause })
 
 const readByCycleId = (
   sql: PgClient.PgClient,
   cycleId: string,
-): Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError> =>
+): Effect.Effect<Option.Option<ExecutionCycleClosure>, ExecutionCycleClosureStoreError> =>
   sql<Record<string, unknown>>`
     SELECT document
     FROM autonomous_cycle_paper_closures
@@ -33,24 +33,26 @@ const readByCycleId = (
       const row = rows[0]
       if (row === undefined) return Effect.succeed(Option.none())
       if (typeof row !== 'object' || row === null || !('document' in row)) {
-        return Effect.fail(storeError('read', 'decode', 'paper closure row is missing its document'))
+        return Effect.fail(storeError('read', 'decode', 'execution closure row is missing its document'))
       }
-      const decoded = decodePaperCycleClosureResult(row.document)
+      const decoded = decodeExecutionCycleClosureResult(row.document)
       return decoded._tag === 'Failure'
-        ? Effect.fail(storeError('read', 'decode', 'paper closure document failed schema validation', decoded.failure))
+        ? Effect.fail(
+            storeError('read', 'decode', 'execution closure document failed schema validation', decoded.failure),
+          )
         : Effect.succeed(Option.some(decoded.success))
     }),
     Effect.mapError((cause) =>
-      cause instanceof PaperCycleClosureStoreError
+      cause instanceof ExecutionCycleClosureStoreError
         ? cause
-        : storeError('read', 'query', 'paper closure read failed', cause),
+        : storeError('read', 'query', 'execution closure read failed', cause),
     ),
   )
 
 const readLatestReplanByCycleId = (
   sql: PgClient.PgClient,
   cycleId: string,
-): Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError> =>
+): Effect.Effect<Option.Option<ExecutionCycleClosure>, ExecutionCycleClosureStoreError> =>
   sql<Record<string, unknown>>`
     SELECT document
     FROM autonomous_cycle_paper_close_replans
@@ -63,19 +65,19 @@ const readLatestReplanByCycleId = (
       const row = rows[0]
       if (row === undefined) return Effect.succeed(Option.none())
       if (typeof row !== 'object' || row === null || !('document' in row)) {
-        return Effect.fail(storeError('read-replan', 'decode', 'paper close replan row is missing its document'))
+        return Effect.fail(storeError('read-replan', 'decode', 'execution close replan row is missing its document'))
       }
-      const decoded = decodePaperCycleClosureResult(row.document)
+      const decoded = decodeExecutionCycleClosureResult(row.document)
       return decoded._tag === 'Failure'
         ? Effect.fail(
-            storeError('read-replan', 'decode', 'paper close replan failed schema validation', decoded.failure),
+            storeError('read-replan', 'decode', 'execution close replan failed schema validation', decoded.failure),
           )
         : Effect.succeed(Option.some(decoded.success))
     }),
     Effect.mapError((cause) =>
-      cause instanceof PaperCycleClosureStoreError
+      cause instanceof ExecutionCycleClosureStoreError
         ? cause
-        : storeError('read-replan', 'query', 'paper close replan read failed', cause),
+        : storeError('read-replan', 'query', 'execution close replan read failed', cause),
     ),
   )
 
@@ -83,7 +85,7 @@ const readReplanByHash = (
   sql: PgClient.PgClient,
   cycleId: string,
   contentHash: string,
-): Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError> =>
+): Effect.Effect<Option.Option<ExecutionCycleClosure>, ExecutionCycleClosureStoreError> =>
   sql<Record<string, unknown>>`
     SELECT document
     FROM autonomous_cycle_paper_close_replans
@@ -95,26 +97,26 @@ const readReplanByHash = (
       const row = rows[0]
       if (row === undefined) return Effect.succeed(Option.none())
       if (typeof row !== 'object' || row === null || !('document' in row)) {
-        return Effect.fail(storeError('bind-replan', 'decode', 'paper close replan row is missing its document'))
+        return Effect.fail(storeError('bind-replan', 'decode', 'execution close replan row is missing its document'))
       }
-      const decoded = decodePaperCycleClosureResult(row.document)
+      const decoded = decodeExecutionCycleClosureResult(row.document)
       return decoded._tag === 'Failure'
         ? Effect.fail(
-            storeError('bind-replan', 'decode', 'paper close replan failed schema validation', decoded.failure),
+            storeError('bind-replan', 'decode', 'execution close replan failed schema validation', decoded.failure),
           )
         : Effect.succeed(Option.some(decoded.success))
     }),
     Effect.mapError((cause) =>
-      cause instanceof PaperCycleClosureStoreError
+      cause instanceof ExecutionCycleClosureStoreError
         ? cause
-        : storeError('bind-replan', 'query', 'paper close replan read failed', cause),
+        : storeError('bind-replan', 'query', 'execution close replan read failed', cause),
     ),
   )
 
 const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const fence = yield* WriterFence
-  const store: PaperCycleClosureStoreShape = {
+  const store: ExecutionCycleClosureStoreShape = {
     read: (cycleId) => readByCycleId(sql, cycleId),
     readLatestReplan: (cycleId) => readLatestReplanByCycleId(sql, cycleId),
     containsIntent: (intentId) =>
@@ -134,13 +136,13 @@ const makeStore = Effect.gen(function* () {
         Effect.flatMap((rows) => {
           const row = rows[0]
           return row === undefined
-            ? Effect.fail(storeError('contains-intent', 'invariant', 'paper closure intent query returned no row'))
+            ? Effect.fail(storeError('contains-intent', 'invariant', 'execution closure intent query returned no row'))
             : Effect.succeed(row.contains)
         }),
         Effect.mapError((cause) =>
-          cause instanceof PaperCycleClosureStoreError
+          cause instanceof ExecutionCycleClosureStoreError
             ? cause
-            : storeError('contains-intent', 'query', 'paper closure intent lookup failed', cause),
+            : storeError('contains-intent', 'query', 'execution closure intent lookup failed', cause),
         ),
       ),
     bindReplan: (closure) =>
@@ -168,14 +170,14 @@ const makeStore = Effect.gen(function* () {
               return yield* storeError(
                 'bind-replan',
                 'invariant',
-                'paper close replan disappeared after its immutable bind',
+                'execution close replan disappeared after its immutable bind',
               )
             }
             if (stored.value.contentHash !== closure.contentHash) {
               return yield* storeError(
                 'bind-replan',
                 'conflict',
-                'paper close replan identity was reused with different content',
+                'execution close replan identity was reused with different content',
               )
             }
             return stored.value
@@ -183,9 +185,9 @@ const makeStore = Effect.gen(function* () {
         )
         .pipe(
           Effect.mapError((cause) =>
-            cause instanceof PaperCycleClosureStoreError
+            cause instanceof ExecutionCycleClosureStoreError
               ? cause
-              : storeError('bind-replan', 'query', 'paper close replan bind failed', cause),
+              : storeError('bind-replan', 'query', 'execution close replan bind failed', cause),
           ),
         ),
     bind: (closure) =>
@@ -208,13 +210,13 @@ const makeStore = Effect.gen(function* () {
           `
             const stored = yield* readByCycleId(sql, closure.cycleId)
             if (Option.isNone(stored)) {
-              return yield* storeError('bind', 'invariant', 'paper closure disappeared after its immutable bind')
+              return yield* storeError('bind', 'invariant', 'execution closure disappeared after its immutable bind')
             }
             if (stored.value.contentHash !== closure.contentHash) {
               return yield* storeError(
                 'bind',
                 'conflict',
-                'paper closure identity was reused with different immutable content',
+                'execution closure identity was reused with different immutable content',
               )
             }
             return stored.value
@@ -222,13 +224,13 @@ const makeStore = Effect.gen(function* () {
         )
         .pipe(
           Effect.mapError((cause) =>
-            cause instanceof PaperCycleClosureStoreError
+            cause instanceof ExecutionCycleClosureStoreError
               ? cause
-              : storeError('bind', 'query', 'paper closure bind failed', cause),
+              : storeError('bind', 'query', 'execution closure bind failed', cause),
           ),
         ),
   }
   return store
 })
 
-export const PaperCycleClosureStoreLive = Layer.effect(PaperCycleClosureStore, makeStore)
+export const ExecutionCycleClosureStoreLive = Layer.effect(ExecutionCycleClosureStore, makeStore)

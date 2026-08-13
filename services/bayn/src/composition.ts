@@ -59,8 +59,8 @@ import {
   makeForwardPerformanceReceiptEnvelope,
 } from './db/forward-performance-receipt'
 import { ForwardPerformanceReceiptStoreLive } from './db/forward-performance-receipt-postgres'
-import { PaperCycleClosureStore, type PaperCycleClosureStoreShape } from './db/paper-cycle-closure'
-import { PaperCycleClosureStoreLive as PaperCycleClosureStorePostgresLive } from './db/paper-cycle-closure-postgres'
+import { ExecutionCycleClosureStore, type ExecutionCycleClosureStoreShape } from './db/execution-cycle-closure'
+import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from './db/execution-cycle-closure-postgres'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
 import {
   AuthorityGenerationStore,
@@ -239,7 +239,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     IntentStoreLive,
     MutationStoreLive,
     LiveCapitalGrantStoreLive,
-    PaperCycleClosureStorePostgresLive,
+    ExecutionCycleClosureStorePostgresLive,
     ForwardPerformanceReceiptStoreLive,
     LifecycleCommandStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
@@ -445,7 +445,7 @@ const mutationCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   executionProgram: ExecutionProgram,
   executionEpisode: CapitalActivationRequest,
-  paperCycleClosureStore: PaperCycleClosureStoreShape,
+  executionCycleClosureStore: ExecutionCycleClosureStoreShape,
   blockedCycleIntentStore: BlockedCycleIntentStoreShape,
   lifecycleCommandStore: import('./db/lifecycle-command').LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
@@ -467,7 +467,7 @@ const mutationCycle = (
     strategy: plan.strategy,
     ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'PAPER_BOOTSTRAP' as const } : {}),
     executionProgram,
-    paperCycleClosureStore,
+    executionCycleClosureStore,
     blockedCycleIntentStore,
     onClosedCycle,
     executionEpisodeCutoffAt: executionEpisode.cutoffAt,
@@ -1817,7 +1817,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                       authorityGenerationStore: AuthorityGenerationStore,
                       capitalGrantLifecycleStore: CapitalGrantLifecycleStore,
                       authorityRestrictionStore: AuthorityRestrictionStore,
-                      paperCycleClosureStore: PaperCycleClosureStore,
+                      executionCycleClosureStore: ExecutionCycleClosureStore,
                       forwardPerformanceReceiptStore: ForwardPerformanceReceiptStore,
                     }).pipe(
                       Effect.flatMap((runtimeServices) => {
@@ -1834,7 +1834,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           Layer.succeed(WriterFence, runtimeServices.writerFence),
                           Layer.succeed(IntentStore, runtimeServices.intentStore),
                           Layer.succeed(MutationStore, runtimeServices.mutationStore),
-                          Layer.succeed(PaperCycleClosureStore, runtimeServices.paperCycleClosureStore),
+                          Layer.succeed(ExecutionCycleClosureStore, runtimeServices.executionCycleClosureStore),
                         )
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           Effect.gen(function* () {
@@ -2251,7 +2251,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                               entrySubmitExpiresAt: request.cutoffAt,
                                               closeSubmitExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
-                                                runtimeServices.paperCycleClosureStore
+                                                runtimeServices.executionCycleClosureStore
                                                   .containsIntent(intentId)
                                                   .pipe(Effect.orElseSucceed(() => false)),
                                               intentStore: runtimeServices.intentStore,
@@ -2273,7 +2273,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           realizedPlan,
                                           executionProgram,
                                           request,
-                                          runtimeServices.paperCycleClosureStore,
+                                          runtimeServices.executionCycleClosureStore,
                                           runtimeServices.blockedCycleIntentStore,
                                           runtimeServices.lifecycleCommandStore,
                                           runtimeServices.writerFence,
