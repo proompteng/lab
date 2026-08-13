@@ -279,7 +279,7 @@ const baseConfig = (
   host: parsed.host,
   port: parsed.port,
   qualificationRunId: parsed.qualificationRunId,
-  paperActivationRequestJson: parsed.paperActivationRequestJson,
+  capitalActivationRequestJson: parsed.capitalActivationRequestJson,
   execution,
   build,
   healthIntervalMs: parsed.healthIntervalMs,

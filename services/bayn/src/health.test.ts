@@ -736,7 +736,7 @@ describe('Bayn continuous health', () => {
     ])
   })
 
-  test('projects live-capital mutation health through the durable PAPER capital stage', () => {
+  test('projects live-capital mutation health through the durable capital stage', () => {
     const checkedAt = '2026-07-20T00:04:00.000Z'
     const liveIdentity = Result.getOrThrow(
       makeBrokerIdentity({
@@ -808,11 +808,11 @@ describe('Bayn continuous health', () => {
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
   })
 
-  test('projects a realized research PAPER episode through its read-only bootstrap config', () => {
+  test('projects a realized research capital episode through its read-only bootstrap config', () => {
     const checkedAt = '2026-08-05T12:00:00.000Z'
     const current: RuntimeState = {
       ...readyState(),
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized',
         requestHash: 'a'.repeat(64),
         generationHash: 'b'.repeat(64),
@@ -868,7 +868,7 @@ describe('Bayn continuous health', () => {
     const generationHash = 'b'.repeat(64)
     const current: RuntimeState = {
       ...readyState(),
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Completed',
         requestHash: 'a'.repeat(64),
         generationHash,
@@ -932,7 +932,7 @@ describe('Bayn continuous health', () => {
           }),
         },
       },
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized',
         requestHash: 'a'.repeat(64),
         generationHash,
@@ -1008,7 +1008,7 @@ describe('Bayn continuous health', () => {
     const generationHash = 'd'.repeat(64)
     const initial: RuntimeState = {
       ...initialState({}),
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized',
         requestHash: 'c'.repeat(64),
         generationHash,

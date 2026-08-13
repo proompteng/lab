@@ -301,9 +301,9 @@ const statusFactsDataFirst = (
 ) => {
   const broker = publicBrokerState(state)
   const dependencies = publicDependencies(state)
-  const paperActivationRealized = state.paperActivation?._tag === 'Realized'
-  const effectiveBrokerAccess = paperActivationRealized ? BrokerAccess.Mutation : execution.brokerAccess
-  const effectiveCapitalAuthority = paperActivationRealized
+  const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
+  const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : execution.brokerAccess
+  const effectiveCapitalAuthority = capitalActivationRealized
     ? CapitalAuthorityKind.Granted
     : execution.capitalAuthority._tag
   return {
@@ -347,7 +347,7 @@ const statusFactsDataFirst = (
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
-    paperActivation: state.paperActivation ?? { _tag: 'NotConfigured' },
+    capitalActivation: state.capitalActivation ?? { _tag: 'NotConfigured' },
     broker,
     authority: {
       brokerEnvironment: execution.brokerIdentity?.environment ?? null,
@@ -530,15 +530,15 @@ const renderPrometheusMetricsDataFirst = (
     state.autonomousCycleLoop.lastPass?.result === 'SUCCESS' && state.autonomousCycleLoop.lastPass.outcome === 'NOT_DUE'
       ? (state.autonomousCycleLoop.lastPass.notDueReason?.toLowerCase() ?? 'unknown')
       : 'none'
-  const paperActivationRealized = state.paperActivation?._tag === 'Realized'
-  const effectiveBrokerMutation = paperActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
+  const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
+  const effectiveBrokerMutation = capitalActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
   const effectiveCapitalPromotion =
-    paperActivationRealized || config.execution.capitalAuthority._tag !== CapitalAuthorityKind.None
-  const paperActivationState =
-    state.paperActivation?._tag === 'NotConfigured' || state.paperActivation === undefined
+    capitalActivationRealized || config.execution.capitalAuthority._tag !== CapitalAuthorityKind.None
+  const capitalActivationState =
+    state.capitalActivation?._tag === 'NotConfigured' || state.capitalActivation === undefined
       ? 'not_configured'
-      : state.paperActivation._tag.toLowerCase()
-  const paperActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
+      : state.capitalActivation._tag.toLowerCase()
+  const capitalActivationStates = ['not_configured', 'pending', 'realized', 'completed'] as const
   const cadence = autonomousCycleCadenceObservation(state)
   const cadenceConditions = Object.values(MonthEndCadenceCondition)
   const cadenceReasons = Object.values(MonthEndCadenceReason)
@@ -557,8 +557,8 @@ const renderPrometheusMetricsDataFirst = (
       : state.cycle.authority.effective === Authority.Paper
         ? 'paper'
         : 'observe'
-  const paperActivationRecoveryOnly =
-    paperActivationRealized &&
+  const capitalActivationRecoveryOnly =
+    capitalActivationRealized &&
     state.cycle.authority?.maximum === Authority.Paper &&
     state.cycle.authority.effective === Authority.Observe &&
     state.cycle.alerts.killActive
@@ -714,7 +714,7 @@ const renderPrometheusMetricsDataFirst = (
     ...Object.values(CapitalAuthorityKind).map(
       (authority) =>
         `bayn_capital_authority{authority="${authority}"} ${
-          paperActivationRealized
+          capitalActivationRealized
             ? authority === CapitalAuthorityKind.Granted
               ? 1
               : 0
@@ -734,7 +734,7 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_authority_coherent Whether durable and configured authority agree.',
           '# TYPE bayn_authority_coherent gauge',
           `bayn_authority_coherent ${state.cycle.alerts.authorityIncoherent ? 0 : 1}`,
-          '# HELP bayn_authority_kill_active Whether the durable paper kill is active.',
+          '# HELP bayn_authority_kill_active Whether the durable execution kill is active.',
           '# TYPE bayn_authority_kill_active gauge',
           `bayn_authority_kill_active ${state.cycle.alerts.killActive ? 1 : 0}`,
         ]
@@ -754,15 +754,15 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
     '# TYPE bayn_capital_promotion_enabled gauge',
     `bayn_capital_promotion_enabled ${effectiveCapitalPromotion ? 1 : 0}`,
-    '# HELP bayn_paper_activation_state Current PAPER activation lifecycle state.',
-    '# TYPE bayn_paper_activation_state gauge',
-    ...paperActivationStates.map(
+    '# HELP bayn_capital_activation_state Current capital activation lifecycle state.',
+    '# TYPE bayn_capital_activation_state gauge',
+    ...capitalActivationStates.map(
       (activationState) =>
-        `bayn_paper_activation_state{state="${activationState}"} ${paperActivationState === activationState ? 1 : 0}`,
+        `bayn_capital_activation_state{state="${activationState}"} ${capitalActivationState === activationState ? 1 : 0}`,
     ),
-    '# HELP bayn_paper_activation_recovery_only Whether the realized PAPER runtime is restricted to recovery and close operations.',
-    '# TYPE bayn_paper_activation_recovery_only gauge',
-    `bayn_paper_activation_recovery_only ${paperActivationRecoveryOnly ? 1 : 0}`,
+    '# HELP bayn_capital_activation_recovery_only Whether the realized capital runtime is restricted to recovery and close operations.',
+    '# TYPE bayn_capital_activation_recovery_only gauge',
+    `bayn_capital_activation_recovery_only ${capitalActivationRecoveryOnly ? 1 : 0}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

@@ -155,7 +155,7 @@ export interface AutonomousCycleLoopStatus {
   readonly lastPass: AutonomousCyclePassObservation | null
 }
 
-export type PaperActivationRuntimeState =
+export type CapitalActivationRuntimeState =
   | { readonly _tag: 'NotConfigured' }
   | {
       readonly _tag: 'Pending'
@@ -185,7 +185,7 @@ export interface RuntimeState {
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
   readonly autonomousCycleLoop: AutonomousCycleLoopStatus
-  readonly paperActivation?: PaperActivationRuntimeState
+  readonly capitalActivation?: CapitalActivationRuntimeState
   readonly broker: BrokerStatus | null
   readonly error: string | null
 }
@@ -220,7 +220,7 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
     startedAt: null,
     lastPass: null,
   },
-  paperActivation: { _tag: 'NotConfigured' },
+  capitalActivation: { _tag: 'NotConfigured' },
   broker:
     input.broker === undefined
       ? null
@@ -240,8 +240,8 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
 
 export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean =>
   state.evidence !== null ||
-  ((state.paperActivation?._tag === 'Realized' || state.paperActivation?._tag === 'Completed') &&
-    state.paperActivation.grant === 'Research')
+  ((state.capitalActivation?._tag === 'Realized' || state.capitalActivation?._tag === 'Completed') &&
+    state.capitalActivation.grant === 'Research')
 
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&

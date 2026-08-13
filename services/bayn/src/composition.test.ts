@@ -1355,7 +1355,7 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(result.finalized).toBe(true)
     expect(restrictions).toEqual(['PAPER episode restricted effective authority: flat exact receipt finalized'])
-    expect(result.state.paperActivation).toEqual({
+    expect(result.state.capitalActivation).toEqual({
       _tag: 'Completed',
       requestHash: researchRequest.requestHash,
       generationHash: hash('2'),

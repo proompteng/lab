@@ -18,7 +18,7 @@ import {
 } from './observability'
 import { CycleState, CycleTerminalReason } from './model'
 import { CycleNotDueReason } from './runner/model'
-import { projectResearchPaperBootstrapWaiting } from '../health/decisions'
+import { projectResearchCapitalBootstrapWaiting } from '../health/decisions'
 import { Authority, KillState, ReconciliationStatus } from '../paper'
 
 const now = '2026-07-20T12:00:00.000Z'
@@ -299,15 +299,15 @@ describe('autonomous cycle operations classification', () => {
       cadenceDecision: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
     }
 
-    expect(projectResearchPaperBootstrapWaiting(failed, true, matchingPass)).toMatchObject({
+    expect(projectResearchCapitalBootstrapWaiting(failed, true, matchingPass)).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
       reason: CycleOperationsReason.StalePaperBootstrapSkipped,
       last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
       alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
     })
-    expect(projectResearchPaperBootstrapWaiting(failed, false, matchingPass)).toBe(failed)
+    expect(projectResearchCapitalBootstrapWaiting(failed, false, matchingPass)).toBe(failed)
     expect(
-      projectResearchPaperBootstrapWaiting(failed, true, {
+      projectResearchCapitalBootstrapWaiting(failed, true, {
         ...matchingPass,
         cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-09-11' },
       }),
@@ -317,19 +317,19 @@ describe('autonomous cycle operations classification', () => {
       last: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
     })
     expect(
-      projectResearchPaperBootstrapWaiting(failed, true, {
+      projectResearchCapitalBootstrapWaiting(failed, true, {
         ...matchingPass,
         notDueReason: CycleNotDueReason.MonthEndCadence,
       }),
     ).toBe(failed)
     expect(
-      projectResearchPaperBootstrapWaiting(failed, true, {
+      projectResearchCapitalBootstrapWaiting(failed, true, {
         ...matchingPass,
         cadenceDecision: { ...matchingPass.cadenceDecision, signalSessionDate: '2026-08-09' },
       }),
     ).toBe(failed)
     expect(
-      projectResearchPaperBootstrapWaiting(failed, true, {
+      projectResearchCapitalBootstrapWaiting(failed, true, {
         ...matchingPass,
         cadenceDecision: { signalSessionDate: '2026-09-10', executionSessionDate: '2026-08-11' },
       }),
@@ -354,7 +354,7 @@ describe('autonomous cycle operations classification', () => {
       Authority.Paper,
       thresholds,
     )
-    expect(projectResearchPaperBootstrapWaiting(unsafe, true, matchingPass)).toBe(unsafe)
+    expect(projectResearchCapitalBootstrapWaiting(unsafe, true, matchingPass)).toBe(unsafe)
     expect(unsafe).toMatchObject({
       condition: CycleOperationsCondition.Failed,
       reason: CycleOperationsReason.UnresolvedMutation,
