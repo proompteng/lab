@@ -27,6 +27,7 @@ import {
   failRecoveryFirstCycleDriverSlot,
   makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
+  makePublishedExecutionCycleDriverLive,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
   PublishedExecutionCycleDriver,
@@ -232,25 +233,22 @@ describe('native execution runtime', () => {
   test('does not acquire execution resources until the first tick and releases them exactly once', async () => {
     let acquired = 0
     let released = 0
+    let publishedSlot: RecoveryFirstCycleDriverSlot | undefined
+    const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
     const executionResources = Layer.merge(
-      Layer.effect(
-        PublishedExecutionCycleDriver,
-        Effect.acquireRelease(
-          Effect.gen(function* () {
+      makePublishedExecutionCycleDriverLive(30_000, (slot) => {
+        publishedSlot = slot
+        return Effect.acquireRelease(
+          Effect.sync(() => {
             acquired += 1
-            const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-            yield* Deferred.succeed(ready, undefined)
-            return {
-              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
-              ready,
-            } satisfies RecoveryFirstCycleDriverSlot
+            return undefined
           }),
           () =>
             Effect.sync(() => {
               released += 1
             }),
-        ),
-      ),
+        ).pipe(Effect.andThen(captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context))))
+      }),
       Layer.succeed(
         ExecutionControllerStatusStore,
         statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
@@ -269,6 +267,8 @@ describe('native execution runtime', () => {
     expect(acquired).toBe(1)
     await managed.dispose()
     expect(released).toBe(1)
+    if (publishedSlot === undefined) throw new Error('production driver layer did not publish its slot')
+    expect(await Effect.runPromise(Ref.get(publishedSlot.state))).toEqual({ _tag: 'Pending' })
   })
 
   test('managed runtime resolves the current driver after a restricted generation rebind', async () => {

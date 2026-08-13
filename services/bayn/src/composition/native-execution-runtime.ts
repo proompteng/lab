@@ -334,7 +334,10 @@ export const awaitNativeExecutionRuntimeDriver = (
     Effect.andThen(readRecoveryFirstCycleDriverSlot(slot)),
   )
 
-export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export const makePublishedExecutionCycleDriverLive = <R>(
+  operationTimeoutMs: number,
+  prepare: (slot: RecoveryFirstCycleDriverSlot) => Effect.Effect<void, never, R>,
+) =>
   Layer.effect(
     PublishedExecutionCycleDriver,
     Effect.gen(function* () {
@@ -342,11 +345,14 @@ export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'Auto
         state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
         ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
       }
-      yield* startRuntimePreparation(plan, slot).pipe(Effect.forkScoped({ startImmediately: true }))
-      yield* awaitNativeExecutionRuntimeDriver(slot, plan.config.operationTimeoutMs)
+      yield* prepare(slot).pipe(Effect.forkScoped({ startImmediately: true }))
+      yield* awaitNativeExecutionRuntimeDriver(slot, operationTimeoutMs)
       return slot
     }),
   )
+
+export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+  makePublishedExecutionCycleDriverLive(plan.config.operationTimeoutMs, (slot) => startRuntimePreparation(plan, slot))
 
 type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
 
