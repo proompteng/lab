@@ -29,19 +29,19 @@ import { provideTestLayer } from './effect-test-support'
 
 import {
   ApplicationPlatformLive,
-  QualifiedPaperActivationStoreLive,
-  activatePreparedQualifiedPaperGeneration,
+  QualifiedCapitalActivationStoreLive,
+  activatePreparedQualifiedCapitalGeneration,
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
   finalizeExecutionEpisode,
   observeCycleGenerationHash,
-  paperReceiptFinalizationWindowOpen,
-  prepareOrRecoverQualifiedPaperActivation,
-  prepareOrRecoverResearchPaperActivation,
+  capitalReceiptFinalizationWindowOpen,
+  prepareOrRecoverQualifiedCapitalActivation,
+  prepareOrRecoverResearchCapitalActivation,
   readCompletedExecutionLifecycle,
-  recoverPaperActivationGeneration,
-  refreshResearchPaperActivationReconciliation,
-  restrictExpiredPaperActivation,
+  recoverCapitalActivationGeneration,
+  refreshResearchCapitalActivationReconciliation,
+  restrictExpiredCapitalActivation,
   runExecutionLifecycleMaintenance,
   runRestateLifecycleWithReconciliationGuardian,
 } from './composition'
@@ -57,10 +57,10 @@ import {
 } from './db/execution-store'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import {
-  makeResearchPaperActivationRequest,
-  makePaperActivationRequest,
-  makeResearchPaperBuildContinuation,
-  makeResearchPaperPlanHash,
+  makeResearchCapitalActivationRequest,
+  makeCapitalActivationRequest,
+  makeResearchCapitalBuildContinuation,
+  makeResearchCapitalPlanHash,
 } from './execution/configuration'
 import {
   Authority,
@@ -107,9 +107,9 @@ const researchPlan = {
 const { schemaVersion: _researchPlanSchemaVersion, ...researchPlanFields } = researchPlan
 
 const researchRequest = Result.getOrThrow(
-  makeResearchPaperActivationRequest({
+  makeResearchCapitalActivationRequest({
     schemaVersion: 'bayn.paper-research-activation-request.v1',
-    grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchPaperPlanHash(researchPlan)) },
+    grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(researchPlan)) },
     ...researchPlanFields,
   }),
 )
@@ -152,11 +152,11 @@ const continuationResearchPlan = {
 } as const
 const { schemaVersion: _continuationPlanSchemaVersion, ...continuationResearchPlanFields } = continuationResearchPlan
 const continuationRequest = Result.getOrThrow(
-  makeResearchPaperActivationRequest({
+  makeResearchCapitalActivationRequest({
     schemaVersion: 'bayn.paper-research-activation-request.v1',
     grant: {
       _tag: 'Research',
-      planHash: Result.getOrThrow(makeResearchPaperPlanHash(continuationResearchPlan)),
+      planHash: Result.getOrThrow(makeResearchCapitalPlanHash(continuationResearchPlan)),
     },
     ...continuationResearchPlanFields,
   }),
@@ -189,7 +189,7 @@ const continuationBuild = {
   imageDigest: `sha256:${hash('f')}`,
 } as const
 const researchBuildContinuation = Result.getOrThrow(
-  makeResearchPaperBuildContinuation({
+  makeResearchCapitalBuildContinuation({
     schemaVersion: 'bayn.paper-research-build-continuation.v1',
     request: continuationRequest,
     generationHash: continuationGeneration.generationHash,
@@ -197,7 +197,7 @@ const researchBuildContinuation = Result.getOrThrow(
   }),
 )
 const mismatchedResearchBuildContinuation = Result.getOrThrow(
-  makeResearchPaperBuildContinuation({
+  makeResearchCapitalBuildContinuation({
     schemaVersion: 'bayn.paper-research-build-continuation.v1',
     request: continuationRequest,
     generationHash: hash('0'),
@@ -205,7 +205,7 @@ const mismatchedResearchBuildContinuation = Result.getOrThrow(
   }),
 )
 const staleResearchBuildContinuation = Result.getOrThrow(
-  makeResearchPaperBuildContinuation({
+  makeResearchCapitalBuildContinuation({
     schemaVersion: 'bayn.paper-research-build-continuation.v1',
     request: continuationRequest,
     generationHash: continuationGeneration.generationHash,
@@ -296,7 +296,7 @@ const resumeBuildContinuation = (
   continuation = researchBuildContinuation,
   authorityStore = continuationAuthorityStore(),
 ) =>
-  prepareOrRecoverResearchPaperActivation(
+  prepareOrRecoverResearchCapitalActivation(
     continuationApplicationPlan,
     continuationRequest,
     continuation,
@@ -308,7 +308,7 @@ const resumeBuildContinuation = (
   )
 
 const recoverBuildContinuation = (continuation = researchBuildContinuation) =>
-  recoverPaperActivationGeneration(
+  recoverCapitalActivationGeneration(
     continuationApplicationPlan,
     continuationRequest,
     continuation,
@@ -336,14 +336,14 @@ describe('Bayn application platform', () => {
 
     const context = await Effect.runPromise(
       Effect.scoped(
-        Layer.build(QualifiedPaperActivationStoreLive(continuationApplicationPlan.config, sql, writerFence)),
+        Layer.build(QualifiedCapitalActivationStoreLive(continuationApplicationPlan.config, sql, writerFence)),
       ),
     )
 
     expect(Context.get(context, CapitalGrantLifecycleStore)).toBeDefined()
   })
 
-  test('activates and verifies durable qualified PAPER authority before runtime realization', async () => {
+  test('activates and verifies durable qualified capital authority before runtime realization', async () => {
     const generationHash = hash('1')
     const proof = {
       schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
@@ -371,7 +371,7 @@ describe('Bayn application platform', () => {
     }
 
     const activated = await Effect.runPromise(
-      activatePreparedQualifiedPaperGeneration(lifecycle, proof, { generationHash, sourceGenerationHash }),
+      activatePreparedQualifiedCapitalGeneration(lifecycle, proof, { generationHash, sourceGenerationHash }),
     )
     expect(activationCalls).toBe(1)
     expect(activated).toMatchObject({
@@ -383,7 +383,7 @@ describe('Bayn application platform', () => {
 
     const mismatch = await Effect.runPromise(
       Effect.flip(
-        activatePreparedQualifiedPaperGeneration(
+        activatePreparedQualifiedCapitalGeneration(
           {
             activatePreparedCapitalGrant: () => Effect.succeed({ ...activated, generationHash: hash('4') }),
           },
@@ -392,7 +392,7 @@ describe('Bayn application platform', () => {
         ),
       ),
     )
-    expect(mismatch.message).toBe('qualified PAPER durable authority does not match the prepared generation')
+    expect(mismatch.message).toBe('qualified capital authority does not match the prepared generation')
   })
 
   test('owns the Restate reconciliation guardian for exactly the service scope', async () => {
@@ -537,13 +537,13 @@ describe('Bayn PAPER receipt retry boundary', () => {
   })
 
   test('keeps receipt finalization available after a restart during the close-to-receipt grace window', () => {
-    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:15:00.001Z')).toBe(true)
-    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:30:00.000Z')).toBe(false)
-    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:14:59.999Z')).toBe(false)
+    expect(capitalReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:15:00.001Z')).toBe(true)
+    expect(capitalReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:30:00.000Z')).toBe(false)
+    expect(capitalReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:14:59.999Z')).toBe(false)
   })
 })
 
-describe('Bayn PAPER startup recovery boundary', () => {
+describe('Bayn capital startup recovery boundary', () => {
   test('starts OBSERVE cycles from the persisted successor and never from stale PAPER authority', () => {
     const successorGenerationHash = Result.getOrThrow(
       paperObserveSuccessorGenerationHash({ previousPaperGenerationHash: hash('12') }),
@@ -591,7 +591,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
       },
     }
     const request = Result.getOrThrow(
-      makePaperActivationRequest({
+      makeCapitalActivationRequest({
         schemaVersion: 'bayn.paper-activation-request.v1',
         qualification: {
           runId: qualifiedEvidence.qualification.runId,
@@ -663,7 +663,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const recovered = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-12T19:30:00.000Z'))
-        return yield* prepareOrRecoverQualifiedPaperActivation(
+        return yield* prepareOrRecoverQualifiedCapitalActivation(
           continuationApplicationPlan,
           qualifiedEvidence,
           request,
@@ -751,7 +751,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
     expect(generation).toEqual(continuationGeneration)
     expect(logs).toContainEqual({
-      message: ['Bayn PAPER build continuation resumed the active generation'],
+      message: ['Bayn capital build continuation resumed the active generation'],
       annotations: {
         service: 'bayn',
         activationMode: 'ACTIVE',
@@ -788,7 +788,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
     expect(generation).toEqual(continuationGeneration)
     expect(logs).toContainEqual({
-      message: ['Bayn PAPER build continuation resumed a restricted active generation for recovery'],
+      message: ['Bayn capital build continuation resumed a restricted active generation for recovery'],
       annotations: {
         service: 'bayn',
         activationMode: 'RECOVERY_ONLY',
@@ -806,12 +806,12 @@ describe('Bayn PAPER startup recovery boundary', () => {
       {
         continuation: researchBuildContinuation,
         store: continuationAuthorityStore(null),
-        message: 'durable research PAPER history is missing',
+        message: 'durable research capital history is missing',
       },
       {
         continuation: mismatchedResearchBuildContinuation,
         store: continuationAuthorityStore(),
-        message: 'research PAPER build continuation requires the exact active generation',
+        message: 'research capital build continuation requires the exact active generation',
       },
     ] as const
 
@@ -822,7 +822,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     }
   })
 
-  test('reconciles a completed PAPER generation before rearming and activates from its OBSERVE successor', async () => {
+  test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {
     const previousPaperGenerationHash = continuationGeneration.generationHash
     const successorGenerationHash = Result.getOrThrow(
       paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }),
@@ -834,9 +834,9 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const plan = { ...continuationResearchPlan, activation: continuationBuild, riskPolicyHash }
     const { schemaVersion: _schemaVersion, ...planFields } = plan
     const request = Result.getOrThrow(
-      makeResearchPaperActivationRequest({
+      makeResearchCapitalActivationRequest({
         schemaVersion: 'bayn.paper-research-activation-request.v1',
-        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchPaperPlanHash(plan)) },
+        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(plan)) },
         ...planFields,
       }),
     )
@@ -995,7 +995,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     const activated = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
-        return yield* prepareOrRecoverResearchPaperActivation(
+        return yield* prepareOrRecoverResearchCapitalActivation(
           continuationApplicationPlan,
           request,
           null,
@@ -1025,16 +1025,16 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
     expect(result.recovered).toEqual(continuationGeneration)
     expect(result.mismatched.message).toBe(
-      'research PAPER build continuation is not bound to the active generation and current build',
+      'research capital build continuation is not bound to the active generation and current build',
     )
-    expect(result.stale.message).toBe('paper activation request is not bound to the current activation build')
+    expect(result.stale.message).toBe('capital activation request is not bound to the current activation build')
   })
 
-  test('persists one fresh reconciliation before activating a new research PAPER generation', async () => {
+  test('persists one fresh reconciliation before activating a new research capital generation', async () => {
     const operations: string[] = []
 
     await Effect.runPromise(
-      refreshResearchPaperActivationReconciliation(
+      refreshResearchCapitalActivationReconciliation(
         Effect.sync(() => {
           operations.push('reconcile')
         }),
@@ -1121,7 +1121,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     })
   })
 
-  test('derives one stable OBSERVE successor per immutable PAPER generation', () => {
+  test('derives one stable OBSERVE successor per immutable capital generation', () => {
     const previousPaperGenerationHash = hash('2')
     const first = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
     const replay = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
@@ -1233,7 +1233,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
 
     const failure = await Effect.runPromise(
       Effect.flip(
-        refreshResearchPaperActivationReconciliation(Effect.fail(reconciliationFailure), 1_000).pipe(
+        refreshResearchCapitalActivationReconciliation(Effect.fail(reconciliationFailure), 1_000).pipe(
           Effect.andThen(
             Effect.sync(() => {
               operations.push('activate')
@@ -1244,7 +1244,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(operations).toEqual([])
-    expect(failure.message).toBe('research PAPER pre-activation reconciliation failed')
+    expect(failure.message).toBe('research capital pre-activation reconciliation failed')
     expect(failure.cause).toBe(reconciliationFailure)
   })
 
@@ -1254,7 +1254,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>()
         const finalizations = yield* Ref.make(0)
-        const activation = yield* refreshResearchPaperActivationReconciliation(
+        const activation = yield* refreshResearchCapitalActivationReconciliation(
           Deferred.succeed(started, undefined).pipe(
             Effect.andThen(Effect.never),
             Effect.ensuring(Ref.update(finalizations, (count) => count + 1)),
@@ -1282,9 +1282,9 @@ describe('Bayn PAPER startup recovery boundary', () => {
     )
 
     expect(operations).toEqual([])
-    expect(timeoutFailure.message).toBe('research PAPER pre-activation reconciliation failed')
+    expect(timeoutFailure.message).toBe('research capital pre-activation reconciliation failed')
     expect(timeoutFailure.cause).toMatchObject({
-      message: 'research PAPER pre-activation reconciliation timed out',
+      message: 'research capital pre-activation reconciliation timed out',
     })
   })
 
@@ -1305,7 +1305,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-03T12:00:00.000Z'))
-        yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
+        yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
@@ -1364,7 +1364,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
     })
     expect(result.state.broker).toMatchObject({
       executionEligible: false,
-      executionDisabledReason: 'PAPER_EPISODE_COMPLETED',
+      executionDisabledReason: 'EXECUTION_EPISODE_COMPLETED',
     })
   })
 })

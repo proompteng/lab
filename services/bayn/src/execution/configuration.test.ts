@@ -7,15 +7,15 @@ import { BrokerAccess, CapitalAuthorityKind } from './authority'
 import { Authority, makeResearchCapitalGrantGenerationResult } from './contracts'
 import {
   CapitalAuthoritySelection,
-  decodePaperActivationConfigurationResult,
-  decodePaperActivationRequestResult,
-  makePaperActivationRequest,
-  makeResearchPaperActivationRequest,
-  makeResearchPaperBuildContinuation,
-  makeResearchPaperPlanHash,
-  researchPaperBuildContinuationIsBound,
+  decodeCapitalActivationConfigurationResult,
+  decodeCapitalActivationRequestResult,
+  makeCapitalActivationRequest,
+  makeResearchCapitalActivationRequest,
+  makeResearchCapitalBuildContinuation,
+  makeResearchCapitalPlanHash,
+  researchCapitalBuildContinuationIsBound,
   researchCapitalGrantProof,
-  researchPaperGenerationIsBoundToRequest,
+  researchCapitalGenerationIsBoundToRequest,
   resolveExecutionPolicy,
 } from './configuration'
 
@@ -172,12 +172,12 @@ describe('execution policy configuration', () => {
       cutoffAt: '2026-07-28T08:00:00.000Z',
       expiresAt: '2026-07-28T09:30:00.000Z',
     }
-    const request = Result.getOrThrow(makePaperActivationRequest(material))
-    expect(decodePaperActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
-    expect(decodePaperActivationRequestResult({ ...request, requestHash: 'c'.repeat(64) })).toMatchObject({
+    const request = Result.getOrThrow(makeCapitalActivationRequest(material))
+    expect(decodeCapitalActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
+    expect(decodeCapitalActivationRequestResult({ ...request, requestHash: 'c'.repeat(64) })).toMatchObject({
       _tag: 'Failure',
     })
-    expect(decodePaperActivationRequestResult({ ...request, unexpected: true })).toMatchObject({ _tag: 'Failure' })
+    expect(decodeCapitalActivationRequestResult({ ...request, unexpected: true })).toMatchObject({ _tag: 'Failure' })
   })
 
   test('decodes a canonical research grant without qualification aliases', () => {
@@ -207,7 +207,7 @@ describe('execution policy configuration', () => {
       expiresAt: '2026-09-03T20:00:00.000Z',
       maximumCloseSessions: 3 as const,
     } as const
-    const planHash = Result.getOrThrow(makeResearchPaperPlanHash(plan))
+    const planHash = Result.getOrThrow(makeResearchCapitalPlanHash(plan))
     const { schemaVersion: _planSchemaVersion, ...planFields } = plan
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
@@ -232,35 +232,35 @@ describe('execution policy configuration', () => {
       }),
     )
     const request = Result.getOrThrow(
-      makeResearchPaperActivationRequest({
+      makeResearchCapitalActivationRequest({
         schemaVersion: 'bayn.paper-research-activation-request.v1',
         grant: { _tag: 'Research', planHash },
         ...planFields,
       }),
     )
-    expect(decodePaperActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
-    expect(decodePaperActivationRequestResult({ ...request, grant: { _tag: 'Qualified' } })).toMatchObject({
+    expect(decodeCapitalActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
+    expect(decodeCapitalActivationRequestResult({ ...request, grant: { _tag: 'Qualified' } })).toMatchObject({
       _tag: 'Failure',
     })
-    expect(decodePaperActivationRequestResult({ ...request, maximumCloseSessions: 4 })).toMatchObject({
+    expect(decodeCapitalActivationRequestResult({ ...request, maximumCloseSessions: 4 })).toMatchObject({
       _tag: 'Failure',
     })
     expect(
-      makeResearchPaperActivationRequest({
+      makeResearchCapitalActivationRequest({
         schemaVersion: 'bayn.paper-research-activation-request.v1',
         grant: { _tag: 'Research', planHash },
         ...planFields,
         cutoffAt: '2026-09-02T13:00:00.000Z',
       }),
-    ).toEqual(Result.fail('ResearchPaperPlanHashMismatch'))
+    ).toEqual(Result.fail('ResearchCapitalPlanHashMismatch'))
     expect(researchCapitalGrantProof(request)).toMatchObject({
       grant: request.grant,
       proofPlanHash: request.grant.planHash,
     })
-    expect(researchPaperGenerationIsBoundToRequest(request, sourceGenerationHash, generation)).toEqual(
+    expect(researchCapitalGenerationIsBoundToRequest(request, sourceGenerationHash, generation)).toEqual(
       Result.succeed(undefined),
     )
-    expect(researchPaperGenerationIsBoundToRequest(request, 'f'.repeat(64), generation)).toMatchObject({
+    expect(researchCapitalGenerationIsBoundToRequest(request, 'f'.repeat(64), generation)).toMatchObject({
       _tag: 'Failure',
     })
 
@@ -270,25 +270,25 @@ describe('execution policy configuration', () => {
       imageDigest: `sha256:${'c'.repeat(64)}`,
     }
     const continuation = Result.getOrThrow(
-      makeResearchPaperBuildContinuation({
+      makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
         request,
         generationHash: generation.generationHash,
         activation: currentActivation,
       }),
     )
-    expect(decodePaperActivationConfigurationResult(continuation)).toEqual(Result.succeed(continuation))
+    expect(decodeCapitalActivationConfigurationResult(continuation)).toEqual(Result.succeed(continuation))
     expect(
-      researchPaperBuildContinuationIsBound(continuation, sourceGenerationHash, generation, currentActivation),
+      researchCapitalBuildContinuationIsBound(continuation, sourceGenerationHash, generation, currentActivation),
     ).toEqual(Result.succeed(undefined))
     expect(
-      researchPaperBuildContinuationIsBound(continuation, sourceGenerationHash, generation, {
+      researchCapitalBuildContinuationIsBound(continuation, sourceGenerationHash, generation, {
         ...currentActivation,
         imageDigest: `sha256:${'d'.repeat(64)}`,
       }),
     ).toMatchObject({ _tag: 'Failure' })
     const wrongGenerationContinuation = Result.getOrThrow(
-      makeResearchPaperBuildContinuation({
+      makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
         request,
         generationHash: 'e'.repeat(64),
@@ -296,7 +296,7 @@ describe('execution policy configuration', () => {
       }),
     )
     expect(
-      researchPaperBuildContinuationIsBound(
+      researchCapitalBuildContinuationIsBound(
         wrongGenerationContinuation,
         sourceGenerationHash,
         generation,
@@ -304,18 +304,18 @@ describe('execution policy configuration', () => {
       ),
     ).toMatchObject({ _tag: 'Failure' })
     expect(
-      decodePaperActivationConfigurationResult({
+      decodeCapitalActivationConfigurationResult({
         ...continuation,
         generationHash: 'e'.repeat(64),
       }),
     ).toMatchObject({ _tag: 'Failure' })
     expect(
-      makeResearchPaperBuildContinuation({
+      makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
         request,
         generationHash: generation.generationHash,
         activation: { ...currentActivation, imageRepository: 'ghcr.io/other/bayn' },
       }),
-    ).toEqual(Result.fail('ResearchPaperBuildContinuationCanonicalizationFailed'))
+    ).toEqual(Result.fail('ResearchCapitalBuildContinuationCanonicalizationFailed'))
   })
 })
