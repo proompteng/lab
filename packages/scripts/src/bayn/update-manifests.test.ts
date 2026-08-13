@@ -86,7 +86,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     pin === null ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
     options.capitalActivationRequest === undefined
       ? ''
-      : `            - name: ${options.capitalActivationRequest === 'canonical' ? 'BAYN_CAPITAL_ACTIVATION_REQUEST' : 'BAYN_PAPER_ACTIVATION_REQUEST'}\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: paper-activation-request\n`,
+      : `            - name: ${options.capitalActivationRequest === 'canonical' ? 'BAYN_CAPITAL_ACTIVATION_REQUEST' : 'BAYN_PAPER_ACTIVATION_REQUEST'}\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: ${options.capitalActivationRequest === 'canonical' ? 'capital-activation-request' : 'paper-activation-request'}\n`,
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 

@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-13T00:03:42Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-13T02:54:02Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -51,7 +51,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 75cb3d19ab93bed5d35564423423d6f94bcc335d
+              value: bf16e466d98825d889a71675bcc8ba9458ab12b6
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -60,23 +60,22 @@ spec:
                   apiVersion: v1
                   fieldPath: metadata.namespace
             - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION
-              value: d63a3156e6a3da21b02edfec706f960f6c5c653c
+              value: 75cb3d19ab93bed5d35564423423d6f94bcc335d
             - name: BAYN_LIFECYCLE_OWNER
               value: RESTATE
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:3014b6495e19f6dabc93251389f8522776712b83faf274b77a9e4dfa89344bf3
+              value: sha256:a0b49f9c5a7a1ee7011dca5fa3ee8799d36924f4ec3e131397d108a1ddf35908
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9"
-            # Legacy env spelling remains until the promoted image understands the canonical name.
-            - name: BAYN_PAPER_ACTIVATION_REQUEST
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
                   name: bayn-alpaca-auth
-                  key: paper-activation-request
+                  key: capital-activation-request
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
             # sha256("bayn/authority-generation/autonomous-observe-v10")
