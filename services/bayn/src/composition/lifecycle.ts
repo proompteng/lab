@@ -24,6 +24,8 @@ import {
   type RecoveryFirstCycleDriverInterpreter,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
+import { notDueReconciliationError } from '../observe-composition/decision-builder'
+import type { ReconciliationPassError } from '../reconciler'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 
@@ -102,7 +104,7 @@ export const lifecycleMaintenanceCycle =
     plan: ApplicationPlanFor<'AutonomousService'>,
     store: LifecycleCommandStoreShape,
     writerFence: WriterFenceService,
-    maintainReconciliation: Effect.Effect<void>,
+    maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
     maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
     interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
@@ -121,7 +123,7 @@ export const lifecycleMaintenanceCycle =
           }),
         )
         const advance = operationPermit.withPermit(
-          maintainLifecycle.pipe(
+          runLifecycleMaintenanceAdvance(maintainReconciliation, maintainLifecycle).pipe(
             Effect.andThen(observeSuccess),
             Effect.catch((error) =>
               currentUtcInstant.pipe(
@@ -141,7 +143,20 @@ export const lifecycleMaintenanceCycle =
         )
         const driver: RecoveryFirstCycleDriver = {
           advance,
-          maintainReconciliation: operationPermit.withPermit(maintainReconciliation),
+          maintainReconciliation: operationPermit.withPermit(
+            maintainReconciliation.pipe(
+              Effect.mapError(lifecycleReconciliationError),
+              Effect.catch((error) =>
+                Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
+                  Effect.annotateLogs({
+                    operation: error.operation,
+                    failure: error.failure,
+                    reason: error.message,
+                  }),
+                ),
+              ),
+            ),
+          ),
           nextDelayMs,
           wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
         }
@@ -152,6 +167,22 @@ export const lifecycleMaintenanceCycle =
         )(driver)
       }),
     )
+
+const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
+  const converted = notDueReconciliationError(cause)
+  return new CycleRunnerError({
+    operation: 'reconcile-not-due',
+    failure: converted.failure,
+    message: converted.message,
+    cause: converted,
+  })
+}
+
+export const runLifecycleMaintenanceAdvance = (
+  maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
+  maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
+  maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError), Effect.andThen(maintainLifecycle))
 
 export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
   authority.maximum === Authority.Observe && authority.effective === Authority.Observe

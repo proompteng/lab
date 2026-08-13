@@ -74,6 +74,8 @@ import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
+import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
+import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
 
@@ -447,6 +449,48 @@ describe('Bayn application platform', () => {
 })
 
 describe('Bayn PAPER receipt retry boundary', () => {
+  test('reconciles before receipt maintenance and blocks finalization when reconciliation fails', async () => {
+    const events: string[] = []
+    const success = await Effect.runPromise(
+      runLifecycleMaintenanceAdvance(
+        Effect.sync(() => {
+          events.push('reconcile')
+        }),
+        Effect.sync(() => {
+          events.push('finalize')
+          return 'CONTINUE' as const
+        }),
+      ),
+    )
+
+    expect(success).toBe('CONTINUE')
+    expect(events).toEqual(['reconcile', 'finalize'])
+
+    let finalizationRuns = 0
+    const reconciliationFailure = new ReconciliationError({
+      operation: 'snapshot',
+      message: 'receipt reconciliation failed',
+    })
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runLifecycleMaintenanceAdvance(
+          Effect.fail(reconciliationFailure),
+          Effect.sync(() => {
+            finalizationRuns += 1
+            return 'CONTINUE' as const
+          }),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CycleRunnerError',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation failed: receipt reconciliation failed',
+    })
+    expect(finalizationRuns).toBe(0)
+  })
+
   test('does not bind a generation receipt before its PAPER entry cutoff', () => {
     const cutoffAt = '2026-08-03T12:00:00.000Z'
 

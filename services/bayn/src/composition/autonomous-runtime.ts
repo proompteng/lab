@@ -481,9 +481,6 @@ export const makeAutonomousServiceRuntime = (
                               // @effect-diagnostics-next-line strictEffectProvide:off -- value-only reconciliation services have no resource lifetime
                               Effect.provide(cycleResources),
                               Effect.asVoid,
-                              Effect.catch((cause) =>
-                                Effect.logError('Bayn receipt-finalization reconciliation guardian failed', cause),
-                              ),
                             )
                             const maintainLifecycle = runExecutionLifecycleMaintenance(
                               request,
