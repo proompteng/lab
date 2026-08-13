@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result } from 'effect'
+import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, ScopedRef } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { ApplicationPlanFor } from '../app'
@@ -28,6 +28,7 @@ import {
   makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
   makePublishedExecutionCycleDriverLive,
+  makeRecoveringManagedNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
   PublishedExecutionCycleDriver,
@@ -318,6 +319,72 @@ describe('native execution runtime', () => {
     await managed.dispose()
 
     expect(calls).toEqual(['restricted', 'observe'])
+  })
+
+  test('reacquires execution resources after a cold-start initialization failure', async () => {
+    let acquired = 0
+    let released = 0
+    const failure = new Error('transient dependency unavailable')
+    const readySlot = Effect.runSync(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+        yield* Deferred.succeed(ready, undefined)
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
+          ready,
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const executionResources = Layer.merge(
+      Layer.effect(
+        PublishedExecutionCycleDriver,
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            acquired += 1
+            return acquired
+          }),
+          () =>
+            Effect.sync(() => {
+              released += 1
+            }),
+        ).pipe(Effect.flatMap((attempt) => (attempt === 1 ? Effect.fail(failure) : Effect.succeed(readySlot)))),
+      ),
+      Layer.succeed(
+        ExecutionControllerStatusStore,
+        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+      ),
+    )
+    const hostRunner = {
+      runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
+        Effect.runPromise(effect, options),
+    }
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const managed = yield* ScopedRef.fromAcquire(
+            Effect.acquireRelease(
+              Effect.succeed(ManagedRuntime.make(executionResources)),
+              (runtime) => runtime.disposeEffect,
+            ),
+          )
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(managed, executionResources, hostRunner)
+          const first = yield* Effect.tryPromise({
+            try: () => runtime.advance(command, new AbortController().signal),
+            catch: (cause) => cause,
+          }).pipe(Effect.flip)
+          const second = yield* Effect.promise(() =>
+            runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
+          )
+          return { first, second }
+        }),
+      ),
+    )
+
+    expect(result.first).toBe(failure)
+    expect(result.second.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
+    expect(acquired).toBe(2)
+    expect(released).toBe(2)
   })
 
   test('fails initialization deterministically when preparation never publishes a driver', async () => {

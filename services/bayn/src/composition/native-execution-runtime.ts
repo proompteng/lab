@@ -1,4 +1,4 @@
-import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Ref, Result, Scope } from 'effect'
+import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Ref, Result, Scope, ScopedRef } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
@@ -356,21 +356,29 @@ export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'Auto
 
 type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
 
-export const makeManagedNativeExecutionRuntimeAdapter = <E>(
-  executionRunner: ManagedRuntime.ManagedRuntime<NativeExecutionManagedServices, E>,
-  logRunner: ExecutionEffectRunner,
-): NativeExecutionRuntime => ({
-  advance: (command, signal) =>
-    executionRunner.runPromise(
-      Effect.all({ driverSlot: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
-        Effect.flatMap(({ driverSlot, statusStore }) =>
-          readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
-            Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore)),
-          ),
+type NativeExecutionManagedRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | NativeExecutionManagedServices, E>
+
+const runManagedNativeExecutionAdvance = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  command: AdvanceExecutionCommand,
+  signal: AbortSignal,
+): Promise<ExecutionAdvanceStepResult> =>
+  executionRunner.runPromise(
+    Effect.all({ driverSlot: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
+      Effect.flatMap(({ driverSlot, statusStore }) =>
+        readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
+          Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore)),
         ),
       ),
-      { signal },
     ),
+    { signal },
+  )
+
+export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  logRunner: ExecutionEffectRunner,
+): NativeExecutionRuntime => ({
+  advance: (command, signal) => runManagedNativeExecutionAdvance(executionRunner, command, signal),
   log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
 })
 
@@ -378,6 +386,40 @@ const ownManagedRuntime = <R, E>(
   managed: ManagedRuntime.ManagedRuntime<R, E>,
 ): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
   Effect.acquireRelease(Effect.succeed(managed), (runtime) => runtime.disposeEffect)
+
+export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E>(
+  executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
+  executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
+  hostRunner: ExecutionEffectRunner,
+): NativeExecutionRuntime => {
+  const replaceFailedRuntime = (cause: unknown): Promise<never> =>
+    hostRunner
+      .runPromise(
+        ScopedRef.set(executionRuntimes, ownManagedRuntime(ManagedRuntime.make(executionResources))).pipe(
+          Effect.uninterruptible,
+        ),
+      )
+      .then(() => {
+        throw cause
+      })
+
+  return {
+    advance: (command, signal) => {
+      const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
+      return executionRunner
+        .runPromise(Effect.void, { signal })
+        .catch(replaceFailedRuntime)
+        .then(() =>
+          runManagedNativeExecutionAdvance(executionRunner, command, signal).catch((cause: unknown) =>
+            cause instanceof NativeExecutionRuntimeError && cause.operation === 'initialize'
+              ? replaceFailedRuntime(cause)
+              : Promise.reject(cause),
+          ),
+        )
+    },
+    log: (level, message, annotations) => hostRunner.runPromise(logEffect(level, message, annotations)),
+  }
+}
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -393,12 +435,12 @@ export const acquireNativeExecutionRuntime = (
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
-    const managed = yield* ownManagedRuntime(ManagedRuntime.make(executionResources))
+    const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )
     return {
       config,
-      runtime: makeManagedNativeExecutionRuntimeAdapter(managed, logManaged),
+      runtime: makeRecoveringManagedNativeExecutionRuntimeAdapter(managed, executionResources, logManaged),
     }
   })
