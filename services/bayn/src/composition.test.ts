@@ -21,6 +21,7 @@ import { TestClock } from 'effect/testing'
 
 import { config, fixtureRuntime, readyState } from './app-test-support'
 import {
+  advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
@@ -1265,6 +1266,33 @@ describe('Bayn capital startup recovery boundary', () => {
       expiredIntentCount: 0,
       terminalIntentCount: 1,
     })
+  })
+
+  test('exposes one bounded restricted recovery attempt to an external durable scheduler', async () => {
+    let advances = 0
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.sync(() => {
+          advances += 1
+          return 'recovered-once' as const
+        }),
+        Effect.fail(
+          new OperationalError({
+            component: 'strategy',
+            operation: 'terminal-generation-recovery',
+            message: 'blocked generation intent settlement failed',
+            retryable: false,
+            cause: new BlockedCycleIntentStoreError({
+              failure: 'invariant',
+              message: 'intent still requires broker recovery',
+            }),
+          }),
+        ),
+      ),
+    )
+
+    expect(waiting).toEqual({ _tag: 'Waiting', advance: 'recovered-once' })
+    expect(advances).toBe(1)
   })
 
   test('fails closed when restricted recovery cannot identify a generation to roll over', async () => {

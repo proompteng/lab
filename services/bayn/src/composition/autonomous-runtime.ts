@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Ref, Result, Scope } from 'effect'
+import { Deferred, Effect, Layer, Option, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
@@ -11,6 +11,7 @@ import {
   type AutonomousRuntimeResolver,
 } from '../app'
 import {
+  advanceRestrictedGenerationRecovery,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
   type TerminalGenerationRolloverReceipt,
@@ -700,15 +701,48 @@ export const makeAutonomousServiceRuntime = (
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
-                                      const recover: RecoveryFirstCycleDriverInterpreter = (driver) =>
-                                        recoverRestrictedGenerationBeforeRollover({
-                                          advance: driver.advance,
-                                          wait: driver.wait,
-                                          settle: recoverBlockedGeneration,
-                                        }).pipe(
-                                          Effect.asVoid,
-                                          Effect.catch((cause) => Effect.die(cause)),
-                                        )
+                                      const externalInterpreter = options.interpretCycleDriver
+                                      const recover: RecoveryFirstCycleDriverInterpreter =
+                                        externalInterpreter === undefined
+                                          ? (driver) =>
+                                              recoverRestrictedGenerationBeforeRollover({
+                                                advance: driver.advance,
+                                                wait: driver.wait,
+                                                settle: recoverBlockedGeneration,
+                                              }).pipe(
+                                                Effect.asVoid,
+                                                Effect.catch((cause) => Effect.die(cause)),
+                                              )
+                                          : (driver) =>
+                                              Deferred.make<void>().pipe(
+                                                Effect.flatMap((rolledOver) => {
+                                                  const externallyOwnedDriver = {
+                                                    ...driver,
+                                                    advance: advanceRestrictedGenerationRecovery(
+                                                      driver.advance,
+                                                      recoverBlockedGeneration,
+                                                    ).pipe(
+                                                      Effect.catch((cause) =>
+                                                        cause instanceof OperationalError
+                                                          ? Effect.die(cause)
+                                                          : Effect.fail(cause),
+                                                      ),
+                                                      Effect.tap((step) =>
+                                                        step._tag === 'RolledOver'
+                                                          ? Deferred.succeed(rolledOver, undefined)
+                                                          : Effect.void,
+                                                      ),
+                                                      Effect.map((step) => step.advance),
+                                                    ),
+                                                  }
+                                                  return Effect.raceFirst(
+                                                    externalInterpreter(externallyOwnedDriver).pipe(
+                                                      Effect.andThen(Effect.never),
+                                                    ),
+                                                    Deferred.await(rolledOver),
+                                                  )
+                                                }),
+                                              )
                                       return startCycle(
                                         {
                                           qualificationRunId: cycleBindingId,

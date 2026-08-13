@@ -1,4 +1,4 @@
-import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Result, Scope } from 'effect'
+import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Ref, Result, Scope } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
@@ -44,6 +44,11 @@ export type BoundRecoveryFirstCycleDriver = {
   readonly wait: (advance: RecoveryFirstCycleAdvance) => Effect.Effect<void>
 }
 
+export interface RecoveryFirstCycleDriverSlot {
+  readonly current: Ref.Ref<BoundRecoveryFirstCycleDriver | null>
+  readonly ready: Deferred.Deferred<void, NativeExecutionRuntimeError>
+}
+
 interface ExecutionEffectRunner {
   readonly runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) => Promise<A>
 }
@@ -82,6 +87,10 @@ export const executionControllerConfig = (
             ? (plan.config.execution.capitalAuthority.persistedGrantHash ?? null)
             : null,
       },
+      accounting: {
+        tigerBeetleClusterId: plan.config.tigerBeetle.clusterId.toString(),
+        tigerBeetleLedger: plan.config.tigerBeetle.ledger,
+      },
       cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
       operationTimeoutMs: plan.config.operationTimeoutMs,
@@ -109,17 +118,12 @@ const bindRecoveryFirstCycleDriver = (
   )
 
 export const captureRecoveryFirstCycleDriver =
-  (
-    target: Deferred.Deferred<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
-  ): RecoveryFirstCycleDriverInterpreter =>
+  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverInterpreter =>
   (driver) =>
     bindRecoveryFirstCycleDriver(driver).pipe(
-      Effect.flatMap((bound) => Deferred.succeed(target, bound)),
-      Effect.flatMap((captured) =>
-        captured
-          ? Effect.never
-          : Effect.die(new Error('native execution runtime attempted to publish more than one cycle driver')),
-      ),
+      Effect.tap((bound) => Ref.set(slot.current, bound)),
+      Effect.tap(() => Deferred.succeed(slot.ready, undefined)),
+      Effect.andThen(Effect.never),
     )
 
 const projectionFailure = (cause: unknown): TransientExecutionFailure =>
@@ -238,21 +242,21 @@ const logEffect = (
 }
 
 export const makeNativeExecutionRuntimeAdapter = (
-  driver: BoundRecoveryFirstCycleDriver,
+  driver: Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
   statusStore: ExecutionControllerStatusStoreShape,
   runner: ExecutionEffectRunner,
 ): NativeExecutionRuntime => ({
   advance: (command, signal) =>
-    runner.runPromise(executeNativeExecutionAdvance(command, driver, statusStore), { signal }),
+    runner.runPromise(
+      driver.pipe(Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore))),
+      { signal },
+    ),
   log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
 })
 
-const startRuntimePreparation = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  target: Deferred.Deferred<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
-) =>
+const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
-    interpretCycleDriver: captureRecoveryFirstCycleDriver(target),
+    interpretCycleDriver: captureRecoveryFirstCycleDriver(slot),
   }).pipe(
     Effect.flatMap(({ dependencies, runtime }) =>
       prepareAutonomousApplication(plan.config, plan.strategy, dependencies, runtime),
@@ -261,7 +265,7 @@ const startRuntimePreparation = (
       Fiber.await(cycleFiber).pipe(
         Effect.flatMap((exit) =>
           Deferred.fail(
-            target,
+            slot.ready,
             runtimeError('initialize', 'native execution cycle stopped before the worker was disposed', exit),
           ),
         ),
@@ -271,7 +275,7 @@ const startRuntimePreparation = (
     Effect.scoped,
     Effect.catchCause((cause) =>
       Deferred.fail(
-        target,
+        slot.ready,
         runtimeError('initialize', 'native execution runtime failed before publishing its cycle driver', cause),
       ).pipe(Effect.asVoid),
     ),
@@ -290,15 +294,24 @@ export const acquireScopedManagedRuntime = <R, E>(
   })
 
 export const awaitNativeExecutionRuntimeDriver = (
-  target: Deferred.Deferred<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
+  slot: RecoveryFirstCycleDriverSlot,
   operationTimeoutMs: number,
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
-  Deferred.await(target).pipe(
+  Deferred.await(slot.ready).pipe(
     Effect.timeoutOrElse({
       duration: nativeExecutionRuntimeInitializationTimeoutMs(operationTimeoutMs),
       orElse: () =>
         Effect.fail(runtimeError('initialize', 'native execution runtime did not publish its cycle driver in time')),
     }),
+    Effect.andThen(
+      Ref.get(slot.current).pipe(
+        Effect.flatMap((driver) =>
+          driver === null
+            ? Effect.fail(runtimeError('initialize', 'native execution runtime signaled readiness without a driver'))
+            : Effect.succeed(driver),
+        ),
+      ),
+    ),
   )
 
 export const acquireNativeExecutionRuntime = (
@@ -311,10 +324,13 @@ export const acquireNativeExecutionRuntime = (
       ExecutionControllerStatusResourceLive(plan.config),
       makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
     )
-    const driverReady = yield* Deferred.make<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>()
+    const driverSlot: RecoveryFirstCycleDriverSlot = {
+      current: yield* Ref.make<BoundRecoveryFirstCycleDriver | null>(null),
+      ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+    }
     const managed = ManagedRuntime.make(resources)
-    yield* acquireScopedManagedRuntime(managed, startRuntimePreparation(plan, driverReady))
-    const driver = yield* awaitNativeExecutionRuntimeDriver(driverReady, plan.config.operationTimeoutMs)
+    yield* acquireScopedManagedRuntime(managed, startRuntimePreparation(plan, driverSlot))
+    yield* awaitNativeExecutionRuntimeDriver(driverSlot, plan.config.operationTimeoutMs)
     const context = yield* Effect.tryPromise({
       try: () => managed.context(),
       catch: (cause) => runtimeError('initialize', 'native execution runtime resources failed to initialize', cause),
@@ -322,6 +338,16 @@ export const acquireNativeExecutionRuntime = (
     const statusStore = Context.get(context, ExecutionControllerStatusStore)
     return {
       config,
-      runtime: makeNativeExecutionRuntimeAdapter(driver, statusStore, managed),
+      runtime: makeNativeExecutionRuntimeAdapter(
+        Ref.get(driverSlot.current).pipe(
+          Effect.flatMap((driver) =>
+            driver === null
+              ? Effect.fail(runtimeError('initialize', 'native execution runtime driver is unavailable'))
+              : Effect.succeed(driver),
+          ),
+        ),
+        statusStore,
+        managed,
+      ),
     }
   })
