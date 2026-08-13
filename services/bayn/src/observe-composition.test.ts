@@ -4243,6 +4243,65 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationEvents).not.toContain('publication:3')
     expect(mutationEvents.filter((event) => event.startsWith('publication:'))).toHaveLength(2)
 
+    const externalTimeoutObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reconciledAt))
+        const maintenanceEntered = yield* Deferred.make<void>()
+        const externalTimeoutStartup = makeMutationAutonomousCycleStartup({
+          accountId,
+          authorityGenerationHash: generationHash,
+          pollIntervalMs: 100,
+          reconciliationIntervalMs: 100,
+          reconciliationPassTimeoutMs: 50,
+          strategy: fixtureRuntime,
+          executionProgram: sandboxExecutionProgram(),
+          beforeLifecycleAdvance: Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never)),
+          interpretCycleDriver: (driver) =>
+            Effect.gen(function* () {
+              const advance = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
+              yield* Deferred.await(maintenanceEntered)
+              yield* TestClock.adjust(50)
+              yield* Fiber.join(advance).pipe(Effect.orDie)
+            }),
+        })
+        const loop = yield* externalTimeoutStartup({
+          qualificationRunId: 'c'.repeat(64),
+          recordPass: (observation) =>
+            Effect.sync(() => {
+              externalTimeoutObservations.push(observation)
+            }),
+        })
+        yield* loop.pipe(
+          Effect.provideService(BrokerRead, brokerRead),
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(MarketData, missingPublicationMarketData),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
+          Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(IntentStore, intentStore),
+          Effect.provideService(MutationStore, mutationStore),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(externalTimeoutObservations).toEqual([
+      expect.objectContaining({
+        result: 'FAILURE',
+        operation: 'run-cycle-pass',
+        failure: 'operational',
+        message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
+      }),
+    ])
+    expect(authorityRestrictions).toBe(1)
+    authorityRestrictions = 0
+
     mutationEvents.length = 0
     mutationReconciliations = 0
     publicationReads = 0

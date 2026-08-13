@@ -107,7 +107,7 @@ export const boundedReconciliationPass = (
     }),
   )
 
-const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerError =>
+export const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerError =>
   new CycleRunnerError({
     operation: 'run-cycle-pass',
     failure: 'operational',
