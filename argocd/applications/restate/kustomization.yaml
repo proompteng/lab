@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: restate
 resources:
   - serviceaccount.yaml
+  - request-identity-sealedsecret.yaml
   - service-cluster.yaml
   - service.yaml
   - admin-tailscale-service.yaml

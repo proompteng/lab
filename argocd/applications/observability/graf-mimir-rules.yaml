@@ -2719,6 +2719,44 @@ data:
                 Batch runs are reporting market-closed skips during expected market-open windows.
                 Validate Torghut trading status probe semantics and pre-open probe contracts.
               runbook_url: docs/runbooks/torghut-market-context-ingest.md
+      - name: restate-control-plane.rules
+        rules:
+          - alert: RestateServerMetricsUnavailable
+            expr: |
+              absent(up{job="restate-server", namespace="restate", service="restate"})
+              or
+              up{job="restate-server", namespace="restate", service="restate"} != 1
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate server metrics are unavailable
+              description: The Restate NodeCtl metrics endpoint has not been reachable for two minutes.
+          - alert: RestateOperatorMetricsUnavailable
+            expr: |
+              absent(up{job="restate-operator", namespace="restate-operator", service="restate-operator"})
+              or
+              up{job="restate-operator", namespace="restate-operator", service="restate-operator"} != 1
+            for: 2m
+            labels:
+              severity: critical
+              service: restate-operator
+              notify: email
+            annotations:
+              summary: Restate Operator metrics are unavailable
+              description: The pinned Restate Operator metrics endpoint has not been reachable for two minutes.
+          - alert: RestateOperatorCRDMissing
+            expr: restate_operator_crd_missing > 0
+            for: 5m
+            labels:
+              severity: critical
+              service: restate-operator
+              notify: email
+            annotations:
+              summary: Restate Operator is waiting for a required CRD
+              description: At least one operator controller has been unable to discover its required CRD for five minutes.
       - name: bayn-cycle-operations.rules
         rules:
           - alert: BaynMetricsUnavailable
