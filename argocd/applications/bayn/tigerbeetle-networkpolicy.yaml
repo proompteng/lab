@@ -18,6 +18,9 @@ spec:
               app.kubernetes.io/name: bayn
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/instance: ledger
         - namespaceSelector:
             matchLabels:

@@ -13,6 +13,9 @@ resources:
   - tigerbeetle-networkpolicy.yaml
   - egress-proxy.yaml
   - deployment.yaml
+  - execution-bootstrap-sealedsecret.yaml
+  - execution-controller.yaml
+  - execution-controller-networkpolicy.yaml
   - lifecycle-current.yaml
   - lifecycle-previous.yaml
   - service.yaml
