@@ -86,14 +86,14 @@ describe('Bayn lifecycle release manifests', () => {
     )
 
     expect(parseBaynLifecycleCurrent(current)).toEqual({
+      sourceSha: 'bf16e466d98825d889a71675bcc8ba9458ab12b6',
+      tag: 'sha-bf16e466d98825d889a71675bcc8ba9458ab12b6',
+      digest: 'sha256:a0b49f9c5a7a1ee7011dca5fa3ee8799d36924f4ec3e131397d108a1ddf35908',
+    })
+    expect(parseBaynLifecyclePrevious(previous)).toEqual({
       sourceSha: '75cb3d19ab93bed5d35564423423d6f94bcc335d',
       tag: 'sha-75cb3d19ab93bed5d35564423423d6f94bcc335d',
       digest: 'sha256:3014b6495e19f6dabc93251389f8522776712b83faf274b77a9e4dfa89344bf3',
-    })
-    expect(parseBaynLifecyclePrevious(previous)).toEqual({
-      sourceSha: 'd63a3156e6a3da21b02edfec706f960f6c5c653c',
-      tag: 'sha-d63a3156e6a3da21b02edfec706f960f6c5c653c',
-      digest: 'sha256:158297d021a893a151ef61c75e6db6f581c3da1776b5724c6455f9fd0b604131',
     })
     expect(baynLifecycleIsActive(kustomization)).toBeTrue()
     expect(() => validateBaynLifecycleCommandPort(deployment)).not.toThrow()
