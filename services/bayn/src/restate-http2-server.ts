@@ -39,10 +39,12 @@ const listen = (
       server.off('error', onError)
       resume(Effect.succeed({ server, sessions, onSession }))
     }
+    // Node emits listening and asynchronous bind errors after listen returns. Invoke it before installing callbacks so
+    // a synchronous argument or state defect cannot strand listeners that Effect never had a chance to finalize.
+    server.listen(port)
     server.on('session', onSession)
     server.once('error', onError)
     server.once('listening', onListening)
-    server.listen(port)
     return Effect.sync(() => {
       server.off('error', onError)
       server.off('listening', onListening)

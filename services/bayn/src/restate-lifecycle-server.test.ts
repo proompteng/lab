@@ -5,7 +5,7 @@ import { createServer as createHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Effect, Fiber, Result } from 'effect'
+import { Cause, Effect, Exit, Fiber, Result } from 'effect'
 
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
@@ -13,7 +13,7 @@ import {
   makeBaynLifecycleBootstrap,
   type LifecycleCommandClient,
 } from './restate-lifecycle-controller'
-import { acquireRestateHttp2Server } from './restate-http2-server'
+import { acquireRestateHttp2Server, RestateHttp2ServerError } from './restate-http2-server'
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -86,7 +86,62 @@ class PendingHttp2Server extends EventEmitter {
   }
 }
 
+class DefectiveHttp2Server extends PendingHttp2Server {
+  constructor(private readonly defect: Error) {
+    super()
+  }
+
+  override listen(): this {
+    this.listenCount += 1
+    throw this.defect
+  }
+}
+
 describe('Bayn Restate lifecycle HTTP/2 server', () => {
+  test('preserves a typed asynchronous listen failure and its cause while removing callbacks', async () => {
+    const server = new PendingHttp2Server()
+    const cause = new Error('port already in use')
+
+    const failure = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const acquisition = yield* acquireRestateHttp2Server(
+            server as unknown as Parameters<typeof acquireRestateHttp2Server>[0],
+            9080,
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          server.emit('error', cause)
+          return yield* Fiber.join(acquisition).pipe(Effect.flip)
+        }),
+      ),
+    )
+
+    expect(failure).toBeInstanceOf(RestateHttp2ServerError)
+    expect(failure).toMatchObject({ message: 'Restate endpoint failed to listen', cause })
+    expect(server.listenerCount('error')).toBe(0)
+    expect(server.listenerCount('listening')).toBe(0)
+    expect(server.listenerCount('session')).toBe(0)
+  })
+
+  test('propagates a synchronous listen defect without retaining callbacks', async () => {
+    const defect = new Error('invalid listen state')
+    const server = new DefectiveHttp2Server(defect)
+
+    const exit = await Effect.runPromise(
+      Effect.scoped(
+        acquireRestateHttp2Server(server as unknown as Parameters<typeof acquireRestateHttp2Server>[0], 9080),
+      ).pipe(Effect.exit),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      expect(Cause.hasDies(exit.cause)).toBe(true)
+      expect(Cause.pretty(exit.cause)).toContain(defect.message)
+    }
+    expect(server.listenerCount('error')).toBe(0)
+    expect(server.listenerCount('listening')).toBe(0)
+    expect(server.listenerCount('session')).toBe(0)
+  })
+
   test('cancels a pending listen without retaining callbacks or accepting a later session', async () => {
     const server = new PendingHttp2Server()
 
