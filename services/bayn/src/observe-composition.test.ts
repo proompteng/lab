@@ -65,7 +65,7 @@ import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
   buildMutationShadowCycleDecision,
-  buildClosingPaperCycleDecision,
+  buildClosingExecutionCycleDecision,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
@@ -80,7 +80,7 @@ import {
   mutationRecoveryIsDue,
   mutationIntentReconciliationDelayMs,
   executionSubmitExpiresAt,
-  paperMutationSubmissionAllowed,
+  executionMutationSubmissionAllowed,
   executionCycleHasFilledIntent,
   executionClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
@@ -90,7 +90,7 @@ import {
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,
   recoveryFirstCycleNextDelayMs,
-  terminalizeBlockedPaperCycle,
+  terminalizeBlockedExecutionCycle,
 } from './observe-composition'
 import {
   AccountStatus,
@@ -135,7 +135,7 @@ test('external lifecycle ownership never schedules past the reconciliation caden
 
 test('PAPER submissions obey separate entry and final close-session cutoffs', () => {
   expect(
-    paperMutationSubmissionAllowed({
+    executionMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: false,
       executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
@@ -143,7 +143,7 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     }),
   ).toBe(true)
   expect(
-    paperMutationSubmissionAllowed({
+    executionMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: false,
       executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
@@ -151,7 +151,7 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     }),
   ).toBe(false)
   expect(
-    paperMutationSubmissionAllowed({
+    executionMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: true,
       executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
@@ -160,7 +160,7 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     }),
   ).toBe(true)
   expect(
-    paperMutationSubmissionAllowed({
+    executionMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: true,
       executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
@@ -1539,7 +1539,7 @@ describe('OBSERVE runtime composition', () => {
     )
     expect(failure).toMatchObject({
       failure: 'contract',
-      message: 'lookup-only PAPER recovery lost its durable submit evidence',
+      message: 'lookup-only execution recovery lost its durable submit evidence',
     })
     const cancelFailure = await Effect.runPromise(
       Effect.flip(
@@ -1550,7 +1550,7 @@ describe('OBSERVE runtime composition', () => {
     )
     expect(cancelFailure).toMatchObject({
       failure: 'contract',
-      message: 'lookup-only PAPER recovery lost its durable cancel evidence',
+      message: 'lookup-only execution recovery lost its durable cancel evidence',
     })
     expect(submits).toBe(0)
     expect(cancels).toBe(0)
@@ -1680,7 +1680,7 @@ describe('OBSERVE runtime composition', () => {
 
     expect(failure).toMatchObject({
       failure: 'contract',
-      message: 'fresh PAPER submit crossed its immutable submission cutoff before broker I/O',
+      message: 'fresh broker submit crossed its immutable submission cutoff before broker I/O',
     })
     expect(submits).toBe(0)
   })
@@ -1801,7 +1801,7 @@ describe('OBSERVE runtime composition', () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* terminalizeBlockedPaperCycle(
+        return yield* terminalizeBlockedExecutionCycle(
           fixture.boundCycle,
           {
             _tag: 'Block',
@@ -1866,7 +1866,7 @@ describe('OBSERVE runtime composition', () => {
 
     const failure = await Effect.runPromise(
       Effect.flip(
-        terminalizeBlockedPaperCycle(
+        terminalizeBlockedExecutionCycle(
           fixture.boundCycle,
           {
             _tag: 'Block',
@@ -1885,7 +1885,7 @@ describe('OBSERVE runtime composition', () => {
 
     expect(failure).toMatchObject({
       failure: 'store',
-      message: 'blocked PAPER cycle finalization failed',
+      message: 'blocked execution cycle finalization failed',
     })
     expect(restrictions).toBe(0)
   })
@@ -2525,7 +2525,7 @@ describe('OBSERVE runtime composition', () => {
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
-          return yield* buildClosingPaperCycleDecision({
+          return yield* buildClosingExecutionCycleDecision({
             input: fixture.input,
             preparation: fixture.preparation,
             policy: fixture.policy,
@@ -2706,7 +2706,7 @@ describe('OBSERVE runtime composition', () => {
     const close = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* buildClosingPaperCycleDecision({
+        return yield* buildClosingExecutionCycleDecision({
           input: fixture.input,
           preparation: fixture.preparation,
           policy: fixture.policy,

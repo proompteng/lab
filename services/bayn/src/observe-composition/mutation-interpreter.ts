@@ -10,7 +10,7 @@ import { currentUtcInstant } from '../time'
 import { decideMutationIntentSettlement, type MutationIntentExecutionResult } from './mutation-decisions'
 import { Pipeable } from '../pipeable'
 
-export type PaperMutationExecutor<E, R> = {
+export type ExecutionMutationExecutor<E, R> = {
   readonly submit?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
@@ -44,7 +44,7 @@ const restrictMutationAuthorityDataFirst = (
       .pipe(
         Effect.mapError((cause) =>
           mutationRunnerError({
-            message: 'authority restriction failed after a bound PAPER cycle failure',
+            message: 'authority restriction failed after a bound execution cycle failure',
             cause: { subject, reason, cause },
             failure: 'store',
           }),
@@ -63,7 +63,7 @@ const submitDoesNotRequireRecovery = (eventType: MutationEvent['eventType']): bo
   eventType === MutationEventType.SubmitRejected || eventType === MutationEventType.SubmitDenied
 
 export interface ExecuteMutationIntentInput<E, R> {
-  readonly executor: PaperMutationExecutor<E, R>
+  readonly executor: ExecutionMutationExecutor<E, R>
   readonly intentId: string
   readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
   readonly submitExpiresAt?: string | undefined
@@ -90,14 +90,14 @@ export const executeMutationIntentWithExecutor = <E, R>(
     if (existing === undefined) {
       if (action !== 'SUBMIT') {
         return yield* mutationRunnerError({
-          message: `lookup-only PAPER recovery lost its durable ${operation.toLowerCase()} evidence`,
+          message: `lookup-only execution recovery lost its durable ${operation.toLowerCase()} evidence`,
           cause: { intentId, action, operation },
           failure: 'contract',
         })
       }
       if (submitExpiresAt === undefined) {
         return yield* mutationRunnerError({
-          message: 'fresh PAPER submit is missing its immutable submission cutoff',
+          message: 'fresh broker submit is missing its immutable submission cutoff',
           cause: undefined,
           failure: 'contract',
         })
@@ -105,21 +105,21 @@ export const executeMutationIntentWithExecutor = <E, R>(
       const submitObservedAt = yield* now
       if (submitObservedAt >= submitExpiresAt) {
         return yield* mutationRunnerError({
-          message: 'fresh PAPER submit crossed its immutable submission cutoff before broker I/O',
+          message: 'fresh broker submit crossed its immutable submission cutoff before broker I/O',
           cause: { intentId, submitObservedAt, submitExpiresAt },
           failure: 'contract',
         })
       }
       if (executor.submit === undefined) {
         return yield* mutationRunnerError({
-          message: 'fresh PAPER submit is unavailable under OBSERVE recovery-only authority',
+          message: 'fresh broker submit is unavailable under OBSERVE recovery-only authority',
           cause: undefined,
           failure: 'contract',
         })
       }
       event = yield* executor
         .submit(intentId, mutationConsistencyDelayMs)
-        .pipe(Effect.mapError((cause) => mutationRunnerError({ message: 'guarded PAPER submit failed', cause })))
+        .pipe(Effect.mapError((cause) => mutationRunnerError({ message: 'guarded broker submit failed', cause })))
     } else if (operation === MutationOperation.Submit && submitDoesNotRequireRecovery(existing.eventType)) {
       event = existing
     } else {
@@ -127,14 +127,14 @@ export const executeMutationIntentWithExecutor = <E, R>(
         .recover(intentId, operation)
         .pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: `lookup-only PAPER ${operation.toLowerCase()} recovery failed`, cause }),
+            mutationRunnerError({ message: `lookup-only execution ${operation.toLowerCase()} recovery failed`, cause }),
           ),
         )
     }
     const settlement = decideMutationIntentSettlement(event.eventType)
     if (settlement._tag === 'Unresolved') {
       return yield* mutationRunnerError({
-        message: `guarded PAPER submit remains unresolved at ${settlement.eventType}`,
+        message: `guarded broker submit remains unresolved at ${settlement.eventType}`,
         cause: event,
         failure: 'operational',
       })

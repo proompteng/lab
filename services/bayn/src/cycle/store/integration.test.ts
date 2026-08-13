@@ -74,7 +74,7 @@ import {
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
   prepareObserveStartup,
-  terminalizeBlockedPaperCycle,
+  terminalizeBlockedExecutionCycle,
   type ObserveDecisionFailure,
 } from '../../observe-composition'
 import {
@@ -4018,7 +4018,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `
 
           const terminalization = yield* Effect.exit(
-            terminalizeBlockedPaperCycle(
+            terminalizeBlockedExecutionCycle(
               bound.cycle,
               {
                 _tag: 'Block',
@@ -4045,7 +4045,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             unfinished.intent.intentId,
             'cancel-unknown',
           )
-          const committed = yield* terminalizeBlockedPaperCycle(
+          const committed = yield* terminalizeBlockedExecutionCycle(
             bound.cycle,
             {
               _tag: 'Block',
@@ -4157,7 +4157,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       if (Exit.isFailure(result.terminalization)) {
         expect(Cause.squash(result.terminalization.cause)).toMatchObject({
           failure: 'store',
-          message: 'blocked PAPER cycle finalization failed',
+          message: 'blocked execution cycle finalization failed',
         })
       }
       expect(result.authorityAfterRejectedBlock).toEqual({
