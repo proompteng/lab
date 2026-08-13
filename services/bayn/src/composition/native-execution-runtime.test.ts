@@ -21,6 +21,27 @@ const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
 const completedAt = '2026-08-13T18:00:00.000Z'
 
+const marketDataBinding = {
+  snapshotId: hash('8'),
+  publicationAsOf: '2026-08-12',
+  calendarVersion: 'xnys-2026-v1',
+  bounds: {
+    schemaVersion: 'bayn.evaluation-bounds.v1' as const,
+    dataStart: '2020-01-01',
+    dataEnd: '2026-08-12',
+    lookbackStart: '2025-01-01',
+    evaluationStart: '2026-01-01',
+    evaluationEnd: '2026-08-12',
+  },
+}
+
+type PlanOverrides = {
+  readonly imageDigest?: string
+  readonly cyclePollIntervalMs?: number
+  readonly qualificationRunId?: string
+  readonly marketDataBinding?: typeof marketDataBinding
+}
+
 const command: AdvanceExecutionCommand = {
   controllerKey: hash('1'),
   epoch: 4,
@@ -61,10 +82,7 @@ const statusStore = (
   read: () => Effect.succeed(null),
 })
 
-const plan = (
-  imageDigest = `sha256:${hash('3')}`,
-  cyclePollIntervalMs = 30_000,
-): ApplicationPlanFor<'AutonomousService'> =>
+const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousService'> =>
   ({
     _tag: 'AutonomousService',
     config: {
@@ -73,9 +91,11 @@ const plan = (
         authorityGenerationHash: hash('4'),
         reconciliationIntervalMs: 30_000,
       },
-      build: { sourceRevision, imageDigest },
+      build: { sourceRevision, imageDigest: overrides.imageDigest ?? `sha256:${hash('3')}` },
+      qualificationRunId: overrides.qualificationRunId ?? hash('9'),
+      clickhouse: overrides.marketDataBinding ?? marketDataBinding,
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
-      cyclePollIntervalMs,
+      cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
       operationTimeoutMs: 30_000,
     },
     strategy: {
@@ -92,18 +112,37 @@ const plan = (
   }) as ApplicationPlanFor<'AutonomousService'>
 
 describe('native execution runtime', () => {
-  test('binds controller identity to account, image, source, strategy, authority, and cadence', () => {
+  test('binds controller identity to code, authority, qualification, market data, and cadence', () => {
     const first = executionControllerConfig(plan())
     const replay = executionControllerConfig(plan())
-    const newImage = executionControllerConfig(plan(`sha256:${hash('8')}`))
-    const newCadence = executionControllerConfig(plan(`sha256:${hash('3')}`, 60_000))
+    const changedPlans = [
+      plan({ imageDigest: `sha256:${hash('a')}` }),
+      plan({ cyclePollIntervalMs: 60_000 }),
+      plan({ qualificationRunId: hash('a') }),
+      plan({ marketDataBinding: { ...marketDataBinding, snapshotId: hash('b') } }),
+      plan({ marketDataBinding: { ...marketDataBinding, publicationAsOf: '2026-08-13' } }),
+      plan({ marketDataBinding: { ...marketDataBinding, calendarVersion: 'xnys-2026-v2' } }),
+      ...Object.keys(marketDataBinding.bounds).map((field) =>
+        plan({
+          marketDataBinding: {
+            ...marketDataBinding,
+            bounds: {
+              ...marketDataBinding.bounds,
+              [field]: `${marketDataBinding.bounds[field as keyof typeof marketDataBinding.bounds]}-changed`,
+            },
+          },
+        }),
+      ),
+    ].map(executionControllerConfig)
 
     expect(Result.isSuccess(first)).toBe(true)
     expect(replay).toEqual(first)
-    if (Result.isFailure(first) || Result.isFailure(newImage) || Result.isFailure(newCadence)) return
+    if (Result.isFailure(first)) return
     expect(first.success.controllerKey).toBe(command.controllerKey)
-    expect(first.success.planHash).not.toBe(newImage.success.planHash)
-    expect(first.success.planHash).not.toBe(newCadence.success.planHash)
+    for (const changed of changedPlans) {
+      expect(Result.isSuccess(changed)).toBe(true)
+      if (Result.isSuccess(changed)) expect(first.success.planHash).not.toBe(changed.success.planHash)
+    }
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })
 

@@ -65,6 +65,13 @@ export const executionControllerConfig = (
       imageDigest: plan.config.build.imageDigest,
       strategy: plan.strategy.provenance.strategy,
       strategyProtocolHash: plan.strategyProtocolHash,
+      qualificationRunId: plan.config.qualificationRunId ?? null,
+      marketData: {
+        snapshotId: plan.config.clickhouse.snapshotId,
+        publicationAsOf: plan.config.clickhouse.publicationAsOf,
+        calendarVersion: plan.config.clickhouse.calendarVersion,
+        bounds: plan.config.clickhouse.bounds,
+      },
       capitalActivationRequestHash: sha256(plan.config.capitalActivationRequestJson ?? ''),
       authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
       cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
