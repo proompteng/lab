@@ -71,6 +71,7 @@ spec:
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9"
+            # Legacy env spelling remains until the promoted image understands the canonical name.
             - name: BAYN_PAPER_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:

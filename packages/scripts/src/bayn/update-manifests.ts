@@ -54,7 +54,7 @@ export interface BaynManifestUpdate {
   readonly promotionReason:
     | 'eligible'
     | 'strategy-identity-change-requires-fresh-snapshot'
-    | 'research-paper-activation-refresh-required'
+    | 'research-capital-activation-refresh-required'
   readonly qualificationMode: 'preserve' | 'replace' | 'install' | 'research'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -86,7 +86,7 @@ const environmentValue = (deployment: string, name: string): string => {
 }
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
-const paperActivationRequest = /            - name: BAYN_PAPER_ACTIVATION_REQUEST\n/
+const capitalActivationRequest = /            - name: BAYN_(?:CAPITAL|PAPER)_ACTIVATION_REQUEST\n/
 const qualificationIdentityNames = [
   'BAYN_SIGNAL_SNAPSHOT_ID',
   'BAYN_SIGNAL_PUBLICATION_ASOF',
@@ -180,7 +180,7 @@ const transitionQualificationPin = (
   if (mode === 'replace') return hadQualificationPin ? deployment.replace(qualificationPin, '') : deployment
   if (mode === 'research') {
     if (hadQualificationPin || acceptedQualificationRunId !== undefined) {
-      throw new Error('research PAPER release cannot carry qualification state')
+      throw new Error('research capital release cannot carry qualification state')
     }
     return deployment
   }
@@ -224,9 +224,11 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
-  const paperActivationRequests = [...deployment.matchAll(new RegExp(paperActivationRequest.source, 'g'))]
-  if (paperActivationRequests.length > 1) throw new Error('expected at most one BAYN_PAPER_ACTIVATION_REQUEST block')
-  const hasPaperActivationRequest = paperActivationRequests.length === 1
+  const capitalActivationRequests = [...deployment.matchAll(new RegExp(capitalActivationRequest.source, 'g'))]
+  if (capitalActivationRequests.length > 1) {
+    throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST or legacy activation request block')
+  }
+  const hasCapitalActivationRequest = capitalActivationRequests.length === 1
   const deployedQualificationRunId = hadQualificationPin
     ? environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID')
     : null
@@ -262,8 +264,8 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error('an accepted qualification pin cannot be rebound to different strategy or runtime identity')
   }
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
-    if (hasPaperActivationRequest) {
-      throw new Error('qualification installation cannot reuse a configured PAPER activation request')
+    if (hasCapitalActivationRequest) {
+      throw new Error('qualification installation cannot reuse a configured capital activation request')
     }
     if (hadQualificationPin) {
       throw new Error('qualification installation requires an already-deployed unpinned runtime')
@@ -277,13 +279,13 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       throw new Error('qualification installation must pin the exact deployed source, image, strategy, and runtime')
     }
   }
-  const researchPaperRelease =
-    !hadQualificationPin && hasPaperActivationRequest && acceptedQualificationRunId === undefined
-  if (researchPaperRelease && (!strategyIdentityMatches || !candidateRuntimeMatchesDeployment)) {
-    throw new Error('a research PAPER release cannot change strategy or runtime identity')
+  const researchCapitalRelease =
+    !hadQualificationPin && hasCapitalActivationRequest && acceptedQualificationRunId === undefined
+  if (researchCapitalRelease && (!strategyIdentityMatches || !candidateRuntimeMatchesDeployment)) {
+    throw new Error('a research capital release cannot change strategy or runtime identity')
   }
   const unpinnedCandidateReplay =
-    !hadQualificationPin && !hasPaperActivationRequest && acceptedQualificationRunId === undefined
+    !hadQualificationPin && !hasCapitalActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
     (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
@@ -291,7 +293,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
   }
   let qualificationMode: BaynManifestUpdate['qualificationMode']
-  if (researchPaperRelease) {
+  if (researchCapitalRelease) {
     qualificationMode = 'research'
   } else if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
     qualificationMode = 'install'
@@ -329,17 +331,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       ...updateDetails,
     }
   }
-  if (researchPaperRelease && !activationBuildMatches) {
+  if (researchCapitalRelease && !activationBuildMatches) {
     return {
       promotionAction: 'hold',
-      promotionReason: 'research-paper-activation-refresh-required',
+      promotionReason: 'research-capital-activation-refresh-required',
       ...updateDetails,
     }
   }
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
-  if (researchPaperRelease || unpinnedCandidateReplay) {
+  if (researchCapitalRelease || unpinnedCandidateReplay) {
     return {
       promotionAction: 'promote',
       promotionReason: 'eligible',
