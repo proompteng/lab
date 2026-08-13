@@ -20,7 +20,7 @@ const command = {
 const observation = {
   result: 'SUCCESS' as const,
   outcome: 'NOT_DUE' as const,
-  notDueReason: CycleNotDueReason.StalePaperBootstrap,
+  notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
   observedAt: '2026-08-10T20:00:01.000Z',
 }
 
@@ -237,7 +237,7 @@ describe('Bayn lifecycle command execution', () => {
             sourceRevision: 'b'.repeat(40),
             replayed: false,
             nextDelayMs: 30_000,
-            observation,
+            observation: { ...observation, notDueReason: 'STALE_PAPER_BOOTSTRAP' },
           })
           expect(calls.map(({ operation }) => operation)).toEqual(['begin', 'advance', 'complete'])
           expect(calls[0]?.input).toEqual({
@@ -316,6 +316,10 @@ describe('Bayn lifecycle command execution', () => {
           expect(responses.map((response) => response.status)).toEqual([200, 200])
           expect(advanceCount).toBe(1)
           expect(bodies.map((body) => body.replayed)).toEqual([false, true])
+          expect(bodies.map((body) => body.observation.notDueReason)).toEqual([
+            'STALE_PAPER_BOOTSTRAP',
+            'STALE_PAPER_BOOTSTRAP',
+          ])
         }),
       ),
     )

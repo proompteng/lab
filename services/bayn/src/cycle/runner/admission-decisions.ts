@@ -43,9 +43,9 @@ type CycleCalendarCandidateFailure =
       readonly cause: CycleConstructionFailure
     }
 
-const stalePaperBootstrapResult = (material: CycleAcquireMaterial, observedAt: string): CycleNotDueResult => ({
+const staleExecutionBootstrapResult = (material: CycleAcquireMaterial, observedAt: string): CycleNotDueResult => ({
   outcome: 'NOT_DUE',
-  reason: CycleNotDueReason.StalePaperBootstrap,
+  reason: CycleNotDueReason.StaleExecutionBootstrap,
   signalSessionDate: material.signalSessionDate,
   executionSessionDate: material.executionSessionDate,
   observedAt,
@@ -58,8 +58,8 @@ export const selectCycleAcquisition = (
   material: CycleAcquireMaterial,
   acquiredAt: string,
 ): CycleCalendarCandidateDecision =>
-  cadence === 'PAPER_BOOTSTRAP' && acquiredAt >= material.draft.window.publicationDeadlineAt
-    ? { _tag: 'NOT_DUE', result: stalePaperBootstrapResult(material, acquiredAt) }
+  cadence === 'CAPITAL_BOOTSTRAP' && acquiredAt >= material.draft.window.publicationDeadlineAt
+    ? { _tag: 'NOT_DUE', result: staleExecutionBootstrapResult(material, acquiredAt) }
     : { _tag: 'ACQUIRE', material }
 
 const selectCycleCalendarPublication = <R>(
@@ -68,7 +68,7 @@ const selectCycleCalendarPublication = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
-  knownMissedPaperBootstrap: boolean,
+  knownMissedCapitalBootstrap: boolean,
 ): Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure> => {
   const candidate: CycleCandidate = {
     qualificationRunId: context.qualificationRunId,
@@ -102,8 +102,8 @@ const selectCycleCalendarPublication = <R>(
         }
       }
       const material = { publication, draft, ...common }
-      if (context.cadence === 'PAPER_BOOTSTRAP' && knownMissedPaperBootstrap) {
-        return { _tag: 'NOT_DUE', result: stalePaperBootstrapResult(material, observedAt) }
+      if (context.cadence === 'CAPITAL_BOOTSTRAP' && knownMissedCapitalBootstrap) {
+        return { _tag: 'NOT_DUE', result: staleExecutionBootstrapResult(material, observedAt) }
       }
       return selectCycleAcquisition(context.cadence, material, observedAt)
     },
@@ -116,7 +116,7 @@ const selectCycleCalendarCandidateDataFirst = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
-  knownMissedPaperBootstrap = false,
+  knownMissedCapitalBootstrap = false,
 ): Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure> => {
   const [first, ...remaining] = publications
   return remaining.reduce<Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>>(
@@ -133,7 +133,7 @@ const selectCycleCalendarCandidateDataFirst = <R>(
                   observation,
                   calendarReadContentHash,
                   observedAt,
-                  knownMissedPaperBootstrap,
+                  knownMissedCapitalBootstrap,
                 ),
                 Result.map((next) => (next._tag === 'ACQUIRE' ? next : current)),
               ),
@@ -145,7 +145,7 @@ const selectCycleCalendarCandidateDataFirst = <R>(
       observation,
       calendarReadContentHash,
       observedAt,
-      knownMissedPaperBootstrap,
+      knownMissedCapitalBootstrap,
     ),
   )
 }

@@ -165,7 +165,7 @@ export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Resul
     : Result.fail(
         snapshotFailure(
           'AccountBaselineMissing',
-          'paper account has fill history before Bayn established an opening cash baseline',
+          'broker account has fill history before Bayn established an opening cash baseline',
         ),
       )
 

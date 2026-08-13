@@ -484,7 +484,7 @@ describe('paper reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'snapshot',
-      message: 'paper account has fill history before Bayn established an opening cash baseline',
+      message: 'broker account has fill history before Bayn established an opening cash baseline',
       failure: {
         _tag: 'Snapshot',
         reason: 'AccountBaselineMissing',
@@ -538,7 +538,7 @@ describe('paper reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'normalization',
-      message: `paper execution requires extended hours disabled for ${malformedOrder.brokerOrderId}`,
+      message: `execution requires extended hours disabled for ${malformedOrder.brokerOrderId}`,
       failure: {
         _tag: 'Normalization',
         stage: 'order',

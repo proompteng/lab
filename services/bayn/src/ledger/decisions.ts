@@ -191,7 +191,7 @@ const accountReconciliationQueriesDataFirst = (
       ledgerValidationError({
         operation: 'verify-account',
         reason: 'batch-limit',
-        message: 'paper account exceeds the exact reconciliation limit',
+        message: 'broker account exceeds the exact reconciliation limit',
         material: {
           accountCount: plan.accounts.length,
           transferCount: plan.transfers.length,
@@ -236,7 +236,7 @@ const assembleAccountPlanDataFirst = (
       return failLedgerValidation({
         operation: 'build-account-reconciliation',
         reason: 'wrong-account',
-        detail: `accounting plan does not belong to paper account ${accountId}`,
+        detail: `accounting plan does not belong to broker account ${accountId}`,
         material: {
           accountId,
           planRunKey: plan.runKey,

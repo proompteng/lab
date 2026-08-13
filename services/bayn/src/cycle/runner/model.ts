@@ -22,7 +22,7 @@ export class CycleNotDueReconciliationError extends Data.TaggedError('CycleNotDu
 
 export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
-  readonly cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
+  readonly cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
@@ -34,7 +34,7 @@ export interface CycleRunContext<R = never> {
 
 export interface CycleCandidate {
   readonly qualificationRunId: string
-  readonly cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
+  readonly cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly signalSession: SignalCycleSession
@@ -43,7 +43,7 @@ export interface CycleCandidate {
 
 export enum CycleNotDueReason {
   MonthEndCadence = 'MONTH_END_CADENCE',
-  StalePaperBootstrap = 'STALE_PAPER_BOOTSTRAP',
+  StaleExecutionBootstrap = 'STALE_CAPITAL_BOOTSTRAP',
 }
 
 export type CycleBindingResult = Exclude<CyclePublicationReadiness, { readonly outcome: 'WAITING' }>

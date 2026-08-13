@@ -16,6 +16,10 @@ import {
 import {
   executionActivationExpiredRestrictionReason,
   executionEpisodeCompletedRestrictionReason,
+  executionEpisodeFailureRestrictionPrefix,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyExecutionEpisodeCompletedRestrictionReason,
+  legacyExecutionEpisodeFailureRestrictionPrefix,
 } from '../../execution/episode'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
@@ -241,11 +245,14 @@ const makeObserveAuthorityInterpreterDataFirst = (
             state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
             AND (
-              state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
+              OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
               OR (
                 state.reason IN (
                   ${executionEpisodeCompletedRestrictionReason},
-                  ${executionActivationExpiredRestrictionReason}
+                  ${executionActivationExpiredRestrictionReason},
+                  ${legacyExecutionEpisodeCompletedRestrictionReason},
+                  ${legacyExecutionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
                   SELECT 1
@@ -362,11 +369,14 @@ const makeObserveAuthorityInterpreterDataFirst = (
                 state.effective = 'OBSERVE'
                 AND state.kill_state = 'ACTIVE'
                 AND (
-                  state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                  state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
+                  OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
                   OR (
                     state.reason IN (
                       ${executionEpisodeCompletedRestrictionReason},
-                      ${executionActivationExpiredRestrictionReason}
+                      ${executionActivationExpiredRestrictionReason},
+                      ${legacyExecutionEpisodeCompletedRestrictionReason},
+                      ${legacyExecutionActivationExpiredRestrictionReason}
                     )
                     AND EXISTS (
                       SELECT 1

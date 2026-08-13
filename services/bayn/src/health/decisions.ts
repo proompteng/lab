@@ -91,7 +91,7 @@ export const projectResearchCapitalBootstrapWaiting = (
     status.mutations.unresolvedCount !== 0 ||
     lastPass?.result !== 'SUCCESS' ||
     lastPass.outcome !== 'NOT_DUE' ||
-    lastPass.notDueReason !== CycleNotDueReason.StalePaperBootstrap ||
+    lastPass.notDueReason !== CycleNotDueReason.StaleExecutionBootstrap ||
     !observesMissedOrNewerBootstrap(last, cadence)
   ) {
     return status
@@ -99,7 +99,7 @@ export const projectResearchCapitalBootstrapWaiting = (
   return {
     ...status,
     condition: CycleOperationsCondition.Waiting,
-    reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+    reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
     alerts: { ...status.alerts, cycleFailed: false },
   }
 }

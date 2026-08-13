@@ -312,7 +312,7 @@ describe('paper broker observations', () => {
     })
     const unsupported = failure(orderObservation({ ...order, orderType: AlpacaOrderType.Stop }, evidence))
     expect(unsupported).toEqual({ _tag: 'UnsupportedOrderType', value: AlpacaOrderType.Stop })
-    expect(renderBrokerObservationError(unsupported)).toBe('unsupported paper order type stop')
+    expect(renderBrokerObservationError(unsupported)).toBe('unsupported broker order type stop')
 
     expect(failure(orderObservation({ ...order, filledQuantityMicros: '+1' }, evidence))).toEqual({
       _tag: 'FilledQuantityInvalid',

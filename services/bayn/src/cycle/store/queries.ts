@@ -22,11 +22,11 @@ export interface CycleQueries {
     scope: CycleRecoveryScope,
   ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
   readonly decisionEvidenceMatches: (document: CycleDecisionDocument) => Effect.Effect<boolean, CycleStoreInternalError>
-  readonly paperCompletionEvidenceMatches: (
+  readonly executionCompletionEvidenceMatches: (
     document: ExecutionDecisionDocument,
     observedAt: string,
   ) => Effect.Effect<boolean, CycleStoreInternalError>
-  readonly paperGenerationIsSuperseded: (
+  readonly executionGenerationIsSuperseded: (
     document: ExecutionDecisionDocument,
   ) => Effect.Effect<boolean, CycleStoreInternalError>
 }
@@ -110,8 +110,8 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       Effect.map((rows) =>
         rows.map(({ document, paper_completion_evidence_matches, paper_generation_is_superseded }) =>
           attachCycleDecisionStoreEvidence(document, {
-            paperCompletionEvidenceMatches: paper_completion_evidence_matches,
-            paperGenerationIsSuperseded: paper_generation_is_superseded,
+            executionCompletionEvidenceMatches: paper_completion_evidence_matches,
+            executionGenerationIsSuperseded: paper_generation_is_superseded,
           }),
         ),
       ),
@@ -250,7 +250,10 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       Effect.map(([match]) => match.matches),
     )
 
-  const paperCompletionEvidenceMatches: CycleQueries['paperCompletionEvidenceMatches'] = (document, observedAt) =>
+  const executionCompletionEvidenceMatches: CycleQueries['executionCompletionEvidenceMatches'] = (
+    document,
+    observedAt,
+  ) =>
     sql<Record<string, unknown>>`
       SELECT paper_cycle_completion_evidence_matches(
         ${document.bindings.cycleId},
@@ -262,7 +265,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       Effect.map(([match]) => match.matches),
     )
 
-  const paperGenerationIsSuperseded: CycleQueries['paperGenerationIsSuperseded'] = (document) =>
+  const executionGenerationIsSuperseded: CycleQueries['executionGenerationIsSuperseded'] = (document) =>
     sql<Record<string, unknown>>`
       SELECT paper_cycle_generation_is_superseded(
         ${document.bindings.cycleId},
@@ -279,7 +282,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
     selectDecisionDocuments,
     selectOldestUnfinishedCycle,
     decisionEvidenceMatches,
-    paperCompletionEvidenceMatches,
-    paperGenerationIsSuperseded,
+    executionCompletionEvidenceMatches,
+    executionGenerationIsSuperseded,
   }
 }

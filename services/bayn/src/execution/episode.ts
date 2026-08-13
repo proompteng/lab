@@ -152,7 +152,12 @@ export interface ExecutionEpisodeAuthorityFacts {
   readonly reason?: string
 }
 
-export const executionEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
+export const executionCycleRestrictionSubject = 'execution cycle loop'
+export const executionEpisodeRestrictionSubject = 'execution episode'
+export const executionActivationRestrictionSubject = 'execution activation lease'
+export const executionEpisodeFailureRestrictionPrefix = `${executionCycleRestrictionSubject} restricted effective authority:`
+export const legacyExecutionEpisodeFailureRestrictionPrefix =
+  'PAPER autonomous cycle loop restricted effective authority:'
 export const legacyExecutionEpisodeFailureRestrictionPattern =
   '^bound PAPER cycle [0-9a-f]{64} restricted effective authority: intent [0-9a-f]{64} (submit settled (denied|rejected)|ended (BLOCKED|CANCELED|EXPIRED|REJECTED|without outcome))$'
 const legacyExecutionEpisodeFailureRestriction = new RegExp(legacyExecutionEpisodeFailureRestrictionPattern)
@@ -160,11 +165,14 @@ const legacyExecutionEpisodeFailureRestriction = new RegExp(legacyExecutionEpiso
 /** Accepts only system-authored failure restrictions; operator kills and malformed legacy reasons stay fail-closed. */
 export const isExecutionEpisodeFailureRestriction = (reason: string | undefined): boolean =>
   reason?.startsWith(executionEpisodeFailureRestrictionPrefix) === true ||
+  reason?.startsWith(legacyExecutionEpisodeFailureRestrictionPrefix) === true ||
   (reason !== undefined && legacyExecutionEpisodeFailureRestriction.test(reason))
 
-export const executionEpisodeCompletedRestrictionReason =
+export const executionEpisodeCompletedRestrictionReason = `${executionEpisodeRestrictionSubject} restricted effective authority: flat exact receipt finalized`
+export const legacyExecutionEpisodeCompletedRestrictionReason =
   'PAPER episode restricted effective authority: flat exact receipt finalized'
-export const executionActivationExpiredRestrictionReason =
+export const executionActivationExpiredRestrictionReason = `${executionActivationRestrictionSubject} restricted effective authority: immutable activation request expired`
+export const legacyExecutionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
 
 export type ExecutionEpisodeAuthorityDecision =

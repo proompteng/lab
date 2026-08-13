@@ -286,14 +286,14 @@ export const decideCompletion = Pipeable.dual(3, decideCompletionDataFirst)
 const validateCompletionDocumentDataFirst = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
-  paperCompletionEvidenceMatches?: boolean,
+  executionCompletionEvidenceMatches?: boolean,
 ): Result.Result<void, CycleStoreDecisionFailure> => {
   const storedDocument = storedDocuments[0]
   const completionEvidenceMatches =
-    paperCompletionEvidenceMatches ??
+    executionCompletionEvidenceMatches ??
     (storedDocument === undefined
       ? false
-      : cycleDecisionStoreEvidence(storedDocument)?.paperCompletionEvidenceMatches === true)
+      : cycleDecisionStoreEvidence(storedDocument)?.executionCompletionEvidenceMatches === true)
   const expectedStatus = decision.state === CycleState.Completed ? TargetPlanStatus.Planned : TargetPlanStatus.NoTrade
   return storedDocuments.length === 1 &&
     storedDocument !== undefined &&
@@ -308,7 +308,7 @@ const validateCompletionDocumentDataFirst = (
 export const validateCompletionDocument = Pipeable.by<
   (
     storedDocuments: readonly CycleDecisionDocument[],
-    paperCompletionEvidenceMatches?: boolean,
+    executionCompletionEvidenceMatches?: boolean,
   ) => (
     decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
   ) => ReturnType<typeof validateCompletionDocumentDataFirst>,
@@ -352,14 +352,14 @@ export const decideBlock = Pipeable.dual(3, decideBlockDataFirst)
 const validateBlockedDecisionDataFirst = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
-  paperGenerationIsSuperseded?: boolean,
+  executionGenerationIsSuperseded?: boolean,
 ): Result.Result<void, CycleStoreDecisionFailure> => {
   const storedDocument = storedDocuments[0]
   const generationIsSuperseded =
-    paperGenerationIsSuperseded ??
+    executionGenerationIsSuperseded ??
     (storedDocument === undefined
       ? false
-      : cycleDecisionStoreEvidence(storedDocument)?.paperGenerationIsSuperseded === true)
+      : cycleDecisionStoreEvidence(storedDocument)?.executionGenerationIsSuperseded === true)
   if (
     storedDocuments.length !== 1 ||
     storedDocument === undefined ||
@@ -387,16 +387,16 @@ const validateBlockedDecisionDataFirst = (
     }
     return fail(
       'invariant',
-      'planned PAPER cycle may block only from exact durable risk failure or submission expiry evidence',
+      'planned execution cycle may block only from exact durable risk failure or submission expiry evidence',
     )
   }
-  return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired PAPER decision')
+  return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired execution decision')
 }
 
 export const validateBlockedDecision = Pipeable.by<
   (
     storedDocuments: readonly CycleDecisionDocument[],
-    paperGenerationIsSuperseded?: boolean,
+    executionGenerationIsSuperseded?: boolean,
   ) => (
     decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
   ) => ReturnType<typeof validateBlockedDecisionDataFirst>,

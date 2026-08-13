@@ -514,7 +514,7 @@ const sandboxExecutionProgram = (
   }
 }
 
-const paperLifecycleFixture = async (
+const executionLifecycleFixture = async (
   transformPolicy: (policy: Policy) => Policy = (policy) => policy,
   strategyDecision: DecisionPlan = decision,
 ) => {
@@ -662,8 +662,8 @@ const storedIntent = (
   updatedAt,
 })
 
-const prepareStoredPaperStep = async (
-  fixture: Awaited<ReturnType<typeof paperLifecycleFixture>>,
+const prepareStoredExecutionStep = async (
+  fixture: Awaited<ReturnType<typeof executionLifecycleFixture>>,
   record: StoredIntent,
   latest: MutationEvent | undefined,
   observedAt: string,
@@ -829,7 +829,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('continues to the next approved intent while an earlier acknowledged order is stably open', async () => {
-    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const fixture = await executionLifecycleFixture((policy) => policy, partialFillDecision)
     const first = fixture.intents[0]
     const second = fixture.intents[1]
     const secondRisk = fixture.document.deltaRisk[1]
@@ -867,7 +867,7 @@ describe('OBSERVE runtime composition', () => {
       [second.intentId, undefined],
     ])
 
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       firstRecord,
       accepted,
@@ -894,7 +894,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('defers an expired untouched remainder while an earlier acknowledged order is stably open', async () => {
-    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const fixture = await executionLifecycleFixture((policy) => policy, partialFillDecision)
     const first = fixture.intents[0]
     const second = fixture.intents[1]
     if (first === undefined || second === undefined) {
@@ -919,7 +919,7 @@ describe('OBSERVE runtime composition', () => {
     const firstRecord = storedIntent(first, IntentState.Acknowledged, accepted.occurredAt)
     const secondRecord = storedIntent(second, IntentState.Approved, accepted.occurredAt)
 
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       firstRecord,
       accepted,
@@ -946,7 +946,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('uses a settled unsuccessful predecessor instead of an expired untouched remainder as the terminal cause', async () => {
-    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const fixture = await executionLifecycleFixture((policy) => policy, partialFillDecision)
     const first = fixture.intents[0]
     const second = fixture.intents[1]
     if (first === undefined || second === undefined) {
@@ -960,7 +960,7 @@ describe('OBSERVE runtime composition', () => {
     )
     const secondRecord = storedIntent(second, IntentState.Approved, fixture.document.createdAt)
 
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       firstRecord,
       undefined,
@@ -1126,7 +1126,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('chooses cancellation recovery before submit recovery and fresh-policy gates', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const event = (operation: MutationOperation, eventType: MutationEventType): MutationEvent => ({
       schemaVersion: 'bayn.paper-mutation-event.v1',
       eventId: canonicalHashV1({ operation, eventType, intentId: fixture.intent.intentId }),
@@ -1151,7 +1151,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('keeps OBSERVE recovery-only execution lookup-capable while fresh submit remains structurally unavailable', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const occurredAt = fixture.document.createdAt
     const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const submitUnknown: MutationEvent = {
@@ -1176,7 +1176,7 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'recovery-only-order',
     }
 
-    const recovery = await prepareStoredPaperStep(
+    const recovery = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
       submitUnknown,
@@ -1596,7 +1596,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('keeps an accepted pending intent lookup-recoverable after its immutable submission cutoff', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const afterCutoff = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Acknowledged, fixture.document.createdAt)
     const accepted: MutationEvent = {
@@ -1613,7 +1613,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: fixture.document.createdAt,
     }
 
-    const step = await prepareStoredPaperStep(fixture, record, accepted, afterCutoff)
+    const step = await prepareStoredExecutionStep(fixture, record, accepted, afterCutoff)
 
     expect(step).toEqual({
       _tag: 'Execute',
@@ -1624,7 +1624,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('keeps an unknown submit lookup-recoverable after its immutable submission cutoff', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const afterCutoff = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Unknown, fixture.document.createdAt)
     const unknown: MutationEvent = {
@@ -1640,7 +1640,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: fixture.document.createdAt,
     }
 
-    const step = await prepareStoredPaperStep(fixture, record, unknown, afterCutoff, 1)
+    const step = await prepareStoredExecutionStep(fixture, record, unknown, afterCutoff, 1)
 
     expect(step).toEqual({
       _tag: 'Execute',
@@ -1651,7 +1651,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('never creates a fresh submit POST once the immutable cutoff is reached', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     let submits = 0
     const program: ExecutionProgram = {
       ...sandboxExecutionProgram(),
@@ -1686,7 +1686,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('binds a real PAPER risk rejection and terminalizes it without intent or broker work', async () => {
-    const fixture = await paperLifecycleFixture((policy) => ({
+    const fixture = await executionLifecycleFixture((policy) => ({
       ...policy,
       maxOrderNotionalMicros: '1',
     }))
@@ -1706,17 +1706,17 @@ describe('OBSERVE runtime composition', () => {
     expect(fixture.document.deltaRisk).toHaveLength(1)
     expect(fixture.document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Blocked)
     const attached = attachCycleDecisionStoreEvidence(fixture.document, {
-      paperCompletionEvidenceMatches: false,
-      paperGenerationIsSuperseded: true,
+      executionCompletionEvidenceMatches: false,
+      executionGenerationIsSuperseded: true,
     })
     expect(Reflect.ownKeys(attached)).toEqual(Reflect.ownKeys(fixture.document))
     expect(Result.isSuccess(decodeExecutionDecisionDocument(attached))).toBe(true)
     expect(cycleDecisionStoreEvidence(attached)).toEqual({
-      paperCompletionEvidenceMatches: false,
-      paperGenerationIsSuperseded: true,
+      executionCompletionEvidenceMatches: false,
+      executionGenerationIsSuperseded: true,
     })
 
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Planned, fixture.document.createdAt),
       undefined,
@@ -1735,7 +1735,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('atomically persists a risk-blocked cycle before restricting PAPER authority', async () => {
-    const fixture = await paperLifecycleFixture((policy) => ({
+    const fixture = await executionLifecycleFixture((policy) => ({
       ...policy,
       maxOrderNotionalMicros: '1',
     }))
@@ -1776,7 +1776,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.sync(() => {
           events.push('restrict')
           expect(reason).toBe(
-            `PAPER autonomous cycle loop restricted effective authority: bound cycle ${fixture.boundCycle.identity.cycleId} blocked: BLOCKED_RISK`,
+            `execution cycle loop restricted effective authority: bound cycle ${fixture.boundCycle.identity.cycleId} blocked: BLOCKED_RISK`,
           )
           expect(updatedAt).toBe(observedAt)
         }),
@@ -1824,7 +1824,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('does not restrict PAPER authority when the causal cycle block is rejected', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const observedAt = fixture.document.submissionCutoffAt
     const unused = Effect.die(new Error('failed PAPER terminalization used an unrelated store operation'))
     let restrictions = 0
@@ -1891,7 +1891,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
     expect(riskExpiresAt < fixture.document.submissionCutoffAt).toBe(true)
     expect(expiredExecutionPlanTerminalReason(riskExpiresAt, riskExpiresAt, fixture.document.submissionCutoffAt)).toBe(
@@ -1906,7 +1906,7 @@ describe('OBSERVE runtime composition', () => {
     ).toBe(CycleTerminalReason.MissedSubmission)
 
     const record = storedIntent(fixture.intent, IntentState.Approved, fixture.document.createdAt)
-    const step = await prepareStoredPaperStep(fixture, record, undefined, riskExpiresAt)
+    const step = await prepareStoredExecutionStep(fixture, record, undefined, riskExpiresAt)
 
     expect(step).toEqual({
       _tag: 'Block',
@@ -1915,8 +1915,8 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('terminalizes an uncommitted PAPER intent at approval expiry before any durable commit', async () => {
-    const fixture = await paperLifecycleFixture()
+  test('terminalizes an uncommitted execution intent at approval expiry before any durable commit', async () => {
+    const fixture = await executionLifecycleFixture()
     const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
     let reads = 0
     let commits = 0
@@ -1924,7 +1924,7 @@ describe('OBSERVE runtime composition', () => {
       commit: () =>
         Effect.sync(() => {
           commits += 1
-          throw new Error('expired uncommitted PAPER intent must not reach durable commit')
+          throw new Error('expired uncommitted execution intent must not reach durable commit')
         }),
       read: () =>
         Effect.sync(() => {
@@ -1981,8 +1981,8 @@ describe('OBSERVE runtime composition', () => {
     expect(commits).toBe(0)
   })
 
-  test('terminalizes a superseded PAPER generation after proving no mutation exists', async () => {
-    const fixture = await paperLifecycleFixture()
+  test('terminalizes a superseded execution generation after proving no mutation exists', async () => {
+    const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1)
     let intentReads = 0
     let mutationReads = 0
@@ -1991,7 +1991,7 @@ describe('OBSERVE runtime composition', () => {
       commit: () =>
         Effect.sync(() => {
           commits += 1
-          throw new Error('superseded PAPER generation must not commit an intent')
+          throw new Error('superseded execution generation must not commit an intent')
         }),
       read: () =>
         Effect.sync(() => {
@@ -2016,7 +2016,7 @@ describe('OBSERVE runtime composition', () => {
           policy: fixture.policy,
           cycle: fixture.boundCycle,
           document: fixture.document,
-          reconcile: Effect.die(new Error('superseded PAPER generation must not reconcile or read the broker')),
+          reconcile: Effect.die(new Error('superseded execution generation must not reconcile or read the broker')),
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -2045,7 +2045,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('recovers superseded accepted and unknown submits and cancellations before provenance blocking', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const occurredAt = fixture.document.createdAt
     const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
@@ -2095,7 +2095,7 @@ describe('OBSERVE runtime composition', () => {
       eventType: MutationEventType.RecoveryFound,
     }
 
-    const acceptedStep = await prepareStoredPaperStep(
+    const acceptedStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
       accepted,
@@ -2107,7 +2107,7 @@ describe('OBSERVE runtime composition', () => {
       true,
       driftedPolicy,
     )
-    const unknownStep = await prepareStoredPaperStep(
+    const unknownStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
       unknown,
@@ -2119,7 +2119,7 @@ describe('OBSERVE runtime composition', () => {
       true,
       driftedPolicy,
     )
-    const cancelAcceptedStep = await prepareStoredPaperStep(
+    const cancelAcceptedStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
       accepted,
@@ -2131,7 +2131,7 @@ describe('OBSERVE runtime composition', () => {
       true,
       driftedPolicy,
     )
-    const cancelUnknownStep = await prepareStoredPaperStep(
+    const cancelUnknownStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
       unknown,
@@ -2143,7 +2143,7 @@ describe('OBSERVE runtime composition', () => {
       true,
       driftedPolicy,
     )
-    const settledSubmitStep = await prepareStoredPaperStep(
+    const settledSubmitStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled),
       accepted,
@@ -2155,7 +2155,7 @@ describe('OBSERVE runtime composition', () => {
       true,
       driftedPolicy,
     )
-    const settledCancelStep = await prepareStoredPaperStep(
+    const settledCancelStep = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled),
       accepted,
@@ -2214,7 +2214,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('recovers old-policy mutation work before rejecting fresh work under the current policy', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const occurredAt = fixture.document.createdAt
     const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const driftedPolicy: Policy = {
@@ -2235,7 +2235,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt,
     }
 
-    const recovery = await prepareStoredPaperStep(
+    const recovery = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
       accepted,
@@ -2301,13 +2301,13 @@ describe('OBSERVE runtime composition', () => {
     expect(freshFailure).toMatchObject({
       _tag: 'CycleRunnerError',
       failure: 'contract',
-      message: 'current source-controlled PAPER risk policy changed from the durable decision binding',
+      message: 'current source-controlled execution risk policy changed from the durable decision binding',
     })
     expect(commits).toBe(0)
   })
 
   test('recovers old execution-model mutations before gating fresh submission on the current model', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const occurredAt = fixture.document.createdAt
     const observedAt = utcInstantFromEpochMillis(Date.parse(occurredAt) + 1_000)
     const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
@@ -2335,7 +2335,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt,
     }
 
-    const recovery = await prepareStoredPaperStep(
+    const recovery = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
       accepted,
@@ -2348,7 +2348,7 @@ describe('OBSERVE runtime composition', () => {
       fixture.policy,
       driftedPreparation,
     )
-    const terminalization = await prepareStoredPaperStep(
+    const terminalization = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled),
       accepted,
@@ -2429,7 +2429,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('terminalizes a known rejected PAPER intent without waiting for cutoff', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const rejectedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     expect(rejectedAt < fixture.risk.evaluation.decision.expiresAt).toBe(true)
     const record = storedIntent(fixture.intent, IntentState.Terminal, rejectedAt, TerminalOutcome.Rejected)
@@ -2450,7 +2450,7 @@ describe('OBSERVE runtime composition', () => {
     }
     const restrictions: { readonly reason: string; readonly updatedAt: string }[] = []
 
-    const step = await prepareStoredPaperStep(fixture, record, rejected, rejectedAt, 0, (reason, updatedAt) =>
+    const step = await prepareStoredExecutionStep(fixture, record, rejected, rejectedAt, 0, (reason, updatedAt) =>
       restrictions.push({ reason, updatedAt }),
     )
 
@@ -2467,7 +2467,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('builds a deterministic close from persisted entry binding when signal services are unavailable', async () => {
-    const fixture = await paperLifecycleFixture((policy) => ({
+    const fixture = await executionLifecycleFixture((policy) => ({
       ...policy,
       maxBrokerStateAgeMs: 3_600_000,
       maxMarketDataAgeMs: 3_600_000,
@@ -2620,8 +2620,8 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('keeps a rejected PAPER close intent recoverable while reconciliation still shows an open position', async () => {
-    const fixture = await paperLifecycleFixture()
+  test('keeps a rejected execution close intent recoverable while reconciliation still shows an open position', async () => {
+    const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const rejected: MutationEvent = {
@@ -2640,7 +2640,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: observedAt,
     }
     const restrictions: string[] = []
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected),
       rejected,
@@ -2681,7 +2681,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('continues to an unsubmitted later close intent after an earlier close rejection', async () => {
-    const fixture = await paperLifecycleFixture(
+    const fixture = await executionLifecycleFixture(
       (policy) => ({
         ...policy,
         maxBrokerStateAgeMs: 3_600_000,
@@ -2786,7 +2786,7 @@ describe('OBSERVE runtime composition', () => {
       [secondIntent.intentId, undefined],
     ])
     const restrictions: string[] = []
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       records.get(firstIntent.intentId) as StoredIntent,
       rejected,
@@ -2821,7 +2821,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('keeps a partially filled PAPER cycle recoverable until its close phase', async () => {
-    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const fixture = await executionLifecycleFixture((policy) => policy, partialFillDecision)
     const filledIntent = fixture.intents[0]
     const rejectedIntent = fixture.intents[1]
     if (filledIntent === undefined || rejectedIntent === undefined) {
@@ -2860,7 +2860,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: observedAt,
     }
     const restrictions: string[] = []
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       filledRecord,
       accepted,
@@ -2888,7 +2888,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('keeps a single canceled partial-fill PAPER intent recoverable before cutoff', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const cutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
@@ -2922,7 +2922,7 @@ describe('OBSERVE runtime composition', () => {
     }
     const restrictions: string[] = []
 
-    const step = await prepareStoredPaperStep(
+    const step = await prepareStoredExecutionStep(
       fixture,
       record,
       accepted,
@@ -2946,7 +2946,7 @@ describe('OBSERVE runtime composition', () => {
 
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(cutoffAt) + 60_000)
     const closeRestrictions: string[] = []
-    const closeStep = await prepareStoredPaperStep(
+    const closeStep = await prepareStoredExecutionStep(
       fixture,
       record,
       accepted,
@@ -2974,7 +2974,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('completes a filled PAPER cycle after a later exact post-cutoff reconciliation', async () => {
-    const fixture = await paperLifecycleFixture()
+    const fixture = await executionLifecycleFixture()
     const terminalAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const reconciledLaterAt = utcInstantFromEpochMillis(Date.parse(terminalAt) + 1_000)
     const record = storedIntent(fixture.intent, IntentState.Terminal, terminalAt, TerminalOutcome.Filled)
@@ -2992,7 +2992,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: terminalAt,
     }
 
-    const step = await prepareStoredPaperStep(fixture, record, accepted, reconciledLaterAt)
+    const step = await prepareStoredExecutionStep(fixture, record, accepted, reconciledLaterAt)
 
     expect(step).toEqual({ _tag: 'Complete', observedAt: reconciledLaterAt })
     const completion = Result.getOrThrow(decideCompletion(fixture.boundCycle, CycleState.Completed, reconciledLaterAt))

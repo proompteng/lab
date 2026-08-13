@@ -120,6 +120,8 @@ import { Journal, JournalLive } from './ledger'
 import { MarketData, MarketDataLive } from './market-data'
 import {
   decideExecutionEpisodeAuthority,
+  executionActivationRestrictionSubject,
+  executionEpisodeRestrictionSubject,
   isExecutionEpisodeFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
@@ -465,7 +467,7 @@ const mutationCycle = (
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
-    ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'PAPER_BOOTSTRAP' as const } : {}),
+    ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
     executionProgram,
     executionCycleClosureStore,
     blockedCycleIntentStore,
@@ -1471,7 +1473,7 @@ const restrictExpiredCapitalActivationDataFirst = (
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,
 ): Effect.Effect<void, OperationalError> =>
-  restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
+  restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
     Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
     Effect.provideService(WriterFence, writerFence),
     Effect.mapError((cause) => capitalActivationOperationalError('expired capital restriction failed', cause)),
@@ -1523,7 +1525,7 @@ export const runExecutionLifecycleMaintenance = (
         observedAt,
       })
       const restrict = decision.restrictExpiredAuthority
-        ? restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
+        ? restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
             Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
             Effect.provideService(WriterFence, writerFence),
           )
@@ -1676,7 +1678,7 @@ const finalizeExecutionEpisodeDataFirst = (
     Effect.flatMap((receiptHash) =>
       receiptHash === undefined
         ? Effect.succeed(false)
-        : restrictMutationAuthority('PAPER episode', 'flat exact receipt finalized').pipe(
+        : restrictMutationAuthority(executionEpisodeRestrictionSubject, 'flat exact receipt finalized').pipe(
             Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
             Effect.provideService(WriterFence, writerFence),
             Effect.andThen(completedCapitalActivation(state, request, generationHash, receiptHash)),

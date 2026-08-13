@@ -161,7 +161,7 @@ describe('simulation reconciliation persistence logging', () => {
     expect(result.brokerState.account.accountId).toBe(accountId)
 
     const completed = logs.find((entry) =>
-      JSON.stringify(entry.message).includes('Paper account reconciliation completed'),
+      JSON.stringify(entry.message).includes('Broker account reconciliation completed'),
     )
     expect(completed).toBeDefined()
     if (completed === undefined) return expect.unreachable('successful reconciliation log was not captured')
