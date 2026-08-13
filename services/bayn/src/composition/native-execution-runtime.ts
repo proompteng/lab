@@ -98,6 +98,7 @@ export const executionControllerConfig = (
       },
       cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+      reconciliationStaleThresholdMs: plan.config.reconciliationStaleThresholdMs,
       operationTimeoutMs: plan.config.operationTimeoutMs,
     }),
     (cause) => runtimeError('binding', 'native execution controller plan could not be hashed', cause),

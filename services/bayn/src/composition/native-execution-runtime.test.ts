@@ -62,6 +62,7 @@ type PlanOverrides = {
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
   readonly cyclePollIntervalMs?: number
+  readonly reconciliationStaleThresholdMs?: number
   readonly qualificationRunId?: string
   readonly persistedGrantHash?: string
   readonly marketDataBinding?: MarketDataBinding
@@ -172,6 +173,7 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
       },
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
       cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
+      reconciliationStaleThresholdMs: overrides.reconciliationStaleThresholdMs ?? config.reconciliationStaleThresholdMs,
       operationTimeoutMs: 30_000,
     },
     strategy: fixtureRuntime,
@@ -188,6 +190,7 @@ describe('native execution runtime', () => {
     const changedPlans = [
       plan({ imageDigest: `sha256:${hash('a')}` }),
       plan({ cyclePollIntervalMs: 60_000 }),
+      plan({ reconciliationStaleThresholdMs: 180_000 }),
       plan({ qualificationRunId: hash('a') }),
       plan({ persistedGrantHash: hash('d') }),
       plan({ brokerAccess: 'read-only' }),
