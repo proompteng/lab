@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'node:crypto'
+
 import * as restate from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
@@ -6,6 +8,7 @@ import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
   decodeExecutionControllerActivation,
+  decodeExecutionControllerBootstrap,
   decodeExecutionControllerDeactivation,
   decodeExecutionControllerState,
   decodeExecutionControllerTick,
@@ -14,9 +17,11 @@ import {
   decideExecutionControllerTick,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
+  type ExecutionControllerBootstrap,
   type ExecutionControllerState,
   type ExecutionControllerTick,
 } from './execution/controller'
+import { sha256 } from './hash'
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   type: 'object',
@@ -98,7 +103,7 @@ const decisionOrTerminal = <A>(decision: Result.Result<A, { readonly message: st
 const verifyActivationBinding = (
   config: ExecutionControllerConfig,
   key: string,
-  request: ExecutionControllerActivation,
+  request: Pick<ExecutionControllerActivation, 'controllerKey' | 'planHash' | 'sourceRevision'>,
 ): void => {
   if (
     key !== config.controllerKey ||
@@ -109,6 +114,58 @@ const verifyActivationBinding = (
     throw terminal('execution controller request does not match this immutable deployment')
   }
 }
+
+const verifyTickBinding = (
+  config: ExecutionControllerConfig,
+  key: string,
+  state: ExecutionControllerState | null,
+): void => {
+  if (
+    key !== config.controllerKey ||
+    (state !== null && (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision))
+  ) {
+    throw terminal('execution controller durable state does not match this immutable deployment')
+  }
+}
+
+const bootstrapTokenPattern = /^[A-Za-z0-9_-]{43,128}$/
+const authorizationPrefix = 'Bearer '
+
+const isCanonicalBootstrapToken = (token: string): boolean => {
+  if (!bootstrapTokenPattern.test(token)) return false
+  const decoded = Buffer.from(token, 'base64url')
+  return decoded.length >= 32 && decoded.length <= 96 && decoded.toString('base64url') === token
+}
+
+export const executionBootstrapAuthorizationHash = (token: string): Result.Result<string, string> =>
+  isCanonicalBootstrapToken(token)
+    ? Result.succeed(sha256(token))
+    : Result.fail('execution controller bootstrap token must be 32-96 bytes of base64url entropy')
+
+const authorizeBootstrap = (expectedHash: string, authorization: string | undefined): void => {
+  const token =
+    authorization !== undefined && authorization.startsWith(authorizationPrefix)
+      ? authorization.slice(authorizationPrefix.length)
+      : undefined
+  const actualHash = token !== undefined && isCanonicalBootstrapToken(token) ? sha256(token) : '0'.repeat(64)
+  const expected = Buffer.from(expectedHash, 'hex')
+  const actual = Buffer.from(actualHash, 'hex')
+  if (expected.length !== 32 || actual.length !== 32 || !timingSafeEqual(expected, actual)) {
+    throw new restate.TerminalError('execution controller bootstrap authorization failed', { errorCode: 403 })
+  }
+}
+
+export const bindBootstrapActivation = (
+  state: ExecutionControllerState | null,
+  request: ExecutionControllerBootstrap,
+): ExecutionControllerActivation => ({
+  schemaVersion: 'bayn.execution-controller-activation.v1',
+  controllerKey: request.controllerKey,
+  epoch: state?.epoch ?? 1,
+  firstSequence: state === null ? 0 : state.active ? state.initialSequence : state.nextSequence,
+  planHash: request.planHash,
+  sourceRevision: request.sourceRevision,
+})
 
 const readState = async (
   ctx: restate.ObjectContext<ControllerObjectState> | restate.ObjectSharedContext<ControllerObjectState>,
@@ -193,6 +250,7 @@ export const makeBaynExecutionController = (
             'execution controller tick failed validation',
           )
           const state = await readState(ctx)
+          verifyTickBinding(config, ctx.key, state)
           const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
           const decision = decisionOrTerminal(decideExecutionControllerTick(state, tick, ctx.key, issuedAt))
           if (decision._tag === 'Ignored') return
@@ -256,11 +314,7 @@ export const makeBaynExecutionController = (
             decodeExecutionControllerDeactivation(candidate),
             'execution controller deactivation failed validation',
           )
-          verifyActivationBinding(config, ctx.key, {
-            ...request,
-            schemaVersion: 'bayn.execution-controller-activation.v1',
-            firstSequence: 0,
-          })
+          verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           if (decision._tag === 'Deactivated') {
             ctx.set(stateKey, decision.state)
@@ -291,6 +345,7 @@ export const makeBaynExecutionController = (
 export const makeBaynExecutionBootstrap = (
   config: ExecutionControllerConfig,
   controller: ReturnType<typeof makeBaynExecutionController>,
+  authorizationHash: string,
   hooks: readonly restate.HooksProvider[] = [],
 ) =>
   restate.service({
@@ -303,11 +358,14 @@ export const makeBaynExecutionBootstrap = (
         },
         async (ctx: restate.Context, candidate: unknown) => {
           const request = decodeOrTerminal(
-            decodeExecutionControllerActivation(candidate),
+            decodeExecutionControllerBootstrap(candidate),
             'execution controller bootstrap failed validation',
           )
           verifyActivationBinding(config, request.controllerKey, request)
-          return ctx.objectClient(controller, config.controllerKey).activate(request)
+          authorizeBootstrap(authorizationHash, ctx.request().headers.get('authorization'))
+          const client = ctx.objectClient(controller, config.controllerKey)
+          const state = await client.status(undefined)
+          return client.activate(bindBootstrapActivation(state, request))
         },
       ),
     },

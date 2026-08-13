@@ -20,6 +20,14 @@ export const ExecutionControllerActivationSchema = Schema.Struct({
 })
 export type ExecutionControllerActivation = typeof ExecutionControllerActivationSchema.Type
 
+export const ExecutionControllerBootstrapSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v1'),
+  controllerKey: Sha256Schema,
+  planHash: Sha256Schema,
+  sourceRevision: GitSourceRevisionSchema,
+})
+export type ExecutionControllerBootstrap = typeof ExecutionControllerBootstrapSchema.Type
+
 export const ExecutionControllerTickSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-tick.v1'),
   epoch: EpochSchema,
@@ -272,6 +280,10 @@ export const decideExecutionControllerDeactivation = (
 
 export const decodeExecutionControllerActivation = Schema.decodeUnknownResult(
   ExecutionControllerActivationSchema,
+  strictParseOptions,
+)
+export const decodeExecutionControllerBootstrap = Schema.decodeUnknownResult(
+  ExecutionControllerBootstrapSchema,
   strictParseOptions,
 )
 export const decodeExecutionControllerTick = Schema.decodeUnknownResult(
