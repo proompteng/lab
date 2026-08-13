@@ -39,7 +39,7 @@ import {
   verifyAccountingReceipts,
   type ReconciliationAlgebraFailure,
   type RiskContextRow,
-} from './reconciliation-algebra'
+} from './algebra'
 
 const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 const invalidSqlTimestamp = (): Date => {

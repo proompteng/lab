@@ -18,7 +18,7 @@ import {
   type ResearchCapitalGrantGenerationConstructionFailure,
   type ResearchCapitalGrantGenerationMaterial,
   type ResearchCapitalGrantProofBinding,
-} from '../execution/contracts'
+} from './contracts'
 import type { QualificationLock, QualificationResult } from '../qualification'
 import { Pipeable } from '../pipeable'
 

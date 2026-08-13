@@ -28,7 +28,7 @@ import {
   validateObserveGenerationRequest,
   type ObserveGenerationDecision,
   type ObserveGenerationRequest,
-} from '../capital-grant-algebra'
+} from '../../execution/capital-grant-algebra'
 import {
   authorityStateFromRow,
   capitalGrantGenerationFromRow,
