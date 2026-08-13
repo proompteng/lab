@@ -32,10 +32,10 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'lifecycle-command',
         message: 'Restate lifecycle ownership requires an autonomous broker-bound Bayn service',
       }
-    case 'PaperReconciliationCadenceNotWithinStaleThreshold':
+    case 'ExecutionReconciliationCadenceNotWithinStaleThreshold':
       return {
         operation: 'cycle-loop',
-        message: `PAPER reconciliation interval ${failure.reconciliationIntervalMs.toString()}ms plus prior post-timestamp tail bound ${failure.priorReconciliationTailTimeoutMs.toString()}ms plus next full-pass timeout ${failure.reconciliationPassTimeoutMs.toString()}ms must be shorter than the reconciliation stale threshold ${failure.reconciliationStaleThresholdMs.toString()}ms`,
+        message: `execution reconciliation interval ${failure.reconciliationIntervalMs.toString()}ms plus prior post-timestamp tail bound ${failure.priorReconciliationTailTimeoutMs.toString()}ms plus next full-pass timeout ${failure.reconciliationPassTimeoutMs.toString()}ms must be shorter than the reconciliation stale threshold ${failure.reconciliationStaleThresholdMs.toString()}ms`,
       }
     case 'IncompleteAlpacaCredentials':
       return {
@@ -51,6 +51,11 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
       return { operation: 'broker-connection', message: renderBrokerConnectionDecodeFailure(failure.cause) }
     case 'InvalidExecutionPolicy':
       return { operation: 'execution-authority', message: renderExecutionPolicyFailure(failure.cause) }
+    case 'LegacyCapitalAuthorityEnvironmentMismatch':
+      return {
+        operation: 'execution-authority',
+        message: `legacy BAYN_CAPITAL_AUTHORITY=${failure.capitalAuthority} does not match the decoded broker environment`,
+      }
     case 'LegacyAuthorityMismatch':
       return {
         operation: 'execution-authority',

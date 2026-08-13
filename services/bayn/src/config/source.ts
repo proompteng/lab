@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyStringSchema as NonEmptyString,
 } from '../schemas'
 import {
+  CapitalAuthoritySelectionTokenSchema,
   maximumOperationalThresholdMs,
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
@@ -33,7 +34,6 @@ const RuntimeOperationTokenSchema = Schema.Literals([
   'PAPER_CANDIDATE_DISCOVERY',
   'EXECUTION_PREPARE',
 ])
-const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 const LifecycleOwnerSchema = Schema.Literals(['PROCESS', 'RESTATE'])
 
 const ReplicaAddresses = Schema.Trim.pipe(
@@ -83,6 +83,25 @@ const capitalActivationRequest = Config.all({
   }),
 )
 
+const persistedCapitalGrantHash = Config.all({
+  canonical: Config.option(Config.schema(Sha256Schema, 'BAYN_PERSISTED_CAPITAL_GRANT_HASH')),
+  legacy: Config.option(Config.schema(Sha256Schema, 'BAYN_LIVE_CAPITAL_GRANT_HASH')),
+}).pipe(
+  Config.mapOrFail(({ canonical, legacy }) => {
+    if (Option.isSome(canonical) && Option.isSome(legacy)) {
+      return Effect.fail(
+        new Config.ConfigError(
+          new ConfigProvider.SourceError({
+            message:
+              'BAYN_PERSISTED_CAPITAL_GRANT_HASH and legacy BAYN_LIVE_CAPITAL_GRANT_HASH cannot both be configured',
+          }),
+        ),
+      )
+    }
+    return Effect.succeed(Option.isSome(canonical) ? canonical : legacy)
+  }),
+)
+
 export const runtimeConfigSource = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
@@ -100,10 +119,10 @@ export const runtimeConfigSource = Config.all({
   ),
   legacyMaximumAuthority: Config.option(Config.schema(LegacyAuthorityTokenSchema, 'BAYN_MAXIMUM_AUTHORITY')),
   brokerAccess: Config.schema(BrokerAccessSchema, 'BAYN_BROKER_ACCESS').pipe(Config.withDefault(BrokerAccess.ReadOnly)),
-  capitalAuthority: Config.schema(CapitalAuthoritySelectionSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
+  capitalAuthority: Config.schema(CapitalAuthoritySelectionTokenSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
     Config.withDefault(CapitalAuthoritySelection.None),
   ),
-  liveCapitalGrantHash: Config.option(Config.schema(Sha256Schema, 'BAYN_LIVE_CAPITAL_GRANT_HASH')),
+  persistedCapitalGrantHash,
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   lifecycleOwner: Config.schema(LifecycleOwnerSchema, 'BAYN_LIFECYCLE_OWNER').pipe(Config.withDefault('PROCESS')),
@@ -165,7 +184,7 @@ export const runtimeConfigSource = Config.all({
       legacyMaximumAuthority: Option.getOrUndefined(config.legacyMaximumAuthority),
       brokerAccess: config.brokerAccess,
       capitalAuthority: config.capitalAuthority,
-      liveCapitalGrantHash: Option.getOrUndefined(config.liveCapitalGrantHash),
+      persistedCapitalGrantHash: Option.getOrUndefined(config.persistedCapitalGrantHash),
       configuredBuild: {
         sourceRevision: config.sourceRevision,
         imageRepository: config.imageRepository,

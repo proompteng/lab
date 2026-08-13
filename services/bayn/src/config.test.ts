@@ -5,6 +5,7 @@ import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
 import {
+  LegacyCapitalAuthoritySelection,
   loadConfig,
   resolveRuntimeConfig,
   type ParsedRuntimeConfig,
@@ -20,7 +21,7 @@ const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 const imageDigest = `sha256:${'b'.repeat(64)}`
 const authorityGenerationHash = '1'.repeat(64)
-const liveCapitalGrantHash = '2'.repeat(64)
+const persistedCapitalGrantHash = '2'.repeat(64)
 const buildMetadata: EmbeddedBuildMetadata = {
   sourceRevision,
   imageRepository,
@@ -80,7 +81,7 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   legacyMaximumAuthority: 'OBSERVE',
   brokerAccess: BrokerAccess.ReadOnly,
   capitalAuthority: CapitalAuthoritySelection.None,
-  liveCapitalGrantHash: undefined,
+  persistedCapitalGrantHash: undefined,
   configuredBuild: { ...buildMetadata, imageDigest },
   provenanceMode: 'production',
   healthIntervalMs: 30_000,
@@ -197,7 +198,7 @@ describe('pure runtime configuration resolution', () => {
           configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
           legacyMaximumAuthority: 'PAPER',
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.Sandbox,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
         }),
       ),
     )
@@ -207,8 +208,8 @@ describe('pure runtime configuration resolution', () => {
           configuredAlpaca: alpaca(BrokerEnvironment.Live),
           legacyMaximumAuthority: undefined,
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-          liveCapitalGrantHash,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
+          persistedCapitalGrantHash,
         }),
       ),
     )
@@ -227,10 +228,40 @@ describe('pure runtime configuration resolution', () => {
         capitalAuthority: {
           _tag: CapitalAuthorityKind.Granted,
           authorityGenerationHash,
-          persistedGrantHash: liveCapitalGrantHash,
+          persistedGrantHash: persistedCapitalGrantHash,
         },
       },
     })
+  })
+
+  test('preserves legacy capital selectors until the decoded broker environment is validated', () => {
+    expectFailure(
+      {
+        configuredAlpaca: alpaca(BrokerEnvironment.Live),
+        legacyMaximumAuthority: undefined,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: LegacyCapitalAuthoritySelection.Sandbox,
+        persistedCapitalGrantHash,
+      },
+      {
+        _tag: 'LegacyCapitalAuthorityEnvironmentMismatch',
+        capitalAuthority: LegacyCapitalAuthoritySelection.Sandbox,
+        brokerEnvironment: BrokerEnvironment.Live,
+      },
+    )
+    expectFailure(
+      {
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+        legacyMaximumAuthority: undefined,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: LegacyCapitalAuthoritySelection.Live,
+      },
+      {
+        _tag: 'LegacyCapitalAuthorityEnvironmentMismatch',
+        capitalAuthority: LegacyCapitalAuthoritySelection.Live,
+        brokerEnvironment: BrokerEnvironment.Sandbox,
+      },
+    )
   })
 
   test('reserves the prior post-timestamp tail and next full-pass deadline for every mutation capital mode', () => {
@@ -241,7 +272,7 @@ describe('pure runtime configuration resolution', () => {
       },
       legacyMaximumAuthority: 'PAPER' as const,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: CapitalAuthoritySelection.Sandbox,
+      capitalAuthority: CapitalAuthoritySelection.Granted,
     }
     const accepted = Result.getOrThrow(resolveRuntimeConfig(resolutionInput(paper)))
     expect(accepted).toMatchObject({
@@ -262,7 +293,7 @@ describe('pure runtime configuration resolution', () => {
         },
       },
       {
-        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 60_000,
         priorReconciliationTailTimeoutMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
@@ -278,7 +309,7 @@ describe('pure runtime configuration resolution', () => {
         },
       },
       {
-        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 89_999,
         priorReconciliationTailTimeoutMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
@@ -295,7 +326,7 @@ describe('pure runtime configuration resolution', () => {
         },
       },
       {
-        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 1,
         priorReconciliationTailTimeoutMs: 120_000,
         reconciliationPassTimeoutMs: 120_000,
@@ -310,15 +341,15 @@ describe('pure runtime configuration resolution', () => {
       },
       legacyMaximumAuthority: undefined,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-      liveCapitalGrantHash,
+      capitalAuthority: CapitalAuthoritySelection.Granted,
+      persistedCapitalGrantHash,
     }
     expect(Result.getOrThrow(resolveRuntimeConfig(resolutionInput(live)))).toMatchObject({
       runtimeMode: 'AutonomousService',
       alpaca: { reconciliationIntervalMs: 59_999 },
       execution: {
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: { _tag: CapitalAuthorityKind.Granted, persistedGrantHash: liveCapitalGrantHash },
+        capitalAuthority: { _tag: CapitalAuthorityKind.Granted, persistedGrantHash: persistedCapitalGrantHash },
       },
     })
     expectFailure(
@@ -330,7 +361,7 @@ describe('pure runtime configuration resolution', () => {
         },
       },
       {
-        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 60_000,
         priorReconciliationTailTimeoutMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
@@ -418,7 +449,7 @@ describe('pure runtime configuration resolution', () => {
         overrides: {
           configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
           brokerAccess: BrokerAccess.ReadOnly,
-          capitalAuthority: CapitalAuthoritySelection.Sandbox,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
         },
         tag: 'ReadOnlyBrokerRequiresNoCapital',
       },
@@ -427,29 +458,29 @@ describe('pure runtime configuration resolution', () => {
           configuredAlpaca: alpaca(BrokerEnvironment.Live),
           legacyMaximumAuthority: undefined,
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.Sandbox,
+          capitalAuthority: CapitalAuthoritySelection.None,
         },
-        tag: 'LiveBrokerRequiresLiveCapitalGrant',
+        tag: 'MutationBrokerRequiresCapitalAuthority',
       },
       {
         overrides: {
           configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
           legacyMaximumAuthority: undefined,
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-          liveCapitalGrantHash,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
+          persistedCapitalGrantHash,
         },
-        tag: 'SandboxBrokerRequiresSandboxCapital',
+        tag: 'SandboxBrokerForbidsPersistedGrant',
       },
       {
         overrides: {
           configuredAlpaca: alpaca(BrokerEnvironment.Live),
           legacyMaximumAuthority: undefined,
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-          liveCapitalGrantHash: undefined,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
+          persistedCapitalGrantHash: undefined,
         },
-        tag: 'LiveCapitalRequiresGrantHash',
+        tag: 'PersistedCapitalGrantRequired',
       },
     ] as const
 
@@ -468,13 +499,13 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
         legacyMaximumAuthority: 'OBSERVE',
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
       {
         _tag: 'LegacyAuthorityMismatch',
         legacyMaximumAuthority: 'OBSERVE',
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
     )
   })
@@ -502,12 +533,12 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
         legacyMaximumAuthority: undefined,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
       {
         _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
     )
   })
@@ -546,12 +577,12 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
         legacyMaximumAuthority: undefined,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
       {
         _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
       },
     )
     expectFailure(
@@ -680,6 +711,96 @@ describe('runtime configuration loading', () => {
     expect(config.capitalActivationRequestJson).toBe('{"request":"legacy"}')
   })
 
+  test('maps legacy capital selectors and grant hashes into the account-neutral policy', async () => {
+    const sandboxEnvironment = new Map(runtimeEnvironment)
+    sandboxEnvironment.delete('BAYN_OPERATION')
+    sandboxEnvironment.delete('BAYN_QUALIFICATION_RUN_ID')
+    sandboxEnvironment.delete('BAYN_MAXIMUM_AUTHORITY')
+    sandboxEnvironment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
+    sandboxEnvironment.set('BAYN_CAPITAL_AUTHORITY', 'sandbox-capital')
+
+    const sandbox = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), sandboxEnvironment))
+    expect(sandbox.execution).toMatchObject({
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash },
+    })
+
+    const liveEnvironment = new Map(sandboxEnvironment)
+    liveEnvironment.set('BAYN_CAPITAL_AUTHORITY', 'live-capital-grant')
+    liveEnvironment.set('BAYN_BROKER_ENVIRONMENT', BrokerEnvironment.Live)
+    liveEnvironment.set('BAYN_ALPACA_BASE_URL', alpacaLiveBaseUrl)
+    liveEnvironment.set('BAYN_LIVE_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
+
+    const live = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), liveEnvironment))
+    expect(live.execution).toMatchObject({
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: {
+        _tag: CapitalAuthorityKind.Granted,
+        authorityGenerationHash,
+        persistedGrantHash: persistedCapitalGrantHash,
+      },
+    })
+  })
+
+  test('rejects legacy capital selectors configured for the opposite broker environment', async () => {
+    const liveEnvironment = new Map(runtimeEnvironment)
+    liveEnvironment.delete('BAYN_OPERATION')
+    liveEnvironment.delete('BAYN_QUALIFICATION_RUN_ID')
+    liveEnvironment.delete('BAYN_MAXIMUM_AUTHORITY')
+    liveEnvironment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
+    liveEnvironment.set('BAYN_CAPITAL_AUTHORITY', 'sandbox-capital')
+    liveEnvironment.set('BAYN_BROKER_ENVIRONMENT', BrokerEnvironment.Live)
+    liveEnvironment.set('BAYN_ALPACA_BASE_URL', alpacaLiveBaseUrl)
+    liveEnvironment.set('BAYN_PERSISTED_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
+
+    const liveFailure = await Effect.runPromise(
+      Effect.flip(provideEnvironment(loadConfig(buildMetadata), liveEnvironment)),
+    )
+    expect(liveFailure).toMatchObject({
+      component: 'config',
+      operation: 'execution-authority',
+      retryable: false,
+      cause: {
+        _tag: 'LegacyCapitalAuthorityEnvironmentMismatch',
+        capitalAuthority: 'sandbox-capital',
+        brokerEnvironment: BrokerEnvironment.Live,
+      },
+    })
+
+    const sandboxEnvironment = new Map(liveEnvironment)
+    sandboxEnvironment.set('BAYN_CAPITAL_AUTHORITY', 'live-capital-grant')
+    sandboxEnvironment.set('BAYN_BROKER_ENVIRONMENT', BrokerEnvironment.Sandbox)
+    sandboxEnvironment.set('BAYN_ALPACA_BASE_URL', alpacaSandboxBaseUrl)
+    sandboxEnvironment.delete('BAYN_PERSISTED_CAPITAL_GRANT_HASH')
+
+    const sandboxFailure = await Effect.runPromise(
+      Effect.flip(provideEnvironment(loadConfig(buildMetadata), sandboxEnvironment)),
+    )
+    expect(sandboxFailure).toMatchObject({
+      component: 'config',
+      operation: 'execution-authority',
+      retryable: false,
+      cause: {
+        _tag: 'LegacyCapitalAuthorityEnvironmentMismatch',
+        capitalAuthority: 'live-capital-grant',
+        brokerEnvironment: BrokerEnvironment.Sandbox,
+      },
+    })
+  })
+
+  test('rejects ambiguous canonical and legacy capital grant hashes', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_PERSISTED_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
+    environment.set('BAYN_LIVE_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
+
+    const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
+
+    expect(failure).toMatchObject({ component: 'config', operation: 'load', retryable: false })
+    expect(String(failure.cause)).toContain(
+      'BAYN_PERSISTED_CAPITAL_GRANT_HASH and legacy BAYN_LIVE_CAPITAL_GRANT_HASH cannot both be configured',
+    )
+  })
+
   test('rejects ambiguous canonical and legacy capital activation requests', async () => {
     const environment = new Map(runtimeEnvironment)
     environment.set('BAYN_CAPITAL_ACTIVATION_REQUEST', '{"request":"canonical"}')
@@ -699,7 +820,8 @@ describe('runtime configuration loading', () => {
     environment.delete('BAYN_QUALIFICATION_RUN_ID')
     environment.delete('BAYN_MAXIMUM_AUTHORITY')
     environment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
-    environment.set('BAYN_CAPITAL_AUTHORITY', CapitalAuthoritySelection.LiveGrant)
+    environment.set('BAYN_CAPITAL_AUTHORITY', CapitalAuthoritySelection.Granted)
+    environment.set('BAYN_PERSISTED_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
 
     const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
 
@@ -709,7 +831,7 @@ describe('runtime configuration loading', () => {
       retryable: false,
       cause: {
         _tag: 'InvalidExecutionPolicy',
-        cause: { _tag: 'SandboxBrokerRequiresSandboxCapital' },
+        cause: { _tag: 'SandboxBrokerForbidsPersistedGrant' },
       },
     })
   })

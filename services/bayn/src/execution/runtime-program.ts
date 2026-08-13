@@ -25,7 +25,7 @@ import {
   executionCapitalLimitsFromPolicy,
   refreshExecutionBrokerSubmitSnapshot,
   validateExecutionBrokerSubmitSnapshot,
-  validateLiveGrantForSubmit,
+  validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
@@ -37,7 +37,7 @@ export interface ExecutionProgramDependencies {
   readonly intentStore: IntentStoreService
   readonly mutationStore: MutationStoreShape
   readonly writerFence: WriterFenceService
-  readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
+  readonly persistedCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly riskPolicy: Policy
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed entry lease, checked at the final writer fence. */
@@ -95,12 +95,12 @@ const finalExecutionGrantAuthorization = (
   if (capital.persistedGrant === undefined) return Effect.succeed({ limits: policyLimits.success })
   const grantHash = capital.persistedGrant.grant.grantHash
   return Effect.gen(function* () {
-    const persisted = yield* dependencies.liveCapitalGrants.lockForSubmit(grantHash)
+    const persisted = yield* dependencies.persistedCapitalGrants.lockForSubmit(grantHash)
     if (persisted === undefined) {
-      return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const, grantHash })
+      return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const, grantHash })
     }
     const observedAt = yield* dependencies.currentUtcInstant
-    const validated = validateLiveGrantForSubmit(authority, persisted, observedAt)
+    const validated = validatePersistedCapitalGrantForSubmit(authority, persisted, observedAt)
     if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
     const grantLimits = validated.success.capitalAuthority.persistedGrant.grant.limits
     return {
@@ -124,7 +124,7 @@ const finalBrokerAuthorization = (
     const refreshedAuthority =
       capital.persistedAuthority === undefined
         ? Result.succeed(authority)
-        : validateLiveGrantForSubmit(authority, capital.persistedAuthority, observedAt)
+        : validatePersistedCapitalGrantForSubmit(authority, capital.persistedAuthority, observedAt)
     if (Result.isFailure(refreshedAuthority)) return yield* Effect.fail(refreshedAuthority.failure)
     const validation = validateExecutionBrokerSubmitSnapshot(
       refreshedAuthority.success,

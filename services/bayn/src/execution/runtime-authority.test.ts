@@ -178,7 +178,7 @@ describe('runtime authority resolution', () => {
         brokerIdentity: liveIdentity,
         strategy,
         observedAt: '2026-07-28T08:00:00.000Z',
-        readLiveGrant: (grantHash) => {
+        readPersistedCapitalGrant: (grantHash) => {
           readHash = grantHash
           return Effect.succeed(grantedCapitalAuthority(grant))
         },

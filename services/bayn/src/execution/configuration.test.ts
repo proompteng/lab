@@ -21,7 +21,7 @@ import {
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
-const liveCapitalGrantHash = '2'.repeat(64)
+const persistedCapitalGrantHash = '2'.repeat(64)
 
 const identity = (environment: BrokerEnvironment) =>
   Result.getOrThrow(
@@ -37,41 +37,45 @@ describe('execution policy configuration', () => {
   test('constructs only the behaviorally valid broker and capital combinations', () => {
     const identities = [undefined, identity(BrokerEnvironment.Sandbox), identity(BrokerEnvironment.Live)] as const
     const accesses = [BrokerAccess.ReadOnly, BrokerAccess.Mutation] as const
-    const capitals = [
-      CapitalAuthoritySelection.None,
-      CapitalAuthoritySelection.Sandbox,
-      CapitalAuthoritySelection.LiveGrant,
-    ] as const
+    const capitals = [CapitalAuthoritySelection.None, CapitalAuthoritySelection.Granted] as const
+    const persistedGrantHashes = [undefined, persistedCapitalGrantHash] as const
     const results = identities.flatMap((brokerIdentity) =>
       accesses.flatMap((brokerAccess) =>
-        capitals.map((capitalAuthority) => ({
-          environment: brokerIdentity?.environment ?? 'none',
-          brokerAccess,
-          capitalAuthority,
-          result: resolveExecutionPolicy({
-            brokerIdentity,
+        capitals.flatMap((capitalAuthority) =>
+          persistedGrantHashes.map((persistedGrantHash) => ({
+            environment: brokerIdentity?.environment ?? 'none',
             brokerAccess,
             capitalAuthority,
-            authorityGenerationHash:
-              capitalAuthority === CapitalAuthoritySelection.None ? undefined : authorityGenerationHash,
-            liveCapitalGrantHash:
-              capitalAuthority === CapitalAuthoritySelection.LiveGrant ? liveCapitalGrantHash : undefined,
-          }),
-        })),
+            persistedGrantHash,
+            result: resolveExecutionPolicy({
+              brokerIdentity,
+              brokerAccess,
+              capitalAuthority,
+              authorityGenerationHash:
+                capitalAuthority === CapitalAuthoritySelection.None ? undefined : authorityGenerationHash,
+              persistedCapitalGrantHash: persistedGrantHash,
+            }),
+          })),
+        ),
       ),
     )
 
-    expect(results).toHaveLength(18)
+    expect(results).toHaveLength(24)
     expect(
       results
         .filter(({ result }) => Result.isSuccess(result))
-        .map(({ environment, brokerAccess, capitalAuthority }) => [environment, brokerAccess, capitalAuthority]),
+        .map(({ environment, brokerAccess, capitalAuthority, persistedGrantHash }) => [
+          environment,
+          brokerAccess,
+          capitalAuthority,
+          persistedGrantHash,
+        ]),
     ).toEqual([
-      ['none', BrokerAccess.ReadOnly, CapitalAuthoritySelection.None],
-      [BrokerEnvironment.Sandbox, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None],
-      [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthoritySelection.Sandbox],
-      [BrokerEnvironment.Live, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None],
-      [BrokerEnvironment.Live, BrokerAccess.Mutation, CapitalAuthoritySelection.LiveGrant],
+      ['none', BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
+      [BrokerEnvironment.Sandbox, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
+      [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthoritySelection.Granted, undefined],
+      [BrokerEnvironment.Live, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
+      [BrokerEnvironment.Live, BrokerAccess.Mutation, CapitalAuthoritySelection.Granted, persistedCapitalGrantHash],
     ])
   })
 
@@ -80,32 +84,32 @@ describe('execution policy configuration', () => {
       resolveExecutionPolicy({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
         authorityGenerationHash: undefined,
-        liveCapitalGrantHash: undefined,
+        persistedCapitalGrantHash: undefined,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'SandboxCapitalRequiresAuthorityGeneration' } })
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'GrantedCapitalRequiresAuthorityGeneration' } })
     expect(
       resolveExecutionPolicy({
         brokerIdentity: identity(BrokerEnvironment.Live),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
         authorityGenerationHash: undefined,
-        liveCapitalGrantHash,
+        persistedCapitalGrantHash,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveCapitalRequiresAuthorityGeneration' } })
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'GrantedCapitalRequiresAuthorityGeneration' } })
     expect(
       resolveExecutionPolicy({
         brokerIdentity: identity(BrokerEnvironment.Live),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
         authorityGenerationHash,
-        liveCapitalGrantHash: undefined,
+        persistedCapitalGrantHash: undefined,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveCapitalRequiresGrantHash' } })
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedCapitalGrantRequired' } })
   })
 
-  test('produces no-capital, sandbox-capital, and live-grant requests without compatibility aliases', () => {
+  test('produces one no-capital or granted-capital request for either broker environment', () => {
     expect(
       Result.getOrThrow(
         resolveExecutionPolicy({
@@ -113,7 +117,7 @@ describe('execution policy configuration', () => {
           brokerAccess: BrokerAccess.ReadOnly,
           capitalAuthority: CapitalAuthoritySelection.None,
           authorityGenerationHash: undefined,
-          liveCapitalGrantHash: undefined,
+          persistedCapitalGrantHash: undefined,
         }),
       ).capitalAuthority._tag,
     ).toBe(CapitalAuthorityKind.None)
@@ -122,9 +126,9 @@ describe('execution policy configuration', () => {
         resolveExecutionPolicy({
           brokerIdentity: identity(BrokerEnvironment.Sandbox),
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.Sandbox,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
           authorityGenerationHash,
-          liveCapitalGrantHash: undefined,
+          persistedCapitalGrantHash: undefined,
         }),
       ).capitalAuthority._tag,
     ).toBe(CapitalAuthorityKind.Granted)
@@ -133,15 +137,15 @@ describe('execution policy configuration', () => {
         resolveExecutionPolicy({
           brokerIdentity: identity(BrokerEnvironment.Live),
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+          capitalAuthority: CapitalAuthoritySelection.Granted,
           authorityGenerationHash,
-          liveCapitalGrantHash,
+          persistedCapitalGrantHash,
         }),
       ).capitalAuthority,
     ).toEqual({
       _tag: CapitalAuthorityKind.Granted,
       authorityGenerationHash,
-      persistedGrantHash: liveCapitalGrantHash,
+      persistedGrantHash: persistedCapitalGrantHash,
     })
   })
 

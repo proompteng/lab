@@ -1043,9 +1043,9 @@ const prepareCapitalActivation = (
       resolveExecutionPolicy({
         brokerIdentity: plan.config.alpaca.identity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+        capitalAuthority: CapitalAuthoritySelection.Granted,
         authorityGenerationHash: prepared.generation.generationHash,
-        liveCapitalGrantHash: undefined,
+        persistedCapitalGrantHash: undefined,
       }),
     ).pipe(
       Effect.mapError((cause) =>
@@ -1805,7 +1805,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                       pgClient: PgClient.PgClient,
                       session: BrokerSession,
                       alpacaHttpClient: AlpacaHttpClient,
-                      liveCapitalGrants: LiveCapitalGrantStore,
+                      persistedCapitalGrants: LiveCapitalGrantStore,
                       intentStore: IntentStore,
                       blockedCycleIntentStore: BlockedCycleIntentStore,
                       lifecycleCommandStore: LifecycleCommandStore,
@@ -2186,7 +2186,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     brokerIdentity: realizedPlan.config.alpaca.identity,
                                     strategy: realizedPlan.strategy.provenance.strategy,
                                     observedAt,
-                                    readLiveGrant: runtimeServices.liveCapitalGrants.read,
+                                    readPersistedCapitalGrant: runtimeServices.persistedCapitalGrants.read,
                                   }),
                                 ),
                                 Effect.mapError((cause) =>
@@ -2247,7 +2247,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           Effect.fromResult(
                                             makeExecutionProgram(authority, {
                                               brokerRead: runtimeServices.session.read,
-                                              liveCapitalGrants: runtimeServices.liveCapitalGrants,
+                                              persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
                                               riskPolicy,
                                               currentUtcInstant,
                                               entrySubmitExpiresAt: request.cutoffAt,
