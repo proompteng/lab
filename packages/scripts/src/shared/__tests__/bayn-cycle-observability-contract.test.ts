@@ -54,7 +54,7 @@ describe('Bayn cycle operations alert contract', () => {
     )
   })
 
-  test('scrapes only bounded Bayn metrics through the existing cluster collector', () => {
+  test('collects bounded Bayn metrics and trace-correlated logs through the existing cluster collector', () => {
     const rules = baynRules()
     const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
     const deployment = YAML.parse(
@@ -67,7 +67,41 @@ describe('Bayn cycle operations alert contract', () => {
     expect(alloy).toContain('targets         = discovery.relabel.bayn_metrics.output')
     expect(alloy).not.toContain('__meta_kubernetes_pod_ready')
     expect(alloy).toContain('regex         = "up|bayn_.*"')
+    expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
+    expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
+    expect(alloy).toContain('regex         = "bayn|lifecycle|register"')
+    expect(alloy).toContain('loki.source.kubernetes "bayn_pod_logs"')
+    expect(alloy).toContain('forward_to = [loki.write.bayn.receiver]')
+    expect(alloy).not.toMatch(/trace_id|span_id/)
+    expect(alloy).toContain(
+      'url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"',
+    )
     expect(deployment.spec.template.metadata.annotations['observability.proompteng.ai/config-sha256']).toBe(digest)
+
+    const collectorRbac = YAML.parseAllDocuments(
+      readRepoFile('argocd/applications/observability/cluster-metrics-alloy-rbac.yaml'),
+    ).map((document) => document.toJSON() as Record<string, any>)
+    const baynLogRole = collectorRbac.find(
+      (resource) => resource.kind === 'Role' && resource.metadata?.name === 'observability-bayn-log-reader',
+    )
+    const baynLogBinding = collectorRbac.find(
+      (resource) => resource.kind === 'RoleBinding' && resource.metadata?.name === 'observability-bayn-log-reader',
+    )
+    expect(baynLogRole).toMatchObject({
+      metadata: { namespace: 'bayn' },
+      rules: [{ apiGroups: [''], resources: ['pods/log'], verbs: ['get'] }],
+    })
+    expect(baynLogBinding).toMatchObject({
+      metadata: { namespace: 'bayn' },
+      roleRef: { kind: 'Role', name: 'observability-bayn-log-reader' },
+      subjects: [
+        {
+          kind: 'ServiceAccount',
+          name: 'observability-cluster-metrics-alloy',
+          namespace: 'observability',
+        },
+      ],
+    })
 
     const policies = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/networkpolicy.yaml')).map(
       (document) => document.toJSON() as Record<string, any>,
@@ -155,6 +189,7 @@ describe('Bayn cycle operations alert contract', () => {
     expect(normalizedRunbook).toContain(
       'compare configured provenance with the embedded source revision, image digest, strategy behavior hash, and strategy parameter hash',
     )
+    expect(runbook).toContain('{job="bayn", namespace="bayn"} |= "<trace_id>"')
     expect(runbook).not.toMatch(/clear.*(Prometheus|Mimir|Grafana)|restart.*autonomous cycle loop/i)
   })
 })

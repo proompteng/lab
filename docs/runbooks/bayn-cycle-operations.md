@@ -18,6 +18,8 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    and `bayn.reconciliation.run` spans. Broker and mutation spans remain children of the Bayn command trace.
 3. Use the emitted `trace_id` and `span_id` fields to move between Tempo and the correlated JSON logs in Loki. Never
    use account identifiers, credentials, order payloads, or other high-cardinality business data as trace attributes.
+   Query the bounded log stream with `{job="bayn", namespace="bayn"} |= "<trace_id>"`; the trace ID stays in the JSON
+   payload rather than becoming a high-cardinality Loki label.
 4. Treat a missing segment as an observability failure: verify the workload's exact source revision, its OTLP endpoint,
    and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not lifecycle proof.
 
