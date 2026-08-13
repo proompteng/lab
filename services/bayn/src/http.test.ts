@@ -677,7 +677,7 @@ describe('Bayn HTTP pure decisions', () => {
         },
       },
       {
-        name: 'configured paper ceiling and durable observe kill',
+        name: 'configured granted capital remains read-only before activation',
         state: configured,
         execution: sandboxMutationExecution,
         expected: {
@@ -686,8 +686,8 @@ describe('Bayn HTTP pure decisions', () => {
           accounting: 'EXACT',
           observationAvailable: true,
           brokerEnvironment: BrokerEnvironment.Sandbox,
-          brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthorityKind.Granted,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: CapitalAuthorityKind.None,
           durable: {
             available: true,
             configured: true,
@@ -1685,8 +1685,16 @@ describe('Bayn HTTP probes', () => {
     )
   })
 
-  test('reports explicit mutation and sandbox-capital capability without submitting an order', async () => {
-    await withHttpServer({ execution: sandboxMutationExecution }, ({ port }) =>
+  test('keeps configured granted capital read-only while activation is pending', async () => {
+    const pendingState: RuntimeState = {
+      ...readyState(),
+      capitalActivation: {
+        _tag: 'Pending',
+        requestHash: 'a'.repeat(64),
+        reason: 'PREPARATION_FAILED',
+      },
+    }
+    await withHttpServer({ execution: sandboxMutationExecution, state: pendingState }, ({ port }) =>
       Effect.all([request(port, '/v1/status'), request(port, '/metrics')]).pipe(
         Effect.tap(([status, metrics]) =>
           Effect.sync(() => {
@@ -1695,15 +1703,16 @@ describe('Bayn HTTP probes', () => {
               body: {
                 authority: {
                   brokerEnvironment: BrokerEnvironment.Sandbox,
-                  brokerAccess: BrokerAccess.Mutation,
-                  capitalAuthority: CapitalAuthorityKind.Granted,
-                  brokerOrders: true,
-                  capitalPromotion: true,
+                  brokerAccess: BrokerAccess.ReadOnly,
+                  capitalAuthority: CapitalAuthorityKind.None,
+                  brokerOrders: false,
+                  capitalPromotion: false,
                 },
               },
             })
-            expect(metrics.body).toContain('bayn_broker_orders_enabled 1')
-            expect(metrics.body).toContain('bayn_capital_promotion_enabled 1')
+            expect(metrics.body).toContain('bayn_broker_orders_enabled 0')
+            expect(metrics.body).toContain('bayn_capital_promotion_enabled 0')
+            expect(metrics.body).toContain('bayn_capital_activation_state{state="pending"} 1')
           }),
         ),
         Effect.asVoid,

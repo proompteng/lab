@@ -760,6 +760,15 @@ describe('Bayn continuous health', () => {
     } as typeof config
     const current = {
       ...readyState(),
+      capitalActivation: {
+        _tag: 'Realized' as const,
+        requestHash: 'a'.repeat(64),
+        generationHash: 'c'.repeat(64),
+        grant: 'Qualified' as const,
+        cutoffAt: '2026-07-20T00:30:00.000Z',
+        expiresAt: '2026-07-22T20:00:00.000Z',
+        maximumCloseSessions: null,
+      },
       autonomousCycleLoop: {
         configured: true,
         startedAt: checkedAt,

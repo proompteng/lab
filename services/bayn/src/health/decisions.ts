@@ -1,7 +1,6 @@
 import { Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { historicalSandboxAuthority } from '../execution/legacy-authority'
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
@@ -346,7 +345,7 @@ const deriveCycleStatus = (
       deriveCycleOperationsStatusResult(
         result.value,
         clock.checkedAtMs,
-        runtime.capitalActivation?._tag === 'Realized' ? Authority.Paper : historicalSandboxAuthority(config.execution),
+        runtime.capitalActivation?._tag === 'Realized' ? Authority.Paper : Authority.Observe,
         config,
       ),
       {
