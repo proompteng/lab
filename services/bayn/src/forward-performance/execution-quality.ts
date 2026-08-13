@@ -168,6 +168,7 @@ const notionalOrderMatchesIntent = (
   orderNotionalMicros: string,
 ): boolean => {
   if (intent.notionalLimitMicros === undefined) return false
+  if (intent.side !== 'BUY') return orderNotionalMicros === intent.notionalLimitMicros
   const currentNotional = alpacaBuyNotionalMicros(intent.notionalLimitMicros)
   return (
     orderNotionalMicros === intent.notionalLimitMicros ||

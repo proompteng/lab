@@ -471,6 +471,42 @@ describe('forward performance domain', () => {
     })
   })
 
+  test('rejects a cent-quantized notional representation for a SELL intent', () => {
+    const [baseExecution] = exactExecutionEvidence()
+    if (
+      baseExecution === undefined ||
+      baseExecution.intent === undefined ||
+      baseExecution.terminalOrder === undefined
+    ) {
+      throw new Error('execution identity fixture missing')
+    }
+    const { quantityMicros: _quantityMicros, ...notionalOrder } = baseExecution.terminalOrder
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: [
+            {
+              ...baseExecution,
+              intent: {
+                ...baseExecution.intent,
+                notionalLimitMicros: '110000001',
+              },
+              terminalOrder: {
+                ...notionalOrder,
+                notionalMicros: '110000000',
+              },
+            },
+          ],
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).toContain('TERMINAL_ORDER_EVIDENCE_GAP')
+  })
+
   test('orders terminal fills by broker occurrence even when fill observation completes after order observation', () => {
     const [execution] = exactExecutionEvidence()
     if (execution === undefined) throw new Error('execution fixture missing')
