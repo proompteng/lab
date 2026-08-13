@@ -110,7 +110,7 @@ import {
 } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
 import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime-program'
-import { resolvePreparedSandboxAuthority } from './execution/runtime-authority'
+import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from './execution/runtime-authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from './execution/writer-fence'
 import { operationalError, OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
@@ -1724,7 +1724,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       strategy: plan.strategy,
       strategyProtocolHash: plan.strategyProtocolHash,
     }) as ApplicationPlanFor<'AutonomousService'>
-    const serializedRequest = observePlan.config.capitalActivationRequestJson
+    const serializedRequest = plan.config.capitalActivationRequestJson
     const decodedActivation: Result.Result<ConfiguredCapitalActivation | null, string> =
       serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serializedRequest)
     const startupEvidenceMode =
@@ -1767,7 +1767,13 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
         const request = configured?.request ?? null
         const buildContinuation = configured?.buildContinuation ?? null
         const current = yield* Ref.get(state)
-        if (request === null) return Result.succeed({ request, buildContinuation, evidence: current.evidence })
+        if (request === null) {
+          if (plan.config.execution.brokerAccess === BrokerAccess.Mutation) {
+            yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
+            return Result.fail('configured granted capital requires an immutable execution episode request')
+          }
+          return Result.succeed({ request, buildContinuation, evidence: current.evidence })
+        }
         const observedAt = yield* currentUtcInstant
         const validation = capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
           allowCloseRecovery: true,
@@ -2144,61 +2150,47 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }
-                              if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
+                              const realizedPolicy = resolvePreparedExecutionPolicy({
+                                configured: plan.config.execution,
+                                brokerIdentity: plan.config.alpaca.identity,
+                                preparedGenerationHash: prepared.generation.generationHash,
+                              })
+                              if (Result.isFailure(realizedPolicy)) {
                                 return Effect.fail(
                                   capitalActivationOperationalError(
-                                    'research capital activation requires a sandbox broker',
+                                    'prepared execution policy is invalid',
+                                    realizedPolicy.failure,
                                   ),
                                 )
                               }
+                              const realizedConfig = {
+                                ...plan.config,
+                                execution: realizedPolicy.success,
+                                ...(isResearchCapitalActivationRequest(request)
+                                  ? { qualificationRunId: request.grant.planHash }
+                                  : {}),
+                              } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+                              const realizedPlan = makeApplicationPlan({
+                                config: realizedConfig,
+                                protocol: plan.protocol,
+                                parameterHash: plan.parameterHash,
+                                strategy: plan.strategy,
+                                strategyProtocolHash: plan.strategyProtocolHash,
+                              }) as ApplicationPlanFor<'AutonomousService'>
                               return currentUtcInstant.pipe(
                                 Effect.flatMap((observedAt) =>
-                                  resolvePreparedSandboxAuthority({
-                                    brokerIdentity: observePlan.config.alpaca.identity as Extract<
-                                      typeof observePlan.config.alpaca.identity,
-                                      { readonly environment: BrokerEnvironment.Sandbox }
-                                    >,
-                                    strategy: observePlan.strategy.provenance.strategy,
-                                    generationHash: prepared.generation.generationHash,
+                                  resolvePreparedExecutionAuthority({
+                                    executionPolicy: realizedPolicy.success,
+                                    brokerIdentity: realizedPlan.config.alpaca.identity,
+                                    strategy: realizedPlan.strategy.provenance.strategy,
                                     observedAt,
+                                    readLiveGrant: runtimeServices.liveCapitalGrants.read,
                                   }),
                                 ),
                                 Effect.mapError((cause) =>
-                                  capitalActivationOperationalError(
-                                    'prepared sandbox execution authority is invalid',
-                                    cause,
-                                  ),
+                                  capitalActivationOperationalError('prepared execution authority is invalid', cause),
                                 ),
                                 Effect.flatMap((authority) => {
-                                  const realizedPolicy = resolveExecutionPolicy({
-                                    brokerIdentity: observePlan.config.alpaca.identity,
-                                    brokerAccess: BrokerAccess.Mutation,
-                                    capitalAuthority: CapitalAuthoritySelection.Sandbox,
-                                    authorityGenerationHash: prepared.generation.generationHash,
-                                    liveCapitalGrantHash: undefined,
-                                  })
-                                  if (Result.isFailure(realizedPolicy)) {
-                                    return Effect.fail(
-                                      capitalActivationOperationalError(
-                                        'prepared sandbox execution policy is invalid',
-                                        realizedPolicy.failure,
-                                      ),
-                                    )
-                                  }
-                                  const realizedConfig = {
-                                    ...observePlan.config,
-                                    execution: realizedPolicy.success,
-                                    ...(isResearchCapitalActivationRequest(request)
-                                      ? { qualificationRunId: request.grant.planHash }
-                                      : {}),
-                                  } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
-                                  const realizedPlan = makeApplicationPlan({
-                                    config: realizedConfig,
-                                    protocol: observePlan.protocol,
-                                    parameterHash: observePlan.parameterHash,
-                                    strategy: observePlan.strategy,
-                                    strategyProtocolHash: observePlan.strategyProtocolHash,
-                                  }) as ApplicationPlanFor<'AutonomousService'>
                                   const capitalGrant = capitalGrantFromLegacyGeneration(prepared.generation)
                                   const cycleBindingId = capitalGrantKey(capitalGrant)
                                   const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
@@ -2413,7 +2405,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
         ),
       )
     }
-    return yield* runApplication(observePlan.config, observePlan.strategy, dependencies, {
+    return yield* runApplication(plan.config, plan.strategy, dependencies, {
       ...pendingRuntime(),
       resolveAfterStartup,
     })

@@ -302,10 +302,8 @@ const statusFactsDataFirst = (
   const broker = publicBrokerState(state)
   const dependencies = publicDependencies(state)
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
-  const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : execution.brokerAccess
-  const effectiveCapitalAuthority = capitalActivationRealized
-    ? CapitalAuthorityKind.Granted
-    : execution.capitalAuthority._tag
+  const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : BrokerAccess.ReadOnly
+  const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
   return {
     service: 'bayn',
     operational: {
@@ -531,9 +529,8 @@ const renderPrometheusMetricsDataFirst = (
       ? (state.autonomousCycleLoop.lastPass.notDueReason?.toLowerCase() ?? 'unknown')
       : 'none'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
-  const effectiveBrokerMutation = capitalActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
-  const effectiveCapitalPromotion =
-    capitalActivationRealized || config.execution.capitalAuthority._tag !== CapitalAuthorityKind.None
+  const effectiveBrokerMutation = capitalActivationRealized
+  const effectiveCapitalPromotion = capitalActivationRealized
   const capitalActivationState =
     state.capitalActivation?._tag === 'NotConfigured' || state.capitalActivation === undefined
       ? 'not_configured'
