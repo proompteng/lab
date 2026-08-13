@@ -93,17 +93,20 @@ const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCade
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
 
 export const runExternalLifecycleAdvanceWithinTimeout = <A, E, R>(
+  operationPermit: Semaphore.Semaphore,
   beforeLifecycleAdvance: Effect.Effect<LifecycleAdvanceDisposition, E, R> | undefined,
   runCycleAdvance: Effect.Effect<A, E, R>,
   completeLifecycleAdvance: Effect.Effect<A, E, R>,
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
   runMutationPassWithinTimeout(
-    beforeLifecycleAdvance === undefined
-      ? runCycleAdvance
-      : beforeLifecycleAdvance.pipe(
-          Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
-        ),
+    operationPermit.withPermit(
+      beforeLifecycleAdvance === undefined
+        ? runCycleAdvance
+        : beforeLifecycleAdvance.pipe(
+            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+          ),
+    ),
     timeoutMs,
   )
 
@@ -395,16 +398,16 @@ const makeRecoveryFirstCycleDriver = (
         : input.beforeLifecycleAdvance.pipe(
             Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
           )
-    const advance = operationPermit.withPermit(
+    const advance =
       input.interpretCycleDriver === undefined
-        ? lifecycleAdvance
+        ? operationPermit.withPermit(lifecycleAdvance)
         : runExternalLifecycleAdvanceWithinTimeout(
+            operationPermit,
             input.beforeLifecycleAdvance,
             runCycleAdvance,
             completeLifecycleAdvance,
             cyclePassTimeoutMs,
-          ),
-    )
+          )
     const maintainReconciliation = operationPermit.withPermit(
       reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
         Effect.catch((error) =>
