@@ -16,17 +16,22 @@ import {
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
+import type { RecoveryFirstRuntime } from '../observe-composition'
 import { fixtureProtocol } from '../test-fixtures'
 import {
   acquireScopedManagedRuntime,
   awaitNativeExecutionRuntimeDriver,
+  captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
+  failRecoveryFirstCycleDriverSlot,
   makeNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
+  readRecoveryFirstCycleDriverSlot,
   type BoundRecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverSlot,
+  type RecoveryFirstCycleDriverSlotState,
 } from './native-execution-runtime'
 
 const hash = (character: string): string => character.repeat(64)
@@ -263,7 +268,7 @@ describe('native execution runtime', () => {
     const failure = await Effect.runPromise(
       Effect.gen(function* () {
         const slot: RecoveryFirstCycleDriverSlot = {
-          current: yield* Ref.make<BoundRecoveryFirstCycleDriver | null>(null),
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
           ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
         }
         const awaiting = yield* Effect.forkChild(awaitNativeExecutionRuntimeDriver(slot, 20))
@@ -428,5 +433,64 @@ describe('native execution runtime', () => {
     await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
 
     expect(calls).toEqual(['restricted', 'observe'])
+  })
+
+  test('propagates a preparation failure that occurs after the first driver was published', async () => {
+    const failure = new NativeExecutionRuntimeError({
+      operation: 'initialize',
+      message: 'observe driver rebinding failed',
+    })
+    const slot = Effect.runSync(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+        yield* Deferred.succeed(ready, undefined)
+        const state = yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver })
+        return {
+          state,
+          ready,
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const runtime = makeNativeExecutionRuntimeAdapter(
+      readRecoveryFirstCycleDriverSlot(slot),
+      statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+      { runPromise: (effect, options) => Effect.runPromise(effect, options) },
+    )
+
+    await runtime.advance(command, new AbortController().signal)
+    await Effect.runPromise(failRecoveryFirstCycleDriverSlot(slot, failure))
+    const afterFailure = await runtime
+      .advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+
+    expect(afterFailure).toBe(failure)
+  })
+
+  test('makes the old driver unavailable while a replacement is being prepared', async () => {
+    const slot = Effect.runSync(
+      Effect.gen(function* () {
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+          ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const context = Context.empty() as Context.Context<RecoveryFirstRuntime>
+    const publication = Effect.runFork(
+      captureRecoveryFirstCycleDriver(slot)(driver).pipe(Effect.provideContext(context)),
+    )
+
+    await Effect.runPromise(Deferred.await(slot.ready))
+    expect(await Effect.runPromise(readRecoveryFirstCycleDriverSlot(slot))).toBeDefined()
+    await Effect.runPromise(Fiber.interrupt(publication))
+    const unavailable = await Effect.runPromise(Effect.flip(readRecoveryFirstCycleDriverSlot(slot)))
+
+    expect(unavailable).toMatchObject({
+      operation: 'initialize',
+      message: 'native execution runtime driver is unavailable',
+    })
   })
 })
