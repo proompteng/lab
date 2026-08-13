@@ -14,7 +14,7 @@
     "test": "bun test",
     "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
     "test:effect-runtime": "bun test src/clickhouse-patch.test.ts src/effect-runtime-compatibility.test.ts",
-    "test:postgres": "bun test src/cycle/store/observability.integration.test.ts && bun test src/db/evidence-store.integration.test.ts && bun test src/db/paper-store.integration.test.ts && bun test src/cycle/store/integration.test.ts",
+    "test:postgres": "bun test src/cycle/store/observability.integration.test.ts && bun test src/db/evidence-store.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/cycle/store/integration.test.ts",
     "tsc": "bun run tsc:all && bun run tsc:production",
     "tsc:all": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json",
     "tsc:production": "\"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json"
