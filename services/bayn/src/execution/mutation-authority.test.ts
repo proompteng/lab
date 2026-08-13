@@ -27,10 +27,10 @@ import {
   BrokerAccess,
   grantedCapitalAuthority,
   makeExecutionAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   type ExecutionStrategyIdentity,
   type GrantedCapitalAuthority,
-  type LiveCapitalLimits,
+  type ExecutionCapitalLimits,
   type MutationExecutionAuthority,
 } from './authority'
 import {
@@ -51,7 +51,7 @@ const strategy: ExecutionStrategyIdentity = {
   parameterHash: '3'.repeat(64),
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
-const defaultLimits: LiveCapitalLimits = {
+const defaultLimits: ExecutionCapitalLimits = {
   maxGrossNotionalMicros: '1000000000',
   maxOrderNotionalMicros: '500000000',
   maxPositionNotionalMicros: '750000000',
@@ -162,11 +162,14 @@ const identity = (environment: BrokerEnvironment) =>
     }),
   )
 
-const liveGrant = (limits: LiveCapitalLimits = defaultLimits) =>
+const persistedGrantRecord = (
+  limits: ExecutionCapitalLimits = defaultLimits,
+  environment: BrokerEnvironment = BrokerEnvironment.Live,
+) =>
   Result.getOrThrow(
-    makeLiveCapitalGrant({
-      schemaVersion: 'bayn.live-capital-grant.v1',
-      brokerIdentity: identity(BrokerEnvironment.Live),
+    makeCapitalGrantRecord({
+      schemaVersion: 'bayn.capital-grant.v2',
+      brokerIdentity: identity(environment),
       authorityGenerationHash,
       strategy,
       limits,
@@ -216,7 +219,8 @@ const cancelReceipt: CancelReceipt = {
 }
 
 interface ScenarioInput {
-  readonly grant?: ReturnType<typeof liveGrant>
+  readonly environment?: BrokerEnvironment
+  readonly grant?: ReturnType<typeof persistedGrantRecord>
   readonly persisted?: GrantedCapitalAuthority | undefined
   readonly observedAt?: string
   readonly brokerAccount?: Account
@@ -229,7 +233,8 @@ interface ScenarioInput {
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
-  const grant = input.grant ?? liveGrant()
+  const environment = input.environment ?? BrokerEnvironment.Live
+  const grant = input.grant ?? persistedGrantRecord(defaultLimits, environment)
   const trace: string[] = []
   let submits = 0
   let grantReads = 0
@@ -270,8 +275,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       }),
     cancel: () => Effect.succeed(cancelReceipt),
   }
-  const authority = mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(grant))
-  if (!isPersistedGrantExecutionAuthority(authority)) throw new Error('live submit fixture requires live authority')
+  const authority = mutationAuthority(environment, grantedCapitalAuthority(grant))
+  if (!isPersistedGrantExecutionAuthority(authority)) {
+    throw new Error('persisted submit fixture requires persisted-grant authority')
+  }
   const persistedCapitalGrants = {
     read: () =>
       Effect.sync(() => {
@@ -326,6 +333,17 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
+    'revalidates the same persisted grant contract for %s submission',
+    async (environment) => {
+      const observed = await runLiveSubmit({ environment })
+
+      expect(observed.exit._tag).toBe('Success')
+      expect(observed.grantReads).toBe(1)
+      expect(observed.submits).toBe(1)
+    },
+  )
+
   test('refreshes exposure and the immutable grant immediately before one live submit', async () => {
     const observed = await runLiveSubmit()
 
@@ -372,11 +390,11 @@ describe('final broker mutation authority', () => {
   })
 
   test('blocks an immutable revocation reread after startup with no broker submit', async () => {
-    const grant = liveGrant()
+    const grant = persistedGrantRecord()
     const observed = await runLiveSubmit({
       grant,
       persisted: grantedCapitalAuthority(grant, {
-        schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+        schemaVersion: 'bayn.capital-grant-revocation.v2',
         revokedAt: '2026-07-28T08:00:00.000Z',
         revokedBy: 'operator:test',
         reason: 'containment',
@@ -388,10 +406,10 @@ describe('final broker mutation authority', () => {
   })
 
   test('observes a revocation that lands while broker state is collected', async () => {
-    const grant = liveGrant()
+    const grant = persistedGrantRecord()
     const active = grantedCapitalAuthority(grant)
     const revoked = grantedCapitalAuthority(grant, {
-      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      schemaVersion: 'bayn.capital-grant-revocation.v2',
       revokedAt: activeAt,
       revokedBy: 'operator:test',
       reason: 'containment',
@@ -441,7 +459,7 @@ describe('final broker mutation authority', () => {
   ] as const)(
     'enforces the live %s limit at the final boundary',
     async (_name, limitOverride, snapshotOverride, tag) => {
-      const grant = liveGrant({ ...defaultLimits, ...limitOverride })
+      const grant = persistedGrantRecord({ ...defaultLimits, ...limitOverride })
       const observed = await runLiveSubmit({ grant, ...snapshotOverride })
 
       expect(failureTag(observed.exit)).toBe(tag)
@@ -502,7 +520,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('nets a reducing sell by symbol before applying the gross-exposure ceiling', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxGrossNotionalMicros: '100000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxGrossNotionalMicros: '100000000' })
     const observed = await runLiveSubmit({
       grant,
       positions: [position({ quantityMicros: '900000', marketValueMicros: '90000000' })],
@@ -532,7 +550,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('does not let a queued buy hide an overshort that can fill first', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '200000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '200000000' })
     const queuedBuy = order({
       brokerOrderId: '5ea242d9-9fa2-423b-908d-d2cccfcd5a5c',
       side: BrokerOrderSide.Buy,
@@ -555,7 +573,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('does not let a queued reducing sell subsidize a new symbol gross exposure', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxGrossNotionalMicros: '150000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxGrossNotionalMicros: '150000000' })
     const queuedSell = order({
       brokerOrderId: 'ee49ed03-d957-45f7-b725-a32d9c215cd5',
       symbol: 'NVDA',
@@ -591,7 +609,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('prices only the unfilled remainder of a partially filled queued buy', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '120000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxPositionNotionalMicros: '120000000' })
     const partialBuy = order(
       {
         brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
@@ -615,7 +633,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('rejects a partially filled market-order remainder whose future fill remains unbounded', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '150000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxPositionNotionalMicros: '150000000' })
     const partialMarketBuy = order(
       {
         brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
@@ -666,7 +684,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('applies the immutable order-notional ceiling to a reducing sell', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '98999999' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '98999999' })
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
@@ -678,7 +696,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('uses the durable notional cap rather than an unavailable broker quote', async () => {
-    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '100000000' })
+    const grant = persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '100000000' })
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
@@ -732,7 +750,7 @@ describe('final broker mutation authority', () => {
   })
 
   test('keeps cancellation available for containment after grant revocation', async () => {
-    const grant = liveGrant()
+    const grant = persistedGrantRecord()
     let cancels = 0
     let grantReads = 0
     const mutation: BrokerMutationShape = {

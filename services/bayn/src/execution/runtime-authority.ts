@@ -42,9 +42,6 @@ export type PreparedExecutionPolicyFailure =
 export type PreparedExecutionAuthorityFailure =
   | RuntimeAuthorityFailure
   | {
-      readonly _tag: 'PersistedCapitalGrantHashMissing'
-    }
-  | {
       readonly _tag: 'PersistedCapitalGrantMissing'
       readonly grantHash: string
     }
@@ -116,12 +113,10 @@ export const resolvePreparedExecutionAuthority = <E>(input: {
       : Effect.succeed(authority.success)
   }
 
-  if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox) {
+  const grantHash = capitalAuthority.persistedGrantHash
+  if (grantHash === undefined) {
     return resolveAuthority(grantedCapitalAuthority(capitalAuthority.authorityGenerationHash))
   }
-
-  const grantHash = capitalAuthority.persistedGrantHash
-  if (grantHash === undefined) return Effect.fail({ _tag: 'PersistedCapitalGrantHashMissing' })
   return input.readPersistedCapitalGrant(grantHash).pipe(
     Effect.flatMap(
       (
@@ -138,22 +133,4 @@ export const resolvePreparedExecutionAuthority = <E>(input: {
             }),
     ),
   )
-}
-
-export const resolvePreparedSandboxAuthority = (input: {
-  readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Sandbox }
-  readonly strategy: ExecutionStrategyIdentity
-  readonly generationHash: string
-  readonly observedAt: string
-}): Effect.Effect<ExecutionAuthority, RuntimeAuthorityFailure> => {
-  const authority = makeExecutionAuthority({
-    brokerIdentity: input.brokerIdentity,
-    brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: grantedCapitalAuthority(input.generationHash),
-    strategy: input.strategy,
-    observedAt: input.observedAt,
-  })
-  return Result.isFailure(authority)
-    ? Effect.fail({ _tag: 'ExecutionAuthorityInvalid', cause: authority.failure })
-    : Effect.succeed(authority.success)
 }

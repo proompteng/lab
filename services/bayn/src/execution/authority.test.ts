@@ -8,11 +8,11 @@ import {
   CapitalAuthorityKind,
   grantedCapitalAuthority,
   makeExecutionAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   noCapitalAuthority,
   type CapitalAuthority,
   type ExecutionStrategyIdentity,
-  type LiveCapitalGrant,
+  type CapitalGrantRecord,
 } from './authority'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -38,10 +38,12 @@ const identity = (environment: BrokerEnvironment, identityAccountId = accountId)
 const liveIdentity = identity(BrokerEnvironment.Live)
 const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
 
-const liveGrant = (overrides: Partial<Parameters<typeof makeLiveCapitalGrant>[0]> = {}): LiveCapitalGrant =>
+const persistedGrantRecord = (
+  overrides: Partial<Parameters<typeof makeCapitalGrantRecord>[0]> = {},
+): CapitalGrantRecord =>
   Result.getOrThrow(
-    makeLiveCapitalGrant({
-      schemaVersion: 'bayn.live-capital-grant.v1',
+    makeCapitalGrantRecord({
+      schemaVersion: 'bayn.capital-grant.v2',
       brokerIdentity: liveIdentity,
       authorityGenerationHash,
       strategy,
@@ -60,12 +62,6 @@ const liveGrant = (overrides: Partial<Parameters<typeof makeLiveCapitalGrant>[0]
     }),
   )
 
-const authorities = [
-  noCapitalAuthority,
-  grantedCapitalAuthority(authorityGenerationHash),
-  grantedCapitalAuthority(liveGrant()),
-] as const satisfies readonly CapitalAuthority[]
-
 const construct = (environment: BrokerEnvironment, brokerAccess: BrokerAccess, capitalAuthority: CapitalAuthority) =>
   makeExecutionAuthority({
     brokerIdentity: environment === BrokerEnvironment.Sandbox ? sandboxIdentity : liveIdentity,
@@ -76,10 +72,18 @@ const construct = (environment: BrokerEnvironment, brokerAccess: BrokerAccess, c
   })
 
 describe('execution authority construction', () => {
-  test('accepts only the four safe environment, access, and capital combinations', () => {
+  test('accepts the same safe access and capital combinations for both environments', () => {
     const cases = [BrokerEnvironment.Sandbox, BrokerEnvironment.Live].flatMap((environment) =>
       [BrokerAccess.ReadOnly, BrokerAccess.Mutation].flatMap((brokerAccess) =>
-        authorities.map((capitalAuthority) => ({
+        [
+          noCapitalAuthority,
+          grantedCapitalAuthority(authorityGenerationHash),
+          grantedCapitalAuthority(
+            persistedGrantRecord({
+              brokerIdentity: environment === BrokerEnvironment.Sandbox ? sandboxIdentity : liveIdentity,
+            }),
+          ),
+        ].map((capitalAuthority) => ({
           environment,
           brokerAccess,
           capitalAuthority: capitalAuthority._tag,
@@ -103,7 +107,9 @@ describe('execution authority construction', () => {
     ).toEqual([
       [BrokerEnvironment.Sandbox, BrokerAccess.ReadOnly, CapitalAuthorityKind.None, false],
       [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthorityKind.Granted, false],
+      [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthorityKind.Granted, true],
       [BrokerEnvironment.Live, BrokerAccess.ReadOnly, CapitalAuthorityKind.None, false],
+      [BrokerEnvironment.Live, BrokerAccess.Mutation, CapitalAuthorityKind.Granted, false],
       [BrokerEnvironment.Live, BrokerAccess.Mutation, CapitalAuthorityKind.Granted, true],
     ])
   })
@@ -120,21 +126,16 @@ describe('execution authority construction', () => {
     })
   })
 
-  test('validates environment-specific grant persistence only at authority construction', () => {
+  test('uses one persisted grant contract for sandbox and live broker identities', () => {
     expect(
       makeExecutionAuthority({
         brokerIdentity: sandboxIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(liveGrant()),
+        capitalAuthority: grantedCapitalAuthority(persistedGrantRecord({ brokerIdentity: sandboxIdentity })),
         strategy,
         observedAt,
       }),
-    ).toMatchObject({
-      _tag: 'Failure',
-      failure: {
-        _tag: 'SandboxBrokerForbidsPersistedGrant',
-      },
-    })
+    ).toMatchObject({ _tag: 'Success', success: { brokerIdentity: sandboxIdentity } })
     expect(
       makeExecutionAuthority({
         brokerIdentity: liveIdentity,
@@ -143,15 +144,32 @@ describe('execution authority construction', () => {
         strategy,
         observedAt,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'CapitalEnvironmentRequiresPersistedGrant' } })
+    ).toMatchObject({ _tag: 'Success', success: { brokerIdentity: liveIdentity } })
   })
 
-  test('fails closed for revoked, expired, not-yet-valid, and mismatched live grants', () => {
+  test('decodes legacy live-only grant rows without widening their environment', () => {
+    const neutral = persistedGrantRecord({ brokerIdentity: sandboxIdentity })
+    expect(
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.live-capital-grant.v1',
+        brokerIdentity: sandboxIdentity,
+        authorityGenerationHash: neutral.authorityGenerationHash,
+        strategy: neutral.strategy,
+        limits: neutral.limits,
+        validFrom: neutral.validFrom,
+        validUntil: neutral.validUntil,
+        issuedAt: neutral.issuedAt,
+        issuedBy: neutral.issuedBy,
+      }),
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'CapitalGrantRecordSchemaInvalid' } })
+  })
+
+  test('fails closed for revoked, expired, not-yet-valid, and mismatched persisted capital grants', () => {
     const generationMismatch = makeExecutionAuthority({
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
       capitalAuthority: {
-        ...grantedCapitalAuthority(liveGrant()),
+        ...grantedCapitalAuthority(persistedGrantRecord()),
         authorityGenerationHash: '9'.repeat(64),
       },
       strategy,
@@ -160,8 +178,8 @@ describe('execution authority construction', () => {
     const revoked = makeExecutionAuthority({
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: grantedCapitalAuthority(liveGrant(), {
-        schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      capitalAuthority: grantedCapitalAuthority(persistedGrantRecord(), {
+        schemaVersion: 'bayn.capital-grant-revocation.v2',
         revokedAt: '2026-07-28T07:30:00.000Z',
         revokedBy: 'operator:test',
         reason: 'manual containment',
@@ -173,7 +191,7 @@ describe('execution authority construction', () => {
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
       capitalAuthority: grantedCapitalAuthority(
-        liveGrant({
+        persistedGrantRecord({
           issuedAt: '2026-07-28T04:00:00.000Z',
           validFrom: '2026-07-28T05:00:00.000Z',
           validUntil: '2026-07-28T07:00:00.000Z',
@@ -186,7 +204,7 @@ describe('execution authority construction', () => {
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
       capitalAuthority: grantedCapitalAuthority(
-        liveGrant({
+        persistedGrantRecord({
           issuedAt: '2026-07-28T08:30:00.000Z',
           validFrom: '2026-07-28T09:00:00.000Z',
           validUntil: '2026-07-28T10:00:00.000Z',
@@ -198,7 +216,7 @@ describe('execution authority construction', () => {
     const mismatchedStrategy = makeExecutionAuthority({
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: grantedCapitalAuthority(liveGrant()),
+      capitalAuthority: grantedCapitalAuthority(persistedGrantRecord()),
       strategy: { ...strategy, parameterHash: '4'.repeat(64) },
       observedAt,
     })
@@ -206,7 +224,7 @@ describe('execution authority construction', () => {
     const mismatchedAccount = makeExecutionAuthority({
       brokerIdentity: otherLiveIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: grantedCapitalAuthority(liveGrant()),
+      capitalAuthority: grantedCapitalAuthority(persistedGrantRecord()),
       strategy,
       observedAt,
     })

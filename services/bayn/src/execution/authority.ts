@@ -42,8 +42,6 @@ export interface ExecutionCapitalLimits {
   readonly maxOpenOrders: number
 }
 
-export type LiveCapitalLimits = ExecutionCapitalLimits
-
 export interface ExecutionStrategyIdentity {
   readonly name: string
   readonly behaviorHash: string
@@ -51,7 +49,7 @@ export interface ExecutionStrategyIdentity {
   readonly parameterSchemaVersion: string
 }
 
-export const LiveCapitalLimitsSchema = Schema.Struct({
+export const ExecutionCapitalLimitsSchema = Schema.Struct({
   maxGrossNotionalMicros: PositiveMicros,
   maxOrderNotionalMicros: PositiveMicros,
   maxPositionNotionalMicros: PositiveMicros,
@@ -66,29 +64,32 @@ export const ExecutionStrategyIdentitySchema = Schema.Struct({
   parameterSchemaVersion: NonEmptyString,
 })
 
-export const LiveCapitalGrantMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.live-capital-grant.v1'),
+export const CapitalGrantRecordMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literals(['bayn.live-capital-grant.v1', 'bayn.capital-grant.v2']),
   brokerIdentity: BrokerIdentitySchema,
   authorityGenerationHash: Sha256,
   strategy: ExecutionStrategyIdentitySchema,
-  limits: LiveCapitalLimitsSchema,
+  limits: ExecutionCapitalLimitsSchema,
   validFrom: UtcInstant,
   validUntil: UtcInstant,
   issuedAt: UtcInstant,
   issuedBy: NonEmptyString,
 })
-export type LiveCapitalGrantMaterial = typeof LiveCapitalGrantMaterialSchema.Type
+export type CapitalGrantRecordMaterial = typeof CapitalGrantRecordMaterialSchema.Type
 
-const LiveCapitalGrantBase = Schema.Struct({
-  ...LiveCapitalGrantMaterialSchema.fields,
+const CapitalGrantRecordBase = Schema.Struct({
+  ...CapitalGrantRecordMaterialSchema.fields,
   grantHash: Sha256,
 })
 
-export const LiveCapitalGrantSchema = LiveCapitalGrantBase.check(
-  Schema.makeFilter((grant: typeof LiveCapitalGrantBase.Type): readonly Schema.FilterIssue[] => {
+export const CapitalGrantRecordSchema = CapitalGrantRecordBase.check(
+  Schema.makeFilter((grant: typeof CapitalGrantRecordBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
-    if (grant.brokerIdentity.environment !== BrokerEnvironment.Live) {
-      issues.push({ path: ['brokerIdentity', 'environment'], issue: 'must be live' })
+    if (
+      grant.schemaVersion === 'bayn.live-capital-grant.v1' &&
+      grant.brokerIdentity.environment !== BrokerEnvironment.Live
+    ) {
+      issues.push({ path: ['brokerIdentity', 'environment'], issue: 'legacy v1 grants must be bound to live' })
     }
     if (grant.validUntil <= grant.validFrom) {
       issues.push({ path: ['validUntil'], issue: 'must be after validFrom' })
@@ -104,19 +105,19 @@ export const LiveCapitalGrantSchema = LiveCapitalGrantBase.check(
     return issues
   }),
 )
-export type LiveCapitalGrant = typeof LiveCapitalGrantSchema.Type
+export type CapitalGrantRecord = typeof CapitalGrantRecordSchema.Type
 
-export const LiveCapitalGrantRevocationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.live-capital-grant-revocation.v1'),
+export const CapitalGrantRevocationSchema = Schema.Struct({
+  schemaVersion: Schema.Literals(['bayn.live-capital-grant-revocation.v1', 'bayn.capital-grant-revocation.v2']),
   revokedAt: UtcInstant,
   revokedBy: NonEmptyString,
   reason: NonEmptyString,
 })
-export type LiveCapitalGrantRevocation = typeof LiveCapitalGrantRevocationSchema.Type
+export type CapitalGrantRevocation = typeof CapitalGrantRevocationSchema.Type
 
 export interface PersistedCapitalGrant {
-  readonly grant: LiveCapitalGrant
-  readonly revocation?: LiveCapitalGrantRevocation
+  readonly grant: CapitalGrantRecord
+  readonly revocation?: CapitalGrantRevocation
 }
 
 export interface GrantedCapitalAuthority {
@@ -130,8 +131,8 @@ export type CapitalAuthority = NoCapitalAuthority | GrantedCapitalAuthority
 export const noCapitalAuthority: NoCapitalAuthority = Object.freeze({ _tag: CapitalAuthorityKind.None })
 
 const persistedGrantBinding = (
-  grant: LiveCapitalGrant,
-  revocation?: LiveCapitalGrantRevocation,
+  grant: CapitalGrantRecord,
+  revocation?: CapitalGrantRevocation,
 ): PersistedCapitalGrant => ({
   grant,
   ...(revocation === undefined ? {} : { revocation }),
@@ -139,12 +140,12 @@ const persistedGrantBinding = (
 
 export function grantedCapitalAuthority(authorityGenerationHash: string): GrantedCapitalAuthority
 export function grantedCapitalAuthority(
-  grant: LiveCapitalGrant,
-  revocation?: LiveCapitalGrantRevocation,
+  grant: CapitalGrantRecord,
+  revocation?: CapitalGrantRevocation,
 ): GrantedCapitalAuthority
 export function grantedCapitalAuthority(
-  input: string | LiveCapitalGrant,
-  revocation?: LiveCapitalGrantRevocation,
+  input: string | CapitalGrantRecord,
+  revocation?: CapitalGrantRevocation,
 ): GrantedCapitalAuthority {
   const authorityGenerationHash = typeof input === 'string' ? input : input.authorityGenerationHash
   const persistedGrant = typeof input === 'string' ? undefined : persistedGrantBinding(input, revocation)
@@ -179,12 +180,6 @@ export type ExecutionAuthorityConstructionFailure =
   | {
       readonly _tag: 'MutationBrokerRequiresCapitalAuthority'
       readonly environment: BrokerEnvironment
-    }
-  | {
-      readonly _tag: 'SandboxBrokerForbidsPersistedGrant'
-    }
-  | {
-      readonly _tag: 'CapitalEnvironmentRequiresPersistedGrant'
     }
   | {
       readonly _tag: 'PersistedGrantAuthorityGenerationMismatch'
@@ -255,10 +250,8 @@ export const makeExecutionAuthority = (
     })
   }
 
-  if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox) {
-    if (input.capitalAuthority.persistedGrant !== undefined) {
-      return Result.fail({ _tag: 'SandboxBrokerForbidsPersistedGrant' })
-    }
+  const persistedGrant = input.capitalAuthority.persistedGrant
+  if (persistedGrant === undefined) {
     return Result.succeed({
       brokerIdentity: input.brokerIdentity,
       brokerAccess: BrokerAccess.Mutation,
@@ -267,10 +260,6 @@ export const makeExecutionAuthority = (
     })
   }
 
-  const persistedGrant = input.capitalAuthority.persistedGrant
-  if (persistedGrant === undefined) {
-    return Result.fail({ _tag: 'CapitalEnvironmentRequiresPersistedGrant' })
-  }
   if (input.capitalAuthority.authorityGenerationHash !== persistedGrant.grant.authorityGenerationHash) {
     return Result.fail({
       _tag: 'PersistedGrantAuthorityGenerationMismatch',
@@ -321,28 +310,31 @@ export const makeExecutionAuthority = (
   })
 }
 
-export type LiveCapitalGrantConstructionFailure =
+export type CapitalGrantRecordConstructionFailure =
   | {
-      readonly _tag: 'LiveCapitalGrantSchemaInvalid'
+      readonly _tag: 'CapitalGrantRecordSchemaInvalid'
       readonly operation: 'material' | 'grant'
       readonly cause: Schema.SchemaError
     }
   | {
-      readonly _tag: 'LiveCapitalGrantCanonicalizationFailed'
+      readonly _tag: 'CapitalGrantRecordCanonicalizationFailed'
       readonly cause: CanonicalHashFailure
     }
 
-const decodeLiveGrantMaterial = Schema.decodeUnknownResult(LiveCapitalGrantMaterialSchema, StrictParseOptions)
-const decodeLiveGrant = Schema.decodeUnknownResult(LiveCapitalGrantSchema, StrictParseOptions)
+const decodeCapitalGrantRecordMaterial = Schema.decodeUnknownResult(
+  CapitalGrantRecordMaterialSchema,
+  StrictParseOptions,
+)
+const decodeCapitalGrantRecordValue = Schema.decodeUnknownResult(CapitalGrantRecordSchema, StrictParseOptions)
 
-export const makeLiveCapitalGrant = (
-  input: LiveCapitalGrantMaterial,
-): Result.Result<LiveCapitalGrant, LiveCapitalGrantConstructionFailure> =>
+export const makeCapitalGrantRecord = (
+  input: CapitalGrantRecordMaterial,
+): Result.Result<CapitalGrantRecord, CapitalGrantRecordConstructionFailure> =>
   pipe(
-    decodeLiveGrantMaterial(input),
+    decodeCapitalGrantRecordMaterial(input),
     Result.mapError(
-      (cause): LiveCapitalGrantConstructionFailure => ({
-        _tag: 'LiveCapitalGrantSchemaInvalid',
+      (cause): CapitalGrantRecordConstructionFailure => ({
+        _tag: 'CapitalGrantRecordSchemaInvalid',
         operation: 'material',
         cause,
       }),
@@ -351,17 +343,17 @@ export const makeLiveCapitalGrant = (
       pipe(
         canonicalHashV1Result(material),
         Result.mapError(
-          (cause): LiveCapitalGrantConstructionFailure => ({
-            _tag: 'LiveCapitalGrantCanonicalizationFailed',
+          (cause): CapitalGrantRecordConstructionFailure => ({
+            _tag: 'CapitalGrantRecordCanonicalizationFailed',
             cause,
           }),
         ),
         Result.flatMap((grantHash) =>
           pipe(
-            decodeLiveGrant({ ...material, grantHash }),
+            decodeCapitalGrantRecordValue({ ...material, grantHash }),
             Result.mapError(
-              (cause): LiveCapitalGrantConstructionFailure => ({
-                _tag: 'LiveCapitalGrantSchemaInvalid',
+              (cause): CapitalGrantRecordConstructionFailure => ({
+                _tag: 'CapitalGrantRecordSchemaInvalid',
                 operation: 'grant',
                 cause,
               }),
@@ -372,12 +364,12 @@ export const makeLiveCapitalGrant = (
     ),
   )
 
-export const decodeLiveCapitalGrant = (input: unknown) => decodeLiveGrant(input)
-const decodeLiveCapitalGrantRevocationDataFirst = Schema.decodeUnknownResult(
-  LiveCapitalGrantRevocationSchema,
+export const decodeCapitalGrantRecord = (input: unknown) => decodeCapitalGrantRecordValue(input)
+const decodeCapitalGrantRevocationDataFirst = Schema.decodeUnknownResult(
+  CapitalGrantRevocationSchema,
   StrictParseOptions,
 )
 
-export const decodeLiveCapitalGrantRevocation = Pipeable.dual(1, (input: unknown) =>
-  decodeLiveCapitalGrantRevocationDataFirst(input),
+export const decodeCapitalGrantRevocation = Pipeable.dual(1, (input: unknown) =>
+  decodeCapitalGrantRevocationDataFirst(input),
 )

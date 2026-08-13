@@ -398,9 +398,7 @@ export type ExecutionPolicyResolutionFailure =
     }
   | {
       readonly _tag: 'PersistedCapitalGrantRequired'
-    }
-  | {
-      readonly _tag: 'SandboxBrokerForbidsPersistedGrant'
+      readonly environment: BrokerEnvironment
     }
   | {
       readonly _tag: 'UnexpectedAuthorityGenerationHash'
@@ -481,11 +479,10 @@ export const resolveExecutionPolicy = (
   if (input.authorityGenerationHash === undefined) {
     return Result.fail({ _tag: 'GrantedCapitalRequiresAuthorityGeneration' })
   }
-  if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox && input.persistedCapitalGrantHash !== undefined) {
-    return Result.fail({ _tag: 'SandboxBrokerForbidsPersistedGrant' })
-  }
+  // Compatibility policy only: historical sandbox generations predate persisted grants. The execution authority and
+  // submit path are account-environment neutral once a grant is present.
   if (input.brokerIdentity.environment === BrokerEnvironment.Live && input.persistedCapitalGrantHash === undefined) {
-    return Result.fail({ _tag: 'PersistedCapitalGrantRequired' })
+    return Result.fail({ _tag: 'PersistedCapitalGrantRequired', environment: input.brokerIdentity.environment })
   }
   return Result.succeed({
     brokerIdentity: input.brokerIdentity,
@@ -511,9 +508,7 @@ export const renderExecutionPolicyFailure = (failure: ExecutionPolicyResolutionF
     case 'GrantedCapitalRequiresAuthorityGeneration':
       return 'granted capital requires an authority generation hash'
     case 'PersistedCapitalGrantRequired':
-      return 'this broker environment requires a persisted capital grant hash'
-    case 'SandboxBrokerForbidsPersistedGrant':
-      return 'sandbox broker execution forbids a live-capital authorization grant'
+      return `${failure.environment} broker execution requires a persisted capital grant hash`
     case 'UnexpectedAuthorityGenerationHash':
       return `authority generation hash is not valid for ${failure.capitalAuthority}`
     case 'UnexpectedPersistedCapitalGrantHash':

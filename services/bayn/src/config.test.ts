@@ -464,16 +464,6 @@ describe('pure runtime configuration resolution', () => {
       },
       {
         overrides: {
-          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
-          legacyMaximumAuthority: undefined,
-          brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthoritySelection.Granted,
-          persistedCapitalGrantHash,
-        },
-        tag: 'SandboxBrokerForbidsPersistedGrant',
-      },
-      {
-        overrides: {
           configuredAlpaca: alpaca(BrokerEnvironment.Live),
           legacyMaximumAuthority: undefined,
           brokerAccess: BrokerAccess.Mutation,
@@ -814,14 +804,16 @@ describe('runtime configuration loading', () => {
     )
   })
 
-  test('returns a typed startup error for an invalid authority combination', async () => {
+  test('returns a typed startup error when a live broker lacks its persisted capital grant', async () => {
     const environment = new Map(runtimeEnvironment)
     environment.delete('BAYN_OPERATION')
     environment.delete('BAYN_QUALIFICATION_RUN_ID')
     environment.delete('BAYN_MAXIMUM_AUTHORITY')
     environment.set('BAYN_BROKER_ACCESS', BrokerAccess.Mutation)
     environment.set('BAYN_CAPITAL_AUTHORITY', CapitalAuthoritySelection.Granted)
-    environment.set('BAYN_PERSISTED_CAPITAL_GRANT_HASH', persistedCapitalGrantHash)
+    environment.set('BAYN_BROKER_ENVIRONMENT', BrokerEnvironment.Live)
+    environment.set('BAYN_ALPACA_BASE_URL', alpacaLiveBaseUrl)
+    environment.delete('BAYN_PERSISTED_CAPITAL_GRANT_HASH')
 
     const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
 
@@ -831,7 +823,7 @@ describe('runtime configuration loading', () => {
       retryable: false,
       cause: {
         _tag: 'InvalidExecutionPolicy',
-        cause: { _tag: 'SandboxBrokerForbidsPersistedGrant' },
+        cause: { _tag: 'PersistedCapitalGrantRequired', environment: BrokerEnvironment.Live },
       },
     })
   })

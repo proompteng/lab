@@ -21,7 +21,6 @@ import { OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
 import {
   BrokerAccess,
-  BrokerEnvironment,
   makeExecutionAuthority,
   type ExecutionCapitalLimits,
   type ExecutionAuthority,
@@ -33,18 +32,13 @@ import {
 import { Pipeable } from '../pipeable'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
-  readonly brokerIdentity: MutationExecutionAuthority['brokerIdentity'] & {
-    readonly environment: BrokerEnvironment.Live
-  }
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
 }
 
 export const isPersistedGrantExecutionAuthority = (
   authority: MutationExecutionAuthority | ExecutionAuthority,
 ): authority is PersistedGrantExecutionAuthority =>
-  authority.brokerAccess === BrokerAccess.Mutation &&
-  authority.brokerIdentity.environment === BrokerEnvironment.Live &&
-  authority.capitalAuthority.persistedGrant !== undefined
+  authority.brokerAccess === BrokerAccess.Mutation && authority.capitalAuthority.persistedGrant !== undefined
 
 export type IntentAuthorityBindingFailure =
   | {
