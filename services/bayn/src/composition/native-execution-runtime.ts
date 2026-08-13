@@ -4,10 +4,11 @@ import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
+  type ExecutionControllerStatus,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
-import type { ExecutionAdvanceStepResult } from '../execution/controller'
+import { decodeExecutionAdvanceStepResult, type ExecutionAdvanceStepResult } from '../execution/controller'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   type RecoveryFirstCycleAdvance,
@@ -116,7 +117,41 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
 const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
   outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
 
-export const executeNativeExecutionAdvance = (
+const replayProjectedAdvance = (
+  command: AdvanceExecutionCommand,
+  status: ExecutionControllerStatus | null,
+): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
+  if (
+    status === null ||
+    status.epoch < command.epoch ||
+    (status.epoch === command.epoch && status.lastSequence < command.sequence)
+  ) {
+    return Result.succeed(null)
+  }
+  if (
+    status.controllerKey !== command.controllerKey ||
+    status.epoch !== command.epoch ||
+    status.lastSequence !== command.sequence
+  ) {
+    return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
+  }
+  if (status.nextDueAt === undefined) {
+    return Result.fail(projectionFailure('replayed controller status does not retain its next due time'))
+  }
+  return Result.mapError(
+    decodeExecutionAdvanceStepResult({
+      completedAt: status.completedAt,
+      outcome: {
+        _tag: status.lastOutcome,
+        receiptHash: status.lastReceiptHash,
+        nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
+      },
+    }),
+    projectionFailure,
+  )
+}
+
+const advanceAndProject = (
   command: AdvanceExecutionCommand,
   driver: BoundRecoveryFirstCycleDriver,
   statusStore: ExecutionControllerStatusStoreShape,
@@ -157,6 +192,19 @@ export const executeNativeExecutionAdvance = (
         ),
     ),
     Effect.map(({ step }) => step),
+  )
+
+export const executeNativeExecutionAdvance = (
+  command: AdvanceExecutionCommand,
+  driver: BoundRecoveryFirstCycleDriver,
+  statusStore: ExecutionControllerStatusStoreShape,
+): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> =>
+  statusStore.read(command.controllerKey).pipe(
+    Effect.mapError(projectionFailure),
+    Effect.flatMap((status) => Effect.fromResult(replayProjectedAdvance(command, status))),
+    Effect.flatMap((replayed) =>
+      replayed === null ? advanceAndProject(command, driver, statusStore) : Effect.succeed(replayed),
+    ),
   )
 
 const logEffect = (

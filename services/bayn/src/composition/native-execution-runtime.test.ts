@@ -6,6 +6,7 @@ import {
   ExecutionControllerOutcome,
   type ExecutionControllerStatus,
   type ExecutionControllerStatusProjection,
+  ExecutionControllerStatusStoreError,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
@@ -148,6 +149,60 @@ describe('native execution runtime', () => {
 
     expect(failure).toBeInstanceOf(TransientExecutionFailure)
     expect(failure.message).toBe('execution controller status projection did not complete')
+  })
+
+  test('replays an ambiguously committed projection without advancing execution again', async () => {
+    let advanceCount = 0
+    let projectCount = 0
+    const persistence: { current: ExecutionControllerStatus | null } = { current: null }
+    const replayDriver = {
+      ...driver,
+      advance: Effect.sync(() => {
+        advanceCount += 1
+        return {
+          observation: {
+            result: 'SUCCESS' as const,
+            observedAt: completedAt,
+            outcome: 'NOT_DUE' as const,
+          },
+        }
+      }),
+    }
+    const uncertainStore: ExecutionControllerStatusStoreShape = {
+      read: () => Effect.succeed(persistence.current),
+      project: (candidate) =>
+        Effect.sync(() => {
+          projectCount += 1
+          persistence.current = candidate
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ExecutionControllerStatusStoreError({
+                operation: 'project',
+                failure: 'query',
+                message: 'connection failed after commit',
+              }),
+            ),
+          ),
+        ),
+    }
+
+    const first = await Effect.runPromiseExit(executeNativeExecutionAdvance(command, replayDriver, uncertainStore))
+    const replay = await Effect.runPromise(executeNativeExecutionAdvance(command, replayDriver, uncertainStore))
+
+    expect(first._tag).toBe('Failure')
+    expect(advanceCount).toBe(1)
+    expect(projectCount).toBe(1)
+    const committed = persistence.current
+    if (committed === null) throw new Error('ambiguous projection did not persist its status')
+    expect(replay).toEqual({
+      completedAt: committed.completedAt,
+      outcome: {
+        _tag: committed.lastOutcome,
+        receiptHash: committed.lastReceiptHash,
+        nextDelayMs: 30_000,
+      },
+    })
   })
 
   test('forwards Restate cancellation into the Effect runner', async () => {
