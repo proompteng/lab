@@ -2,6 +2,8 @@ apiVersion: restate.dev/v1beta1
 kind: RestateDeployment
 metadata:
   name: bayn-execution-controller
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
   labels:
     app.kubernetes.io/name: bayn-execution-controller
     app.kubernetes.io/part-of: bayn
