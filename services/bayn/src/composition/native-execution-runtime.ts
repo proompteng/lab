@@ -46,7 +46,7 @@ export type BoundRecoveryFirstCycleDriver = {
 
 export class PublishedExecutionCycleDriver extends Context.Service<
   PublishedExecutionCycleDriver,
-  BoundRecoveryFirstCycleDriver
+  RecoveryFirstCycleDriverSlot
 >()('@proompteng/bayn/composition/native-execution-runtime/PublishedExecutionCycleDriver') {}
 
 export type RecoveryFirstCycleDriverSlotState =
@@ -343,7 +343,8 @@ export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'Auto
         ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
       }
       yield* startRuntimePreparation(plan, slot).pipe(Effect.forkScoped({ startImmediately: true }))
-      return yield* awaitNativeExecutionRuntimeDriver(slot, plan.config.operationTimeoutMs)
+      yield* awaitNativeExecutionRuntimeDriver(slot, plan.config.operationTimeoutMs)
+      return slot
     }),
   )
 
@@ -355,8 +356,12 @@ export const makeManagedNativeExecutionRuntimeAdapter = <E>(
 ): NativeExecutionRuntime => ({
   advance: (command, signal) =>
     executionRunner.runPromise(
-      Effect.all({ driver: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
-        Effect.flatMap(({ driver, statusStore }) => executeNativeExecutionAdvance(command, driver, statusStore)),
+      Effect.all({ driverSlot: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
+        Effect.flatMap(({ driverSlot, statusStore }) =>
+          readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
+            Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore)),
+          ),
+        ),
       ),
       { signal },
     ),

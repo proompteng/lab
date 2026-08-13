@@ -236,9 +236,14 @@ describe('native execution runtime', () => {
       Layer.effect(
         PublishedExecutionCycleDriver,
         Effect.acquireRelease(
-          Effect.sync(() => {
+          Effect.gen(function* () {
             acquired += 1
-            return driver
+            const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+            yield* Deferred.succeed(ready, undefined)
+            return {
+              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
+              ready,
+            } satisfies RecoveryFirstCycleDriverSlot
           }),
           () =>
             Effect.sync(() => {
@@ -264,6 +269,55 @@ describe('native execution runtime', () => {
     expect(acquired).toBe(1)
     await managed.dispose()
     expect(released).toBe(1)
+  })
+
+  test('managed runtime resolves the current driver after a restricted generation rebind', async () => {
+    const calls: string[] = []
+    const withCall = (name: string): BoundRecoveryFirstCycleDriver => ({
+      ...driver,
+      advance: Effect.sync(() => {
+        calls.push(name)
+        return {
+          observation: {
+            result: 'SUCCESS' as const,
+            observedAt: completedAt,
+            outcome: 'NOT_DUE' as const,
+          },
+        }
+      }),
+    })
+    const slot = Effect.runSync(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+        yield* Deferred.succeed(ready, undefined)
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({
+            _tag: 'Ready',
+            driver: withCall('restricted'),
+          }),
+          ready,
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const managed = ManagedRuntime.make(
+      Layer.merge(
+        Layer.succeed(PublishedExecutionCycleDriver, slot),
+        Layer.succeed(
+          ExecutionControllerStatusStore,
+          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        ),
+      ),
+    )
+    const runtime = makeManagedNativeExecutionRuntimeAdapter(managed, {
+      runPromise: (effect, options) => Effect.runPromise(effect, options),
+    })
+
+    await runtime.advance(command, new AbortController().signal)
+    await Effect.runPromise(Ref.set(slot.state, { _tag: 'Ready', driver: withCall('observe') }))
+    await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
+    await managed.dispose()
+
+    expect(calls).toEqual(['restricted', 'observe'])
   })
 
   test('fails initialization deterministically when preparation never publishes a driver', async () => {
