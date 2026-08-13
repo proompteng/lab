@@ -1166,6 +1166,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'evaluation_artifacts',
       'evaluation_events',
       'evaluation_runs',
+      'execution_controller_status',
       'fills',
       'gate_outcomes',
       'intents',
@@ -1228,6 +1229,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 37, name: 'account_neutral_runtime_compatibility' },
       { migration_id: 38, name: 'account_neutral_capital_grants' },
       { migration_id: 39, name: 'account_neutral_authority_terminalization' },
+      { migration_id: 40, name: 'execution_controller_status' },
     ])
   })
 

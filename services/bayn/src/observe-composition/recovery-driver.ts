@@ -27,6 +27,7 @@ import type {
   ObserveAutonomousCycleInput,
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
+  LifecycleAdvanceDisposition,
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleDriverInterpreter,
   RecoveryFirstRuntime,
@@ -36,6 +37,7 @@ import {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   decisionBuildError,
+  mutationCyclePassTimeoutError,
   notDueReconciliationError,
   observePass,
   runMutationPassWithinTimeout,
@@ -90,6 +92,29 @@ const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleR
 
 const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
+
+export const runExternalLifecycleAdvanceWithinTimeout = <A, E, R>(
+  operationPermit: Semaphore.Semaphore,
+  beforeLifecycleAdvance: Effect.Effect<LifecycleAdvanceDisposition, E, R> | undefined,
+  runCycleAdvance: Effect.Effect<A, E, R>,
+  completeLifecycleAdvance: Effect.Effect<A, E, R>,
+  timeoutMs: number,
+  onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  operationPermit
+    .withPermit(
+      beforeLifecycleAdvance === undefined
+        ? runCycleAdvance
+        : beforeLifecycleAdvance.pipe(
+            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+          ),
+    )
+    .pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
+      }),
+    )
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -307,6 +332,20 @@ const makeRecoveryFirstCycleDriver = (
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
+    const observeCycleFailure = (error: CycleRunnerError) =>
+      (capability._tag === 'Mutation' ? restrictMutationLoopFailure(error) : Effect.void).pipe(
+        Effect.catch((restrictionError: CycleRunnerError) =>
+          currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) =>
+              observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
+            ),
+            Effect.andThen(Effect.fail(restrictionError)),
+          ),
+        ),
+        Effect.andThen(currentUtcInstant),
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.map((observation) => ({ observation })),
+      )
     const advanceCycle = Effect.gen(function* () {
       const context: CycleRunContext<ObserveDecisionRuntime> = {
         qualificationRunId: startup.qualificationRunId,
@@ -326,20 +365,7 @@ const makeRecoveryFirstCycleDriver = (
       return result
     }).pipe(
       Effect.matchEffect({
-        onFailure: (error) =>
-          (capability._tag === 'Mutation' ? restrictMutationLoopFailure(error) : Effect.void).pipe(
-            Effect.catch((restrictionError: CycleRunnerError) =>
-              currentUtcInstant.pipe(
-                Effect.flatMap((observedAt) =>
-                  observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
-                ),
-                Effect.andThen(Effect.fail(restrictionError)),
-              ),
-            ),
-            Effect.andThen(currentUtcInstant),
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-            Effect.map((observation) => ({ observation })),
-          ),
+        onFailure: observeCycleFailure,
         onSuccess: (result) =>
           observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
             Effect.map((observation) => ({ observation, result })),
@@ -361,26 +387,35 @@ const makeRecoveryFirstCycleDriver = (
               onSuccess: () => advanceCycle,
             }),
           )
-    const advance = operationPermit.withPermit(
+    const completeLifecycleAdvance = currentUtcInstant.pipe(
+      Effect.flatMap((observedAt) => {
+        const observation: AutonomousCyclePassObservation = {
+          result: 'SUCCESS',
+          observedAt,
+          outcome: 'RECOVERED',
+        }
+        return startup.recordPass(observation).pipe(Effect.as({ observation }))
+      }),
+    )
+    // The external driver owns one bounded command. Include lifecycle maintenance and the reconciliation preflight in
+    // the same aggregate budget as the cycle pass so a stalled prerequisite cannot outlive Restate's command window.
+    const lifecycleAdvance =
       input.beforeLifecycleAdvance === undefined
         ? runCycleAdvance
         : input.beforeLifecycleAdvance.pipe(
-            Effect.flatMap((disposition) =>
-              disposition === 'CONTINUE'
-                ? runCycleAdvance
-                : currentUtcInstant.pipe(
-                    Effect.flatMap((observedAt) => {
-                      const observation: AutonomousCyclePassObservation = {
-                        result: 'SUCCESS',
-                        observedAt,
-                        outcome: 'RECOVERED',
-                      }
-                      return startup.recordPass(observation).pipe(Effect.as({ observation }))
-                    }),
-                  ),
-            ),
-          ),
-    )
+            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+          )
+    const advance =
+      input.interpretCycleDriver === undefined
+        ? operationPermit.withPermit(lifecycleAdvance)
+        : runExternalLifecycleAdvanceWithinTimeout(
+            operationPermit,
+            input.beforeLifecycleAdvance,
+            runCycleAdvance,
+            completeLifecycleAdvance,
+            cyclePassTimeoutMs,
+            observeCycleFailure,
+          )
     const maintainReconciliation = operationPermit.withPermit(
       reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
         Effect.catch((error) =>

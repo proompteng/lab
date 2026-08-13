@@ -7,6 +7,7 @@ import type { ApplicationDependencies, ApplicationIdentity, ApplicationPlanFor }
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability, CycleObservabilityLive, CycleStoreLive } from '../cycle/store'
+import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '../db/evidence-store'
 import { ForwardPerformanceReceiptStoreLive } from '../db/forward-performance-receipt-postgres'
@@ -97,6 +98,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     PersistedCapitalGrantStoreLive,
     ExecutionCycleClosureStorePostgresLive,
     ForwardPerformanceReceiptStoreLive,
+    ExecutionControllerStatusStoreLive,
     LifecycleCommandStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(

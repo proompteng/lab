@@ -10,10 +10,10 @@ import type { LifecycleCommandStoreShape } from './db/lifecycle-command'
 import type { WriterFenceService } from './execution/writer-fence'
 import { bearerToken, type LifecycleCommandAuthenticator } from './lifecycle-command-auth'
 import { decideLifecycleCommand, lifecycleCommandV1StaleExecutionBootstrapReason } from './lifecycle-command-contract'
+import type { LifecycleCommand } from './lifecycle-command-contract'
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { withObservedSpan } from './telemetry'
 import { currentUtcInstant } from './time'
-import type { CycleRunnerError } from './cycle/runner'
 import { CycleNotDueReason } from './cycle/runner/model'
 
 export interface LifecycleCommandServerConfig {
@@ -33,6 +33,10 @@ export interface LifecycleCommandExecutionReceipt {
 export interface LifecycleCommandAdvance {
   readonly observation: AutonomousCyclePassObservation
 }
+
+export type LifecycleCommandAdvanceInterpreter<E, R> = (
+  command: LifecycleCommand,
+) => Effect.Effect<LifecycleCommandAdvance, E, R>
 
 export const executeLifecycleCommand = <E, R>(
   store: LifecycleCommandStoreShape,
@@ -161,13 +165,13 @@ const authenticateRequest = (
   )
 }
 
-const handleRequest = <R>(
+const handleRequest = <E, R>(
   config: LifecycleCommandServerConfig,
   store: LifecycleCommandStoreShape,
   fence: WriterFenceService,
   commandPermit: Semaphore.Semaphore,
   authenticate: LifecycleCommandAuthenticator,
-  advance: Effect.Effect<LifecycleCommandAdvance, CycleRunnerError, R>,
+  advance: LifecycleCommandAdvanceInterpreter<E, R>,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse, never, HttpServerRequest.HttpServerRequest | R> =>
   HttpServerRequest.HttpServerRequest.pipe(
     Effect.flatMap((request) => {
@@ -220,31 +224,33 @@ const handleRequest = <R>(
               if (decision._tag === 'Reject') {
                 return jsonResponse(decision.status, { accepted: false, reason: decision.reason })
               }
-              return commandPermit.withPermit(executeLifecycleCommand(store, fence, decision.command, advance)).pipe(
-                Effect.interruptible,
-                Effect.flatMap((receipt) =>
-                  jsonResponse(200, {
-                    schemaVersion: 'bayn.lifecycle-command-response.v1',
-                    accepted: true,
-                    commandId: decision.command.commandId,
-                    sequence: decision.command.sequence,
-                    sourceRevision: decision.sourceRevision,
-                    replayed: receipt.replayed,
-                    nextDelayMs: config.nextDelayMs,
-                    observation: lifecycleCommandObservationV1(receipt.observation),
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logError('Bayn lifecycle command failed', cause).pipe(
-                    Effect.annotateLogs({
-                      controllerKey: decision.command.controllerKey,
+              return commandPermit
+                .withPermit(executeLifecycleCommand(store, fence, decision.command, advance(decision.command)))
+                .pipe(
+                  Effect.interruptible,
+                  Effect.flatMap((receipt) =>
+                    jsonResponse(200, {
+                      schemaVersion: 'bayn.lifecycle-command-response.v1',
+                      accepted: true,
                       commandId: decision.command.commandId,
-                      commandSequence: decision.command.sequence,
+                      sequence: decision.command.sequence,
+                      sourceRevision: decision.sourceRevision,
+                      replayed: receipt.replayed,
+                      nextDelayMs: config.nextDelayMs,
+                      observation: lifecycleCommandObservationV1(receipt.observation),
                     }),
-                    Effect.andThen(jsonResponse(503, { accepted: false, reason: 'COMMAND_FAILED' })),
                   ),
-                ),
-              )
+                  Effect.catch((cause) =>
+                    Effect.logError('Bayn lifecycle command failed', cause).pipe(
+                      Effect.annotateLogs({
+                        controllerKey: decision.command.controllerKey,
+                        commandId: decision.command.commandId,
+                        commandSequence: decision.command.sequence,
+                      }),
+                      Effect.andThen(jsonResponse(503, { accepted: false, reason: 'COMMAND_FAILED' })),
+                    ),
+                  ),
+                )
             }),
           )
         }),
@@ -259,12 +265,12 @@ const handleRequest = <R>(
     ),
   )
 
-export const serveLifecycleCommands = <R>(
+export const serveLifecycleCommands = <E, R>(
   config: LifecycleCommandServerConfig,
   store: LifecycleCommandStoreShape,
   fence: WriterFenceService,
   authenticate: LifecycleCommandAuthenticator,
-  advance: Effect.Effect<LifecycleCommandAdvance, CycleRunnerError, R>,
+  advance: LifecycleCommandAdvanceInterpreter<E, R>,
 ): Effect.Effect<never, ServeError, R> =>
   Effect.gen(function* () {
     const commandPermit = yield* Semaphore.make(1)
