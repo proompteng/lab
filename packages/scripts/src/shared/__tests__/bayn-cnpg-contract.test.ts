@@ -223,3 +223,21 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   expect(alloy).toContain('label = "cnpg.io/cluster"')
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
+
+test('the inactive Restate worker is bound to the current execution generation without capital authority', () => {
+  const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
+  const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
+  const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
+    new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))
+  const deploymentEnvironment = environment(deployment)
+  const controllerEnvironment = environment(controller)
+
+  expect(controller.kind).toBe('RestateDeployment')
+  expect(controllerEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value).toMatch(/^[a-f0-9]{64}$/)
+  expect(controllerEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value).toBe(
+    deploymentEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value,
+  )
+  expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
+  expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+  expect(controllerEnvironment.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(false)
+})

@@ -68,6 +68,11 @@ spec:
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
+            # Bind the inactive controller plan to the same immutable execution
+            # generation as the current owner. This does not grant capital or
+            # schedule a tick; activation remains an authenticated Restate call.
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT
