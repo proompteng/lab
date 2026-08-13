@@ -449,22 +449,27 @@ describe('Bayn application platform', () => {
 })
 
 describe('Bayn PAPER receipt retry boundary', () => {
-  test('reconciles before receipt maintenance and blocks finalization when reconciliation fails', async () => {
+  test('restricts expired authority before reconciliation and blocks finalization when reconciliation fails', async () => {
     const events: string[] = []
     const success = await Effect.runPromise(
       runLifecycleMaintenanceAdvance(
         Effect.sync(() => {
           events.push('reconcile')
         }),
-        Effect.sync(() => {
-          events.push('finalize')
-          return 'CONTINUE' as const
-        }),
+        {
+          beforeReconciliation: Effect.sync(() => {
+            events.push('restrict')
+          }),
+          afterReconciliation: Effect.sync(() => {
+            events.push('finalize')
+            return 'CONTINUE' as const
+          }),
+        },
       ),
     )
 
     expect(success).toBe('CONTINUE')
-    expect(events).toEqual(['reconcile', 'finalize'])
+    expect(events).toEqual(['restrict', 'reconcile', 'finalize'])
 
     let finalizationRuns = 0
     const reconciliationFailure = new ReconciliationError({
@@ -473,13 +478,15 @@ describe('Bayn PAPER receipt retry boundary', () => {
     })
     const failure = await Effect.runPromise(
       Effect.flip(
-        runLifecycleMaintenanceAdvance(
-          Effect.fail(reconciliationFailure),
-          Effect.sync(() => {
+        runLifecycleMaintenanceAdvance(Effect.fail(reconciliationFailure), {
+          beforeReconciliation: Effect.sync(() => {
+            events.push('restrict-after-expiry')
+          }),
+          afterReconciliation: Effect.sync(() => {
             finalizationRuns += 1
             return 'CONTINUE' as const
           }),
-        ),
+        }),
       ),
     )
 
@@ -489,6 +496,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
       message: 'same-pass reconciliation failed: receipt reconciliation failed',
     })
     expect(finalizationRuns).toBe(0)
+    expect(events).toContain('restrict-after-expiry')
   })
 
   test('does not bind a generation receipt before its PAPER entry cutoff', () => {
@@ -557,22 +565,27 @@ describe('Bayn PAPER receipt retry boundary', () => {
     const disposition = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-03T20:15:00.000Z'))
-        return yield* runExecutionLifecycleMaintenance(
-          researchRequest,
-          authorityRestrictionStore,
-          writerFence,
-          (cycleId, observedAt) =>
-            Effect.sync(() => {
-              expect(cycleId).toBeUndefined()
-              expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
-              operations.push('finalize')
-              return true
-            }),
+        return yield* runLifecycleMaintenanceAdvance(
+          Effect.sync(() => {
+            operations.push('reconcile')
+          }),
+          runExecutionLifecycleMaintenance(
+            researchRequest,
+            authorityRestrictionStore,
+            writerFence,
+            (cycleId, observedAt) =>
+              Effect.sync(() => {
+                expect(cycleId).toBeUndefined()
+                expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
+                operations.push('finalize')
+                return true
+              }),
+          ),
         )
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(operations).toEqual(['fence', 'restrict', 'finalize'])
+    expect(operations).toEqual(['fence', 'restrict', 'reconcile', 'finalize'])
     expect(disposition).toBe('COMPLETED')
   })
 

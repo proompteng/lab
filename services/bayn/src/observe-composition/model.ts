@@ -25,6 +25,13 @@ import { utcInstantFromEpochMillis } from '../time'
 
 export type LifecycleAdvanceDisposition = 'CONTINUE' | 'COMPLETED'
 
+export type LifecycleAdvanceMaintenance = {
+  /** Restricts expired authority before any reconciliation or cycle work can reach broker mutation. */
+  readonly beforeReconciliation: Effect.Effect<void, CycleRunnerError>
+  /** Finalizes a receipt only after the same advance has reconciled successfully. */
+  readonly afterReconciliation: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
+}
+
 export const executionEpisodeCloseGraceMs = 15 * 60_000
 
 export const executionEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
@@ -92,8 +99,8 @@ export type ObserveAutonomousCycleInput = {
   readonly executionEpisodeCloseSubmitCutoffAt?: string
   readonly executionEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
-  /** Runs due lifecycle maintenance inside the same serialized command as the cycle pass. */
-  readonly beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
+  /** Runs phased lifecycle maintenance inside the same serialized command as reconciliation and the cycle pass. */
+  readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance
   readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
 

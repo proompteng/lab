@@ -4158,6 +4158,7 @@ describe('OBSERVE runtime composition', () => {
     publicationReads = 0
     const externalObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
     let lifecycleMaintenanceRuns = 0
+    let lifecycleFinalizationRuns = 0
     let externalNextDelayMs: number | undefined
     const externalStartup = makeMutationAutonomousCycleStartup({
       accountId,
@@ -4167,11 +4168,16 @@ describe('OBSERVE runtime composition', () => {
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
-      beforeLifecycleAdvance: Effect.sync(() => {
-        lifecycleMaintenanceRuns += 1
-        mutationEvents.push(`maintenance:${lifecycleMaintenanceRuns.toString()}`)
-        return lifecycleMaintenanceRuns === 3 ? ('COMPLETED' as const) : ('CONTINUE' as const)
-      }),
+      lifecycleMaintenance: {
+        beforeReconciliation: Effect.sync(() => {
+          lifecycleMaintenanceRuns += 1
+          mutationEvents.push(`maintenance:${lifecycleMaintenanceRuns.toString()}`)
+        }),
+        afterReconciliation: Effect.sync(() => {
+          lifecycleFinalizationRuns += 1
+          return lifecycleFinalizationRuns === 3 ? ('COMPLETED' as const) : ('CONTINUE' as const)
+        }),
+      },
       interpretCycleDriver: (driver) =>
         Effect.gen(function* () {
           externalNextDelayMs = driver.nextDelayMs
@@ -4233,11 +4239,13 @@ describe('OBSERVE runtime composition', () => {
     expect(externalObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(externalObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(externalObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
-    expect(lifecycleMaintenanceRuns).toBe(3)
+    expect(lifecycleMaintenanceRuns).toBe(4)
+    expect(lifecycleFinalizationRuns).toBe(3)
     expect(mutationReconciliations).toBe(3)
     expect(mutationEvents.indexOf('maintenance:1')).toBeLessThan(mutationEvents.indexOf('reconcile:1'))
     expect(mutationEvents.indexOf('maintenance:2')).toBeLessThan(mutationEvents.indexOf('reconcile:2'))
-    expect(mutationEvents.indexOf('maintenance:3')).toBeGreaterThan(mutationEvents.indexOf('reconcile:3'))
+    expect(mutationEvents.indexOf('maintenance:3')).toBeLessThan(mutationEvents.indexOf('reconcile:3'))
+    expect(mutationEvents.indexOf('reconcile:3')).toBeLessThan(mutationEvents.indexOf('maintenance:4'))
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
     expect(mutationEvents).not.toContain('publication:3')
@@ -4257,7 +4265,10 @@ describe('OBSERVE runtime composition', () => {
           reconciliationPassTimeoutMs: 50,
           strategy: fixtureRuntime,
           executionProgram: sandboxExecutionProgram(),
-          beforeLifecycleAdvance: Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never)),
+          lifecycleMaintenance: {
+            beforeReconciliation: Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            afterReconciliation: Effect.succeed('CONTINUE'),
+          },
           interpretCycleDriver: (driver) =>
             Effect.gen(function* () {
               const advance = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))

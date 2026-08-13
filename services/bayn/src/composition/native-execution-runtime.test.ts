@@ -41,6 +41,8 @@ const marketDataBinding = {
 }
 
 type PlanOverrides = {
+  readonly brokerAccess?: 'mutation' | 'read-only'
+  readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
   readonly cyclePollIntervalMs?: number
   readonly qualificationRunId?: string
@@ -101,12 +103,15 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
       qualificationRunId: overrides.qualificationRunId ?? hash('9'),
       clickhouse: overrides.marketDataBinding ?? marketDataBinding,
       execution: {
-        brokerAccess: 'mutation',
-        capitalAuthority: {
-          _tag: 'granted-capital',
-          authorityGenerationHash: hash('4'),
-          persistedGrantHash: overrides.persistedGrantHash ?? hash('c'),
-        },
+        brokerAccess: overrides.brokerAccess ?? 'mutation',
+        capitalAuthority:
+          overrides.capitalAuthorityKind === 'none'
+            ? { _tag: 'none' }
+            : {
+                _tag: 'granted-capital',
+                authorityGenerationHash: hash('4'),
+                persistedGrantHash: overrides.persistedGrantHash ?? hash('c'),
+              },
       },
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
       cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
@@ -134,6 +139,8 @@ describe('native execution runtime', () => {
       plan({ cyclePollIntervalMs: 60_000 }),
       plan({ qualificationRunId: hash('a') }),
       plan({ persistedGrantHash: hash('d') }),
+      plan({ brokerAccess: 'read-only' }),
+      plan({ capitalAuthorityKind: 'none' }),
       plan({ marketDataBinding: { ...marketDataBinding, snapshotId: hash('b') } }),
       plan({ marketDataBinding: { ...marketDataBinding, publicationAsOf: '2026-08-13' } }),
       plan({ marketDataBinding: { ...marketDataBinding, calendarVersion: 'xnys-2026-v2' } }),

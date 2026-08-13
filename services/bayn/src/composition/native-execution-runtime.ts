@@ -74,10 +74,14 @@ export const executionControllerConfig = (
       },
       capitalActivationRequestHash: sha256(plan.config.capitalActivationRequestJson ?? ''),
       authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
-      persistedCapitalGrantHash:
-        'persistedGrantHash' in plan.config.execution.capitalAuthority
-          ? (plan.config.execution.capitalAuthority.persistedGrantHash ?? null)
-          : null,
+      executionPolicy: {
+        brokerAccess: plan.config.execution.brokerAccess,
+        capitalAuthority: plan.config.execution.capitalAuthority._tag,
+        persistedCapitalGrantHash:
+          'persistedGrantHash' in plan.config.execution.capitalAuthority
+            ? (plan.config.execution.capitalAuthority.persistedGrantHash ?? null)
+            : null,
+      },
       cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
       operationTimeoutMs: plan.config.operationTimeoutMs,

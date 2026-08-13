@@ -20,6 +20,7 @@ import {
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   type LifecycleAdvanceDisposition,
+  type LifecycleAdvanceMaintenance,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverInterpreter,
   type RecoveryFirstRuntime,
@@ -105,7 +106,7 @@ export const lifecycleMaintenanceCycle =
     store: LifecycleCommandStoreShape,
     writerFence: WriterFenceService,
     maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
-    maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+    maintainLifecycle: LifecycleAdvanceMaintenance,
     interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
   (startup) =>
@@ -144,8 +145,8 @@ export const lifecycleMaintenanceCycle =
         const driver: RecoveryFirstCycleDriver = {
           advance,
           maintainReconciliation: operationPermit.withPermit(
-            maintainReconciliation.pipe(
-              Effect.mapError(lifecycleReconciliationError),
+            maintainLifecycle.beforeReconciliation.pipe(
+              Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
               Effect.catch((error) =>
                 Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
                   Effect.annotateLogs({
@@ -180,9 +181,12 @@ const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunn
 
 export const runLifecycleMaintenanceAdvance = (
   maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
-  maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+  maintainLifecycle: LifecycleAdvanceMaintenance,
 ): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
-  maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError), Effect.andThen(maintainLifecycle))
+  maintainLifecycle.beforeReconciliation.pipe(
+    Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
+    Effect.andThen(maintainLifecycle.afterReconciliation),
+  )
 
 export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
   authority.maximum === Authority.Observe && authority.effective === Authority.Observe
@@ -218,7 +222,7 @@ export const mutationCycle = (
   lifecycleCommandStore: LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
-  beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+  lifecycleMaintenance?: LifecycleAdvanceMaintenance,
   interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
 ) => {
   const interpretCycleDriver =
@@ -241,7 +245,7 @@ export const mutationCycle = (
     executionEpisodeCutoffAt: executionEpisode.cutoffAt,
     executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
     executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
-    ...(beforeLifecycleAdvance === undefined ? {} : { beforeLifecycleAdvance }),
+    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
     ...(interpretCycleDriver === undefined ? {} : { interpretCycleDriver }),
   })
 }

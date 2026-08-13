@@ -51,6 +51,7 @@ export {
 } from './observe-composition/model'
 export type {
   LifecycleAdvanceDisposition,
+  LifecycleAdvanceMaintenance,
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
