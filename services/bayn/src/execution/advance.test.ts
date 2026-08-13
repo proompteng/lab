@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit } from 'effect'
 
 import { CycleRunnerError } from '../cycle/runner'
+import { CycleState } from '../cycle/model'
 import { CycleNotDueReason } from '../cycle/runner/model'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { advanceExecutionOnce } from './advance'
@@ -22,6 +23,10 @@ const driver = (
     | {
         readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED'
         readonly readiness: { readonly outcome: 'ALREADY_BOUND' | 'BLOCKED' | 'BOUND' }
+      }
+    | {
+        readonly outcome: 'ALREADY_TERMINAL'
+        readonly cycle: { readonly state: CycleState.Blocked | CycleState.Completed | CycleState.NoTrade }
       },
 ) => ({
   advance: Effect.succeed({ observation, ...(result === undefined ? {} : { result }) }),
@@ -141,6 +146,30 @@ describe('advanceExecutionOnce', () => {
     }
     expect(bound).toMatchObject({ _tag: 'Completed' })
     expect(outcomes[0]?.receiptHash).not.toBe(bound.receiptHash)
+  })
+
+  test('distinguishes a blocked terminal cycle from successful terminal states', async () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      outcome: 'ALREADY_TERMINAL' as const,
+      observedAt: '2026-08-13T17:00:01.000Z',
+    }
+    const blocked = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver(observation, { outcome: 'ALREADY_TERMINAL', cycle: { state: CycleState.Blocked } }),
+      ),
+    )
+    const completed = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver(observation, { outcome: 'ALREADY_TERMINAL', cycle: { state: CycleState.Completed } }),
+      ),
+    )
+
+    expect(blocked).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
+    expect(completed).toMatchObject({ _tag: 'Completed' })
+    expect(blocked.receiptHash).not.toBe(completed.receiptHash)
   })
 
   test('keeps interpreter failures typed for Restate retry policy', async () => {

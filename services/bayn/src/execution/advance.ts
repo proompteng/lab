@@ -1,6 +1,7 @@
 import { Data, Effect } from 'effect'
 
 import type { CycleRunnerError } from '../cycle/runner'
+import { CycleState } from '../cycle/model'
 import type { CycleNotDueReason, CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
@@ -18,7 +19,14 @@ type AdvanceCycleResult =
       }
     }
   | {
-      readonly outcome: Exclude<CycleRunResult['outcome'], 'ACQUIRED' | 'REACQUIRED' | 'RECOVERED' | 'RESUMED'>
+      readonly outcome: 'ALREADY_TERMINAL'
+      readonly cycle: Pick<Extract<CycleRunResult, { readonly outcome: 'ALREADY_TERMINAL' }>['cycle'], 'state'>
+    }
+  | {
+      readonly outcome: Exclude<
+        CycleRunResult['outcome'],
+        'ACQUIRED' | 'ALREADY_TERMINAL' | 'REACQUIRED' | 'RECOVERED' | 'RESUMED'
+      >
     }
 
 interface AdvancePass {
@@ -97,6 +105,9 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
     return { _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } }
   }
   if (result?.outcome === 'RECOVERED' && result.action === 'BLOCKED') {
+    return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
+  }
+  if (result?.outcome === 'ALREADY_TERMINAL' && result.cycle.state === CycleState.Blocked) {
     return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
   }
   if (result !== undefined && 'readiness' in result && result.readiness.outcome === 'BLOCKED') {
