@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
-import { intentIdForPlan, paperIntentIdForDecodedPlan } from './execution/intents/domain'
+import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
@@ -95,7 +95,7 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
     }
     if (
       evaluation.decision.outcome !== RiskOutcome.Blocked ||
-      !evaluation.decision.reasonCodes.includes(Reason.AuthorityNotPaper)
+      !evaluation.decision.reasonCodes.includes(Reason.AuthorityNotGranted)
     ) {
       issues.push({
         path: ['deltaRisk', index, 'evaluation', 'decision'],
@@ -142,29 +142,29 @@ export const ObserveShadowDecisionDocumentSchema = ObserveShadowDecisionDocument
 )
 export type ObserveShadowDecisionDocument = typeof ObserveShadowDecisionDocumentSchema.Type
 
-const PaperDecisionBindingsSchema = Schema.Struct({
+const ExecutionDecisionBindingsSchema = Schema.Struct({
   ...ShadowDecisionBindingsSchema.fields,
   qualificationRunId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
 })
 
-const PaperRiskBlockSchema = Schema.Struct({
+const ExecutionRiskBlockSchema = Schema.Struct({
   intentId: Sha256Schema,
   decisionId: Sha256Schema,
   reasonCodes: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(1), Schema.isUnique()),
 })
 
-const PaperDecisionMaterialSchema = Schema.Struct({
+const ExecutionDecisionMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-cycle-decision.v1'),
   mode: Schema.Literal('PAPER'),
   dispatchable: Schema.Boolean,
-  bindings: PaperDecisionBindingsSchema,
+  bindings: ExecutionDecisionBindingsSchema,
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
-  riskBlock: Schema.optionalKey(PaperRiskBlockSchema),
+  riskBlock: Schema.optionalKey(ExecutionRiskBlockSchema),
   /** Previous close-plan content hash used to derive a distinct residual close identity. */
   replanGenerationHash: Schema.optionalKey(Sha256Schema),
   createdAt: UtcInstantSchema,
@@ -172,7 +172,9 @@ const PaperDecisionMaterialSchema = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 
-const paperMaterialIssues = (document: typeof PaperDecisionMaterialSchema.Type): readonly Schema.FilterIssue[] => {
+const executionMaterialIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (document.expiresAt !== document.submissionCutoffAt) {
     issues.push({ path: ['expiresAt'], issue: 'must equal the immutable cycle submission cutoff' })
@@ -227,7 +229,7 @@ const paperMaterialIssues = (document: typeof PaperDecisionMaterialSchema.Type):
       notionalLimitMicros: risk.notionalLimitMicros,
       ...(document.replanGenerationHash === undefined ? {} : { replanGenerationHash: document.replanGenerationHash }),
     } as const
-    const identity = paperIntentIdForDecodedPlan(plan, document.bindings.authorityGenerationHash)
+    const identity = executionIntentIdForDecodedPlan(plan, document.bindings.authorityGenerationHash)
     if (Result.isFailure(identity) || document.orderedIntentIds[index] !== identity.success) {
       issues.push({ path: ['orderedIntentIds', index], issue: 'must bind the exact ordered target content' })
     }
@@ -270,7 +272,7 @@ const paperMaterialIssues = (document: typeof PaperDecisionMaterialSchema.Type):
       blockedDecision.reasonCodes.length !== document.riskBlock.reasonCodes.length ||
       blockedDecision.reasonCodes.some((reason, index) => reason !== document.riskBlock?.reasonCodes[index]) ||
       blockedDecision.reasonCodes.some((reason) => !knownReasonCodes.includes(reason as Reason)) ||
-      blockedDecision.reasonCodes.includes(Reason.AuthorityNotPaper)
+      blockedDecision.reasonCodes.includes(Reason.AuthorityNotGranted)
     ) {
       issues.push({
         path: ['riskBlock'],
@@ -281,12 +283,12 @@ const paperMaterialIssues = (document: typeof PaperDecisionMaterialSchema.Type):
   return issues
 }
 
-const PaperDecisionDocumentSemanticSchema = Schema.Struct({
-  ...PaperDecisionMaterialSchema.fields,
+const ExecutionDecisionDocumentSemanticSchema = Schema.Struct({
+  ...ExecutionDecisionMaterialSchema.fields,
   contentHash: Sha256Schema,
-}).check(Schema.makeFilter(paperMaterialIssues))
+}).check(Schema.makeFilter(executionMaterialIssues))
 
-export const PaperDecisionDocumentSchema = PaperDecisionDocumentSemanticSchema.check(
+export const ExecutionDecisionDocumentSchema = ExecutionDecisionDocumentSemanticSchema.check(
   Schema.makeFilter((document) => {
     const { contentHash, ...material } = document
     const expectedHash = canonicalHashV1Result(material)
@@ -295,11 +297,11 @@ export const PaperDecisionDocumentSchema = PaperDecisionDocumentSemanticSchema.c
       : []
   }),
 )
-export type PaperDecisionDocument = typeof PaperDecisionDocumentSchema.Type
+export type ExecutionDecisionDocument = typeof ExecutionDecisionDocumentSchema.Type
 
 export const CycleDecisionDocumentSchema = Schema.Union([
   ObserveShadowDecisionDocumentSchema,
-  PaperDecisionDocumentSchema,
+  ExecutionDecisionDocumentSchema,
 ])
 export type CycleDecisionDocument = typeof CycleDecisionDocumentSchema.Type
 
@@ -343,7 +345,7 @@ const decodeDocumentFailure = (
 ): ShadowDecisionContractFailure => new ShadowDecisionContractFailure({ operation: 'decode', reason, message, cause })
 
 const decodeDocumentResult = Schema.decodeUnknownResult(ObserveShadowDecisionDocumentSchema, strictParseOptions)
-const decodePaperDocumentResult = Schema.decodeUnknownResult(PaperDecisionDocumentSchema, strictParseOptions)
+const decodeExecutionDocumentResult = Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema, strictParseOptions)
 
 export const makeObserveShadowDecisionDocument = (
   material: unknown,
@@ -377,9 +379,9 @@ export const decodeObserveShadowDecisionDocument = (
     decodeDocumentFailure('contract', 'shadow decision document failed its durable contract', cause),
   )
 
-export const makePaperDecisionDocument = (
+export const makeExecutionDecisionDocument = (
   material: unknown,
-): Result.Result<PaperDecisionDocument, ShadowDecisionContractFailure> => {
+): Result.Result<ExecutionDecisionDocument, ShadowDecisionContractFailure> => {
   if (typeof material !== 'object' || material === null || Array.isArray(material)) {
     return Result.fail(makeDocumentFailure('contract', 'PAPER decision material must be an object'))
   }
@@ -388,15 +390,15 @@ export const makePaperDecisionDocument = (
       makeDocumentFailure('canonicalization', 'PAPER decision material is not canonicalizable', cause),
     ),
     (contentHash) =>
-      Result.mapError(decodePaperDocumentResult({ ...material, contentHash }), (cause) =>
+      Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
         makeDocumentFailure('contract', 'PAPER decision material failed its durable contract', cause),
       ),
   )
 }
 
-export const decodePaperDecisionDocument = (
+export const decodeExecutionDecisionDocument = (
   input: unknown,
-): Result.Result<PaperDecisionDocument, ShadowDecisionContractFailure> =>
-  Result.mapError(decodePaperDocumentResult(input), (cause) =>
+): Result.Result<ExecutionDecisionDocument, ShadowDecisionContractFailure> =>
+  Result.mapError(decodeExecutionDocumentResult(input), (cause) =>
     decodeDocumentFailure('contract', 'PAPER decision document failed its durable contract', cause),
   )

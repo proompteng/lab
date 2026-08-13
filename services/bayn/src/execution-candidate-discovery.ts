@@ -1,10 +1,10 @@
 export {
-  PaperCandidateIneligibility,
+  ExecutionCandidateIneligibility,
   type ExecutionCandidateDiscoveryBinding,
   type ExecutionCandidateDiscoveryIdentity,
   type ExecutionCandidateDiscoveryReceipt,
   type ExecutionCandidateDiscoverySnapshot,
-  type PaperCandidateFactsMaterial,
+  type ExecutionCandidateFactsMaterial,
 } from './execution-candidate-discovery/model'
 export {
   renderExecutionCandidateDiscoveryError,
@@ -12,4 +12,4 @@ export {
 } from './execution-candidate-discovery/failure'
 export { validateExecutionCandidateDiscoverySnapshot } from './execution-candidate-discovery/snapshot-validation'
 export { validateExecutionCandidateDiscoveryObservations } from './execution-candidate-discovery/broker-observation-validation'
-export { discoverPaperCandidates } from './execution-candidate-discovery/program'
+export { discoverExecutionCandidates } from './execution-candidate-discovery/program'

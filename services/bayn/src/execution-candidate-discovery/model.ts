@@ -98,7 +98,7 @@ export const AssetObservationSchema = Schema.Struct({
   normalizedResponseHash: Sha256Schema,
 })
 
-export enum PaperCandidateIneligibility {
+export enum ExecutionCandidateIneligibility {
   AssetClass = 'ASSET_CLASS_NOT_US_EQUITY',
   Inactive = 'ASSET_INACTIVE',
   Ipo = 'ASSET_IPO',
@@ -108,7 +108,7 @@ export enum PaperCandidateIneligibility {
   PtpNoException = 'ASSET_PTP_NO_EXCEPTION',
 }
 
-export const CandidateIneligibilitySchema = Schema.Enum(PaperCandidateIneligibility)
+export const CandidateIneligibilitySchema = Schema.Enum(ExecutionCandidateIneligibility)
 
 export const RuntimeIdentitySchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
@@ -224,7 +224,7 @@ export const CandidateFactsMaterialSchema = Schema.Struct({
     status: Schema.Literal('REQUIRED_UNBOUND'),
   }),
 })
-export type PaperCandidateFactsMaterial = typeof CandidateFactsMaterialSchema.Type
+export type ExecutionCandidateFactsMaterial = typeof CandidateFactsMaterialSchema.Type
 
 export const BrokerObservationsSchema = Schema.Struct({
   account: Schema.Struct({
@@ -270,36 +270,36 @@ export type ExecutionCandidateDiscoverySnapshot = {
   readonly document: ObserveShadowDecisionDocument
 }
 
-export const ValidatedSnapshotTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateSnapshot')
-export type ValidatedPaperCandidateSnapshot = {
+export const ValidatedSnapshotTypeId: unique symbol = Symbol('bayn/ValidatedExecutionCandidateSnapshot')
+export type ValidatedExecutionCandidateSnapshot = {
   readonly [ValidatedSnapshotTypeId]: true
   readonly identity: ExecutionCandidateDiscoveryIdentity
   readonly snapshot: ExecutionCandidateDiscoverySnapshot
   readonly binding: ExecutionCandidateDiscoveryBinding
 }
 
-export const ValidatedAccountTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateAccount')
+export const ValidatedAccountTypeId: unique symbol = Symbol('bayn/ValidatedExecutionCandidateAccount')
 export type ValidatedAccount = {
   readonly [ValidatedAccountTypeId]: true
   readonly read: ReadResult<Account>
 }
 
 export const ValidatedAccountConfigurationTypeId: unique symbol = Symbol(
-  'bayn/ValidatedPaperCandidateAccountConfiguration',
+  'bayn/ValidatedExecutionCandidateAccountConfiguration',
 )
 export type ValidatedAccountConfiguration = {
   readonly [ValidatedAccountConfigurationTypeId]: true
   readonly read: ReadResult<AccountConfigurationObservation>
 }
 
-export const ValidatedAssetsTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateAssets')
+export const ValidatedAssetsTypeId: unique symbol = Symbol('bayn/ValidatedExecutionCandidateAssets')
 export type ValidatedAssets = {
   readonly [ValidatedAssetsTypeId]: true
   readonly reads: ReadonlyArray<ReadResult<AssetObservation>>
 }
 
-export const ValidatedObservationsTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateObservations')
-export type ValidatedPaperCandidateObservations = {
+export const ValidatedObservationsTypeId: unique symbol = Symbol('bayn/ValidatedExecutionCandidateObservations')
+export type ValidatedExecutionCandidateObservations = {
   readonly [ValidatedObservationsTypeId]: true
   readonly account: ValidatedAccount
   readonly accountConfiguration: ValidatedAccountConfiguration

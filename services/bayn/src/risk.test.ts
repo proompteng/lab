@@ -132,7 +132,7 @@ const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
     schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId: 'paper-account-1',
-    brokerMode: BrokerMode.Paper,
+    brokerMode: BrokerMode.Execution,
     allowedSymbols: ['AMD', 'NVDA'],
     allowedOrderTypes: [OrderType.Market],
     allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled],
@@ -231,7 +231,7 @@ const baseState = (): State => {
   })
   return decodeState({
     schemaVersion: 'bayn.paper-risk-state.v2',
-    brokerMode: BrokerMode.Paper,
+    brokerMode: BrokerMode.Execution,
     account,
     positions,
     positionsObservedAt: observedAt,
@@ -251,8 +251,8 @@ const baseState = (): State => {
     authority: {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: hash('4'),
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       version: 1,
       updatedAt: observedAt,
@@ -581,7 +581,7 @@ describe('bounded paper risk', () => {
     expectBlocked(Reason.OutsideSession, makeIntent(), beforeOpen, makePolicy())
     expectBlocked(Reason.OutsideSession, makeIntent(), atCutoff, makePolicy())
     const nearCutoff = evaluateSuccess(makeIntent(), observeNearCutoff, makePolicy())
-    expect(nearCutoff.decision.reasonCodes).toContain(Reason.AuthorityNotPaper)
+    expect(nearCutoff.decision.reasonCodes).toContain(Reason.AuthorityNotGranted)
     expect(nearCutoff.decision.expiresAt).toBe(nearCutoffAt)
     expect(nearCutoff.input.freshUntil).toBe(nearCutoffAt)
   })
@@ -797,7 +797,7 @@ describe('bounded paper risk', () => {
       makePolicy({ maxIntentAgeMs: 60_000 }),
     )
     expectBlocked(
-      Reason.AuthorityNotPaper,
+      Reason.AuthorityNotGranted,
       makeReferenceIntent(),
       makeState({
         authority: {

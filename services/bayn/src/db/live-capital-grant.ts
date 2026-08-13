@@ -125,7 +125,7 @@ const validateLiveGrantGenerationBindingDataFirst = (
     readonly expected: string
     readonly observed: string | null
   }[] = [
-    { field: 'maximum', expected: Authority.Paper, observed: generation.maximum },
+    { field: 'maximum', expected: Authority.Execution, observed: generation.maximum },
     { field: 'strategyName', expected: grant.strategy.name, observed: generation.strategyName },
     {
       field: 'strategyBehaviorHash',

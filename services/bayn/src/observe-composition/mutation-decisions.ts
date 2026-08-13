@@ -273,7 +273,7 @@ const decidePreparedMutationIntentAdmissionDataFirst = (
   unknownOrderCount = 0,
 ): Result.Result<void, PreparedMutationIntentAdmissionFailure> => {
   if (prepared._tag !== 'Submit') return Result.succeed(undefined)
-  if (effectiveAuthority !== Authority.Paper) {
+  if (effectiveAuthority !== Authority.Execution) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'authority',

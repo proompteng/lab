@@ -13,8 +13,8 @@ import {
   type ValidatedAccount,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
-  type ValidatedPaperCandidateObservations,
-  type ValidatedPaperCandidateSnapshot,
+  type ValidatedExecutionCandidateObservations,
+  type ValidatedExecutionCandidateSnapshot,
 } from './model'
 import { isExecutionCandidateDiscoveryError, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 import { selectCompletedCycle, validateIdentity, validateSnapshotForIdentity } from './snapshot-validation'
@@ -181,8 +181,8 @@ const readAssets = (
   )
 
 const observeBroker = (
-  validatedSnapshot: ValidatedPaperCandidateSnapshot,
-): Effect.Effect<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError, BrokerRead> =>
+  validatedSnapshot: ValidatedExecutionCandidateSnapshot,
+): Effect.Effect<ValidatedExecutionCandidateObservations, ExecutionCandidateDiscoveryError, BrokerRead> =>
   Effect.gen(function* () {
     const broker = yield* BrokerRead
     const account = yield* readAccount(broker, validatedSnapshot.identity)
@@ -194,7 +194,7 @@ const observeBroker = (
     )
   })
 
-export const discoverPaperCandidates = (
+export const discoverExecutionCandidates = (
   candidateIdentity: ExecutionCandidateDiscoveryIdentity,
 ): Effect.Effect<
   ExecutionCandidateDiscoveryReceipt,

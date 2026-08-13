@@ -24,9 +24,9 @@ import {
   decideIntentTransition,
   decideRiskCommit,
   intentIdForPlan,
-  paperIntentIdForPlan,
+  executionIntentIdForPlan,
   plan,
-  planPaperIntent,
+  planExecutionIntent,
   validateCommitIdentity,
   validateCurrentAuthority,
   validateCurrentClosingAuthority,
@@ -54,7 +54,7 @@ const input: IntentPlan = {
   createdAt: '2026-07-22T10:00:00.000Z',
 }
 
-const riskState = (generationHash = hash('a'), maximum = Authority.Paper) => ({
+const riskState = (generationHash = hash('a'), maximum = Authority.Execution) => ({
   authority: {
     schemaVersion: 'bayn.paper-authority.v1' as const,
     generationHash,
@@ -121,11 +121,11 @@ const storedIntent = (
 })
 
 const authorityRow = (overrides: Partial<AuthorityBindingRow> = {}): AuthorityBindingRow => ({
-  maximum: Authority.Paper,
-  effective: Authority.Paper,
+  maximum: Authority.Execution,
+  effective: Authority.Execution,
   kill_state: KillState.Clear,
   generation_hash: paperIntent.authorityGenerationHash,
-  generation_maximum: Authority.Paper,
+  generation_maximum: Authority.Execution,
   generation_account_id: paperIntent.accountId,
   generation_risk_policy_hash: paperIntent.policyHash,
   generation_strategy_name: paperIntent.strategyName,
@@ -224,10 +224,10 @@ describe('deterministic paper intents', () => {
   test('binds a durable PAPER identity to the exact risk-state authority generation', async () => {
     const [first, replay, rotated, derivedId] = await Effect.runPromise(
       Effect.all([
-        planPaperIntent(input, riskState()),
-        planPaperIntent({ ...input }, riskState()),
-        planPaperIntent(input, riskState(hash('b'))),
-        paperIntentIdForPlan(input, hash('a')),
+        planExecutionIntent(input, riskState()),
+        planExecutionIntent({ ...input }, riskState()),
+        planExecutionIntent(input, riskState(hash('b'))),
+        executionIntentIdForPlan(input, hash('a')),
       ]),
     )
 
@@ -246,26 +246,26 @@ describe('deterministic paper intents', () => {
   test('derives the v3 identity without authority state and rejects malformed material', async () => {
     const [baseline, changedTime, changedGeneration] = await Effect.runPromise(
       Effect.all([
-        paperIntentIdForPlan(input, hash('a')),
-        paperIntentIdForPlan({ ...input, createdAt: '2026-07-22T10:00:01.000Z' }, hash('a')),
-        paperIntentIdForPlan(input, hash('b')),
+        executionIntentIdForPlan(input, hash('a')),
+        executionIntentIdForPlan({ ...input, createdAt: '2026-07-22T10:00:01.000Z' }, hash('a')),
+        executionIntentIdForPlan(input, hash('b')),
       ]),
     )
 
     expect(changedTime).toBe(baseline)
     expect(changedGeneration).not.toBe(baseline)
     expect(
-      Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan({ ...input, extra: true }, hash('a')))),
+      Exit.isFailure(await Effect.runPromiseExit(executionIntentIdForPlan({ ...input, extra: true }, hash('a')))),
     ).toBe(true)
-    expect(Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
+    expect(Exit.isFailure(await Effect.runPromiseExit(executionIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
   })
 
   test('binds each residual close generation to a distinct PAPER intent identity', async () => {
     const [first, second, replay] = await Effect.runPromise(
       Effect.all([
-        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
-        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('d') }, hash('a')),
-        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+        executionIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+        executionIntentIdForPlan({ ...input, replanGenerationHash: hash('d') }, hash('a')),
+        executionIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
       ]),
     )
 
@@ -274,7 +274,7 @@ describe('deterministic paper intents', () => {
   })
 
   test('refuses to create a durable intent from OBSERVE authority', async () => {
-    const result = await Effect.runPromiseExit(planPaperIntent(input, riskState(hash('c'), Authority.Observe)))
+    const result = await Effect.runPromiseExit(planExecutionIntent(input, riskState(hash('c'), Authority.Observe)))
 
     expect(Exit.isFailure(result)).toBe(true)
   })
@@ -378,8 +378,8 @@ describe('pure intent commit decisions', () => {
 
     expect(Result.isSuccess(validateCurrentAuthority([authorityRow()], paperIntent))).toBe(true)
     expect(tags).toEqual([
-      'MaximumAuthorityNotPaper',
-      'EffectiveAuthorityNotPaper',
+      'MaximumAuthorityNotGranted',
+      'EffectiveAuthorityNotGranted',
       'AuthorityKillNotClear',
       'AuthorityGenerationMismatch',
       'AuthorityGenerationHistoryMismatch',

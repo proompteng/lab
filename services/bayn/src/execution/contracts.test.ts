@@ -422,19 +422,24 @@ describe('execution contracts', () => {
       updatedAt: instant,
     }
     expect(await Effect.runPromise(decodeAuthorityState(observe))).toEqual(observe)
-    await expectFailure(decodeAuthorityState({ ...observe, effective: Authority.Paper }))
+    await expectFailure(decodeAuthorityState({ ...observe, effective: Authority.Execution }))
     await expectFailure(
       decodeAuthorityState({
         ...observe,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Active,
         reason: 'operator kill',
       }),
     )
     expect(
       await Effect.runPromise(
-        decodeAuthorityState({ ...observe, maximum: Authority.Paper, kill: KillState.Active, reason: 'operator kill' }),
+        decodeAuthorityState({
+          ...observe,
+          maximum: Authority.Execution,
+          kill: KillState.Active,
+          reason: 'operator kill',
+        }),
       ),
     ).toMatchObject({ effective: Authority.Observe, kill: KillState.Active })
   })
@@ -447,7 +452,7 @@ describe('execution contracts', () => {
     }
     const material = {
       schemaVersion: 'bayn.paper-authority-generation.v2' as const,
-      maximum: Authority.Paper as const,
+      maximum: Authority.Execution as const,
       previousGenerationHash: hash('0'),
       qualificationRunId: hash('1'),
       qualificationLockId: hash('2'),

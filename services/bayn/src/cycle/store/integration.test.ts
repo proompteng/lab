@@ -87,15 +87,15 @@ import {
   RiskOutcome,
 } from '../../execution/contracts'
 import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
-import { planPaperIntent } from '../../execution/intents'
+import { planExecutionIntent } from '../../execution/intents'
 import { runOnce, type ReconciliationPassResult } from '../../reconciler'
 import { reconciledStateHash } from '../../reconciliation'
 import { readForwardPerformancePostgres } from '../../forward-performance/postgres'
 import { Reason, type Policy } from '../../risk'
 import {
   makeObserveShadowDecisionDocument,
-  makePaperDecisionDocument,
-  type PaperDecisionDocument,
+  makeExecutionDecisionDocument,
+  type ExecutionDecisionDocument,
 } from '../../shadow-decision-contract'
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
@@ -1204,7 +1204,7 @@ const makePaperNoTradeDecision = (
   authorityGenerationHash = 'a'.repeat(64),
 ) => {
   const observe = makeShadowDecision(draft, boundSnapshotId)
-  const result = makePaperDecisionDocument({
+  const result = makeExecutionDecisionDocument({
     schemaVersion: 'bayn.paper-cycle-decision.v1',
     mode: 'PAPER',
     dispatchable: true,
@@ -1295,8 +1295,8 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
       authority: {
         schemaVersion: 'bayn.paper-authority.v1',
         generationHash: plannedPaperGenerationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
         version: 1,
         updatedAt: draft.window.submissionOpenAt,
@@ -1310,7 +1310,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
   }
 }
 
-const plannedPaperDecisionPlan = (draft: CycleDraft): DecisionPlan => {
+const plannedExecutionDecisionPlan = (draft: CycleDraft): DecisionPlan => {
   const targetWeights = Object.fromEntries(
     fixtureProtocol.universe.map((symbol, index) => [symbol, index === 0 ? 0.5 : 0]),
   )
@@ -1472,7 +1472,7 @@ const plannedPaperBrokerRead = (draft: CycleDraft, observedAt = decisionAt): Bro
   }
 }
 
-const buildPlannedPaperDecision = (
+const buildPlannedExecutionDecision = (
   cycle: AutonomousCycle,
   boundSnapshotId: string,
   options: {
@@ -1486,7 +1486,7 @@ const buildPlannedPaperDecision = (
     const sourcePolicy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
     const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
-    const decision = plannedPaperDecisionPlan(cycle)
+    const decision = plannedExecutionDecisionPlan(cycle)
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildMutationShadowCycleDecision({
       authorityGenerationHash: plannedPaperGenerationHash,
@@ -1523,7 +1523,7 @@ const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: st
         },
       },
     }
-    const decision = plannedPaperDecisionPlan(cycle)
+    const decision = plannedExecutionDecisionPlan(cycle)
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildObserveCycleDecision({
       authorityGenerationHash: plannedPaperGenerationHash,
@@ -1582,7 +1582,7 @@ const insertReconciliation = (result: ReconciliationPassResult) =>
   })
 
 const insertQualifiedPaperLineage = (
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   options: { readonly deniedIntent?: boolean } = {},
 ) =>
   Effect.gen(function* () {
@@ -1591,7 +1591,7 @@ const insertQualifiedPaperLineage = (
     if (target === undefined || risk === undefined) {
       return yield* Effect.die(new Error('terminal PAPER failure fixture requires one ordered intent'))
     }
-    const intent = yield* planPaperIntent(
+    const intent = yield* planExecutionIntent(
       {
         schemaVersion: 'bayn.paper-intent-plan.v1',
         ...target,
@@ -1602,8 +1602,8 @@ const insertQualifiedPaperLineage = (
         authority: {
           schemaVersion: 'bayn.paper-authority.v1',
           generationHash: document.bindings.authorityGenerationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
           kill: KillState.Clear,
           version: 1,
           updatedAt: document.createdAt,
@@ -1999,7 +1999,7 @@ const insertQualifiedPaperLineage = (
     return { deniedAt, intent }
   })
 
-const insertSupersedingObserveGeneration = (document: PaperDecisionDocument) =>
+const insertSupersedingObserveGeneration = (document: ExecutionDecisionDocument) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const generationHash = canonicalHashV1({
@@ -2047,7 +2047,7 @@ const insertSupersedingObserveGeneration = (document: PaperDecisionDocument) =>
   })
 
 const insertFilledPlannedPaperIntent = (
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   latestMutation: 'accepted' | 'started' = 'accepted',
 ) =>
   Effect.gen(function* () {
@@ -2056,7 +2056,7 @@ const insertFilledPlannedPaperIntent = (
     if (target === undefined || risk === undefined) {
       return yield* Effect.die(new Error('filled PAPER completion fixture requires one ordered intent'))
     }
-    const intent = yield* planPaperIntent(
+    const intent = yield* planExecutionIntent(
       {
         schemaVersion: 'bayn.paper-intent-plan.v1',
         ...target,
@@ -2067,8 +2067,8 @@ const insertFilledPlannedPaperIntent = (
         authority: {
           schemaVersion: 'bayn.paper-authority.v1',
           generationHash: document.bindings.authorityGenerationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
           kill: KillState.Clear,
           version: 1,
           updatedAt: document.createdAt,
@@ -2192,14 +2192,17 @@ const settleStartedPaperSubmit = (
 
 type SupersededMutationFixture = 'submit-accepted' | 'submit-unknown' | 'cancel-accepted' | 'cancel-unknown'
 
-const insertUnfinishedPlannedPaperMutation = (document: PaperDecisionDocument, fixture: SupersededMutationFixture) =>
+const insertUnfinishedPlannedPaperMutation = (
+  document: ExecutionDecisionDocument,
+  fixture: SupersededMutationFixture,
+) =>
   Effect.gen(function* () {
     const target = document.targetPlan.intentTargets[0]
     const risk = document.deltaRisk[0]
     if (target === undefined || risk === undefined) {
       return yield* Effect.die(new Error('superseded mutation fixture requires one ordered intent'))
     }
-    const intent = yield* planPaperIntent(
+    const intent = yield* planExecutionIntent(
       {
         schemaVersion: 'bayn.paper-intent-plan.v1',
         ...target,
@@ -2210,8 +2213,8 @@ const insertUnfinishedPlannedPaperMutation = (document: PaperDecisionDocument, f
         authority: {
           schemaVersion: 'bayn.paper-authority.v1',
           generationHash: document.bindings.authorityGenerationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
           kill: KillState.Clear,
           version: 1,
           updatedAt: document.createdAt,
@@ -2363,7 +2366,7 @@ const insertUnfinishedPlannedPaperMutation = (document: PaperDecisionDocument, f
   })
 
 const settleSupersededMutation = (
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   intentId: string,
   fixture: SupersededMutationFixture,
 ) =>
@@ -3644,7 +3647,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
         schemaVersion: 'bayn.paper-authority-generation.v3',
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         previousGenerationHash: parentGenerationHash,
         grant: { _tag: 'Research', planHash: researchPlanHash },
         activationSourceRevision: sourceRevision,
@@ -3742,7 +3745,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquireAt)
         yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const activated = yield* store.activate(draft.identity.cycleId, activeAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA)
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA)
         if (
           planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
           planned.document.deltaRisk.length === 0
@@ -3872,7 +3875,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquireAt)
         yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const activated = yield* store.activate(draft.identity.cycleId, activeAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA)
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA)
         if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
           return yield* Effect.die(new Error('superseded PAPER fixture requires a planned decision'))
         }
@@ -3985,7 +3988,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           yield* store.acquire(draft, acquisitionAt)
           yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
           const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-          const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+          const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA, {
             evaluatedAt,
             snapshotFinalizedAt: snapshotBoundAt,
           })
@@ -4240,7 +4243,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           yield* store.acquire(draft, acquisitionAt)
           yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
           const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-          const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+          const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA, {
             evaluatedAt,
             snapshotFinalizedAt: snapshotBoundAt,
           })
@@ -4399,7 +4402,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA, {
           evaluatedAt,
           snapshotFinalizedAt: snapshotBoundAt,
         })
@@ -4487,7 +4490,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquireAt)
         yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const activated = yield* store.activate(draft.identity.cycleId, activeAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA, {
           transformPolicy: (policy) => ({ ...policy, maxOrderNotionalMicros: '1' }),
         })
         if (
@@ -4580,7 +4583,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       },
     })
     expect(result.document.riskBlock?.reasonCodes).toContain(Reason.OrderNotionalExceeded)
-    expect(result.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotPaper)
+    expect(result.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotGranted)
     expect(result.document.deltaRisk.at(-1)?.evaluation.decision.outcome).toBe(RiskOutcome.Blocked)
     expect(result.bound.changed).toBe(true)
     expect(result.bindingReplay.changed).toBe(false)
@@ -4645,7 +4648,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotB, {
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
           evaluatedAt,
           snapshotFinalizedAt: snapshotBoundAt,
         })
@@ -4781,7 +4784,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotB, {
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
           evaluatedAt,
           snapshotFinalizedAt: snapshotBoundAt,
         })

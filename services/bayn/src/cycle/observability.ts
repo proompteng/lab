@@ -521,17 +521,17 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   const attemptAgeMs = ageAt(projection.current?.updatedAt ?? null, nowMs)
   const oldestUnresolvedMutationAgeMs = ageAt(projection.mutations.oldestUnresolvedAt, nowMs)
   const reconciliationAgeMs = ageAt(projection.reconciliation?.reconciledAt ?? null, nowMs)
-  const authorityMissing = maximumAuthority === Authority.Paper && projection.authority === null
+  const authorityMissing = maximumAuthority === Authority.Execution && projection.authority === null
   const authorityMaximumMismatch = projection.authority !== null && projection.authority.maximum !== maximumAuthority
   const authorityIncoherent = authorityMissing || authorityMaximumMismatch
   const killActive = projection.authority?.kill === KillState.Active
-  const reconciliationMissing = maximumAuthority === Authority.Paper && projection.reconciliation === null
+  const reconciliationMissing = maximumAuthority === Authority.Execution && projection.reconciliation === null
   const reconciliationDiscrepancy = projection.reconciliation?.status === ReconciliationStatus.Discrepancy
   const reconciliationCoversLatestMutation = projection.reconciliation?.coversLatestMutation ?? null
   const reconciliationPredatesMutation =
-    maximumAuthority === Authority.Paper && reconciliationCoversLatestMutation === false
+    maximumAuthority === Authority.Execution && reconciliationCoversLatestMutation === false
   const reconciliationStale =
-    maximumAuthority === Authority.Paper &&
+    maximumAuthority === Authority.Execution &&
     reconciliationAgeMs !== null &&
     reconciliationAgeMs >= thresholds.reconciliationStaleThresholdMs
   const reconciliationBlocked =

@@ -495,7 +495,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
-        const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
+        const binding = yield* requirePaperGenerationRuntime(Authority.Execution, 'activation')
         return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding))
       }),
     )
@@ -508,7 +508,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
-        const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
+        const binding = yield* requirePaperGenerationRuntime(Authority.Execution, 'activation')
         return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding, prepared))
       }),
     )

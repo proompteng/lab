@@ -5,7 +5,7 @@ import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
 import {
   intentIdForPlan,
   clientOrderIdForIntentId,
-  paperIntentIdForDecodedPlan,
+  executionIntentIdForDecodedPlan,
   IntentPlanSchema,
   type IntentPlan,
 } from './execution/intents/domain'
@@ -25,12 +25,12 @@ import {
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
 import {
-  makePaperDecisionDocument,
+  makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ObserveShadowDecisionDocument,
-  type PaperDecisionDocument,
+  type ExecutionDecisionDocument,
 } from './shadow-decision-contract'
 import {
   TargetPlannerInputSchema,
@@ -71,7 +71,7 @@ export interface ObserveShadowDecisionInput {
   readonly submissionCutoffAt?: string
 }
 
-export interface PaperDecisionInput extends ObserveShadowDecisionInput {
+export interface ExecutionDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
   /** The immutable signal/session binding retained for restart-safe close construction. */
   readonly executionSession: ExecutionSessionBinding
@@ -285,9 +285,9 @@ const validateRiskState = (
   const { cycle, plannerInput, snapshot } = input
   const state = riskInput.state
   const authorityCompatible =
-    state.closeOnly === true && authority === Authority.Paper
-      ? state.authority.maximum === Authority.Paper &&
-        (state.authority.effective === Authority.Paper || state.authority.effective === Authority.Observe)
+    state.closeOnly === true && authority === Authority.Execution
+      ? state.authority.maximum === Authority.Execution &&
+        (state.authority.effective === Authority.Execution || state.authority.effective === Authority.Observe)
       : state.authority.effective === authority
   if (!authorityCompatible) {
     return Result.fail(error('binding', `decision risk requires effective ${authority} authority`))
@@ -358,7 +358,7 @@ const makeRiskIntent = (
       ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
           error('contract', 'shadow target delta identity is not canonicalizable', cause),
         )
-      : Result.mapError(paperIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
+      : Result.mapError(executionIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
           error('contract', 'PAPER target delta identity is not canonicalizable', cause),
         )
   const identity = Result.mapError(
@@ -405,7 +405,7 @@ interface ShadowReduction {
   readonly dailyTradedNotional: bigint
   readonly projectedPositions: readonly Position[]
   readonly deltaRisk: readonly DeltaRiskEvaluation[]
-  readonly riskBlock?: NonNullable<PaperDecisionDocument['riskBlock']>
+  readonly riskBlock?: NonNullable<ExecutionDecisionDocument['riskBlock']>
 }
 
 interface ShadowReductionContext {
@@ -458,7 +458,7 @@ const reduceShadowDelta = (
   const validOutcome =
     context.authority === Authority.Observe
       ? evaluation.success.decision.outcome === RiskOutcome.Blocked &&
-        evaluation.success.decision.reasonCodes.includes(Reason.AuthorityNotPaper)
+        evaluation.success.decision.reasonCodes.includes(Reason.AuthorityNotGranted)
       : evaluation.success.decision.outcome === RiskOutcome.Approved ||
         evaluation.success.decision.outcome === RiskOutcome.Blocked
   if (evaluation.success.policyHash !== context.policyHash || !validOutcome) {
@@ -476,7 +476,7 @@ const reduceShadowDelta = (
       evaluation: evaluation.success,
     },
   ]
-  if (context.authority === Authority.Paper && evaluation.success.decision.outcome === RiskOutcome.Blocked) {
+  if (context.authority === Authority.Execution && evaluation.success.decision.outcome === RiskOutcome.Blocked) {
     return Result.succeed({
       ...accumulator,
       deltaRisk,
@@ -725,14 +725,14 @@ export const buildObserveShadowDecision = (
 ): Effect.Effect<ObserveShadowDecisionDocument, ShadowDecisionError> =>
   Effect.fromResult(reduceObserveShadowDecision(input))
 
-const assemblePaperDecisionDocument = (
+const assembleExecutionDecisionDocument = (
   context: ShadowDecisionContext,
   reduction: ShadowReduction,
   authorityGenerationHash: string,
   executionSession: ExecutionSessionBinding,
   submissionCutoffAt: string,
   replanGenerationHash?: string,
-): Result.Result<PaperDecisionDocument, ShadowDecisionError> => {
+): Result.Result<ExecutionDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
     reconciledStateHash(plannerBrokerStateMaterial(input.plannerInput)),
@@ -740,7 +740,7 @@ const assemblePaperDecisionDocument = (
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   return Result.mapError(
-    makePaperDecisionDocument({
+    makeExecutionDecisionDocument({
       schemaVersion: 'bayn.paper-cycle-decision.v1',
       mode: 'PAPER',
       dispatchable: reduction.riskBlock === undefined,
@@ -774,9 +774,9 @@ const assemblePaperDecisionDocument = (
   )
 }
 
-export const buildPaperDecision = (
-  input: PaperDecisionInput,
-): Effect.Effect<PaperDecisionDocument, ShadowDecisionError> =>
+export const buildExecutionDecision = (
+  input: ExecutionDecisionInput,
+): Effect.Effect<ExecutionDecisionDocument, ShadowDecisionError> =>
   Effect.fromResult(
     Result.flatMap(
       decodeShadowDecisionContext({
@@ -793,9 +793,14 @@ export const buildPaperDecision = (
         Result.flatMap(validateShadowPlanningBindings(context), () =>
           Result.flatMap(prepareShadowRisk(context), (prepared) =>
             Result.flatMap(
-              reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash, input.replanGenerationHash),
+              reduceShadowRisk(
+                prepared,
+                Authority.Execution,
+                input.authorityGenerationHash,
+                input.replanGenerationHash,
+              ),
               (reduction) =>
-                assemblePaperDecisionDocument(
+                assembleExecutionDecisionDocument(
                   context,
                   reduction,
                   input.authorityGenerationHash,

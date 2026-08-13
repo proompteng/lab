@@ -722,7 +722,7 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_schema_version: 'bayn.paper-authority.v1',
           authority_generation_hash: hash('invalid-authority-generation'),
           authority_maximum: Authority.Observe,
-          authority_effective: Authority.Paper,
+          authority_effective: Authority.Execution,
           authority_kill: KillState.Clear,
           authority_version: '1',
           authority_updated_at: sqlTimestamp('2026-07-22T15:30:01.000Z'),

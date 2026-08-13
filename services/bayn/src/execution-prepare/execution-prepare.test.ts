@@ -16,7 +16,7 @@ import { canonicalHashV1OrThrow, sha256 } from '../hash'
 import { renderExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareGenerationField } from './failure'
 import {
-  PaperCandidateIneligibility,
+  ExecutionCandidateIneligibility,
   type ExecutionCandidateDiscoveryReceipt,
 } from '../execution-candidate-discovery/model'
 import type { ExecutionPrepareProofPlanRequest, ExecutionPrepareRuntimeBinding } from './model'
@@ -161,7 +161,7 @@ const generation = (): CapitalGrantGeneration =>
   Result.getOrThrow(
     makeCapitalGrantGenerationResult({
       schemaVersion: 'bayn.paper-authority-generation.v2',
-      maximum: Authority.Paper,
+      maximum: Authority.Execution,
       previousGenerationHash: proofPlan.binding.authorityGenerationHash,
       qualificationRunId: proofPlan.binding.qualificationRunId,
       qualificationLockId: proofPlan.binding.qualificationLockId,
@@ -343,7 +343,7 @@ describe('EXECUTION_PREPARE pure validation', () => {
       ...pinnedCandidate,
       ordinal: 0,
       observedPlanIntentId: hash('ineligible-execution'),
-      assetEligibility: { eligible: false, reasons: [PaperCandidateIneligibility.NotTradable] },
+      assetEligibility: { eligible: false, reasons: [ExecutionCandidateIneligibility.NotTradable] },
       fractionalTradingEligible: false,
     }
     expect(build(receiptWithCandidates(pinnedDiscoveryReceipt, [ineligibleCandidate, secondCandidate]))).toMatchObject({

@@ -18,8 +18,8 @@ import {
   type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
-  type ValidatedPaperCandidateObservations,
-  type ValidatedPaperCandidateSnapshot,
+  type ValidatedExecutionCandidateObservations,
+  type ValidatedExecutionCandidateSnapshot,
 } from './model'
 import { assetEligibility, normalizedReadEvidence } from './broker-observation-validation'
 import { canonicalHashResult, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
@@ -185,8 +185,8 @@ const decodeReceipt = (
   )
 
 const makeExecutionCandidateDiscoveryReceiptDataFirst = (
-  validatedSnapshot: ValidatedPaperCandidateSnapshot,
-  observations: ValidatedPaperCandidateObservations,
+  validatedSnapshot: ValidatedExecutionCandidateSnapshot,
+  observations: ValidatedExecutionCandidateObservations,
 ): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> => {
   const { binding, snapshot } = validatedSnapshot
   return pipe(

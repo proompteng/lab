@@ -82,8 +82,8 @@ export const projectResearchCapitalBootstrapWaiting = (
     status.current !== null ||
     last?.phase !== CycleState.Blocked ||
     last.terminalReason !== CycleTerminalReason.MissedPublication ||
-    status.authority?.maximum !== Authority.Paper ||
-    status.authority.effective !== Authority.Paper ||
+    status.authority?.maximum !== Authority.Execution ||
+    status.authority.effective !== Authority.Execution ||
     status.authority.kill !== KillState.Clear ||
     status.reconciliation?.status !== ReconciliationStatus.Exact ||
     status.reconciliation.discrepancyCount !== 0 ||
@@ -345,7 +345,7 @@ const deriveCycleStatus = (
       deriveCycleOperationsStatusResult(
         result.value,
         clock.checkedAtMs,
-        runtime.capitalActivation?._tag === 'Realized' ? Authority.Paper : Authority.Observe,
+        runtime.capitalActivation?._tag === 'Realized' ? Authority.Execution : Authority.Observe,
         config,
       ),
       {

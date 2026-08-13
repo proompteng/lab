@@ -4,7 +4,7 @@ import { AccountStatus, AssetClass, AssetExchange, AssetStatus } from '../broker
 import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import {
   DiscoveryReceiptSchema,
-  PaperCandidateIneligibility,
+  ExecutionCandidateIneligibility,
   type ExecutionCandidateDiscoveryReceipt,
 } from '../execution-candidate-discovery/model'
 import { canonicalHashV1OrThrow } from '../hash'
@@ -137,7 +137,7 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
         },
         assetEligibility: {
           eligible: assetEligible,
-          reasons: assetEligible ? [] : [PaperCandidateIneligibility.NotTradable],
+          reasons: assetEligible ? [] : [ExecutionCandidateIneligibility.NotTradable],
         },
         fractionalTradingEligible,
       },

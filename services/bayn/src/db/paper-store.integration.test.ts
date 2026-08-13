@@ -20,7 +20,10 @@ import {
 } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { paperObserveSuccessorGenerationHash, recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
+import {
+  executionObserveSuccessorGenerationHash,
+  recoverTerminalGenerationToObserve,
+} from '../blocked-generation-recovery'
 import { orderRequestBody } from '../broker/alpaca-mutations'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
@@ -719,7 +722,7 @@ const makeActivation = (
 ) =>
   makeCapitalGrantGeneration({
     schemaVersion: 'bayn.paper-authority-generation.v2',
-    maximum: Authority.Paper,
+    maximum: Authority.Execution,
     previousGenerationHash,
     qualificationRunId: qualification.result.runId,
     qualificationLockId: qualification.lock.lockId,
@@ -756,7 +759,7 @@ const makeResearchActivation = (
 ): ResearchCapitalGrantGeneration =>
   makeResearchCapitalGrantGeneration({
     schemaVersion: 'bayn.paper-authority-generation.v3',
-    maximum: Authority.Paper,
+    maximum: Authority.Execution,
     previousGenerationHash,
     grant: { _tag: 'Research', planHash: hash('bounded-research-paper-plan') },
     activationSourceRevision: config.build.sourceRevision,
@@ -2072,7 +2075,7 @@ describePostgres('paper accounting persistence', () => {
           const paper = yield* Effect.flip(
             store.ensureAuthorityGeneration({
               generationHash: hash('paper-authority-generation'),
-              maximum: Authority.Paper,
+              maximum: Authority.Execution,
             }),
           )
           const sql = yield* PgClient.PgClient
@@ -2182,8 +2185,8 @@ describePostgres('paper accounting persistence', () => {
       )
       expect(activated).toMatchObject({
         generationHash: preparation.first.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
       })
     } finally {
@@ -2250,8 +2253,8 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.activated).toMatchObject({
         generationHash: expected.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
       })
       expect(result.replay).toEqual(result.activated)
@@ -2368,8 +2371,8 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.activated).toMatchObject({
         generationHash: activation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
       })
       expect(result.premature).toMatchObject({ operation: 'authority', failure: 'invariant' })
@@ -2528,8 +2531,8 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.activated).toMatchObject({
         generationHash: activation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
       })
       expect(result.rearmed).toMatchObject({
@@ -2617,8 +2620,8 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.activated).toMatchObject({
         generationHash: activation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
       })
       expect(result.beforeFreshReconciliation).toMatchObject({
@@ -2756,8 +2759,8 @@ describePostgres('paper accounting persistence', () => {
       )
 
       const expectedSuccessor = Result.getOrThrow(
-        paperObserveSuccessorGenerationHash({
-          previousPaperGenerationHash: result.paper.generationHash,
+        executionObserveSuccessorGenerationHash({
+          previousExecutionGenerationHash: result.paper.generationHash,
         }),
       )
       expect(result.first).toMatchObject({
@@ -2777,8 +2780,8 @@ describePostgres('paper accounting persistence', () => {
         message: 'authority generation hash was already used',
       })
       expect(result.nextPaper).toMatchObject({
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
       })
       expect(result.nextPaper.version).toBe(result.replay.version + 1)
@@ -2791,7 +2794,7 @@ describePostgres('paper accounting persistence', () => {
         },
         {
           generation_hash: result.paper.generationHash,
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
           previous_generation_hash: configuredObserveGenerationHash,
         },
         {
@@ -2801,7 +2804,7 @@ describePostgres('paper accounting persistence', () => {
         },
         {
           generation_hash: result.nextPaper.generationHash,
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
           previous_generation_hash: expectedSuccessor,
         },
       ])
@@ -3093,7 +3096,7 @@ describePostgres('paper accounting persistence', () => {
             effective: Authority.Observe,
             generation_hash: result.paper.generationHash,
             kill_state: KillState.Active,
-            maximum: Authority.Paper,
+            maximum: Authority.Execution,
             reason,
           })
         }
@@ -3208,8 +3211,8 @@ describePostgres('paper accounting persistence', () => {
       )
       expect(result.activated).toMatchObject({
         generationHash: preparation.prepared.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
       })
     } finally {
@@ -3330,8 +3333,8 @@ describePostgres('paper accounting persistence', () => {
       )
       expect(result.activated).toMatchObject({
         generationHash: preparation.prepared.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
       })
       expect(result.after).not.toEqual(result.before)
       expect(result.history).toEqual({
@@ -3536,8 +3539,8 @@ describePostgres('paper accounting persistence', () => {
       )
       expect(activated).toMatchObject({
         generationHash: activation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
       })
     } finally {
@@ -3645,8 +3648,8 @@ describePostgres('paper accounting persistence', () => {
       expect(result.activated).toEqual({
         ...result.observe,
         generationHash: result.activation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
         updatedAt: expect.any(String),
       })
@@ -3676,7 +3679,7 @@ describePostgres('paper accounting persistence', () => {
         {
           generation_hash: result.activation.generationHash,
           previous_generation_hash: result.observe.generationHash,
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
           authority_version: 2,
           qualification_result_hash: qualifiedEvidence.result.resultHash,
           account_id: accountId,
@@ -4125,8 +4128,8 @@ describePostgres('paper accounting persistence', () => {
       expect(new Set(results.map(({ backendPid }) => backendPid)).size).toBe(4)
       expect(new Set(results.map(({ state }) => JSON.stringify(state))).size).toBe(1)
       expect(results[0]?.state).toMatchObject({
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         version: 2,
       })
       expect(stored.row).toEqual({ history_count: 2, paper_count: 1, version: 2 })
@@ -4137,7 +4140,7 @@ describePostgres('paper accounting persistence', () => {
       })
       expect(stored.evidence.history).toHaveLength(2)
       expect(stored.evidence.history?.[1]).toMatchObject({
-        row: { generation_hash: activation.generationHash, maximum: Authority.Paper },
+        row: { generation_hash: activation.generationHash, maximum: Authority.Execution },
         tupleId: expect.any(String),
       })
     } finally {
@@ -4271,7 +4274,7 @@ describePostgres('paper accounting persistence', () => {
               {
                 authority_version: 2,
                 generation_hash: activation.generationHash,
-                maximum: Authority.Paper,
+                maximum: Authority.Execution,
                 previous_generation_hash: initialGenerationHash,
               },
               {
@@ -4338,7 +4341,7 @@ describePostgres('paper accounting persistence', () => {
       )
 
       expect(result.activated).toMatchObject({
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         effective: Authority.Observe,
         kill: KillState.Active,
         reason: result.before.reason,

@@ -57,18 +57,18 @@ import {
   TimeInForce,
 } from './execution/contracts'
 import {
-  PaperCandidateIneligibility,
-  discoverPaperCandidates,
+  ExecutionCandidateIneligibility,
+  discoverExecutionCandidates,
   renderExecutionCandidateDiscoveryError,
   validateExecutionCandidateDiscoveryObservations,
   validateExecutionCandidateDiscoverySnapshot,
   type ExecutionCandidateDiscoveryIdentity,
-  type PaperCandidateFactsMaterial,
+  type ExecutionCandidateFactsMaterial,
 } from './execution-candidate-discovery'
 import { validateExecutionCandidateDiscoveryObservations as validateObservationsImplementation } from './execution-candidate-discovery/broker-observation-validation'
 import { renderExecutionCandidateDiscoveryError as renderErrorImplementation } from './execution-candidate-discovery/failure'
-import { PaperCandidateIneligibility as PaperCandidateIneligibilityImplementation } from './execution-candidate-discovery/model'
-import { discoverPaperCandidates as discoverPaperCandidatesImplementation } from './execution-candidate-discovery/program'
+import { ExecutionCandidateIneligibility as ExecutionCandidateIneligibilityImplementation } from './execution-candidate-discovery/model'
+import { discoverExecutionCandidates as discoverExecutionCandidatesImplementation } from './execution-candidate-discovery/program'
 import { validateExecutionCandidateDiscoverySnapshot as validateSnapshotImplementation } from './execution-candidate-discovery/snapshot-validation'
 import { Gate, Reason } from './risk'
 import { BrokerEnvironment } from './execution/authority'
@@ -194,12 +194,12 @@ const risk = (ordinal: number) =>
       decision: {
         decisionId: hash(ordinal === 0 ? 'a' : 'b'),
         outcome: RiskOutcome.Blocked,
-        reasonCodes: [Reason.AuthorityNotPaper],
+        reasonCodes: [Reason.AuthorityNotGranted],
       },
       gates: Object.values(Gate).map((name) => ({
         name,
         passed: name !== Gate.Authority,
-        reason: name === Gate.Authority ? Reason.AuthorityNotPaper : Reason.KillActive,
+        reason: name === Gate.Authority ? Reason.AuthorityNotGranted : Reason.KillActive,
       })),
       metrics: {
         orderNotionalMicros: ordinal === 0 ? '100000000' : '150000000',
@@ -452,7 +452,7 @@ const program = (
   const { observability, cycleStore } = stores(state, input)
   return Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(now))
-    return yield* discoverPaperCandidates(candidateIdentity)
+    return yield* discoverExecutionCandidates(candidateIdentity)
   }).pipe(
     Effect.provideService(PgClient.PgClient, sql),
     Effect.provideService(CycleObservability, observability),
@@ -464,8 +464,8 @@ const program = (
 
 describe('paper candidate discovery', () => {
   test('preserves the public facade exports', () => {
-    expect(PaperCandidateIneligibility).toBe(PaperCandidateIneligibilityImplementation)
-    expect(discoverPaperCandidates).toBe(discoverPaperCandidatesImplementation)
+    expect(ExecutionCandidateIneligibility).toBe(ExecutionCandidateIneligibilityImplementation)
+    expect(discoverExecutionCandidates).toBe(discoverExecutionCandidatesImplementation)
     expect(renderExecutionCandidateDiscoveryError).toBe(renderErrorImplementation)
     expect(validateExecutionCandidateDiscoveryObservations).toBe(validateObservationsImplementation)
     expect(validateExecutionCandidateDiscoverySnapshot).toBe(validateSnapshotImplementation)
@@ -611,7 +611,7 @@ describe('paper candidate discovery', () => {
   test('reads one immutable snapshot and emits every ordered candidate without mutation capabilities', async () => {
     const state = control()
     const receipt = await Effect.runPromise(program(state))
-    const publicCandidateFacts: PaperCandidateFactsMaterial = receipt.candidateFacts
+    const publicCandidateFacts: ExecutionCandidateFactsMaterial = receipt.candidateFacts
 
     expect(state.transactions).toBe(1)
     expect(publicCandidateFacts).toBe(receipt.candidateFacts)
@@ -654,13 +654,13 @@ describe('paper candidate discovery', () => {
             assetEligibility: {
               eligible: false,
               reasons: [
-                PaperCandidateIneligibility.AssetClass,
-                PaperCandidateIneligibility.Inactive,
-                PaperCandidateIneligibility.NotTradable,
-                PaperCandidateIneligibility.NotFractionable,
-                PaperCandidateIneligibility.Otc,
-                PaperCandidateIneligibility.Ipo,
-                PaperCandidateIneligibility.PtpNoException,
+                ExecutionCandidateIneligibility.AssetClass,
+                ExecutionCandidateIneligibility.Inactive,
+                ExecutionCandidateIneligibility.NotTradable,
+                ExecutionCandidateIneligibility.NotFractionable,
+                ExecutionCandidateIneligibility.Otc,
+                ExecutionCandidateIneligibility.Ipo,
+                ExecutionCandidateIneligibility.PtpNoException,
               ],
             },
             fractionalTradingEligible: false,
@@ -1047,8 +1047,8 @@ describe('paper candidate discovery', () => {
             ...base.projection,
             authority: {
               generationHash: authorityGenerationHash,
-              maximum: Authority.Paper,
-              effective: Authority.Paper,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
               kill: KillState.Clear,
               reason: null,
               updatedAt: '2099-07-23T20:04:00.000Z',
@@ -1096,7 +1096,7 @@ describe('paper candidate discovery', () => {
                       ...entry.evaluation,
                       decision: {
                         ...entry.evaluation.decision,
-                        reasonCodes: [Reason.AuthorityNotPaper, Reason.KillActive],
+                        reasonCodes: [Reason.AuthorityNotGranted, Reason.KillActive],
                       },
                     },
                   }
@@ -1212,7 +1212,7 @@ describePostgres('paper candidate discovery PostgreSQL transaction', () => {
             block: unexpected,
           }
           yield* TestClock.setTime(Date.parse(observedAt))
-          return yield* discoverPaperCandidates(identity).pipe(
+          return yield* discoverExecutionCandidates(identity).pipe(
             Effect.provideService(CycleObservability, observability),
             Effect.provideService(CycleStore, cycleStore),
             Effect.provideService(BrokerRead, broker(state)),

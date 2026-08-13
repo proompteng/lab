@@ -225,7 +225,7 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
   generation: ResearchCapitalGrantGeneration,
 ): Result.Result<void, string> => {
   if (
-    generation.maximum !== Authority.Paper ||
+    generation.maximum !== Authority.Execution ||
     generation.previousGenerationHash !== sourceGenerationHash ||
     generation.grant.planHash !== request.grant.planHash
   ) {

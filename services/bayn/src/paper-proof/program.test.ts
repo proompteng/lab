@@ -110,7 +110,7 @@ const event = (eventType: MutationEventType, operation = MutationOperation.Submi
 
 const generation = {
   schemaVersion: 'bayn.paper-authority-generation.v2',
-  maximum: Authority.Paper,
+  maximum: Authority.Execution,
   previousGenerationHash: hash('9'),
   qualificationRunId: sourcePlan.qualificationRunId,
   qualificationLockId: hash('a'),

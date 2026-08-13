@@ -3,7 +3,7 @@ import { Effect, Option, Result } from 'effect'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
-import { IntentStore, planPaperIntent, type StoredIntent } from '../execution/intents'
+import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import {
   Authority,
   IntentState,
@@ -18,7 +18,7 @@ import { makeFillTerms, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
-import type { PaperDecisionDocument } from '../shadow-decision-contract'
+import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
 import type { CausalProtocol } from '../protocol'
 import {
@@ -71,7 +71,7 @@ export type MutationPreparationFactsRequest<
   readonly preparation: P
   readonly policy: Policy
   readonly cycle: AutonomousCycle
-  readonly document: PaperDecisionDocument
+  readonly document: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, E, R>
 }
 
@@ -91,7 +91,7 @@ export type MutationPreparationDependencies<
 const validateBoundMutationDocument = (
   input: MutationIntentInput,
   cycle: AutonomousCycle,
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
 ): Result.Result<void, CycleRunnerError> =>
   cycle.state !== CycleState.Active ||
   (input.mutationPhase === 'CLOSE'
@@ -115,7 +115,7 @@ const validateBoundMutationDocument = (
 
 const validateCurrentMutationPolicy = (
   policy: Policy,
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
 ): Result.Result<void, CycleRunnerError> => {
   const policyHash = canonicalHashV1Result(policy)
   if (Result.isFailure(policyHash)) {
@@ -137,7 +137,7 @@ const validateCurrentMutationPolicy = (
 const boundPaperSubmissionCutoff = (
   input: MutationIntentInput,
   cycle: AutonomousCycle,
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
@@ -190,9 +190,9 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
 
 const validateCurrentMutationExecutionTerms = (
   preparation: MutationPreparation,
-  targetIntent: PaperDecisionDocument['targetPlan']['intentTargets'][number],
-  target: PaperDecisionDocument['targetPlan']['targets'][number],
-  riskBinding: PaperDecisionDocument['deltaRisk'][number],
+  targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
+  target: ExecutionDecisionDocument['targetPlan']['targets'][number],
+  riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
 ): Result.Result<void, CycleRunnerError> => {
   const fillTerms = makeFillTerms(
     targetIntent.side === OrderSide.Buy ? 'buy' : 'sell',
@@ -221,17 +221,17 @@ const validateCurrentMutationExecutionTerms = (
       )
 }
 
-type PreparedPaperIntent = {
+type PreparedExecutionIntent = {
   readonly intent: Intent
-  readonly targetIntent: PaperDecisionDocument['targetPlan']['intentTargets'][number]
-  readonly target: PaperDecisionDocument['targetPlan']['targets'][number]
-  readonly riskBinding: PaperDecisionDocument['deltaRisk'][number]
+  readonly targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number]
+  readonly target: ExecutionDecisionDocument['targetPlan']['targets'][number]
+  readonly riskBinding: ExecutionDecisionDocument['deltaRisk'][number]
   readonly stored: StoredIntent | undefined
   readonly latestSubmit: MutationEvent | undefined
   readonly latestCancel: MutationEvent | undefined
 }
 
-type PaperIntentRecoveryLookup = Omit<PreparedPaperIntent, 'intent'> & {
+type PaperIntentRecoveryLookup = Omit<PreparedExecutionIntent, 'intent'> & {
   readonly intentId: string
 }
 
@@ -240,7 +240,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
   preparation: P,
   policy: Policy,
   cycle: AutonomousCycle,
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
   allowSubmit: boolean,
   dependencies: MutationPreparationDependencies<R, E, I, P>,
@@ -264,8 +264,8 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     const documentAuthority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: document.bindings.authorityGenerationHash,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       version: 1,
       updatedAt: document.createdAt,
@@ -330,9 +330,9 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       })
     }
 
-    const preparedIntents: PreparedPaperIntent[] = []
+    const preparedIntents: PreparedExecutionIntent[] = []
     for (const lookup of recoveryLookups) {
-      const intent = yield* planPaperIntent(
+      const intent = yield* planExecutionIntent(
         {
           schemaVersion: 'bayn.paper-intent-plan.v1',
           ...lookup.targetIntent,
@@ -699,7 +699,7 @@ export const prepareMutationIntent = Pipeable.generic<
     preparation: P,
     policy: Policy,
     cycle: AutonomousCycle,
-    document: PaperDecisionDocument,
+    document: ExecutionDecisionDocument,
     reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
     allowSubmit: boolean,
     dependencies: MutationPreparationDependencies<R, E, I, P>,

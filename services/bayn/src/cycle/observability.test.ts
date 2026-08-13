@@ -272,8 +272,8 @@ describe('autonomous cycle operations classification', () => {
     })
     const authority = {
       generationHash: '4'.repeat(64),
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       reason: null,
       updatedAt: now,
@@ -289,7 +289,7 @@ describe('autonomous cycle operations classification', () => {
     const failed = deriveCycleOperationsStatus(
       projection({ last, authority, reconciliation }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
     const matchingPass = {
@@ -351,7 +351,7 @@ describe('autonomous cycle operations classification', () => {
         },
       }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
     expect(projectResearchCapitalBootstrapWaiting(unsafe, true, matchingPass)).toBe(unsafe)
@@ -624,12 +624,12 @@ describe('autonomous cycle operations classification', () => {
 
   test('keeps OBSERVE credential-free while PAPER requires coherent durable authority and reconciliation', () => {
     const observe = deriveCycleOperationsStatus(projection(), Date.parse(now), Authority.Observe, thresholds)
-    const missingPaper = deriveCycleOperationsStatus(projection(), Date.parse(now), Authority.Paper, thresholds)
+    const missingPaper = deriveCycleOperationsStatus(projection(), Date.parse(now), Authority.Execution, thresholds)
     const readyPaper = deriveCycleOperationsStatus(
       projection({
         authority: {
           generationHash: '4'.repeat(64),
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
           effective: Authority.Observe,
           kill: KillState.Clear,
           reason: null,
@@ -645,7 +645,7 @@ describe('autonomous cycle operations classification', () => {
         },
       }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
 
@@ -717,8 +717,8 @@ describe('autonomous cycle operations classification', () => {
     } as const
     const capitalGrant = {
       ...observeAuthority,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
     } as const
     const exactReconciliation = {
       accountId: 'paper-account-1',
@@ -741,7 +741,7 @@ describe('autonomous cycle operations classification', () => {
       },
       {
         name: 'reconciliation discrepancy',
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         injected: projection({
           authority: capitalGrant,
           reconciliation: {
@@ -792,8 +792,8 @@ describe('autonomous cycle operations classification', () => {
   test('requires PAPER reconciliation to cover the latest selected-account mutation', () => {
     const authority = {
       generationHash: '4'.repeat(64),
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       reason: null,
       updatedAt: now,
@@ -820,8 +820,8 @@ describe('autonomous cycle operations classification', () => {
           latestOccurredAt,
         },
       })
-    const covered = deriveCycleOperationsStatus(input(true), Date.parse(now), Authority.Paper, thresholds)
-    const predates = deriveCycleOperationsStatus(input(false), Date.parse(now), Authority.Paper, thresholds)
+    const covered = deriveCycleOperationsStatus(input(true), Date.parse(now), Authority.Execution, thresholds)
+    const predates = deriveCycleOperationsStatus(input(false), Date.parse(now), Authority.Execution, thresholds)
 
     expect(covered).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
@@ -840,8 +840,8 @@ describe('autonomous cycle operations classification', () => {
   test('blocks PAPER on discrepancy and exact reconciliation staleness boundaries', () => {
     const authority = {
       generationHash: '4'.repeat(64),
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       reason: null,
       updatedAt: now,
@@ -859,7 +859,7 @@ describe('autonomous cycle operations classification', () => {
         },
       }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
     const stale = deriveCycleOperationsStatus(
@@ -875,7 +875,7 @@ describe('autonomous cycle operations classification', () => {
         },
       }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
 
@@ -904,7 +904,7 @@ describe('autonomous cycle operations classification', () => {
         },
       }),
       Date.parse(now),
-      Authority.Paper,
+      Authority.Execution,
       thresholds,
     )
     expect(cleared).toMatchObject({

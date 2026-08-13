@@ -490,7 +490,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           const row = rows[0]
           if (
             row === undefined ||
-            row.maximum !== Authority.Paper ||
+            row.maximum !== Authority.Execution ||
             row.activation_schema_version !== 'bayn.paper-authority-generation.v2'
           ) {
             return Effect.as(Effect.void, undefined)
@@ -508,7 +508,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           const row = rows[0]
           if (
             row === undefined ||
-            row.maximum !== Authority.Paper ||
+            row.maximum !== Authority.Execution ||
             row.activation_schema_version !== 'bayn.paper-authority-generation.v3'
           ) {
             return Effect.as(Effect.void, undefined)
