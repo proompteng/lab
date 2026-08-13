@@ -470,7 +470,7 @@ describe('independent qualification reference', () => {
     ).toEqual({
       _tag: 'UnsupportedReferenceExecutionModel',
       actual: 'bayn.execution-model.v1',
-      required: 'bayn.execution-model.v2',
+      required: 'bayn.execution-model.v2-or-v3',
     })
   })
 

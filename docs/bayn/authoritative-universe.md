@@ -138,8 +138,9 @@ positive. It remains pinned and non-authorizing under `OBSERVE`.
 
 ## Robust trend qualification precommit
 
-`bayn.risk-balanced-trend.protocol.v4` preserves the causal v3 execution model, five-sleeve universe, monthly
-rebalance, 35% per-symbol cap, 10% portfolio-volatility ceiling, benchmarks, costs, and qualification policy. It clips
+`bayn.risk-balanced-trend.protocol.v4` preserves the causal execution semantics while using the account-neutral v3
+venue contract, five-sleeve universe, monthly rebalance, 35% per-symbol cap, 10% portfolio-volatility ceiling,
+benchmarks, costs, and qualification policy. It clips
 each normalized horizon score to `[-2, 2]`, uses the median score, requires at least three of four horizons to be
 positive, and allocates eligible sleeves by positive conviction per unit annualized volatility before the existing
 cap and covariance-aware portfolio scaling.
@@ -147,8 +148,8 @@ cap and covariance-aware portfolio scaling.
 The v4 source-controlled identities are:
 
 - behavior `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46`;
-- parameters `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`; and
-- deterministic fixture evaluation `81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416`.
+- parameters `150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b`; and
+- deterministic fixture evaluation `684749c1ed5394c0dee9bb2ffc6de898e963371b7b95738a7d1bd5b22cb222a6`.
 
 These hashes are a precommit, not a qualification result. The changed strategy identity cannot consume the already
 observed 2026-07-24 snapshot; release remains held until a fresher finalized snapshot exists.

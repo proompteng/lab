@@ -42,7 +42,7 @@ remain a dormant adapter boundary until separately reviewed and configured.
   parameter hashes against those embedded facts, and status exposes the promoted image digest, parameter hash, and
   contract versions. The v4 precommit uses behavior hash
   `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameter hash
-  `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`.
+  `150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b`.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
   it does not change lifecycle or authority. The Nix image starts in the default production mode and fails closed if

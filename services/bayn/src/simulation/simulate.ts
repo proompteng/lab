@@ -3,6 +3,7 @@ import { Chunk, pipe, Result } from 'effect'
 import { ContractVersion, type SimulationProtocol } from '../types'
 import type { FeeEvent, FillEvent, IsoDate } from '../types'
 import { calculateSessionFees } from '../execution-model'
+import { isSupportedExecutionModel } from '../execution-model-contract'
 import { accrueSessionCash, makeCashChange, makeDecision, makeFeeEvent, parseMicros, recordDecision } from './evidence'
 import { requiredSession } from './inputs'
 import { calculateExactPerformanceMetrics } from './metrics'
@@ -258,11 +259,11 @@ const simulateDataFirst = (
   recordEvents: boolean,
   terminalCloseTarget?: (target: SimulationTarget, executionIndex: number) => SimulationTarget,
 ): SimulationDecision => {
-  if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
+  if (!isSupportedExecutionModel(protocol.executionModel)) {
     return fail({
       _tag: 'UnsupportedSimulationExecutionModel',
       actual: protocol.executionModel.schemaVersion,
-      required: 'bayn.execution-model.v2',
+      required: 'bayn.execution-model.v2-or-v3',
     })
   }
   if (!Number.isSafeInteger(startIndex) || startIndex < 0 || startIndex >= sessions.length) {

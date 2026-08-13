@@ -8,7 +8,7 @@ import {
   type ExecutionCalendarObservation,
 } from './cycle'
 import { canonicalHashV1Result } from './hash'
-import { ExecutionModelV2Schema, type ExecutionModel } from './protocol'
+import { SupportedExecutionModelSchema, type ExecutionModel } from './protocol'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -376,7 +376,7 @@ const BindExecutionSessionInputSchema = Schema.Struct({
   signal: SignalBindingSchema,
   planningBrokerState: PlanningBrokerStateBindingSchema,
   calendar: CalendarIdentitySchema,
-  executionModel: ExecutionModelV2Schema,
+  executionModel: SupportedExecutionModelSchema,
 })
 
 const BindCycleExecutionSessionInputSchema = Schema.Struct({

@@ -159,7 +159,7 @@ changing it may alter fills, gaps, slippage, shortfall, and performance, but can
 
 The source-controlled v4 precommit identities are behavior
 `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameters
-`19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`. They do not relabel the terminal v3
+`150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b`. They do not relabel the terminal v3
 rejection and do not constitute a new qualification. GitOps must hold this changed identity until a finalized snapshot
 newer than the observed 2026-07-24 snapshot is available.
 

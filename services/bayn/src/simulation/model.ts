@@ -136,7 +136,7 @@ export type SimulationDomainFailure =
   | {
       readonly _tag: 'UnsupportedSimulationExecutionModel'
       readonly actual: string
-      readonly required: 'bayn.execution-model.v2'
+      readonly required: 'bayn.execution-model.v2-or-v3'
     }
   | {
       readonly _tag: 'CanonicalizationFailed'
