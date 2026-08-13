@@ -35,6 +35,7 @@ import {
   decideSubmitSuccess,
   encodeOrder,
   ensureRecoveryDelay,
+  exactOrder,
   makeDryRunSubmit,
   nextInstant,
   recoveryObservationRequiresPersistence,
@@ -122,6 +123,11 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   observedAt: evidence.observedAt,
   ...overrides,
 })
+
+const roundedNotionalIntent: Intent = {
+  ...intent,
+  notionalLimitMicros: '200009999',
+}
 
 const mutation = (
   operation: MutationOperation,
@@ -256,6 +262,66 @@ describe('execution coordinator decisions', () => {
       brokerOrderId,
       evidence,
     })
+  })
+
+  test('matches accepted BUY orders to the exact cent-quantized request while retaining the durable limit', () => {
+    const request = encodedRequest(roundedNotionalIntent)
+    expect(request).toMatchObject({ notional: '200' })
+    expect(exactOrder(roundedNotionalIntent, request, order({ notionalMicros: '200000000' }))).toBe(true)
+    expect(
+      exactOrder(roundedNotionalIntent, request, order({ notionalMicros: roundedNotionalIntent.notionalLimitMicros })),
+    ).toBe(false)
+  })
+
+  test('recovers an interrupted pre-quantization notional submit from its durable request hash', () => {
+    const unknownIntent = { ...roundedNotionalIntent, state: IntentState.Unknown }
+    const legacyRequest = {
+      ...encodedRequest(unknownIntent),
+      notional: '200.009999',
+    }
+    const legacyEvent = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
+    expect(
+      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
+        value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
+        evidence,
+      }),
+    ).toMatchObject({ _tag: 'RecoveryFound' })
+  })
+
+  test('recovers a legacy sub-dollar BUY without permitting a new sub-dollar submission', () => {
+    const unknownIntent = {
+      ...intent,
+      notionalLimitMicros: '999999',
+      state: IntentState.Unknown,
+    }
+    const legacyRequest = {
+      symbol: unknownIntent.symbol,
+      notional: '0.999999',
+      side: 'buy',
+      type: 'market',
+      time_in_force: 'day',
+      client_order_id: unknownIntent.clientOrderId,
+      extended_hours: false,
+    }
+    const legacyEvent = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+      intentId: unknownIntent.intentId,
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+
+    expect(Result.isFailure(orderRequestBody(unknownIntent))).toBe(true)
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
+    expect(
+      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
+        value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
+        evidence,
+      }),
+    ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
   test('does not append another mutation event for the same known open recovery', () => {

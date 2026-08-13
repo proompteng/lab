@@ -9,6 +9,7 @@ import {
   cancelRequestHash,
   compatibleOrderRequestBody,
   orderPriceBoundaryMicros,
+  orderRequestNotionalMicros,
   orderRequestBody,
   type MutationEvidence,
   type OrderRequestBody,
@@ -322,7 +323,7 @@ const exactOrderDataFirst = (intent: Intent, request: CompatibleOrderRequestBody
   if (Result.isFailure(limitPrice)) return false
   const representationMatches =
     'notional' in request
-      ? order.notionalMicros === intent.notionalLimitMicros && order.quantityMicros === undefined
+      ? order.notionalMicros === orderRequestNotionalMicros(request) && order.quantityMicros === undefined
       : order.quantityMicros === intent.quantityMicros && order.notionalMicros === undefined
   return (
     order.accountId === intent.accountId &&

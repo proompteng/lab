@@ -298,6 +298,26 @@ describe('PostgreSQL reconciliation algebra', () => {
     }
   })
 
+  test('projects the exact cent-quantized notional submitted to Alpaca', () => {
+    const unquantizedNotionalLimitMicros = '100009999'
+    const unquantizedIntent = { ...requestIntent, notionalLimitMicros: unquantizedNotionalLimitMicros }
+    const requestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(unquantizedIntent)))
+    const projection = successOf(
+      projectIntentExpectations([
+        {
+          ...intentRow,
+          notional_limit_micros: unquantizedNotionalLimitMicros,
+          submit_request_hash: requestHash,
+        },
+      ]),
+    )
+
+    expect(projection.intents[0]).toMatchObject({
+      submittedOrderType: OrderType.Market,
+      submittedNotionalMicros: '100000000',
+    })
+  })
+
   test('recovers a historical whole-share GTC market request when the current encoder rejects it', () => {
     const projection = successOf(
       projectIntentExpectations([

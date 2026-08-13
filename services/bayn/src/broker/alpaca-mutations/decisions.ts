@@ -67,6 +67,14 @@ export interface SellQuantityMarketOrderRequestBody {
 
 export type OrderRequestBody = BuyNotionalMarketOrderRequestBody | SellQuantityMarketOrderRequestBody
 
+type MarketOrderRequestCommon = Omit<BuyNotionalMarketOrderRequestBody, 'notional'>
+
+interface ValidatedMarketOrderRequest {
+  readonly common: MarketOrderRequestCommon
+  readonly notional: bigint
+  readonly quantity: bigint
+}
+
 export interface LegacyBoundedLimitOrderRequestBody {
   readonly symbol: string
   readonly qty: string
@@ -176,10 +184,36 @@ const microsToDecimal = (micros: bigint): string => {
   return fraction.length === 0 ? whole.toString() : `${whole.toString()}.${fraction}`
 }
 
+const decimalToMicros = (decimal: string): string | undefined => {
+  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,6}))?$/.exec(decimal)
+  if (match === null) return undefined
+  const whole = match[1]
+  if (whole === undefined) return undefined
+  const fraction = match[2] ?? ''
+  return (BigInt(whole) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6))).toString()
+}
+
 const alpacaLimitPriceIncrementMicros = (priceMicros: bigint): bigint => (priceMicros >= 1_000_000n ? 10_000n : 100n)
+const alpacaMinimumBuyNotionalMicros = 1_000_000n
+const alpacaNotionalIncrementMicros = 10_000n
 
 const quantizeDown = (value: bigint, increment: bigint): bigint => (value / increment) * increment
 const quantizeUp = (value: bigint, increment: bigint): bigint => ((value + increment - 1n) / increment) * increment
+
+export const alpacaBuyNotionalMicros = (value: string): Result.Result<string, OrderRequestError> => {
+  const notional = notionalMicros(value)
+  if (Result.isFailure(notional)) return Result.fail(notional.failure)
+  const brokerNotional = quantizeDown(notional.success, alpacaNotionalIncrementMicros)
+  return brokerNotional >= alpacaMinimumBuyNotionalMicros
+    ? Result.succeed(brokerNotional.toString())
+    : Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-order',
+          message: 'buy notional is below Alpaca minimum one-dollar order value',
+          notionalLimitMicros: value,
+        }),
+      )
+}
 
 export const orderPriceBoundaryMicros = (intent: OrderRequestIntent): Result.Result<bigint, OrderRequestError> => {
   const quantity = quantityMicros(intent.quantityMicros)
@@ -345,7 +379,9 @@ export const legacyBoundedLimitOrderRequestBody = (
   })
 }
 
-export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+const validateMarketOrderRequest = (
+  intent: OrderRequestIntent,
+): Result.Result<ValidatedMarketOrderRequest, OrderRequestError> => {
   if (intent.orderType !== DomainOrderType.Market) {
     return Result.fail(
       new OrderRequestError({
@@ -377,10 +413,34 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     client_order_id: intent.clientOrderId,
     extended_hours: false,
   } as const
-  return intent.side === DomainSide.Buy
-    ? Result.succeed({ ...common, notional: microsToDecimal(notional.success) })
-    : Result.succeed({ ...common, qty: microsToDecimal(quantity.success) })
+  return Result.succeed({ common, notional: notional.success, quantity: quantity.success })
 }
+
+export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  const validated = validateMarketOrderRequest(intent)
+  if (Result.isFailure(validated)) return Result.fail(validated.failure)
+  const { common, notional, quantity } = validated.success
+  if (intent.side === DomainSide.Sell) {
+    return Result.succeed({ ...common, qty: microsToDecimal(quantity) })
+  }
+  const brokerNotional = alpacaBuyNotionalMicros(notional.toString())
+  return Result.isFailure(brokerNotional)
+    ? Result.fail(brokerNotional.failure)
+    : Result.succeed({ ...common, notional: microsToDecimal(BigInt(brokerNotional.success)) })
+}
+
+const legacyUnquantizedNotionalMarketOrderRequestBody = (
+  intent: OrderRequestIntent,
+): Result.Result<OrderRequestBody, OrderRequestError> => {
+  if (intent.side !== DomainSide.Buy) return orderRequestBody(intent)
+  return Result.map(validateMarketOrderRequest(intent), ({ common, notional }) => ({
+    ...common,
+    notional: microsToDecimal(notional),
+  }))
+}
+
+export const orderRequestNotionalMicros = (request: CompatibleOrderRequestBody): string | undefined =>
+  'notional' in request ? decimalToMicros(request.notional) : undefined
 
 export const compatibleOrderRequestBody = (
   intent: OrderRequestIntent,
@@ -389,6 +449,8 @@ export const compatibleOrderRequestBody = (
   const candidates: CompatibleOrderRequestBody[] = []
   const current = orderRequestBody(intent)
   if (Result.isSuccess(current)) candidates.push(current.success)
+  const unquantizedNotional = legacyUnquantizedNotionalMarketOrderRequestBody(intent)
+  if (Result.isSuccess(unquantizedNotional)) candidates.push(unquantizedNotional.success)
   const bounded = legacyBoundedLimitOrderRequestBody(intent)
   if (Result.isSuccess(bounded)) candidates.push(bounded.success)
   const historical = historicalMarketOrderRequestBody(intent)
@@ -589,7 +651,7 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
     !order.extendedHours
   if (!commonMatches) return false
   return 'notional' in facts.request
-    ? order.quantityMicros === undefined && order.notionalMicros === facts.intent.notionalLimitMicros
+    ? order.quantityMicros === undefined && order.notionalMicros === orderRequestNotionalMicros(facts.request)
     : order.quantityMicros === facts.intent.quantityMicros && order.notionalMicros === undefined
 }
 

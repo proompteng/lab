@@ -269,11 +269,32 @@ describe('Alpaca broker mutations', () => {
       Result.succeed({ type: 'limit', limit_price: '33.34', side: 'sell' }),
     )
     expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy })).toMatchObject(
-      Result.succeed({ type: 'market', notional: '100.000001', side: 'buy' }),
+      Result.succeed({ type: 'market', notional: '100', side: 'buy' }),
     )
     expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
       Result.succeed({ type: 'market', qty: '3', side: 'sell' }),
     )
+  })
+
+  test('quantizes BUY notionals down to broker cent precision and rejects sub-dollar requests', () => {
+    expect(
+      orderRequestBody({
+        ...intent,
+        notionalLimitMicros: '26253492098',
+      }),
+    ).toMatchObject(Result.succeed({ type: 'market', notional: '26253.49', side: 'buy' }))
+    expect(
+      assertFailure(
+        orderRequestBody({
+          ...intent,
+          notionalLimitMicros: '999999',
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'OrderRequestError',
+      failure: 'invalid-order',
+      notionalLimitMicros: '999999',
+    })
   })
 
   test('refuses to construct mutation capability without explicit submit-orders access', async () => {
@@ -460,6 +481,27 @@ describe('Alpaca broker mutations', () => {
         contentHash: canonicalHashV1(orderResponse),
       },
     })
+  })
+
+  test('accepts Alpaca confirmation of the cent-quantized BUY notional', async () => {
+    const roundedIntent = { ...intent, notionalLimitMicros: '26253492098' }
+    const requests: unknown[] = []
+    const client = HttpClient.make((request) => {
+      requests.push(requestBody(request))
+      return Effect.succeed(response(request, { ...orderResponse, notional: '26253.49' }))
+    })
+
+    const receipt = await Effect.runPromise(withMutation(client, (mutation) => mutation.submit(roundedIntent)))
+
+    expect(requests).toEqual([
+      expect.objectContaining({
+        symbol: roundedIntent.symbol,
+        notional: '26253.49',
+        client_order_id: roundedIntent.clientOrderId,
+      }),
+    ])
+    expect(receipt.order.notionalMicros).toBe('26253490000')
+    expect(receipt.requestHash).toBe(canonicalHashV1(requests[0]))
   })
 
   test('submits a SELL as an exact quantity market order and verifies the accepted order', async () => {
