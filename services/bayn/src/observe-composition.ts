@@ -28,10 +28,10 @@ import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from 
 import { retainAutonomousCyclePassObservation } from './cycle/runner/pass-decisions'
 import { CycleStore } from './cycle/store'
 import {
-  makePaperCycleClosure,
-  type PaperCycleClosure,
-  type PaperCycleClosureStoreShape,
-} from './db/paper-cycle-closure'
+  makeExecutionCycleClosure,
+  type ExecutionCycleClosure,
+  type ExecutionCycleClosureStoreShape,
+} from './db/execution-cycle-closure'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -1112,7 +1112,7 @@ export type ObserveAutonomousCycleInput = {
   readonly strategy: StrategyRuntime
   readonly cycleCadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-  readonly paperCycleClosureStore?: PaperCycleClosureStoreShape
+  readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
   readonly executionEpisodeCutoffAt?: string
   readonly executionEpisodeCloseSubmitCutoffAt?: string
@@ -1322,24 +1322,24 @@ const readBoundMutationDocument = (
     ),
   )
 
-const readPaperCycleClosure = (
+const readExecutionCycleClosure = (
   cycleId: string,
-  store: PaperCycleClosureStoreShape,
-): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
+  store: ExecutionCycleClosureStoreShape,
+): Effect.Effect<ExecutionCycleClosure | undefined, CycleRunnerError> =>
   store.read(cycleId).pipe(
     Effect.mapError((cause) =>
-      mutationRunnerError({ message: 'durable PAPER close plan read failed', cause, failure: 'store' }),
+      mutationRunnerError({ message: 'durable execution close plan read failed', cause, failure: 'store' }),
     ),
     Effect.map(Option.getOrUndefined),
   )
 
-const readLatestPaperCycleCloseReplan = (
+const readLatestExecutionCycleCloseReplan = (
   cycleId: string,
-  store: PaperCycleClosureStoreShape,
-): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
+  store: ExecutionCycleClosureStoreShape,
+): Effect.Effect<ExecutionCycleClosure | undefined, CycleRunnerError> =>
   store.readLatestReplan(cycleId).pipe(
     Effect.mapError((cause) =>
-      mutationRunnerError({ message: 'durable PAPER close replan read failed', cause, failure: 'store' }),
+      mutationRunnerError({ message: 'durable execution close replan read failed', cause, failure: 'store' }),
     ),
     Effect.map(Option.getOrUndefined),
   )
@@ -1380,7 +1380,7 @@ const closePlanNeedsResidualReplan = (
     )
   })
 
-const ensurePaperCycleClosure = (
+const ensureExecutionCycleClosure = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
@@ -1391,11 +1391,11 @@ const ensurePaperCycleClosure = (
   Effect.gen(function* () {
     const cutoffAt = input.executionEpisodeCutoffAt
     const closeExpiresAt = input.executionEpisodeExpiresAt
-    const store = input.paperCycleClosureStore
+    const store = input.executionCycleClosureStore
     if (cutoffAt === undefined || closeExpiresAt === undefined || store === undefined) return undefined
     const observedAt = yield* currentUtcInstant
     if (observedAt < cutoffAt) return undefined
-    const existing = yield* readPaperCycleClosure(cycle.identity.cycleId, store)
+    const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
       return yield* mutationRunnerError({
@@ -1416,7 +1416,7 @@ const ensurePaperCycleClosure = (
       })
       if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
       const closure = yield* Effect.fromResult(
-        makePaperCycleClosure({
+        makeExecutionCycleClosure({
           schemaVersion: 'bayn.paper-cycle-closure.v1',
           cycleId: cycle.identity.cycleId,
           entryDecisionHash,
@@ -1439,7 +1439,7 @@ const ensurePaperCycleClosure = (
       return stored.document
     }
 
-    const latestReplan = yield* readLatestPaperCycleCloseReplan(cycle.identity.cycleId, store)
+    const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
     if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
 
@@ -1455,7 +1455,7 @@ const ensurePaperCycleClosure = (
     })
     if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
     const closure = yield* Effect.fromResult(
-      makePaperCycleClosure({
+      makeExecutionCycleClosure({
         schemaVersion: 'bayn.paper-cycle-closure.v1',
         cycleId: cycle.identity.cycleId,
         entryDecisionHash,
@@ -1627,7 +1627,7 @@ const executeBoundPaperCycle = (
 ): Effect.Effect<BoundPaperCycleExecutionOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, document, reconcile)
+    const closeDocument = yield* ensureExecutionCycleClosure(input, preparation, policy, cycle, document, reconcile)
     const closeOnly = closeDocument !== undefined
     const phaseInput: ObserveAutonomousCycleInput = {
       ...input,
