@@ -13,7 +13,10 @@ import {
   type CapitalGrantGeneration,
   type ResearchCapitalGrantGeneration,
 } from '../../execution/contracts'
-import { paperActivationExpiredRestrictionReason, paperEpisodeCompletedRestrictionReason } from '../../paper-episode'
+import {
+  executionActivationExpiredRestrictionReason,
+  executionEpisodeCompletedRestrictionReason,
+} from '../../execution/episode'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -241,8 +244,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
               OR (
                 state.reason IN (
-                  ${paperEpisodeCompletedRestrictionReason},
-                  ${paperActivationExpiredRestrictionReason}
+                  ${executionEpisodeCompletedRestrictionReason},
+                  ${executionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
                   SELECT 1
@@ -362,8 +365,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
                   OR (
                     state.reason IN (
-                      ${paperEpisodeCompletedRestrictionReason},
-                      ${paperActivationExpiredRestrictionReason}
+                      ${executionEpisodeCompletedRestrictionReason},
+                      ${executionActivationExpiredRestrictionReason}
                     )
                     AND EXISTS (
                       SELECT 1

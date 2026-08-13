@@ -1,7 +1,7 @@
 import { pipe, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
-import { ResearchPaperGrantSchema } from '../paper-episode'
+import { ResearchCapitalGrantSchema } from './episode'
 import {
   ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
@@ -635,7 +635,7 @@ export type CapitalGrantProofBinding = typeof CapitalGrantProofBindingSchema.Typ
 
 export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-paper-grant-proof.v1'),
-  grant: ResearchPaperGrantSchema,
+  grant: ResearchCapitalGrantSchema,
   activationSourceRevision: SourceRevision,
   activationImageRepository: NonEmptyString,
   activationImageDigest: ImageDigest,
@@ -766,7 +766,7 @@ const ResearchCapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority-generation.v3'),
   maximum: Schema.Literal(Authority.Paper),
   previousGenerationHash: Sha256,
-  grant: ResearchPaperGrantSchema,
+  grant: ResearchCapitalGrantSchema,
   activationSourceRevision: SourceRevision,
   activationImageRepository: NonEmptyString,
   activationImageDigest: ImageDigest,

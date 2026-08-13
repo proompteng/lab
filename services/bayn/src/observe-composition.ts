@@ -57,7 +57,10 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { decidePaperEpisodeCycleTerminalization, paperEpisodeAllocationCapitalMicros } from './paper-episode'
+import {
+  decideExecutionEpisodeCycleTerminalization,
+  executionEpisodeAllocationCapitalMicros,
+} from './execution/episode'
 import {
   Authority,
   IntentState,
@@ -261,7 +264,7 @@ type ObserveDecisionCompositionFailure = {
     | 'compiled-decision-hash'
     | 'cycle-binding'
     | 'observe-authority'
-    | 'paper-episode-allocation'
+    | 'execution-episode-allocation'
     | 'reconciled-state-hash'
     | 'reference-prices'
     | 'risk-policy-hash'
@@ -782,7 +785,7 @@ function buildCycleDecision<R>(
     const allocationCapitalMicros =
       authorityRequirement === Authority.Paper
         ? yield* Effect.fromResult(
-            paperEpisodeAllocationCapitalMicros({
+            executionEpisodeAllocationCapitalMicros({
               accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
               dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
               maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
@@ -795,7 +798,7 @@ function buildCycleDecision<R>(
           ).pipe(
             Effect.mapError((cause) =>
               compositionFailure(
-                'paper-episode-allocation',
+                'execution-episode-allocation',
                 'PAPER entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
                 cause,
               ),
@@ -1111,9 +1114,9 @@ export type ObserveAutonomousCycleInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly paperCycleClosureStore?: PaperCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
-  readonly paperEpisodeCutoffAt?: string
-  readonly paperEpisodeCloseSubmitCutoffAt?: string
-  readonly paperEpisodeExpiresAt?: string
+  readonly executionEpisodeCutoffAt?: string
+  readonly executionEpisodeCloseSubmitCutoffAt?: string
+  readonly executionEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
   /** Runs due lifecycle maintenance inside the same serialized command as the cycle pass. */
   readonly beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
@@ -1122,17 +1125,17 @@ export type ObserveAutonomousCycleInput = {
 
 export type LifecycleAdvanceDisposition = 'CONTINUE' | 'COMPLETED'
 
-export const paperEpisodeCloseGraceMs = 15 * 60_000
+export const executionEpisodeCloseGraceMs = 15 * 60_000
 
-export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs)
+export const executionEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
+  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + executionEpisodeCloseGraceMs)
 
 /** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
-export const paperEpisodeReceiptFinalizationGraceMs = 15 * 60_000
+export const executionEpisodeReceiptFinalizationGraceMs = 15 * 60_000
 
-export const paperEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
+export const executionEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
   utcInstantFromEpochMillis(
-    Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt)) + paperEpisodeReceiptFinalizationGraceMs,
+    Date.parse(executionEpisodeCloseExpiresAt(authorityExpiresAt)) + executionEpisodeReceiptFinalizationGraceMs,
   )
 
 type ObserveDecisionRuntime =
@@ -1253,14 +1256,15 @@ const isPostMutationReconciliation = (result: RecoveryFirstCyclePassResult): res
 export const paperMutationSubmissionAllowed = (input: {
   readonly capability: PaperExecutionCapability['_tag']
   readonly closeOnly: boolean
-  readonly paperEpisodeCutoffAt?: string
-  readonly paperEpisodeCloseSubmitCutoffAt?: string
+  readonly executionEpisodeCutoffAt?: string
+  readonly executionEpisodeCloseSubmitCutoffAt?: string
   readonly observedAt: string
 }): boolean =>
   input.capability === 'Mutation' &&
   (input.closeOnly
-    ? input.paperEpisodeCloseSubmitCutoffAt === undefined || input.observedAt < input.paperEpisodeCloseSubmitCutoffAt
-    : input.paperEpisodeCutoffAt === undefined || input.observedAt < input.paperEpisodeCutoffAt)
+    ? input.executionEpisodeCloseSubmitCutoffAt === undefined ||
+      input.observedAt < input.executionEpisodeCloseSubmitCutoffAt
+    : input.executionEpisodeCutoffAt === undefined || input.observedAt < input.executionEpisodeCutoffAt)
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
@@ -1391,8 +1395,8 @@ const ensurePaperCycleClosure = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<PaperDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    const cutoffAt = input.paperEpisodeCutoffAt
-    const closeExpiresAt = input.paperEpisodeExpiresAt
+    const cutoffAt = input.executionEpisodeCutoffAt
+    const closeExpiresAt = input.executionEpisodeExpiresAt
     const store = input.paperCycleClosureStore
     if (cutoffAt === undefined || closeExpiresAt === undefined || store === undefined) return undefined
     const observedAt = yield* currentUtcInstant
@@ -1646,23 +1650,25 @@ const executeBoundPaperCycle = (
       allowSubmit: paperMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
-        ...(input.paperEpisodeCutoffAt === undefined ? {} : { paperEpisodeCutoffAt: input.paperEpisodeCutoffAt }),
-        ...(input.paperEpisodeCloseSubmitCutoffAt === undefined
+        ...(input.executionEpisodeCutoffAt === undefined
           ? {}
-          : { paperEpisodeCloseSubmitCutoffAt: input.paperEpisodeCloseSubmitCutoffAt }),
+          : { executionEpisodeCutoffAt: input.executionEpisodeCutoffAt }),
+        ...(input.executionEpisodeCloseSubmitCutoffAt === undefined
+          ? {}
+          : { executionEpisodeCloseSubmitCutoffAt: input.executionEpisodeCloseSubmitCutoffAt }),
         observedAt,
       }),
     })
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryHasUnsuccessfulIntent =
-        closeOnly || (input.paperEpisodeCutoffAt !== undefined && observedAt >= input.paperEpisodeCutoffAt)
+        closeOnly || (input.executionEpisodeCutoffAt !== undefined && observedAt >= input.executionEpisodeCutoffAt)
           ? yield* entryPaperCycleHasUnsuccessfulIntent(document)
           : false
-      const terminalization = decidePaperEpisodeCycleTerminalization({
+      const terminalization = decideExecutionEpisodeCycleTerminalization({
         closeOnly,
         observedAt,
-        ...(input.paperEpisodeCutoffAt === undefined ? {} : { entryCutoffAt: input.paperEpisodeCutoffAt }),
+        ...(input.executionEpisodeCutoffAt === undefined ? {} : { entryCutoffAt: input.executionEpisodeCutoffAt }),
         entryHasUnsuccessfulIntent,
       })
       switch (terminalization._tag) {
@@ -1960,13 +1966,13 @@ const runRecoveryFirstCyclePass = (
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
           if (
-            input.paperEpisodeCutoffAt !== undefined &&
-            observedAt >= input.paperEpisodeCutoffAt &&
+            input.executionEpisodeCutoffAt !== undefined &&
+            observedAt >= input.executionEpisodeCutoffAt &&
             unfinished !== undefined
           ) {
             return terminalizeUnboundMutationCycleAtCutoff(unfinished, observedAt)
           }
-          if (input.paperEpisodeCutoffAt !== undefined && observedAt >= input.paperEpisodeCutoffAt) {
+          if (input.executionEpisodeCutoffAt !== undefined && observedAt >= input.executionEpisodeCutoffAt) {
             return Effect.succeed({ outcome: 'NO_PUBLICATION' as const, observedAt })
           }
           return runAutonomousCyclePass(context).pipe(

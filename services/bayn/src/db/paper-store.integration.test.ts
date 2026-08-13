@@ -72,10 +72,10 @@ import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
 import {
-  paperActivationExpiredRestrictionReason,
-  paperEpisodeCompletedRestrictionReason,
-  paperEpisodeFailureRestrictionPrefix,
-} from '../paper-episode'
+  executionActivationExpiredRestrictionReason,
+  executionEpisodeCompletedRestrictionReason,
+  executionEpisodeFailureRestrictionPrefix,
+} from '../execution/episode'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreLive,
@@ -1822,7 +1822,7 @@ describePostgres('paper accounting persistence', () => {
     const sourceGenerationHash = hash('terminal-restriction-source-generation')
     const activationReconciliation = exactReconciliation('terminal-restriction-activation')
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
-    const terminalReason = `${paperEpisodeFailureRestrictionPrefix} build-decision failed`
+    const terminalReason = `${executionEpisodeFailureRestrictionPrefix} build-decision failed`
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
     try {
       const result = await runtime.runPromise(
@@ -1904,7 +1904,7 @@ describePostgres('paper accounting persistence', () => {
     const activationReconciliation = exactReconciliation('promoted-terminal-restriction-activation')
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
     const discrepancyReason = `reconciliation discrepancy ${hash('earlier-reconciliation-discrepancy')}`
-    const terminalReason = `${paperEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`
+    const terminalReason = `${executionEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
     try {
       const result = await runtime.runPromise(
@@ -2297,7 +2297,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${paperEpisodeFailureRestrictionPrefix} build-decision failed`,
+            `${executionEpisodeFailureRestrictionPrefix} build-decision failed`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2581,7 +2581,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${paperEpisodeFailureRestrictionPrefix} qualified v2 recovery`,
+            `${executionEpisodeFailureRestrictionPrefix} qualified v2 recovery`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2667,7 +2667,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${paperEpisodeFailureRestrictionPrefix} blocked rollover regression`,
+            `${executionEpisodeFailureRestrictionPrefix} blocked rollover regression`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2811,8 +2811,8 @@ describePostgres('paper accounting persistence', () => {
   }, 15_000)
 
   test.each([
-    ['completed', paperEpisodeCompletedRestrictionReason],
-    ['expired', paperActivationExpiredRestrictionReason],
+    ['completed', executionEpisodeCompletedRestrictionReason],
+    ['expired', executionActivationExpiredRestrictionReason],
   ] as const)(
     'rolls a receipt-finalized %s PAPER generation to clear OBSERVE only after durable receipt evidence',
     async (fixture, restrictionReason) => {

@@ -31,7 +31,7 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
-import { isPaperEpisodeFailureRestriction } from '../paper-episode'
+import { isExecutionEpisodeFailureRestriction } from '../execution/episode'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
@@ -206,7 +206,7 @@ const isTransientReconciliationRestriction = (reason: string | null): boolean =>
   reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
 
 const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
-  isTransientReconciliationRestriction(currentReason) && isPaperEpisodeFailureRestriction(nextReason)
+  isTransientReconciliationRestriction(currentReason) && isExecutionEpisodeFailureRestriction(nextReason)
 
 const fromDecision = <A>(
   operation: ReconciliationStoreError['operation'],

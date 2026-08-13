@@ -27,7 +27,7 @@ import paperCycleClosures from '../../migrations/0024_paper_cycle_closures'
 import forwardPerformanceReceipts from '../../migrations/0025_forward_performance_receipts'
 import paperCycleCloseReplans from '../../migrations/0026_paper_cycle_close_replans'
 import distinctCloseReplanIntents from '../../migrations/0027_distinct_close_replan_intents'
-import researchPaperGrants from '../../migrations/0028_research_paper_grants'
+import researchCapitalGrants from '../../migrations/0028_research_paper_grants'
 import unusedResearchPaperRearm from '../../migrations/0029_unused_research_paper_rearm'
 import clearUnusedResearchPaperRearm from '../../migrations/0030_clear_unused_research_paper_rearm'
 import blockedPaperGenerationRollover from '../../migrations/0031_blocked_paper_generation_rollover'
@@ -65,7 +65,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '25_forward_performance_receipts': forwardPerformanceReceipts,
   '26_paper_cycle_close_replans': paperCycleCloseReplans,
   '27_distinct_close_replan_intents': distinctCloseReplanIntents,
-  '28_research_paper_grants': researchPaperGrants,
+  '28_research_paper_grants': researchCapitalGrants,
   '29_unused_research_paper_rearm': unusedResearchPaperRearm,
   '30_clear_unused_research_paper_rearm': clearUnusedResearchPaperRearm,
   '31_blocked_paper_generation_rollover': blockedPaperGenerationRollover,

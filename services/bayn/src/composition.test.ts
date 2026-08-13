@@ -33,7 +33,7 @@ import {
   activatePreparedQualifiedPaperGeneration,
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
-  finalizePaperEpisode,
+  finalizeExecutionEpisode,
   observeCycleGenerationHash,
   paperReceiptFinalizationWindowOpen,
   prepareOrRecoverQualifiedPaperActivation,
@@ -73,7 +73,7 @@ import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from 
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
-import { loadObserveRiskPolicy, paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
+import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
 
@@ -533,7 +533,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
   })
 
   test('leaves a bounded post-close finalization window for late settlement', () => {
-    expect(paperEpisodeReceiptFinalizationExpiresAt('2026-08-03T12:00:00.000Z')).toBe('2026-08-03T12:30:00.000Z')
+    expect(executionEpisodeReceiptFinalizationExpiresAt('2026-08-03T12:00:00.000Z')).toBe('2026-08-03T12:30:00.000Z')
   })
 
   test('keeps receipt finalization available after a restart during the close-to-receipt grace window', () => {
@@ -1339,7 +1339,7 @@ describe('Bayn PAPER startup recovery boundary', () => {
             autonomousCycleLoopConfigured: true,
           }),
         )
-        const finalized = yield* finalizePaperEpisode(
+        const finalized = yield* finalizeExecutionEpisode(
           state,
           researchRequest,
           hash('2'),
