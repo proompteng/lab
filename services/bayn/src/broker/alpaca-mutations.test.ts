@@ -16,7 +16,7 @@ import {
   type ExecutionStrategyIdentity,
   type ExecutionAuthority,
 } from '../execution/authority'
-import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import {
   BrokerMutationError,
   MutationFailure,

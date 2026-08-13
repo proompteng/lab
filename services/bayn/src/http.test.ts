@@ -45,7 +45,7 @@ import {
   statusResponseDecision,
   validateHistoricalRunRequest,
 } from './http'
-import { Authority, KillState, ReconciliationStatus } from './paper'
+import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { initialState, type RuntimeState } from './runtime-state'
 
 const metricValue = (metrics: string, name: string): number => {

@@ -47,7 +47,15 @@ import type { CycleOperationsProjection } from './cycle/observability'
 import { CycleObservability, CycleStore, type CycleObservabilityShape, type CycleStoreShape } from './cycle/store'
 import { PostgresClientLive } from './db/evidence-store'
 import { canonicalHashV1 } from './hash'
-import { Authority, KillState, OrderSide, OrderType, ReconciliationStatus, RiskOutcome, TimeInForce } from './paper'
+import {
+  Authority,
+  KillState,
+  OrderSide,
+  OrderType,
+  ReconciliationStatus,
+  RiskOutcome,
+  TimeInForce,
+} from './execution/contracts'
 import {
   PaperCandidateIneligibility,
   discoverPaperCandidates,

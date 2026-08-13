@@ -9,7 +9,7 @@ import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
-import { ReconciliationStatus, type Valuation } from '../paper'
+import { ReconciliationStatus, type Valuation } from '../execution/contracts'
 import { persistStableSnapshot } from './broker-persistence'
 import type { StableBrokerSnapshot } from './broker-reconciler-model'
 

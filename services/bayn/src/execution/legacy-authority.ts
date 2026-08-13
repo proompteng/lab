@@ -1,6 +1,6 @@
 import type { ExecutionPolicy } from './configuration'
 import { CapitalAuthorityKind } from './authority'
-import { Authority } from '../paper'
+import { Authority } from './contracts'
 
 /**
  * Compatibility projection for the historical OBSERVE/PAPER persistence schema.

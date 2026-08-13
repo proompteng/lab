@@ -109,7 +109,7 @@ import {
   type Order,
   type Position,
   type Reconciliation,
-} from './paper'
+} from './execution/contracts'
 import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'

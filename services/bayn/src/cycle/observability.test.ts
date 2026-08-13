@@ -19,7 +19,7 @@ import {
 import { CycleState, CycleTerminalReason } from './model'
 import { CycleNotDueReason } from './runner/model'
 import { projectResearchCapitalBootstrapWaiting } from '../health/decisions'
-import { Authority, KillState, ReconciliationStatus } from '../paper'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 
 const now = '2026-07-20T12:00:00.000Z'
 const thresholds = {

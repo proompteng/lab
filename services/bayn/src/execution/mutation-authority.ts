@@ -17,7 +17,7 @@ import {
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../hash'
-import { OrderSide as IntentOrderSide, type Intent } from '../paper'
+import { OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
 import {
   BrokerAccess,

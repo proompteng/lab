@@ -1,8 +1,8 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
-import { MutationOutcome } from '../../paper'
+import { MutationOutcome } from '../../execution/contracts'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../../schemas'
-import type { Intent } from '../../paper'
+import type { Intent } from '../../execution/contracts'
 import type { BrokerReadError, Order, ReadResult } from '../alpaca'
 import { Pipeable } from '../../pipeable'
 
