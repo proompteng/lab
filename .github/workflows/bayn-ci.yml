@@ -174,8 +174,20 @@ jobs:
           --health-interval 1s
           --health-timeout 5s
           --health-retries 30
+      clickhouse:
+        image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
     env:
       BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+      BAYN_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -186,8 +198,26 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
+      - name: Bind ClickHouse endpoint to the disposable job service
+        env:
+          CLICKHOUSE_SERVICE_CONTAINER: ${{ job.services.clickhouse.id }}
+        run: |
+          set -euo pipefail
+          guard_token="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+          docker exec "${CLICKHOUSE_SERVICE_CONTAINER}" clickhouse-client --multiquery --query "
+            CREATE DATABASE bayn_ci_guard;
+            CREATE TABLE bayn_ci_guard.endpoint_identity
+            (
+              token FixedString(32)
+            )
+            ENGINE = Memory;
+            INSERT INTO bayn_ci_guard.endpoint_identity VALUES ('${guard_token}');
+          "
+          echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
       - name: Verify complete Bayn PostgreSQL persistence workflows
         run: bun run --cwd services/bayn test:postgres
+      - name: Verify Bayn ClickHouse Date query semantics
+        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
 
   dependency-input-invariant:
     needs: changes
