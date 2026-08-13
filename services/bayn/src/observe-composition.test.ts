@@ -592,6 +592,7 @@ const reconciliationResultAt = (
   unknownOrderCount = 0,
   positions: readonly Position[] = [],
   orders: readonly Order[] = [],
+  effectiveAuthority: Authority = Authority.Execution,
 ): ReconciliationPassResult => {
   const result = reconciliationResult(generationHash, Authority.Execution, positions, orders)
   const authority = result.riskContext.authority
@@ -640,7 +641,11 @@ const reconciliationResultAt = (
       dailyTradedNotionalMicros: result.riskContext.dailyTradedNotionalMicros,
       dayStartEquityMicros: result.riskContext.dayStartEquityMicros,
       peakEquityMicros: result.riskContext.peakEquityMicros,
-      authority,
+      authority: {
+        ...authority,
+        effective: effectiveAuthority,
+        kill: effectiveAuthority === Authority.Execution ? KillState.Clear : KillState.Active,
+      },
       authorityObservedAt: observedAt,
       unknownMutationCount,
     },
@@ -683,6 +688,7 @@ const prepareStoredExecutionStep = async (
   reconciledOrders: readonly Order[] = [],
   document: typeof fixture.document = fixture.document,
   reconciledPositions: readonly Position[] = [],
+  effectiveAuthority: Authority = Authority.Execution,
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
@@ -714,7 +720,14 @@ const prepareStoredExecutionStep = async (
         cycle: fixture.boundCycle,
         document,
         reconcile: Effect.succeed(
-          reconciliationResultAt(observedAt, unknownMutationCount, 0, reconciledPositions, reconciledOrders),
+          reconciliationResultAt(
+            observedAt,
+            unknownMutationCount,
+            0,
+            reconciledPositions,
+            reconciledOrders,
+            effectiveAuthority,
+          ),
         ),
         allowSubmit,
       })
@@ -2818,6 +2831,72 @@ describe('OBSERVE runtime composition', () => {
       submitExpiresAt: closeExpiresAt,
     })
     expect(restrictions).toHaveLength(1)
+  })
+
+  test('blocks untouched ENTRY intents after a later terminal rejection before any fresh submit', async () => {
+    const fixture = await executionLifecycleFixture((policy) => policy, partialFillDecision)
+    const untouchedIntent = fixture.intents[0]
+    const rejectedIntent = fixture.intents[1]
+    if (untouchedIntent === undefined || rejectedIntent === undefined) {
+      return expect.unreachable('entry rejection fixture requires two planned intents')
+    }
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const rejected: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '5'.repeat(64),
+      mutationId: '6'.repeat(64),
+      intentId: rejectedIntent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitRejected,
+      requestHash: '7'.repeat(64),
+      consistencyDelayMs: 1_000,
+      requestId: 'entry-rejected-request',
+      responseStatus: 422,
+      responseContentHash: '8'.repeat(64),
+      occurredAt: observedAt,
+    }
+    const records = new Map<string, StoredIntent>([
+      [untouchedIntent.intentId, storedIntent(untouchedIntent, IntentState.Planned, fixture.document.createdAt)],
+      [
+        rejectedIntent.intentId,
+        storedIntent(rejectedIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected),
+      ],
+    ])
+    const latestSubmits = new Map<string, MutationEvent | undefined>([
+      [untouchedIntent.intentId, undefined],
+      [rejectedIntent.intentId, rejected],
+    ])
+
+    for (const effectiveAuthority of [Authority.Execution, Authority.Observe]) {
+      const restrictions: string[] = []
+      const step = await prepareStoredExecutionStep(
+        fixture,
+        records.get(untouchedIntent.intentId) as StoredIntent,
+        undefined,
+        observedAt,
+        0,
+        (reason) => restrictions.push(reason),
+        fixture.input,
+        undefined,
+        true,
+        fixture.policy,
+        fixture.preparation,
+        records,
+        latestSubmits,
+        [],
+        fixture.document,
+        [],
+        effectiveAuthority,
+      )
+
+      expect(step, `effective authority ${effectiveAuthority}`).toEqual({
+        _tag: 'Block',
+        reason: CycleTerminalReason.Risk,
+        observedAt,
+      })
+      expect(restrictions, `effective authority ${effectiveAuthority}`).toHaveLength(1)
+    }
   })
 
   test('keeps a partially filled PAPER cycle recoverable until its close phase', async () => {

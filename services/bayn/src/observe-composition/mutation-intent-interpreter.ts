@@ -370,6 +370,14 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       preparedIntents.push({ ...lookup, intent })
     }
 
+    const entryHasTerminalUnsuccessfulIntent =
+      input.mutationPhase !== 'CLOSE' &&
+      preparedIntents.some(
+        (prepared) =>
+          prepared.stored?.intent.state === IntentState.Terminal &&
+          prepared.stored.intent.terminalOutcome !== TerminalOutcome.Filled,
+      )
+
     const recoveryObservedAt = yield* dependencies.now
     let pendingRecovery: { readonly intentId: string; readonly event: MutationEvent } | undefined
     for (const prepared of preparedIntents) {
@@ -510,7 +518,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     const terminalEvidence: ExecutionCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
-    let unsuccessfulIntentFound = false
+    let unsuccessfulIntentFound = entryHasTerminalUnsuccessfulIntent
     let deferredExpiration:
       | {
           readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.Risk
@@ -594,6 +602,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               }
             : { _tag: 'Wait', observedAt: facts.evaluatedAt }
         case 'Submit': {
+          if (entryHasTerminalUnsuccessfulIntent) continue
           if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
           const submitExpiresAt = executionSubmitExpiresAt(
             submissionCutoffAt,
