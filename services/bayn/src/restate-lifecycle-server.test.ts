@@ -12,7 +12,7 @@ import {
   makeBaynLifecycleBootstrap,
   type LifecycleCommandClient,
 } from './restate-lifecycle-controller'
-import { acquireRestateLifecycleHttp2Server } from './restate-lifecycle-server'
+import { acquireRestateHttp2Server } from './restate-http2-server'
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -64,7 +64,7 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const server = createHttp2Server()
-          yield* acquireRestateLifecycleHttp2Server(server, port)
+          yield* acquireRestateHttp2Server(server, port)
           client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
           closed = new Promise((resolve) => client?.once('close', () => resolve('closed')))
           expect(client.closed).toBe(false)
@@ -100,7 +100,7 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const server = createHttp2Server(restate.createEndpointHandler({ services: [lifecycle, bootstrap] }))
-          yield* acquireRestateLifecycleHttp2Server(server, port)
+          yield* acquireRestateHttp2Server(server, port)
           const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
           const discovery = yield* Effect.promise(() => readDiscovery(client))
           client.close()

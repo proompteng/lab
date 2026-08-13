@@ -34,6 +34,7 @@ done
 
 test -x "${rootfs}/bin/bayn-forward-performance"
 test -f "${rootfs}/app/services/bayn/dist/forward-performance-command.js"
+test -f "${rootfs}/app/services/bayn/dist/restate-execution-server.js"
 test -x "${rootfs}/bin/node"
 
 actual="$(BAYN_IMAGE_ROOT="${rootfs}" NODE_ENV=production "${rootfs}/bin/bayn-forward-performance" --help)"
