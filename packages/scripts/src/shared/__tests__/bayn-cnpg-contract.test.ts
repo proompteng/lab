@@ -158,6 +158,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   )
   const applicationPolicy = policies.find((policy) => policy.metadata.name === 'bayn')
   const databasePolicy = policies.find((policy) => policy.metadata.name === 'bayn-db')
+  const egressProxyPolicy = policies.find((policy) => policy.metadata.name === 'bayn-egress-proxy')
   const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
 
   expect(applicationPolicy.spec.egress).toContainEqual({
@@ -170,7 +171,10 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   expect(databasePolicy.spec.ingress).toEqual(
     expect.arrayContaining([
       {
-        from: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } }],
+        from: [
+          { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
+          { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
+        ],
         ports: [{ port: 5432, protocol: 'TCP' }],
       },
       {
@@ -209,6 +213,13 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       },
     ]),
   )
+  expect(egressProxyPolicy.spec.ingress).toContainEqual({
+    from: [
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
+    ],
+    ports: [{ port: 3128, protocol: 'TCP' }],
+  })
   expect(alloy).toContain('label = "cnpg.io/cluster"')
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
