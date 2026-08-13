@@ -138,6 +138,22 @@ describe('execution controller decisions', () => {
     expect(decision.failure).toMatchObject({ operation: 'tick', reason: 'counter-exhausted' })
   })
 
+  test('rejects an exhausted epoch before initial activation or inactive rebinding', () => {
+    const exhausted = activation({ epoch: Number.MAX_SAFE_INTEGER })
+    const initial = decideExecutionControllerActivation(null, exhausted)
+    const rebound = decideExecutionControllerActivation(
+      { ...activated(), active: false, epoch: Number.MAX_SAFE_INTEGER },
+      exhausted,
+    )
+
+    for (const decision of [initial, rebound]) {
+      expect(Result.isFailure(decision)).toBe(true)
+      if (Result.isFailure(decision)) {
+        expect(decision.failure).toMatchObject({ operation: 'activate', reason: 'counter-exhausted' })
+      }
+    }
+  })
+
   test('completes one tick, advances monotonically, and records the next due time', () => {
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
@@ -188,6 +204,23 @@ describe('execution controller decisions', () => {
 
     expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
     expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
+  })
+
+  test('rejects a computed next due time outside the canonical UTC range', () => {
+    const decision = completeExecutionControllerTick(
+      activated(),
+      { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+      {
+        ...completedResult,
+        completedAt: '9999-12-31T23:59:59.999Z',
+        outcome: { ...completedResult.outcome, nextDelayMs: 1 },
+      },
+    )
+
+    expect(Result.isFailure(decision)).toBe(true)
+    if (Result.isFailure(decision)) {
+      expect(decision.failure).toMatchObject({ operation: 'complete', reason: 'invalid-time' })
+    }
   })
 
   test('deactivates by advancing the epoch and permits one explicitly rebound controller', () => {

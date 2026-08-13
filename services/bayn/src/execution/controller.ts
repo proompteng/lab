@@ -8,6 +8,7 @@ const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: N
 const EpochSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
 const DelaySchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
 const DeliveryAttemptSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2 }))
+const decodeUtcInstant = Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)
 
 export const ExecutionControllerActivationSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-activation.v1'),
@@ -96,6 +97,15 @@ export const decideExecutionControllerActivation = (
   state: ExecutionControllerState | null,
   request: ExecutionControllerActivation,
 ): Result.Result<ExecutionControllerActivationDecision, ExecutionControllerDecisionError> => {
+  if (request.epoch === Number.MAX_SAFE_INTEGER) {
+    return Result.fail(
+      new ExecutionControllerDecisionError({
+        operation: 'activate',
+        reason: 'counter-exhausted',
+        message: 'execution controller epoch is exhausted before activation',
+      }),
+    )
+  }
   if (state === null) {
     return Result.succeed({
       _tag: 'Activated',
@@ -192,6 +202,16 @@ export const completeExecutionControllerTick = (
       }),
   })
   if (Result.isFailure(nextDueAt)) return Result.fail(nextDueAt.failure)
+  const decodedNextDueAt = decodeUtcInstant(nextDueAt.success)
+  if (Result.isFailure(decodedNextDueAt)) {
+    return Result.fail(
+      new ExecutionControllerDecisionError({
+        operation: 'complete',
+        reason: 'invalid-time',
+        message: 'execution controller next due time is outside the canonical UTC range',
+      }),
+    )
+  }
   return Result.succeed({
     ...state,
     nextSequence: state.nextSequence + 1,
@@ -201,7 +221,7 @@ export const completeExecutionControllerTick = (
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
     },
-    nextDueAt: nextDueAt.success,
+    nextDueAt: decodedNextDueAt.success,
   })
 }
 
