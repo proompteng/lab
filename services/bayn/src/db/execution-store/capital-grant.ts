@@ -14,34 +14,34 @@ import {
   type ResearchCapitalGrantProofBinding,
 } from '../../execution/contracts'
 import {
-  bindPaperGenerationRuntime,
-  decidePaperActivation,
+  bindCapitalGrantRuntime,
+  decideCapitalGrantActivation,
   deriveCapitalGrantGeneration,
   deriveResearchCapitalGrantGeneration,
-  paperActivationEffectiveAuthority,
-  validateDerivedPaperGeneration,
+  capitalGrantEffectiveAuthority,
+  validateDerivedCapitalGrantGeneration,
   validateLatestExactReconciliation,
   validateMutationCoverage,
-  validatePaperGenerationEvidence,
-  validatePaperGenerationFreshness,
-  validatePaperGenerationReplay,
-  validatePaperPrepareGeneration,
-  validatePreparedPaperActivation,
-  validatePaperSourceAuthority,
+  validateCapitalGrantEvidence,
+  validateCapitalGrantGenerationFreshness,
+  validateCapitalGrantGenerationReplay,
+  validateCapitalGrantPrepareGeneration,
+  validatePreparedCapitalGrantActivation,
+  validateCapitalGrantSourceAuthority,
   validateResearchCapitalGrantProof,
-  validateResearchPaperGenerationReplay,
-  type DerivedPaperGeneration,
-  type DerivedResearchPaperGeneration,
+  validateResearchCapitalGrantGenerationReplay,
+  type DerivedCapitalGrantGeneration,
+  type DerivedResearchCapitalGrantGeneration,
   type ExactReconciliationFacts,
-  type PaperActivationDecision,
-  type PaperGenerationEvidenceFacts,
-  type PaperGenerationRuntimeBinding,
-  type PreparedPaperActivationBinding,
+  type CapitalGrantActivationDecision,
+  type CapitalGrantEvidenceFacts,
+  type CapitalGrantRuntimeBinding,
+  type PreparedCapitalGrantActivationBinding,
 } from '../capital-grant-algebra'
 import {
   authorityStateFromRow,
-  paperGenerationFromRow,
-  researchPaperGenerationFromRow,
+  capitalGrantGenerationFromRow,
+  researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
 import type { ExecutionStoreError, ExecutionStoreRuntimeConfig, PreparedCapitalGrantActivation } from './contract'
@@ -71,7 +71,7 @@ export interface CapitalGrantInterpreter {
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
-interface ResearchPaperRuntimeBinding {
+interface ResearchCapitalGrantRuntimeBinding {
   readonly accountId: string
   readonly brokerIdentityHash: string
   readonly sourceGenerationHash: string
@@ -83,12 +83,12 @@ const makeCapitalGrantInterpreterDataFirst = (
   config: ExecutionStoreRuntimeConfig,
   writerFence: WriterFenceService,
 ): CapitalGrantInterpreter => {
-  const requirePaperGenerationRuntime = (
+  const requireCapitalGrantRuntime = (
     expectedMaximum: Authority,
     operation: 'PREPARE' | 'activation',
-  ): Effect.Effect<PaperGenerationRuntimeBinding, ExecutionStoreError> =>
+  ): Effect.Effect<CapitalGrantRuntimeBinding, ExecutionStoreError> =>
     liftAuthorityDecision(
-      bindPaperGenerationRuntime(
+      bindCapitalGrantRuntime(
         {
           maximumAuthority: historicalSandboxAuthority(config.execution),
           alpaca:
@@ -105,9 +105,9 @@ const makeCapitalGrantInterpreterDataFirst = (
       ),
     )
 
-  const requireResearchPaperRuntime = (
+  const requireResearchCapitalGrantRuntime = (
     sourceGenerationHash: string,
-  ): Effect.Effect<ResearchPaperRuntimeBinding, ExecutionStoreError> => {
+  ): Effect.Effect<ResearchCapitalGrantRuntimeBinding, ExecutionStoreError> => {
     const identity = config.execution.brokerIdentity
     const alpaca = config.alpaca
     if (
@@ -119,7 +119,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       return failExecutionStore(
         'authority',
         'invariant',
-        'research PAPER generation requires the exact configured sandbox broker identity and OBSERVE generation',
+        'research capital grant generation requires the exact configured sandbox broker identity and OBSERVE generation',
       )
     }
     return Effect.succeed({
@@ -129,7 +129,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     })
   }
 
-  const evidenceFacts = (row: ActivationEvidenceRow): PaperGenerationEvidenceFacts => ({
+  const evidenceFacts = (row: ActivationEvidenceRow): CapitalGrantEvidenceFacts => ({
     lock: row.lock_payload,
     result: row.result_payload,
     runStatus: row.run_status,
@@ -151,7 +151,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     parameters: row.parameters,
   })
 
-  const readPaperGenerationEvidence = (binding: PaperGenerationRuntimeBinding) =>
+  const readCapitalGrantEvidence = (binding: CapitalGrantRuntimeBinding) =>
     sql`
       LOCK TABLE
         evaluation_artifacts,
@@ -234,7 +234,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       ),
       Effect.map((rows) => (rows[0] === undefined ? undefined : evidenceFacts(rows[0]))),
       Effect.flatMap((evidence) =>
-        liftAuthorityDecision(validatePaperGenerationEvidence(evidence, binding, config.build)),
+        liftAuthorityDecision(validateCapitalGrantEvidence(evidence, binding, config.build)),
       ),
     )
 
@@ -246,7 +246,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     reconciledAt: row.reconciled_at,
   })
 
-  const readLatestExactReconciliation = (binding: Pick<PaperGenerationRuntimeBinding, 'accountId'>) =>
+  const readLatestExactReconciliation = (binding: Pick<CapitalGrantRuntimeBinding, 'accountId'>) =>
     sql<Record<string, unknown>>`
       SELECT
         reconciliation_id, account_id, content_hash, status, reconciled_at
@@ -264,7 +264,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     )
 
   const verifyMutationCoverage = (
-    binding: Pick<PaperGenerationRuntimeBinding, 'accountId'>,
+    binding: Pick<CapitalGrantRuntimeBinding, 'accountId'>,
     reconciliation: ExactReconciliationFacts,
   ) =>
     sql<Record<string, unknown>>`
@@ -315,14 +315,14 @@ const makeCapitalGrantInterpreterDataFirst = (
       ),
     )
 
-  const derivePaperGeneration = (
+  const deriveQualifiedCapitalGrantGeneration = (
     proof: CapitalGrantProofBinding,
-    binding: PaperGenerationRuntimeBinding,
+    binding: CapitalGrantRuntimeBinding,
     current: AuthorityState,
   ) =>
     Effect.gen(function* () {
-      yield* liftAuthorityDecision(validatePaperSourceAuthority(current))
-      const evidence = yield* readPaperGenerationEvidence(binding)
+      yield* liftAuthorityDecision(validateCapitalGrantSourceAuthority(current))
+      const evidence = yield* readCapitalGrantEvidence(binding)
       const reconciliation = yield* readLatestExactReconciliation(binding)
       yield* verifyMutationCoverage(binding, reconciliation)
       return yield* liftAuthorityDecision(
@@ -337,21 +337,25 @@ const makeCapitalGrantInterpreterDataFirst = (
       )
     })
 
-  const requireFreshPaperGeneration = (derived: Pick<DerivedPaperGeneration, 'reconciliation'>) =>
+  const requireFreshCapitalGrantGeneration = (derived: Pick<DerivedCapitalGrantGeneration, 'reconciliation'>) =>
     authority.nextAuthorityInstant.pipe(
       Effect.flatMap((observedAt) =>
         liftAuthorityDecision(
-          validatePaperGenerationFreshness(derived.reconciliation, observedAt, config.reconciliationStaleThresholdMs),
+          validateCapitalGrantGenerationFreshness(
+            derived.reconciliation,
+            observedAt,
+            config.reconciliationStaleThresholdMs,
+          ),
         ),
       ),
     )
 
-  const prepareCapitalGrantTransaction = (proof: CapitalGrantProofBinding, binding: PaperGenerationRuntimeBinding) =>
+  const prepareCapitalGrantTransaction = (proof: CapitalGrantProofBinding, binding: CapitalGrantRuntimeBinding) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
-      yield* liftAuthorityDecision(validatePaperPrepareGeneration(locked.current, binding))
-      const derived = yield* derivePaperGeneration(proof, binding, locked.current)
-      yield* requireFreshPaperGeneration(derived)
+      yield* liftAuthorityDecision(validateCapitalGrantPrepareGeneration(locked.current, binding))
+      const derived = yield* deriveQualifiedCapitalGrantGeneration(proof, binding, locked.current)
+      yield* requireFreshCapitalGrantGeneration(derived)
       return derived.generation
     })
 
@@ -360,20 +364,20 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
-        const binding = yield* requirePaperGenerationRuntime(Authority.Observe, 'PREPARE')
+        const binding = yield* requireCapitalGrantRuntime(Authority.Observe, 'PREPARE')
         return yield* writerFence.transaction(prepareCapitalGrantTransaction(proof, binding))
       }),
     )
 
-  const replayPaperGeneration = (
+  const replayCapitalGrantGeneration = (
     current: AuthorityState,
-    history: Parameters<typeof paperGenerationFromRow>[0],
+    history: Parameters<typeof capitalGrantGenerationFromRow>[0],
     proof: CapitalGrantProofBinding,
-    binding: PaperGenerationRuntimeBinding,
+    binding: CapitalGrantRuntimeBinding,
   ) =>
-    paperGenerationFromRow(history).pipe(
+    capitalGrantGenerationFromRow(history).pipe(
       Effect.flatMap((stored) =>
-        liftAuthorityDecision(validatePaperGenerationReplay(stored, binding, proof, config.build)),
+        liftAuthorityDecision(validateCapitalGrantGenerationReplay(stored, binding, proof, config.build)),
       ),
       Effect.as(current),
     )
@@ -384,7 +388,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     kill: AuthorityState['kill'],
     activatedAt: Date,
   ) => {
-    const effective = paperActivationEffectiveAuthority(kill)
+    const effective = capitalGrantEffectiveAuthority(kill)
     return sql<Record<string, unknown>>`
       UPDATE authority_state
       SET
@@ -402,15 +406,15 @@ const makeCapitalGrantInterpreterDataFirst = (
       Effect.flatMap((rows) => {
         const row = rows[0]
         return row === undefined
-          ? failExecutionStore('authority', 'invariant', 'PAPER authority was not activated')
+          ? failExecutionStore('authority', 'invariant', 'execution authority was not activated')
           : authorityStateFromRow(row)
       }),
     )
   }
 
-  const writePaperGenerationActivation = (
-    decision: Extract<PaperActivationDecision, { readonly _tag: 'ActivatePaperGeneration' }>,
-    derived: DerivedPaperGeneration,
+  const writeCapitalGrantGenerationActivation = (
+    decision: Extract<CapitalGrantActivationDecision, { readonly _tag: 'ActivateCapitalGrantGeneration' }>,
+    derived: DerivedCapitalGrantGeneration,
     activatedAt: Date,
   ) =>
     Effect.gen(function* () {
@@ -420,14 +424,14 @@ const makeCapitalGrantInterpreterDataFirst = (
         return yield* failExecutionStore(
           'authority',
           'invariant',
-          'PAPER generation requires a configured broker identity',
+          'capital grant generation requires a configured broker identity',
         )
       }
       if (identity.accountId !== input.accountId) {
         return yield* failExecutionStore(
           'authority',
           'invariant',
-          'PAPER generation account does not match the configured broker identity',
+          'capital grant generation account does not match the configured broker identity',
         )
       }
       yield* sql`
@@ -468,26 +472,26 @@ const makeCapitalGrantInterpreterDataFirst = (
       )
     })
 
-  const activatePaperGenerationTransaction = (
+  const activateCapitalGrantGenerationTransaction = (
     proof: CapitalGrantProofBinding,
-    binding: PaperGenerationRuntimeBinding,
-    prepared?: PreparedPaperActivationBinding,
+    binding: CapitalGrantRuntimeBinding,
+    prepared?: PreparedCapitalGrantActivationBinding,
   ) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
       if (prepared !== undefined) {
-        yield* liftAuthorityDecision(validatePreparedPaperActivation(locked.current, binding, prepared))
+        yield* liftAuthorityDecision(validatePreparedCapitalGrantActivation(locked.current, binding, prepared))
       }
-      const decision = yield* liftAuthorityDecision(decidePaperActivation(locked.current, binding))
-      if (decision._tag === 'ReplayPaperGeneration') {
-        return yield* replayPaperGeneration(decision.current, locked.history, proof, binding)
+      const decision = yield* liftAuthorityDecision(decideCapitalGrantActivation(locked.current, binding))
+      if (decision._tag === 'ReplayCapitalGrantGeneration') {
+        return yield* replayCapitalGrantGeneration(decision.current, locked.history, proof, binding)
       }
-      const derived = yield* derivePaperGeneration(proof, binding, decision.current)
-      yield* liftAuthorityDecision(validateDerivedPaperGeneration(derived.generation, binding))
+      const derived = yield* deriveQualifiedCapitalGrantGeneration(proof, binding, decision.current)
+      yield* liftAuthorityDecision(validateDerivedCapitalGrantGeneration(derived.generation, binding))
       const [existing] = yield* authority.readGeneration(derived.generation.generationHash)
       yield* authority.requireUnusedGeneration(derived.generation.generationHash, existing)
-      const activatedAt = yield* requireFreshPaperGeneration(derived)
-      return yield* writePaperGenerationActivation(decision, derived, activatedAt)
+      const activatedAt = yield* requireFreshCapitalGrantGeneration(derived)
+      return yield* writeCapitalGrantGenerationActivation(decision, derived, activatedAt)
     })
 
   const activateCapitalGrant = (candidate: CapitalGrantProofBinding) =>
@@ -495,8 +499,8 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
-        const binding = yield* requirePaperGenerationRuntime(Authority.Execution, 'activation')
-        return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding))
+        const binding = yield* requireCapitalGrantRuntime(Authority.Execution, 'activation')
+        return yield* writerFence.transaction(activateCapitalGrantGenerationTransaction(proof, binding))
       }),
     )
 
@@ -508,20 +512,20 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeCapitalGrantProofBinding(candidate)
-        const binding = yield* requirePaperGenerationRuntime(Authority.Execution, 'activation')
-        return yield* writerFence.transaction(activatePaperGenerationTransaction(proof, binding, prepared))
+        const binding = yield* requireCapitalGrantRuntime(Authority.Execution, 'activation')
+        return yield* writerFence.transaction(activateCapitalGrantGenerationTransaction(proof, binding, prepared))
       }),
     )
 
-  const deriveResearchPaperGeneration = (
+  const deriveResearchCapitalGrantForActivation = (
     proof: ResearchCapitalGrantProofBinding,
-    binding: ResearchPaperRuntimeBinding,
+    binding: ResearchCapitalGrantRuntimeBinding,
     current: AuthorityState,
   ) =>
     Effect.gen(function* () {
-      yield* liftAuthorityDecision(validatePaperSourceAuthority(current))
+      yield* liftAuthorityDecision(validateCapitalGrantSourceAuthority(current))
       yield* liftAuthorityDecision(
-        validatePaperPrepareGeneration(current, {
+        validateCapitalGrantPrepareGeneration(current, {
           accountId: binding.accountId,
           configuredGenerationHash: binding.sourceGenerationHash,
           qualificationRunId: proof.grant.planHash,
@@ -541,22 +545,24 @@ const makeCapitalGrantInterpreterDataFirst = (
       return yield* liftAuthorityDecision(deriveResearchCapitalGrantGeneration({ current, proof, reconciliation }))
     })
 
-  const replayResearchPaperGeneration = (
+  const replayResearchCapitalGrantGeneration = (
     current: AuthorityState,
-    history: Parameters<typeof researchPaperGenerationFromRow>[0],
+    history: Parameters<typeof researchCapitalGrantGenerationFromRow>[0],
     proof: ResearchCapitalGrantProofBinding,
-    binding: ResearchPaperRuntimeBinding,
+    binding: ResearchCapitalGrantRuntimeBinding,
   ) =>
-    researchPaperGenerationFromRow(history).pipe(
+    researchCapitalGrantGenerationFromRow(history).pipe(
       Effect.flatMap((stored) =>
-        liftAuthorityDecision(validateResearchPaperGenerationReplay(stored, proof, binding.sourceGenerationHash)),
+        liftAuthorityDecision(
+          validateResearchCapitalGrantGenerationReplay(stored, proof, binding.sourceGenerationHash),
+        ),
       ),
       Effect.as(current),
     )
 
-  const writeResearchPaperGenerationActivation = (
-    decision: Extract<PaperActivationDecision, { readonly _tag: 'ActivatePaperGeneration' }>,
-    derived: DerivedResearchPaperGeneration,
+  const writeResearchCapitalGrantGenerationActivation = (
+    decision: Extract<CapitalGrantActivationDecision, { readonly _tag: 'ActivateCapitalGrantGeneration' }>,
+    derived: DerivedResearchCapitalGrantGeneration,
     activatedAt: Date,
   ) =>
     Effect.gen(function* () {
@@ -571,7 +577,7 @@ const makeCapitalGrantInterpreterDataFirst = (
         return yield* failExecutionStore(
           'authority',
           'invariant',
-          'research PAPER generation broker identity does not match the configured sandbox account',
+          'research capital grant generation broker identity does not match the configured sandbox account',
         )
       }
       yield* sql`
@@ -603,23 +609,23 @@ const makeCapitalGrantInterpreterDataFirst = (
       )
     })
 
-  const activateResearchPaperGenerationTransaction = (
+  const activateResearchCapitalGrantGenerationTransaction = (
     proof: ResearchCapitalGrantProofBinding,
-    binding: ResearchPaperRuntimeBinding,
+    binding: ResearchCapitalGrantRuntimeBinding,
   ) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
       const decision = yield* liftAuthorityDecision(
-        decidePaperActivation(locked.current, { configuredGenerationHash: locked.current.generationHash }),
+        decideCapitalGrantActivation(locked.current, { configuredGenerationHash: locked.current.generationHash }),
       )
-      if (decision._tag === 'ReplayPaperGeneration') {
-        return yield* replayResearchPaperGeneration(decision.current, locked.history, proof, binding)
+      if (decision._tag === 'ReplayCapitalGrantGeneration') {
+        return yield* replayResearchCapitalGrantGeneration(decision.current, locked.history, proof, binding)
       }
-      const derived = yield* deriveResearchPaperGeneration(proof, binding, decision.current)
+      const derived = yield* deriveResearchCapitalGrantForActivation(proof, binding, decision.current)
       const [existing] = yield* authority.readGeneration(derived.generation.generationHash)
       yield* authority.requireUnusedGeneration(derived.generation.generationHash, existing)
-      const activatedAt = yield* requireFreshPaperGeneration(derived)
-      return yield* writeResearchPaperGenerationActivation(decision, derived, activatedAt)
+      const activatedAt = yield* requireFreshCapitalGrantGeneration(derived)
+      return yield* writeResearchCapitalGrantGenerationActivation(decision, derived, activatedAt)
     })
 
   const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding, sourceGenerationHash: string) =>
@@ -627,7 +633,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       'authority',
       Effect.gen(function* () {
         const proof = yield* decodeResearchCapitalGrantProofBinding(candidate)
-        const binding = yield* requireResearchPaperRuntime(sourceGenerationHash)
+        const binding = yield* requireResearchCapitalGrantRuntime(sourceGenerationHash)
         yield* liftAuthorityDecision(
           validateResearchCapitalGrantProof({
             proof,
@@ -637,7 +643,7 @@ const makeCapitalGrantInterpreterDataFirst = (
             build: config.build,
           }),
         )
-        return yield* writerFence.transaction(activateResearchPaperGenerationTransaction(proof, binding))
+        return yield* writerFence.transaction(activateResearchCapitalGrantGenerationTransaction(proof, binding))
       }),
     )
 

@@ -21,33 +21,33 @@ import {
 } from '../qualification-statistics'
 import { fixtureProtocol } from '../test-fixtures'
 import {
-  bindPaperGenerationRuntime,
+  bindCapitalGrantRuntime,
   decideObserveGeneration,
-  decidePaperActivation,
+  decideCapitalGrantActivation,
   deriveCapitalGrantGeneration,
   deriveResearchCapitalGrantGeneration,
   nextAuthorityVersion,
-  paperActivationEffectiveAuthority,
+  capitalGrantEffectiveAuthority,
   capitalGrantFailureDetails,
   requireUnusedAuthorityGeneration,
   validateAuthorityObservation,
   validateCurrentGenerationHistory,
-  validateDerivedPaperGeneration,
+  validateDerivedCapitalGrantGeneration,
   validateLatestExactReconciliation,
   validateMutationCoverage,
   validateObserveGenerationRequest,
-  validatePaperGenerationEvidence,
-  validatePaperGenerationFreshness,
-  validatePaperGenerationReplay,
-  validatePaperPrepareGeneration,
-  validatePreparedPaperActivation,
-  validatePaperSourceAuthority,
+  validateCapitalGrantEvidence,
+  validateCapitalGrantGenerationFreshness,
+  validateCapitalGrantGenerationReplay,
+  validateCapitalGrantPrepareGeneration,
+  validatePreparedCapitalGrantActivation,
+  validateCapitalGrantSourceAuthority,
   validateResearchCapitalGrantProof,
-  validateResearchPaperGenerationReplay,
+  validateResearchCapitalGrantGenerationReplay,
   type ExactReconciliationFacts,
   type CapitalGrantAlgebraFailure,
-  type PaperGenerationEvidenceFacts,
-  type PaperGenerationRuntimeBinding,
+  type CapitalGrantEvidenceFacts,
+  type CapitalGrantRuntimeBinding,
 } from './capital-grant-algebra'
 
 const successOf = <A, E>(result: Result.Result<A, E>): A => {
@@ -91,7 +91,7 @@ const observeHistory = {
   activatedAt: updatedAt,
 }
 
-const prepareBinding: PaperGenerationRuntimeBinding = {
+const prepareBinding: CapitalGrantRuntimeBinding = {
   accountId,
   configuredGenerationHash: observeGenerationHash,
   qualificationRunId: fixtureQualification.runId,
@@ -192,7 +192,7 @@ const qualifiedResult = successOf(
   ),
 )
 
-const evidence: PaperGenerationEvidenceFacts = {
+const evidence: CapitalGrantEvidenceFacts = {
   lock: fixtureLock,
   result: qualifiedResult,
   runStatus: 'COMPLETE',
@@ -214,7 +214,7 @@ const evidence: PaperGenerationEvidenceFacts = {
   parameters: fixtureProtocol,
 }
 
-describe('PAPER authority algebra', () => {
+describe('capital grant authority algebra', () => {
   test('decides OBSERVE initialization, exact replay, and monotonic rotation', () => {
     const observeRequest = successOf(
       validateObserveGenerationRequest({ generationHash: observeGenerationHash, maximum: Authority.Observe }),
@@ -341,7 +341,7 @@ describe('PAPER authority algebra', () => {
   test('binds PREPARE runtime facts and rejects authority drift before evidence reads', () => {
     expect(
       successOf(
-        bindPaperGenerationRuntime(
+        bindCapitalGrantRuntime(
           {
             maximumAuthority: Authority.Observe,
             alpaca: { accountId, authorityGenerationHash: observeGenerationHash },
@@ -352,11 +352,11 @@ describe('PAPER authority algebra', () => {
         ),
       ),
     ).toEqual(prepareBinding)
-    expect(successOf(validatePaperSourceAuthority(observeAuthority))).toBeUndefined()
-    expect(successOf(validatePaperPrepareGeneration(observeAuthority, prepareBinding))).toBeUndefined()
+    expect(successOf(validateCapitalGrantSourceAuthority(observeAuthority))).toBeUndefined()
+    expect(successOf(validateCapitalGrantPrepareGeneration(observeAuthority, prepareBinding))).toBeUndefined()
 
     const missing = failureOf(
-      bindPaperGenerationRuntime(
+      bindCapitalGrantRuntime(
         {
           maximumAuthority: Authority.Execution,
           alpaca: undefined,
@@ -367,7 +367,7 @@ describe('PAPER authority algebra', () => {
       ),
     )
     expect(missing).toEqual({
-      _tag: 'PaperRuntimeBindingUnavailable',
+      _tag: 'CapitalGrantRuntimeBindingUnavailable',
       operation: 'PREPARE',
       expectedMaximum: Authority.Observe,
       configuredMaximum: Authority.Execution,
@@ -375,38 +375,38 @@ describe('PAPER authority algebra', () => {
       hasQualificationBinding: false,
     })
     expect(capitalGrantFailureDetails(missing).message).toBe(
-      'PAPER PREPARE requires the exact configured authority, account, generation, and qualification binding',
+      'capital grant PREPARE requires the exact configured authority, account, generation, and qualification binding',
     )
     expect(
       failureOf(
-        validatePaperPrepareGeneration(observeAuthority, {
+        validateCapitalGrantPrepareGeneration(observeAuthority, {
           ...prepareBinding,
           configuredGenerationHash: hash('wrong-configured-generation'),
         }),
       ),
-    ).toMatchObject({ _tag: 'PaperPrepareGenerationMismatch' })
+    ).toMatchObject({ _tag: 'CapitalGrantPrepareGenerationMismatch' })
     expect(
       failureOf(
-        validatePaperSourceAuthority({
+        validateCapitalGrantSourceAuthority({
           ...observeAuthority,
           maximum: Authority.Execution,
           effective: Authority.Execution,
         }),
       ),
-    ).toMatchObject({ _tag: 'PaperSourceAuthorityNotObserve' })
+    ).toMatchObject({ _tag: 'CapitalGrantSourceAuthorityNotObserve' })
   })
 
   test('verifies exact terminal evidence and contains canonicalization failures', () => {
-    expect(failureOf(validatePaperGenerationEvidence(undefined, prepareBinding, config.build))).toEqual({
+    expect(failureOf(validateCapitalGrantEvidence(undefined, prepareBinding, config.build))).toEqual({
       _tag: 'QualificationEvidenceUnavailable',
       qualificationRunId: prepareBinding.qualificationRunId,
     })
     expect(qualifiedAnalysis).toMatchObject({ status: 'PASS', reasonCodes: [] })
     expect(qualifiedResult).toMatchObject({ verdict: 'QUALIFIED', reasonCodes: [] })
-    expect(successOf(validatePaperGenerationEvidence(evidence, prepareBinding, config.build))).toBe(evidence)
+    expect(successOf(validateCapitalGrantEvidence(evidence, prepareBinding, config.build))).toBe(evidence)
     expect(
       failureOf(
-        validatePaperGenerationEvidence({ ...evidence, result: fixtureQualification }, prepareBinding, config.build),
+        validateCapitalGrantEvidence({ ...evidence, result: fixtureQualification }, prepareBinding, config.build),
       ),
     ).toMatchObject({
       _tag: 'QualificationEvidenceMismatch',
@@ -419,7 +419,7 @@ describe('PAPER authority algebra', () => {
     const recursive: RecursiveMaterial = {}
     recursive.self = recursive
     const failure = failureOf(
-      validatePaperGenerationEvidence({ ...evidence, parameters: recursive }, prepareBinding, config.build),
+      validateCapitalGrantEvidence({ ...evidence, parameters: recursive }, prepareBinding, config.build),
     )
     expect(failure).toMatchObject({
       _tag: 'QualificationEvidenceVerificationFailed',
@@ -436,13 +436,13 @@ describe('PAPER authority algebra', () => {
     const details = capitalGrantFailureDetails(failure)
     expect(details).toMatchObject({
       failure: 'invariant',
-      message: 'PAPER qualification evidence parameters verification failed',
+      message: 'capital grant qualification evidence parameters verification failed',
     })
     expect(details.cause).toBe(failure.cause)
 
     const accessCause = new Error('injected qualification evidence access failure')
     const accessFailure = failureOf(
-      validatePaperGenerationEvidence(
+      validateCapitalGrantEvidence(
         {
           ...evidence,
           get writingDetail(): unknown {
@@ -460,7 +460,7 @@ describe('PAPER authority algebra', () => {
     })
     expect(capitalGrantFailureDetails(accessFailure)).toEqual({
       failure: 'invariant',
-      message: 'PAPER qualification evidence could not be read safely',
+      message: 'capital grant qualification evidence could not be read safely',
       cause: accessCause,
     })
   })
@@ -501,7 +501,7 @@ describe('PAPER authority algebra', () => {
         },
       }),
     )
-    expect(derivationFailure).toEqual({ _tag: 'PaperGenerationDerivationFailed', cause: derivationCause })
+    expect(derivationFailure).toEqual({ _tag: 'CapitalGrantGenerationDerivationFailed', cause: derivationCause })
     expect(capitalGrantFailureDetails(derivationFailure).cause).toBe(derivationCause)
     expect(
       failureOf(
@@ -515,7 +515,7 @@ describe('PAPER authority algebra', () => {
         }),
       ),
     ).toMatchObject({
-      _tag: 'PaperGenerationDerivationFailed',
+      _tag: 'CapitalGrantGenerationDerivationFailed',
       cause: {
         _tag: 'CapitalGrantGenerationSchemaInvalid',
         operation: 'material',
@@ -557,7 +557,7 @@ describe('PAPER authority algebra', () => {
     ).toMatchObject({ _tag: 'MutationCoverageIncomplete', unresolvedCount: 1 })
     expect(
       failureOf(
-        validatePaperGenerationFreshness(
+        validateCapitalGrantGenerationFreshness(
           reconciliation,
           sqlTimestamp(reconciliation.reconciledAt.getTime() + config.reconciliationStaleThresholdMs),
           config.reconciliationStaleThresholdMs,
@@ -591,13 +591,13 @@ describe('PAPER authority algebra', () => {
     }
 
     expect(successOf(nextAuthorityVersion(observeAuthority))).toBe(2)
-    expect(successOf(decidePaperActivation(observeAuthority, activationBinding))).toEqual({
-      _tag: 'ActivatePaperGeneration',
+    expect(successOf(decideCapitalGrantActivation(observeAuthority, activationBinding))).toEqual({
+      _tag: 'ActivateCapitalGrantGeneration',
       current: observeAuthority,
       authorityVersion: 2,
     })
     const exhaustedAuthority = { ...observeAuthority, version: Number.MAX_SAFE_INTEGER }
-    const exhausted = failureOf(decidePaperActivation(exhaustedAuthority, activationBinding))
+    const exhausted = failureOf(decideCapitalGrantActivation(exhaustedAuthority, activationBinding))
     expect(exhausted).toEqual({
       _tag: 'AuthorityVersionExhausted',
       generationHash: observeGenerationHash,
@@ -607,80 +607,82 @@ describe('PAPER authority algebra', () => {
       failure: 'invariant',
       message: 'durable authority version is not a safe positive integer',
     })
-    expect(successOf(validateDerivedPaperGeneration(derived.generation, activationBinding))).toBeUndefined()
+    expect(successOf(validateDerivedCapitalGrantGeneration(derived.generation, activationBinding))).toBeUndefined()
     const prepared = {
       generationHash: derived.generation.generationHash,
       sourceGenerationHash: observeAuthority.generationHash,
     }
-    expect(successOf(validatePreparedPaperActivation(observeAuthority, activationBinding, prepared))).toBeUndefined()
-    expect(successOf(decidePaperActivation(capitalGrant, activationBinding))).toEqual({
-      _tag: 'ReplayPaperGeneration',
+    expect(
+      successOf(validatePreparedCapitalGrantActivation(observeAuthority, activationBinding, prepared)),
+    ).toBeUndefined()
+    expect(successOf(decideCapitalGrantActivation(capitalGrant, activationBinding))).toEqual({
+      _tag: 'ReplayCapitalGrantGeneration',
       current: capitalGrant,
     })
-    expect(successOf(validatePreparedPaperActivation(capitalGrant, activationBinding, prepared))).toBeUndefined()
+    expect(successOf(validatePreparedCapitalGrantActivation(capitalGrant, activationBinding, prepared))).toBeUndefined()
     expect(
       failureOf(
-        validatePreparedPaperActivation(
+        validatePreparedCapitalGrantActivation(
           { ...observeAuthority, generationHash: hash('post-prepare-observe-generation') },
           activationBinding,
           prepared,
         ),
       ),
     ).toMatchObject({
-      _tag: 'PaperPrepareGenerationMismatch',
+      _tag: 'CapitalGrantPrepareGenerationMismatch',
       configuredGenerationHash: observeAuthority.generationHash,
     })
     expect(
       failureOf(
-        validatePreparedPaperActivation(observeAuthority, activationBinding, {
+        validatePreparedCapitalGrantActivation(observeAuthority, activationBinding, {
           ...prepared,
           generationHash: hash('different-prepared-generation'),
         }),
       ),
     ).toMatchObject({
-      _tag: 'DerivedPaperGenerationMismatch',
+      _tag: 'DerivedCapitalGrantGenerationMismatch',
       configuredGenerationHash: activationBinding.configuredGenerationHash,
     })
     expect(
       failureOf(
-        decidePaperActivation(
+        decideCapitalGrantActivation(
           { ...capitalGrant, generationHash: hash('different-durable-paper-generation') },
           activationBinding,
         ),
       ),
     ).toMatchObject({
-      _tag: 'DurablePaperGenerationMismatch',
+      _tag: 'DurableCapitalGrantGenerationMismatch',
       configuredGenerationHash: activationBinding.configuredGenerationHash,
     })
     expect(
-      successOf(validatePaperGenerationReplay(derived.generation, activationBinding, proof, config.build)),
+      successOf(validateCapitalGrantGenerationReplay(derived.generation, activationBinding, proof, config.build)),
     ).toBeUndefined()
     expect(
       failureOf(
-        validatePaperGenerationReplay(
+        validateCapitalGrantGenerationReplay(
           derived.generation,
           activationBinding,
           { ...proof, proofPlanHash: hash('changed-proof-plan') },
           config.build,
         ),
       ),
-    ).toMatchObject({ _tag: 'PaperGenerationReplayMismatch' })
+    ).toMatchObject({ _tag: 'CapitalGrantGenerationReplayMismatch' })
     expect(
       failureOf(
-        validateDerivedPaperGeneration(derived.generation, {
+        validateDerivedCapitalGrantGeneration(derived.generation, {
           ...activationBinding,
           configuredGenerationHash: hash('different-derived-paper-generation'),
         }),
       ),
     ).toMatchObject({
-      _tag: 'DerivedPaperGenerationMismatch',
+      _tag: 'DerivedCapitalGrantGenerationMismatch',
       derivedGenerationHash: derived.generation.generationHash,
     })
-    expect(paperActivationEffectiveAuthority(KillState.Clear)).toBe(Authority.Execution)
-    expect(paperActivationEffectiveAuthority(KillState.Active)).toBe(Authority.Observe)
+    expect(capitalGrantEffectiveAuthority(KillState.Clear)).toBe(Authority.Execution)
+    expect(capitalGrantEffectiveAuthority(KillState.Active)).toBe(Authority.Observe)
   })
 
-  test('derives and replays a research PAPER generation without qualification evidence', () => {
+  test('derives and replays a research capital grant generation without qualification evidence', () => {
     const research = researchProof()
     expect(
       successOf(
@@ -704,16 +706,16 @@ describe('PAPER authority algebra', () => {
     })
     expect(derived.generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
     expect(
-      successOf(validateResearchPaperGenerationReplay(derived.generation, research, observeGenerationHash)),
+      successOf(validateResearchCapitalGrantGenerationReplay(derived.generation, research, observeGenerationHash)),
     ).toBeUndefined()
     expect(
       failureOf(
-        validateResearchPaperGenerationReplay(
+        validateResearchCapitalGrantGenerationReplay(
           derived.generation,
           { ...research, riskPolicyHash: hash('changed-risk-policy') },
           observeGenerationHash,
         ),
       ),
-    ).toMatchObject({ _tag: 'ResearchPaperGenerationReplayMismatch' })
+    ).toMatchObject({ _tag: 'ResearchCapitalGrantGenerationReplayMismatch' })
   })
 })

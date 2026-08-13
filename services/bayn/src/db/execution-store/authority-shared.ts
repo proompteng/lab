@@ -44,7 +44,7 @@ export const authorityStateFromRow = (
   })
 }
 
-export const paperGenerationFromRow = (
+export const capitalGrantGenerationFromRow = (
   row: AuthorityGenerationRow,
 ): Effect.Effect<CapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
   if (
@@ -71,7 +71,7 @@ export const paperGenerationFromRow = (
     row.reconciliation_id === null ||
     row.reconciliation_content_hash === null
   ) {
-    return failExecutionStore('authority', 'invariant', 'PAPER authority generation history is incomplete')
+    return failExecutionStore('authority', 'invariant', 'capital grant generation history is incomplete')
   }
   return decodeCapitalGrantGeneration({
     schemaVersion: row.activation_schema_version,
@@ -101,7 +101,7 @@ export const paperGenerationFromRow = (
   })
 }
 
-export const researchPaperGenerationFromRow = (
+export const researchCapitalGrantGenerationFromRow = (
   row: AuthorityGenerationRow,
 ): Effect.Effect<ResearchCapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
   if (
@@ -123,7 +123,7 @@ export const researchPaperGenerationFromRow = (
     row.reconciliation_id === null ||
     row.reconciliation_content_hash === null
   ) {
-    return failExecutionStore('authority', 'invariant', 'research PAPER authority generation history is incomplete')
+    return failExecutionStore('authority', 'invariant', 'research capital grant generation history is incomplete')
   }
   return decodeResearchCapitalGrantGeneration({
     schemaVersion: row.activation_schema_version,
@@ -248,7 +248,11 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
         `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
         const currentRow = currentRows[0]
         if (currentRow === undefined) {
-          return yield* failExecutionStore('authority', 'invariant', 'PAPER generation requires initialized authority')
+          return yield* failExecutionStore(
+            'authority',
+            'invariant',
+            'capital grant generation requires initialized authority',
+          )
         }
         const current = yield* authorityStateFromRow(currentRow)
         yield* liftAuthorityDecision(validateAuthorityObservation(current, currentRow.observed_at))
