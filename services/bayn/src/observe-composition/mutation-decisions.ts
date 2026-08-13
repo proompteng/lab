@@ -22,12 +22,12 @@ const quantityScale = 1_000_000n
 export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
   positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
 
-export interface PaperCycleFillInput {
+export interface ExecutionCycleFillInput {
   readonly intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[]
   readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[]
 }
 
-export const paperCycleHasFilledIntent = (input: PaperCycleFillInput): boolean => {
+export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): boolean => {
   const { intents, orders = [] } = input
   const intentIds = new Set(intents.map((intent) => intent.intentId))
   return (
@@ -41,14 +41,14 @@ export const paperCycleHasFilledIntent = (input: PaperCycleFillInput): boolean =
   )
 }
 
-const paperClosePlanNeedsResidualReplanDataFirst = (
+const executionClosePlanNeedsResidualReplanDataFirst = (
   intents: readonly Pick<Intent, 'state'>[],
   openPositionCount: number,
 ): boolean =>
   intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
 
 /** A settled close plan must be replaced when authoritative positions remain open. */
-export const paperClosePlanNeedsResidualReplan = Pipeable.dual(2, paperClosePlanNeedsResidualReplanDataFirst)
+export const executionClosePlanNeedsResidualReplan = Pipeable.dual(2, executionClosePlanNeedsResidualReplanDataFirst)
 
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
@@ -232,7 +232,7 @@ const decidePendingMutationObservationDataFirst = (
     return Result.fail({
       _tag: 'PreparedMutationIntentDecisionFailure',
       intentId: expected.intentId ?? '<missing>',
-      message: 'reconciliation returned multiple orders for one acknowledged PAPER intent',
+      message: 'reconciliation returned multiple orders for one acknowledged execution intent',
     })
   }
   const observed = candidates[0]
@@ -240,7 +240,7 @@ const decidePendingMutationObservationDataFirst = (
     return Result.fail({
       _tag: 'PreparedMutationIntentDecisionFailure',
       intentId: expected.intentId ?? '<missing>',
-      message: 'reconciled broker order conflicts with the acknowledged PAPER intent identity',
+      message: 'reconciled broker order conflicts with the acknowledged execution intent identity',
     })
   }
   return terminalOrderStatuses.has(observed.status)
@@ -277,42 +277,42 @@ const decidePreparedMutationIntentAdmissionDataFirst = (
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'authority',
-      message: 'fresh PAPER submit requires current effective PAPER authority',
+      message: 'fresh broker submit requires current effective execution authority',
     })
   }
   if (observedAt >= expiresAt) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'expiry',
-      message: 'fresh PAPER submit is forbidden at or after decision expiry',
+      message: 'fresh broker submit is forbidden at or after decision expiry',
     })
   }
   if (reconciliationStatus !== ReconciliationStatus.Exact) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'reconciliation-not-exact',
-      message: 'fresh PAPER submit requires exact same-pass reconciliation',
+      message: 'fresh broker submit requires exact same-pass reconciliation',
     })
   }
   if (!accountingExact) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'accounting-inexact',
-      message: 'fresh PAPER submit requires exact same-pass accounting',
+      message: 'fresh broker submit requires exact same-pass accounting',
     })
   }
   if (unknownMutationCount !== 0) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'unknown-mutation',
-      message: 'fresh PAPER submit is forbidden while a mutation outcome is unknown',
+      message: 'fresh broker submit is forbidden while a mutation outcome is unknown',
     })
   }
   if (unknownOrderCount !== 0) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'unknown-order',
-      message: 'fresh PAPER submit is forbidden while a broker order is unknown',
+      message: 'fresh broker submit is forbidden while a broker order is unknown',
     })
   }
   return Result.succeed(undefined)
@@ -349,42 +349,42 @@ const decidePreparedCloseIntentAdmissionDataFirst = (
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'authority',
-      message: 'close-only PAPER admission permits sell intents only',
+      message: 'close-only execution admission permits sell intents only',
     })
   }
   if (observedAt >= expiresAt) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'expiry',
-      message: 'close-only PAPER submit is forbidden after the bounded close lease',
+      message: 'close-only broker submit is forbidden after the bounded close lease',
     })
   }
   if (reconciliationStatus !== ReconciliationStatus.Exact) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'reconciliation-not-exact',
-      message: 'close-only PAPER submit requires exact same-pass reconciliation',
+      message: 'close-only broker submit requires exact same-pass reconciliation',
     })
   }
   if (!accountingExact) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'accounting-inexact',
-      message: 'close-only PAPER submit requires exact same-pass accounting',
+      message: 'close-only broker submit requires exact same-pass accounting',
     })
   }
   if (unknownMutationCount !== 0) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'unknown-mutation',
-      message: 'close-only PAPER submit is forbidden while a mutation outcome is unknown',
+      message: 'close-only broker submit is forbidden while a mutation outcome is unknown',
     })
   }
   if (unknownOrderCount !== 0) {
     return Result.fail({
       _tag: 'PreparedMutationIntentAdmissionFailure',
       reason: 'unknown-order',
-      message: 'close-only PAPER submit is forbidden while a broker order is unknown',
+      message: 'close-only broker submit is forbidden while a broker order is unknown',
     })
   }
   return Result.succeed(undefined)
@@ -413,14 +413,14 @@ const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: 
 
 export const appendPendingMutationOrder = Pipeable.dual(2, appendPendingMutationOrderDataFirst)
 
-export interface PaperCycleIntentTerminalEvidence {
+export interface ExecutionCycleIntentTerminalEvidence {
   readonly state: IntentState
   readonly terminalOutcome?: TerminalOutcome
   readonly updatedAt: string
   readonly latestMutationAt?: string
 }
 
-export interface PaperCycleReconciliationEvidence {
+export interface ExecutionCycleReconciliationEvidence {
   readonly status: ReconciliationStatus
   readonly reconciledAt: string
   readonly accountingExact: boolean
@@ -429,7 +429,7 @@ export interface PaperCycleReconciliationEvidence {
   readonly openPositionCount?: number
 }
 
-export type PaperCycleCompletionDecision =
+export type ExecutionCycleCompletionDecision =
   | { readonly _tag: 'Complete' }
   | {
       readonly _tag: 'Wait'
@@ -444,11 +444,11 @@ export type PaperCycleCompletionDecision =
         | 'open-position'
     }
 
-const decidePaperCycleCompletionDataFirst = (
+const decideExecutionCycleCompletionDataFirst = (
   documentCreatedAt: string,
-  intents: readonly PaperCycleIntentTerminalEvidence[],
-  reconciliation: PaperCycleReconciliationEvidence,
-): PaperCycleCompletionDecision => {
+  intents: readonly ExecutionCycleIntentTerminalEvidence[],
+  reconciliation: ExecutionCycleReconciliationEvidence,
+): ExecutionCycleCompletionDecision => {
   if (intents.some((intent) => intent.state !== IntentState.Terminal)) {
     return { _tag: 'Wait', reason: 'intent-nonterminal' }
   }
@@ -475,7 +475,7 @@ const decidePaperCycleCompletionDataFirst = (
   return { _tag: 'Complete' }
 }
 
-export const decidePaperCycleCompletion = Pipeable.dual(3, decidePaperCycleCompletionDataFirst)
+export const decideExecutionCycleCompletion = Pipeable.dual(3, decideExecutionCycleCompletionDataFirst)
 
 export type PreparedMutationRecoveryDecision =
   | { readonly _tag: 'NoRecovery' }
@@ -586,12 +586,12 @@ const mutationRecoveryIsDueDataFirst = (event: MutationEvent, observedAt: string
 
 export const mutationRecoveryIsDue = Pipeable.dual(2, mutationRecoveryIsDueDataFirst)
 
-const paperSubmitExpiresAtDataFirst = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
+const executionSubmitExpiresAtDataFirst = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
   riskDecisionExpiresAt < documentExpiresAt ? riskDecisionExpiresAt : documentExpiresAt
 
-export const paperSubmitExpiresAt = Pipeable.dual(2, paperSubmitExpiresAtDataFirst)
+export const executionSubmitExpiresAt = Pipeable.dual(2, executionSubmitExpiresAtDataFirst)
 
-const expiredPaperPlanTerminalReasonDataFirst = (
+const expiredExecutionPlanTerminalReasonDataFirst = (
   observedAt: string,
   submitExpiresAt: string,
   submissionCutoffAt: string,
@@ -602,7 +602,7 @@ const expiredPaperPlanTerminalReasonDataFirst = (
       ? CycleTerminalReason.MissedSubmission
       : CycleTerminalReason.Risk
 
-export const expiredPaperPlanTerminalReason = Pipeable.dual(3, expiredPaperPlanTerminalReasonDataFirst)
+export const expiredExecutionPlanTerminalReason = Pipeable.dual(3, expiredExecutionPlanTerminalReasonDataFirst)
 
 export type MutationIntentSettlementDecision =
   | {

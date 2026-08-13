@@ -70,19 +70,19 @@ import {
   appendPendingMutationOrder,
   countOpenPositions,
   decidePendingMutationObservation,
-  decidePaperCycleCompletion,
+  decideExecutionCycleCompletion,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
   decideMutationIntentSettlement,
   executeMutationIntent,
-  expiredPaperPlanTerminalReason,
+  expiredExecutionPlanTerminalReason,
   mutationRecoveryIsDue,
   mutationIntentReconciliationDelayMs,
-  paperSubmitExpiresAt,
+  executionSubmitExpiresAt,
   paperMutationSubmissionAllowed,
-  paperCycleHasFilledIntent,
-  paperClosePlanNeedsResidualReplan,
+  executionCycleHasFilledIntent,
+  executionClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
@@ -171,9 +171,9 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
 })
 
 test('requires a bounded residual close replan after a settled close leaves a position open', () => {
-  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 1)).toBe(true)
-  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Acknowledged }], 1)).toBe(false)
-  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 0)).toBe(false)
+  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 1)).toBe(true)
+  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Acknowledged }], 1)).toBe(false)
+  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 0)).toBe(false)
 })
 
 const calendarMaterial = {
@@ -1256,7 +1256,7 @@ describe('OBSERVE runtime composition', () => {
     } as const
 
     expect(
-      decidePaperCycleCompletion(
+      decideExecutionCycleCompletion(
         evaluatedAt,
         [
           {
@@ -1269,25 +1269,25 @@ describe('OBSERVE runtime composition', () => {
       ),
     ).toEqual({ _tag: 'Wait', reason: 'intent-nonterminal' })
     expect(
-      decidePaperCycleCompletion(
+      decideExecutionCycleCompletion(
         evaluatedAt,
         [{ ...filled, terminalOutcome: TerminalOutcome.Rejected }],
         laterReconciliation,
       ),
     ).toEqual({ _tag: 'Wait', reason: 'intent-unsuccessful' })
     expect(
-      decidePaperCycleCompletion(evaluatedAt, [filled], {
+      decideExecutionCycleCompletion(evaluatedAt, [filled], {
         ...laterReconciliation,
         reconciledAt: intentUpdatedAt,
       }),
     ).toEqual({ _tag: 'Wait', reason: 'reconciliation-not-later' })
     expect(
-      decidePaperCycleCompletion(evaluatedAt, [filled], {
+      decideExecutionCycleCompletion(evaluatedAt, [filled], {
         ...laterReconciliation,
         unknownMutationCount: 1,
       }),
     ).toEqual({ _tag: 'Wait', reason: 'unknown-mutation' })
-    expect(decidePaperCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
+    expect(decideExecutionCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
     expect(countOpenPositions([{ quantityMicros: '0' }, { quantityMicros: '-1' }, { quantityMicros: '2' }])).toBe(2)
   })
 
@@ -1467,8 +1467,8 @@ describe('OBSERVE runtime composition', () => {
     const dueAt = utcInstantFromEpochMillis(Date.parse(evaluatedAt) + accepted.consistencyDelayMs)
     expect(mutationRecoveryIsDue(accepted, utcInstantFromEpochMillis(Date.parse(dueAt) - 1))).toBe(false)
     expect(mutationRecoveryIsDue(accepted, dueAt)).toBe(true)
-    expect(paperSubmitExpiresAt(cycle.window.submissionCutoffAt, evaluatedAt)).toBe(evaluatedAt)
-    expect(paperSubmitExpiresAt(evaluatedAt, cycle.window.submissionCutoffAt)).toBe(evaluatedAt)
+    expect(executionSubmitExpiresAt(cycle.window.submissionCutoffAt, evaluatedAt)).toBe(evaluatedAt)
+    expect(executionSubmitExpiresAt(evaluatedAt, cycle.window.submissionCutoffAt)).toBe(evaluatedAt)
 
     let submits = 0
     let cancels = 0
@@ -1894,11 +1894,11 @@ describe('OBSERVE runtime composition', () => {
     const fixture = await paperLifecycleFixture()
     const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
     expect(riskExpiresAt < fixture.document.submissionCutoffAt).toBe(true)
-    expect(expiredPaperPlanTerminalReason(riskExpiresAt, riskExpiresAt, fixture.document.submissionCutoffAt)).toBe(
+    expect(expiredExecutionPlanTerminalReason(riskExpiresAt, riskExpiresAt, fixture.document.submissionCutoffAt)).toBe(
       CycleTerminalReason.Risk,
     )
     expect(
-      expiredPaperPlanTerminalReason(
+      expiredExecutionPlanTerminalReason(
         fixture.document.submissionCutoffAt,
         fixture.document.submissionCutoffAt,
         fixture.document.submissionCutoffAt,
@@ -2942,7 +2942,7 @@ describe('OBSERVE runtime composition', () => {
     expect(step).toEqual({ _tag: 'Wait', observedAt })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
-    expect(paperCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
+    expect(executionCycleHasFilledIntent({ intents: [record.intent], orders: [partialOrder] })).toBe(true)
 
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(cutoffAt) + 60_000)
     const closeRestrictions: string[] = []
