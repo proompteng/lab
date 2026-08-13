@@ -102,6 +102,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
       ports:
         - port: 5432
           protocol: TCP
@@ -170,6 +173,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
       ports:
         - port: 3128
           protocol: TCP

@@ -29,8 +29,15 @@ spec:
                       pod-security.kubernetes.io/enforce: restricted
                       pod-security.kubernetes.io/audit: restricted
                       pod-security.kubernetes.io/warn: restricted
+                      restate.proompteng.ai/admin-access: "true"
                     annotations:
                       argocd.argoproj.io/sync-options: Prune=false
+                  ignoreDifferences:
+                    - group: apiextensions.k8s.io
+                      kind: CustomResourceDefinition
+                      name: restatecloudenvironments.restate.dev
+                      jsonPointers:
+                        - /spec/versions/0/additionalPrinterColumns
                 - name: restate-operator
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
@@ -86,7 +93,8 @@ spec:
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $hasValuesObject := hasKey . "valuesObject" -}}
     {{- $hasManagedNamespaceMetadata := hasKey . "managedNamespaceMetadata" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasManagedNamespaceMetadata -}}
+    {{- $hasIgnoreDifferences := hasKey . "ignoreDifferences" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasManagedNamespaceMetadata $hasIgnoreDifferences -}}
     {{- if $needsSpec }}
     spec:
     {{- if or $hasDestServer $hasDestName }}
@@ -107,5 +115,8 @@ spec:
     {{- if $hasManagedNamespaceMetadata }}
       syncPolicy:
         managedNamespaceMetadata: {{- .managedNamespaceMetadata | toYaml | nindent 6 }}
+    {{- end }}
+    {{- if $hasIgnoreDifferences }}
+      ignoreDifferences: {{- .ignoreDifferences | toYaml | nindent 6 }}
     {{- end }}
     {{- end }}
