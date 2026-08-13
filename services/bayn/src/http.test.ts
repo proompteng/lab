@@ -691,7 +691,7 @@ describe('Bayn HTTP pure decisions', () => {
           durable: {
             available: true,
             configured: true,
-            maximum: 'paper',
+            maximum: 'execution',
             effective: 'observe',
             kill: 'active',
             reason: 'operator kill',
@@ -1522,7 +1522,7 @@ describe('Bayn HTTP probes', () => {
           coversLatestMutation: true,
         },
         condition: CycleOperationsCondition.Waiting,
-        reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+        reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
         alerts: { ...base.cycle.alerts, cycleFailed: false, reconciliationBlocked: false },
       },
       autonomousCycleLoop: {
@@ -1533,7 +1533,7 @@ describe('Bayn HTTP probes', () => {
           result: 'SUCCESS',
           observedAt: checkedAt,
           outcome: 'NOT_DUE',
-          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
         },
       },
       capitalActivation: {
@@ -1552,19 +1552,19 @@ describe('Bayn HTTP probes', () => {
 
     expect(facts.cycle).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
-      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
       last: { terminalReason: CycleTerminalReason.MissedPublication },
     })
     expect(facts.autonomousCycleLoop.lastPass).toMatchObject({
       result: 'SUCCESS',
       outcome: 'NOT_DUE',
-      notDueReason: CycleNotDueReason.StalePaperBootstrap,
+      notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
     })
     expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
-    expect(metrics).toContain('bayn_cycle_reason{reason="stale_paper_bootstrap_skipped"} 1')
+    expect(metrics).toContain('bayn_cycle_reason{reason="stale_capital_bootstrap_skipped"} 1')
     expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_missed_publication_deadline"} 1')
     expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="success"} 1')
-    expect(metrics).toContain('bayn_autonomous_cycle_not_due_reason{reason="stale_paper_bootstrap"} 1')
+    expect(metrics).toContain('bayn_autonomous_cycle_not_due_reason{reason="stale_capital_bootstrap"} 1')
   })
 
   test('propagates interruption and finalizes a historical read exactly once', async () => {

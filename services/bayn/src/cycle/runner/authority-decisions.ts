@@ -27,7 +27,7 @@ export type CycleAuthoritySelection =
   | {
       readonly _tag: 'READ_CALENDAR'
       readonly publications: NonEmptyPublications
-      readonly reason: 'DISCOVERY' | 'MISSED_PAPER_BOOTSTRAP'
+      readonly reason: 'DISCOVERY' | 'MISSED_CAPITAL_BOOTSTRAP'
     }
   | { readonly _tag: 'ALREADY_TERMINAL'; readonly cycle: AutonomousCycle }
 
@@ -105,20 +105,20 @@ export const reduceCycleAuthoritySelection = Pipeable.dual(2, reduceCycleAuthori
 
 const completeCycleAuthoritySelectionDataFirst = (
   state: CycleAuthoritySelectionState,
-  cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
+  cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP',
 ): CycleAuthoritySelection => {
   if (state._tag === 'TERMINAL') {
     const cycle = state.latestTerminal.cycle
-    return cadence === 'PAPER_BOOTSTRAP' && cycle.terminalReason === CycleTerminalReason.MissedPublication
+    return cadence === 'CAPITAL_BOOTSTRAP' && cycle.terminalReason === CycleTerminalReason.MissedPublication
       ? {
           _tag: 'READ_CALENDAR',
           publications: [state.latestTerminal.publication],
-          reason: 'MISSED_PAPER_BOOTSTRAP',
+          reason: 'MISSED_CAPITAL_BOOTSTRAP',
         }
       : { _tag: 'ALREADY_TERMINAL', cycle }
   }
   const latestTerminal = state.latestTerminal?.cycle
-  if (cadence === 'PAPER_BOOTSTRAP' && latestTerminal !== undefined && latestTerminal.state !== CycleState.NoTrade) {
+  if (cadence === 'CAPITAL_BOOTSTRAP' && latestTerminal !== undefined && latestTerminal.state !== CycleState.NoTrade) {
     const newerPublications = state.publications.filter(
       (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
     )
@@ -142,7 +142,7 @@ const completeCycleAuthoritySelectionDataFirst = (
       return {
         _tag: 'READ_CALENDAR',
         publications: [state.latestTerminal.publication],
-        reason: 'MISSED_PAPER_BOOTSTRAP',
+        reason: 'MISSED_CAPITAL_BOOTSTRAP',
       }
     }
     return { _tag: 'ALREADY_TERMINAL', cycle: latestTerminal }
@@ -152,7 +152,7 @@ const completeCycleAuthoritySelectionDataFirst = (
 
 export const completeCycleAuthoritySelection = Pipeable.by<
   (
-    cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
+    cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP',
   ) => (state: CycleAuthoritySelectionState) => ReturnType<typeof completeCycleAuthoritySelectionDataFirst>,
   typeof completeCycleAuthoritySelectionDataFirst
 >((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, completeCycleAuthoritySelectionDataFirst)

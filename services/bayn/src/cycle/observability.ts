@@ -338,7 +338,7 @@ export enum CycleOperationsReason {
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
-  StalePaperBootstrapSkipped = 'STALE_PAPER_BOOTSTRAP_SKIPPED',
+  StaleExecutionBootstrapSkipped = 'STALE_CAPITAL_BOOTSTRAP_SKIPPED',
 }
 
 export interface CycleOperationsAlerts {

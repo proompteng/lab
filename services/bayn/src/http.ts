@@ -76,6 +76,9 @@ const accountingState = (state: RuntimeState) => {
   return state.health.dependencies.tigerBeetle.status === 'AVAILABLE' ? 'EXACT' : 'UNAVAILABLE'
 }
 
+const publicAuthority = (authority: Authority): 'execution' | 'observe' =>
+  authority === Authority.Execution ? 'execution' : 'observe'
+
 const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): string | null => {
   const identityMismatch =
     broker.accountBound === false &&
@@ -369,8 +372,8 @@ const statusFactsDataFirst = (
             : {
                 available: true,
                 configured: true,
-                maximum: state.cycle.authority.maximum.toLowerCase(),
-                effective: state.cycle.authority.effective.toLowerCase(),
+                maximum: publicAuthority(state.cycle.authority.maximum),
+                effective: publicAuthority(state.cycle.authority.effective),
                 kill: state.cycle.authority.kill.toLowerCase(),
                 reason: state.cycle.authority.reason,
                 updatedAt: state.cycle.authority.updatedAt,
@@ -549,11 +552,7 @@ const renderPrometheusMetricsDataFirst = (
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const effectiveAuthority =
-    state.cycle.authority === null
-      ? 'unknown'
-      : state.cycle.authority.effective === Authority.Execution
-        ? 'paper'
-        : 'observe'
+    state.cycle.authority === null ? 'unknown' : publicAuthority(state.cycle.authority.effective)
   const capitalActivationRecoveryOnly =
     capitalActivationRealized &&
     state.cycle.authority?.maximum === Authority.Execution &&
@@ -665,7 +664,7 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_mutation_recovery_found_events_total Durable broker recovery-found event count.',
           '# TYPE bayn_mutation_recovery_found_events_total counter',
           `bayn_mutation_recovery_found_events_total ${state.cycle.mutations.recoveryFoundCount}`,
-          '# HELP bayn_intents Durable PAPER intent count by active state.',
+          '# HELP bayn_intents Durable execution intent count by active state.',
           '# TYPE bayn_intents gauge',
           `bayn_intents{state="approved"} ${state.cycle.mutations.approvedIntentCount}`,
           `bayn_intents{state="acknowledged"} ${state.cycle.mutations.acknowledgedIntentCount}`,
@@ -724,7 +723,7 @@ const renderPrometheusMetricsDataFirst = (
       ? [
           '# HELP bayn_authority_effective Durable effective authority when initialized.',
           '# TYPE bayn_authority_effective gauge',
-          ...(['unknown', 'observe', 'paper'] as const).map(
+          ...(['unknown', 'observe', 'execution'] as const).map(
             (authority) =>
               `bayn_authority_effective{authority="${authority}"} ${effectiveAuthority === authority ? 1 : 0}`,
           ),

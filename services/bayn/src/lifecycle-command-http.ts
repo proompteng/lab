@@ -9,11 +9,12 @@ import type { ServeError } from 'effect/unstable/http/HttpServerError'
 import type { LifecycleCommandStoreShape } from './db/lifecycle-command'
 import type { WriterFenceService } from './execution/writer-fence'
 import { bearerToken, type LifecycleCommandAuthenticator } from './lifecycle-command-auth'
-import { decideLifecycleCommand } from './lifecycle-command-contract'
+import { decideLifecycleCommand, lifecycleCommandV1StaleExecutionBootstrapReason } from './lifecycle-command-contract'
 import type { AutonomousCyclePassObservation } from './runtime-state'
 import { withObservedSpan } from './telemetry'
 import { currentUtcInstant } from './time'
 import type { CycleRunnerError } from './cycle/runner'
+import { CycleNotDueReason } from './cycle/runner/model'
 
 export interface LifecycleCommandServerConfig {
   readonly host: string
@@ -101,6 +102,10 @@ class LifecycleCommandHttpError extends Data.TaggedError('LifecycleCommandHttpEr
 }> {}
 
 const maximumCommandBytes = 4_096
+const lifecycleCommandObservationV1 = (observation: AutonomousCyclePassObservation): unknown =>
+  observation.result === 'SUCCESS' && observation.notDueReason === CycleNotDueReason.StaleExecutionBootstrap
+    ? { ...observation, notDueReason: lifecycleCommandV1StaleExecutionBootstrapReason }
+    : observation
 
 const jsonResponse = (status: number, body: unknown): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
   HttpServerResponse.json(body, {
@@ -226,7 +231,7 @@ const handleRequest = <R>(
                     sourceRevision: decision.sourceRevision,
                     replayed: receipt.replayed,
                     nextDelayMs: config.nextDelayMs,
-                    observation: receipt.observation,
+                    observation: lifecycleCommandObservationV1(receipt.observation),
                   }),
                 ),
                 Effect.catch((cause) =>

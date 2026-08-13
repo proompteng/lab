@@ -207,7 +207,7 @@ const readForwardPerformanceLedgerDataFirst = (
         ledgerValidationError({
           operation: 'verify-account',
           reason: 'batch-limit',
-          message: 'paper account reached the exact TigerBeetle reconciliation limit',
+          message: 'broker account reached the exact TigerBeetle reconciliation limit',
           material: {
             accountCount: accounts.length,
             transferCount: transfers.length,

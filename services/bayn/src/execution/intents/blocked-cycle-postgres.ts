@@ -4,10 +4,13 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import {
-  legacyExecutionEpisodeFailureRestrictionPattern,
   executionActivationExpiredRestrictionReason,
   executionEpisodeCompletedRestrictionReason,
   executionEpisodeFailureRestrictionPrefix,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyExecutionEpisodeCompletedRestrictionReason,
+  legacyExecutionEpisodeFailureRestrictionPattern,
+  legacyExecutionEpisodeFailureRestrictionPrefix,
 } from '../episode'
 import {
   BlockedCycleIntentStore,
@@ -181,12 +184,15 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
             AND (
-              state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+              state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
+              OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
               OR state.reason ~ ${legacyExecutionEpisodeFailureRestrictionPattern}
               OR (
                 state.reason IN (
                   ${executionEpisodeCompletedRestrictionReason},
-                  ${executionActivationExpiredRestrictionReason}
+                  ${executionActivationExpiredRestrictionReason},
+                  ${legacyExecutionEpisodeCompletedRestrictionReason},
+                  ${legacyExecutionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
                   SELECT 1

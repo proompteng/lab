@@ -1312,7 +1312,7 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(restrictions).toEqual([
       {
-        reason: 'PAPER activation lease restricted effective authority: immutable activation request expired',
+        reason: 'execution activation lease restricted effective authority: immutable activation request expired',
         updatedAt: '2026-08-03T12:00:00.000Z',
       },
     ])
@@ -1355,7 +1355,7 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(result.finalized).toBe(true)
-    expect(restrictions).toEqual(['PAPER episode restricted effective authority: flat exact receipt finalized'])
+    expect(restrictions).toEqual(['execution episode restricted effective authority: flat exact receipt finalized'])
     expect(result.state.capitalActivation).toEqual({
       _tag: 'Completed',
       requestHash: researchRequest.requestHash,

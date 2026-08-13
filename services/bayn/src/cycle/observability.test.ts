@@ -295,13 +295,13 @@ describe('autonomous cycle operations classification', () => {
     const matchingPass = {
       result: 'SUCCESS' as const,
       outcome: 'NOT_DUE' as const,
-      notDueReason: CycleNotDueReason.StalePaperBootstrap,
+      notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
       cadenceDecision: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
     }
 
     expect(projectResearchCapitalBootstrapWaiting(failed, true, matchingPass)).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
-      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
       last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
       alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
     })
@@ -313,7 +313,7 @@ describe('autonomous cycle operations classification', () => {
       }),
     ).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
-      reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+      reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
       last: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
     })
     expect(

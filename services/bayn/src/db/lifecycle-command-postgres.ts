@@ -9,6 +9,7 @@ import {
   type AutonomousCyclePassObservation,
 } from '../runtime-state'
 import { CycleNotDueReason } from '../cycle/runner/model'
+import { lifecycleCommandV1StaleExecutionBootstrapReason } from '../lifecycle-command-contract'
 import {
   LifecycleCommandStore,
   LifecycleCommandStoreError,
@@ -20,6 +21,21 @@ import {
 
 const ControllerKeySchema = Schema.Trim.check(Schema.isPattern(/^[a-z0-9][a-z0-9._-]{0,63}$/))
 const SequenceSchema = Schema.Int.check(Schema.isGreaterThan(0))
+const LifecycleCommandNotDueReasonSchema = Schema.Literals([
+  CycleNotDueReason.MonthEndCadence,
+  CycleNotDueReason.StaleExecutionBootstrap,
+  lifecycleCommandV1StaleExecutionBootstrapReason,
+])
+
+const normalizeLifecycleCommandNotDueReason = (
+  reason: CycleNotDueReason | typeof lifecycleCommandV1StaleExecutionBootstrapReason,
+): CycleNotDueReason =>
+  reason === lifecycleCommandV1StaleExecutionBootstrapReason ? CycleNotDueReason.StaleExecutionBootstrap : reason
+
+const encodeLifecycleCommandNotDueReason = (
+  reason: CycleNotDueReason,
+): CycleNotDueReason | typeof lifecycleCommandV1StaleExecutionBootstrapReason =>
+  reason === CycleNotDueReason.StaleExecutionBootstrap ? lifecycleCommandV1StaleExecutionBootstrapReason : reason
 
 const CommandInputSchema = Schema.Struct({
   controllerKey: ControllerKeySchema,
@@ -46,7 +62,7 @@ const CommandRow = Schema.Struct({
   message: Schema.NullOr(Schema.NonEmptyString),
   observed_at: Schema.NullOr(UtcInstantSchema),
   cadence_decision: Schema.NullOr(MonthEndCadenceDecisionSchema),
-  not_due_reason: Schema.NullOr(Schema.Enum(CycleNotDueReason)),
+  not_due_reason: Schema.NullOr(LifecycleCommandNotDueReasonSchema),
 })
 
 const CommandRows = Schema.Tuple([CommandRow])
@@ -83,7 +99,9 @@ const decodeObservation = (
       outcome: row.outcome,
       observedAt: row.observed_at,
       ...(row.cadence_decision === null ? {} : { cadenceDecision: row.cadence_decision }),
-      ...(row.not_due_reason === null ? {} : { notDueReason: row.not_due_reason }),
+      ...(row.not_due_reason === null
+        ? {}
+        : { notDueReason: normalizeLifecycleCommandNotDueReason(row.not_due_reason) }),
     }).pipe(Effect.mapError((cause) => storeError('decode', 'lifecycle command observation failed decoding', cause)))
   }
   if (
@@ -235,6 +253,10 @@ const complete = (sql: PgClient.PgClient, candidate: LifecycleCommandCompletionI
   )(candidate).pipe(
     Effect.flatMap((input) => {
       const success = input.observation.result === 'SUCCESS'
+      const notDueReason =
+        success && input.observation.outcome === 'NOT_DUE' && input.observation.notDueReason !== undefined
+          ? encodeLifecycleCommandNotDueReason(input.observation.notDueReason)
+          : null
       return sql<Record<string, unknown>>`
         UPDATE lifecycle_commands
         SET
@@ -246,7 +268,7 @@ const complete = (sql: PgClient.PgClient, candidate: LifecycleCommandCompletionI
           message = ${success ? null : input.observation.message},
           observed_at = ${input.observation.observedAt},
           cadence_decision = ${success ? (input.observation.cadenceDecision ?? null) : null},
-          not_due_reason = ${success && input.observation.outcome === 'NOT_DUE' ? (input.observation.notDueReason ?? null) : null},
+          not_due_reason = ${notDueReason},
           completed_at = greatest(${input.completedAt}, started_at)
         WHERE controller_key = ${input.controllerKey}
           AND command_id = ${input.commandId}

@@ -1112,30 +1112,30 @@ describe('autonomous cycle runner', () => {
     expect(
       completeCycleAuthoritySelection(
         { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: terminal } },
-        'PAPER_BOOTSTRAP',
+        'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({
       _tag: 'READ_CALENDAR',
       publications: [publication],
-      reason: 'MISSED_PAPER_BOOTSTRAP',
+      reason: 'MISSED_CAPITAL_BOOTSTRAP',
     })
     const noTrade = { ...terminal, state: CycleState.NoTrade }
     expect(
       completeCycleAuthoritySelection(
         { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: noTrade } },
-        'PAPER_BOOTSTRAP',
+        'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication], reason: 'DISCOVERY' })
     const blocked = { ...terminal, state: CycleState.Blocked }
     expect(
       completeCycleAuthoritySelection(
         { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: blocked } },
-        'PAPER_BOOTSTRAP',
+        'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({
       _tag: 'READ_CALENDAR',
       publications: [publication],
-      reason: 'MISSED_PAPER_BOOTSTRAP',
+      reason: 'MISSED_CAPITAL_BOOTSTRAP',
     })
     const newerPublication = finalizedPublicationInspection('2026-02-02')
     expect(
@@ -1145,7 +1145,7 @@ describe('autonomous cycle runner', () => {
           publications: [newerPublication, publication],
           latestTerminal: { publication, cycle: terminal },
         },
-        'PAPER_BOOTSTRAP',
+        'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
     const riskBlocked = { ...terminal, terminalReason: CycleTerminalReason.Risk }
@@ -1156,7 +1156,7 @@ describe('autonomous cycle runner', () => {
           publications: [newerPublication],
           latestTerminal: { publication, cycle: riskBlocked },
         },
-        'PAPER_BOOTSTRAP',
+        'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: riskBlocked })
     expect(
@@ -1505,7 +1505,7 @@ describe('autonomous cycle runner', () => {
     if (executionSession === undefined) throw new Error('bootstrap fixture must have an execution session')
     const monthly = makeDueCycleDraft(candidate('2026-01-29'), ordinaryNotDueCalendar, executionSession)
     const bootstrap = makeDueCycleDraft(
-      { ...candidate('2026-01-29'), cadence: 'PAPER_BOOTSTRAP' },
+      { ...candidate('2026-01-29'), cadence: 'CAPITAL_BOOTSTRAP' },
       ordinaryNotDueCalendar,
       executionSession,
     )
@@ -2520,7 +2520,7 @@ describe('autonomous cycle runner', () => {
       calendarReads += 1
       return Effect.succeed({ value: monthEndCalendar, evidence })
     })
-    const paperContext = { ...context(), cadence: 'PAPER_BOOTSTRAP' as const }
+    const capitalContext = { ...context(), cadence: 'CAPITAL_BOOTSTRAP' as const }
     const missedPublication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
     const newerPublication = finalizedPublicationInspection('2026-01-30', '2026-01-30T21:15:00.000Z')
 
@@ -2528,14 +2528,14 @@ describe('autonomous cycle runner', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T14:30:00.000Z'))
         const missed = yield* provide(
-          runAutonomousCyclePass(paperContext),
+          runAutonomousCyclePass(capitalContext),
           read,
           store,
           marketDataService(Effect.succeed(finalizedPublications([missedPublication]))),
         )
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
         const successor = yield* provide(
-          runAutonomousCyclePass(paperContext),
+          runAutonomousCyclePass(capitalContext),
           read,
           store,
           marketDataService(
@@ -2549,7 +2549,7 @@ describe('autonomous cycle runner', () => {
 
     expect(result.missed).toMatchObject({
       outcome: 'NOT_DUE',
-      reason: CycleNotDueReason.StalePaperBootstrap,
+      reason: CycleNotDueReason.StaleExecutionBootstrap,
       signalSessionDate: '2026-01-29',
       executionSessionDate: '2026-01-30',
     })
@@ -2587,7 +2587,7 @@ describe('autonomous cycle runner', () => {
 
     const result = await Effect.runPromise(
       provide(
-        runAutonomousCyclePass({ ...context(), cadence: 'PAPER_BOOTSTRAP' }),
+        runAutonomousCyclePass({ ...context(), cadence: 'CAPITAL_BOOTSTRAP' }),
         brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
         cycleStore(control),
         marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
@@ -2596,7 +2596,7 @@ describe('autonomous cycle runner', () => {
 
     expect(result).toMatchObject({
       outcome: 'NOT_DUE',
-      reason: CycleNotDueReason.StalePaperBootstrap,
+      reason: CycleNotDueReason.StaleExecutionBootstrap,
       signalSessionDate: '2026-01-30',
       executionSessionDate: '2026-02-02',
       observedAt: '2026-02-02T13:58:00.000Z',
@@ -2612,9 +2612,9 @@ describe('autonomous cycle runner', () => {
     const publication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
     const executionSession = selectNextExecutionSession(publication.signalSession.session_date, monthEndCalendar)
     if (executionSession === undefined) throw new Error('bootstrap fixture requires an execution session')
-    const paperContext = { ...context(), cadence: 'PAPER_BOOTSTRAP' as const }
+    const capitalContext = { ...context(), cadence: 'CAPITAL_BOOTSTRAP' as const }
     const draft = dueCycleDraftFixture(
-      { ...paperContext, signalSession: publication.signalSession },
+      { ...capitalContext, signalSession: publication.signalSession },
       monthEndCalendar,
       executionSession,
     )
@@ -2639,7 +2639,7 @@ describe('autonomous cycle runner', () => {
         // A persisted terminal outcome remains authoritative even if the observed clock is before its deadline.
         yield* TestClock.setTime(Date.parse('2026-01-30T13:00:00.000Z'))
         return yield* provide(
-          runAutonomousCyclePass(paperContext),
+          runAutonomousCyclePass(capitalContext),
           read,
           store,
           marketDataService(Effect.succeed(finalizedPublications([publication]))),
@@ -2649,7 +2649,7 @@ describe('autonomous cycle runner', () => {
 
     expect(result).toMatchObject({
       outcome: 'NOT_DUE',
-      reason: CycleNotDueReason.StalePaperBootstrap,
+      reason: CycleNotDueReason.StaleExecutionBootstrap,
       signalSessionDate: '2026-01-29',
       executionSessionDate: '2026-01-30',
       observedAt: '2026-01-30T13:00:00.000Z',

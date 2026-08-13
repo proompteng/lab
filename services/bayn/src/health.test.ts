@@ -934,7 +934,7 @@ describe('Bayn continuous health', () => {
           result: 'SUCCESS',
           observedAt: checkedAt,
           outcome: 'NOT_DUE',
-          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
           cadenceDecision: decideMonthEndCadenceEligibility({
             signalSessionDate: '2026-08-10',
             executionSessionDate: '2026-08-11',
@@ -1002,7 +1002,7 @@ describe('Bayn continuous health', () => {
         status: 'READY',
         cycle: {
           condition: CycleOperationsCondition.Waiting,
-          reason: CycleOperationsReason.StalePaperBootstrapSkipped,
+          reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
           last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
           alerts: { cycleFailed: false, reconciliationBlocked: false },
         },

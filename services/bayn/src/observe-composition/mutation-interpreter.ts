@@ -3,6 +3,7 @@ import { Effect } from 'effect'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { MutationEventType, MutationStore, type MutationEvent } from '../execution/mutations'
+import { executionCycleRestrictionSubject } from '../execution/episode'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
 import { CycleRunnerError } from '../cycle/runner'
@@ -57,7 +58,7 @@ export const restrictMutationAuthority = Pipeable.dual(2, restrictMutationAuthor
 export const restrictMutationLoopFailure = (
   error: CycleRunnerError,
 ): Effect.Effect<void, CycleRunnerError, AuthorityRestrictionStore | WriterFence> =>
-  restrictMutationAuthority('PAPER autonomous cycle loop', `${error.operation}: ${error.message}`)
+  restrictMutationAuthority(executionCycleRestrictionSubject, `${error.operation}: ${error.message}`)
 
 const submitDoesNotRequireRecovery = (eventType: MutationEvent['eventType']): boolean =>
   eventType === MutationEventType.SubmitRejected || eventType === MutationEventType.SubmitDenied

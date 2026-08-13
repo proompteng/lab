@@ -3,6 +3,7 @@ import { Effect, Option, Result } from 'effect'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
+import { executionCycleRestrictionSubject } from '../execution/episode'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import {
   Authority,
@@ -126,7 +127,7 @@ const validateCurrentMutationPolicy = (
   return policyHash.success !== document.bindings.policyHash
     ? Result.fail(
         mutationRunnerError({
-          message: 'current source-controlled PAPER risk policy changed from the durable decision binding',
+          message: 'current source-controlled execution risk policy changed from the durable decision binding',
           cause: undefined,
           failure: 'contract',
         }),
@@ -134,7 +135,7 @@ const validateCurrentMutationPolicy = (
     : Result.succeed(undefined)
 }
 
-const boundPaperSubmissionCutoff = (
+const boundExecutionSubmissionCutoff = (
   input: MutationIntentInput,
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
@@ -147,7 +148,7 @@ const boundPaperSubmissionCutoff = (
     ) {
       return Result.fail(
         mutationRunnerError({
-          message: 'durable PAPER close plan changed from its immutable activation close lease',
+          message: 'durable execution close plan changed from its immutable activation close lease',
           cause: undefined,
           failure: 'contract',
         }),
@@ -161,7 +162,7 @@ const boundPaperSubmissionCutoff = (
   ) {
     return Result.fail(
       mutationRunnerError({
-        message: 'durable PAPER decision changed from its immutable cycle submission window',
+        message: 'durable execution decision changed from its immutable cycle submission window',
         cause: undefined,
         failure: 'contract',
       }),
@@ -231,7 +232,7 @@ type PreparedExecutionIntent = {
   readonly latestCancel: MutationEvent | undefined
 }
 
-type PaperIntentRecoveryLookup = Omit<PreparedExecutionIntent, 'intent'> & {
+type ExecutionIntentRecoveryLookup = Omit<PreparedExecutionIntent, 'intent'> & {
   readonly intentId: string
 }
 
@@ -247,7 +248,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 ): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, document))
-    const submissionCutoffAt = yield* Effect.fromResult(boundPaperSubmissionCutoff(input, cycle, document))
+    const submissionCutoffAt = yield* Effect.fromResult(boundExecutionSubmissionCutoff(input, cycle, document))
     const generationIsSuperseded = input.authorityGenerationHash !== document.bindings.authorityGenerationHash
     if (document.riskBlock !== undefined) {
       return {
@@ -270,7 +271,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       version: 1,
       updatedAt: document.createdAt,
     }
-    const recoveryLookups: PaperIntentRecoveryLookup[] = []
+    const recoveryLookups: ExecutionIntentRecoveryLookup[] = []
 
     for (const [index, targetIntent] of document.targetPlan.intentTargets.entries()) {
       const riskBinding = document.deltaRisk[index]
@@ -287,7 +288,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         .read(intentId)
         .pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'durable PAPER intent recovery read failed', cause, failure: 'store' }),
+            mutationRunnerError({ message: 'durable execution intent recovery read failed', cause, failure: 'store' }),
           ),
         )
       const existing = Option.getOrUndefined(stored)
@@ -314,7 +315,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
       if (existing !== undefined && existing.intent.intentId !== intentId) {
         return yield* mutationRunnerError({
-          message: 'durable PAPER intent recovery returned a different intent identity',
+          message: 'durable execution intent recovery returned a different intent identity',
           cause: undefined,
           failure: 'contract',
         })
@@ -345,19 +346,23 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         { authority: documentAuthority },
       ).pipe(
         Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'durable PAPER intent reconstruction failed', cause, failure: 'contract' }),
+          mutationRunnerError({
+            message: 'durable execution intent reconstruction failed',
+            cause,
+            failure: 'contract',
+          }),
         ),
       )
       if (lookup.intentId !== intent.intentId) {
         return yield* mutationRunnerError({
-          message: 'durable PAPER intent identity or order changed after decision binding',
+          message: 'durable execution intent identity or order changed after decision binding',
           cause: undefined,
           failure: 'contract',
         })
       }
       if (lookup.stored !== undefined && !immutableIntentBindingMatches(lookup.stored.intent, intent)) {
         return yield* mutationRunnerError({
-          message: 'stored PAPER intent changed from its durable decision binding',
+          message: 'stored execution intent changed from its durable decision binding',
           cause: undefined,
           failure: 'contract',
         })
@@ -472,7 +477,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     if (input.mutationPhase === 'CLOSE' && intentStore.commitClosing === undefined) {
       return yield* mutationRunnerError({
-        message: 'PAPER close intent store does not expose the close-only authority port',
+        message: 'execution close intent store does not expose the close-only authority port',
         cause: undefined,
         failure: 'store',
       })
@@ -485,7 +490,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           : intentStore.commit(prepared.intent, prepared.riskBinding.evaluation.decision)
         ).pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'durable PAPER intent-set commit failed', cause, failure: 'store' }),
+            mutationRunnerError({ message: 'durable execution intent-set commit failed', cause, failure: 'store' }),
           ),
         ),
       { concurrency: 1, discard: true },
@@ -522,13 +527,13 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         .read(prepared.intent.intentId)
         .pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'committed PAPER intent readback failed', cause, failure: 'store' }),
+            mutationRunnerError({ message: 'committed execution intent readback failed', cause, failure: 'store' }),
           ),
         )
       const record = Option.getOrUndefined(stored)
       if (record === undefined) {
         return yield* mutationRunnerError({
-          message: 'committed PAPER intent disappeared before execution selection',
+          message: 'committed execution intent disappeared before execution selection',
           cause: undefined,
           failure: 'contract',
         })
@@ -554,7 +559,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
             unsuccessfulIntentFound = true
             yield* dependencies.restrictAuthority(
-              'PAPER autonomous cycle loop',
+              executionCycleRestrictionSubject,
               `bound cycle ${cycle.identity.cycleId}: intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
             continue
@@ -642,7 +647,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     if (pendingIntentFound) {
       if (deferredExpiration !== undefined) {
-        yield* Effect.logInfo('Bayn PAPER cutoff terminalization deferred by a nonterminal broker intent').pipe(
+        yield* Effect.logInfo('Bayn execution cutoff terminalization deferred by a nonterminal broker intent').pipe(
           Effect.annotateLogs({
             service: 'bayn',
             cycleId: cycle.identity.cycleId,

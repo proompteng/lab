@@ -7,8 +7,8 @@ export interface CycleStoreDecisionFailure {
 }
 
 export interface CycleDecisionStoreEvidence {
-  readonly paperCompletionEvidenceMatches: boolean
-  readonly paperGenerationIsSuperseded: boolean
+  readonly executionCompletionEvidenceMatches: boolean
+  readonly executionGenerationIsSuperseded: boolean
 }
 
 const decisionStoreEvidence = new WeakMap<object, CycleDecisionStoreEvidence>()

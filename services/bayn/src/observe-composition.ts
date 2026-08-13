@@ -60,6 +60,8 @@ import { MarketData, type MarketDataService } from './market-data'
 import {
   decideExecutionEpisodeCycleTerminalization,
   executionEpisodeAllocationCapitalMicros,
+  executionCycleRestrictionSubject,
+  executionEpisodeFailureRestrictionPrefix,
 } from './execution/episode'
 import {
   Authority,
@@ -1110,7 +1112,7 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
-  readonly cycleCadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
+  readonly cycleCadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
@@ -1716,7 +1718,7 @@ const executeBoundExecutionCycle = (
     )
     if (executed.operation === MutationOperation.Submit && executed.settlement.outcome !== 'accepted') {
       yield* restrictMutationAuthority(
-        'PAPER autonomous cycle loop',
+        executionCycleRestrictionSubject,
         `bound cycle ${cycle.identity.cycleId}: intent ${step.intentId} submit settled ${executed.settlement.outcome}`,
       )
     }
@@ -1812,10 +1814,7 @@ const terminalizeBlockedExecutionCycleDataFirst = (
         ),
         Effect.tap(() =>
           restrictionStore
-            .restrictAuthority(
-              `PAPER autonomous cycle loop restricted effective authority: ${restrictionReason}`,
-              outcome.observedAt,
-            )
+            .restrictAuthority(`${executionEpisodeFailureRestrictionPrefix} ${restrictionReason}`, outcome.observedAt)
             .pipe(
               Effect.mapError((cause) =>
                 mutationRunnerError({

@@ -82,7 +82,7 @@ const logCompletedPass = (
   result: ReconciliationPassResult,
   decision: ReconciliationWriteDecision,
 ): Effect.Effect<void> =>
-  Effect.logInfo('Paper account reconciliation completed').pipe(
+  Effect.logInfo('Broker account reconciliation completed').pipe(
     Effect.annotateLogs({
       status: result.report.reconciliation.status,
       reconciliationId: result.report.reconciliation.reconciliationId,

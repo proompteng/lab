@@ -11,7 +11,7 @@ import { currentUtcInstant } from './time'
 const observeSuccessorSchemaVersion = 'bayn.paper-observe-successor-generation.v1' as const
 
 /**
- * Derives the immutable OBSERVE successor for one terminal PAPER generation. The configured generation is only a
+ * Derives the immutable OBSERVE successor for one terminal execution generation. The configured generation is only a
  * bootstrap key, not a reusable history key; the terminal PAPER hash makes retries deterministic and independent of
  * which reviewed build performs recovery.
  */
@@ -61,7 +61,7 @@ const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
   error.cause.failure === 'invariant'
 
 /**
- * A restricted PAPER generation may still own a nonterminal mutation when the process restarts. Advance the existing
+ * A restricted execution generation may still own a nonterminal mutation when the process restarts. Advance the existing
  * recovery-first driver before every settlement attempt; only the precise nonterminal-intent invariant waits and
  * retries. Query, decode, reconciliation, and authority failures remain fatal.
  */
@@ -100,7 +100,7 @@ export const recoverTerminalGenerationToObserve = <R>(
       .pipe(Effect.mapError((cause) => recoveryError('terminal generation intent settlement failed', cause)))
     if (settlement._tag === 'NoTerminalGeneration') return { _tag: 'NotRequired' }
 
-    yield* Effect.logWarning('Bayn settled a terminal PAPER generation before authority rollover').pipe(
+    yield* Effect.logWarning('Bayn settled a terminal execution generation before authority rollover').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         previousGenerationHash: settlement.authorityGenerationHash,

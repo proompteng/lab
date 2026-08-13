@@ -586,13 +586,13 @@ export const renderBrokerObservationError = (error: BrokerObservationError): str
     case 'ObservationTimeMismatch':
       return `broker payload observation ${error.valueObservedAt} does not match response evidence ${error.evidenceObservedAt}`
     case 'UnsupportedOrderType':
-      return `unsupported paper order type ${error.value}`
+      return `unsupported broker order type ${error.value}`
     case 'UnsupportedTimeInForce':
-      return `unsupported paper time in force ${error.value}`
+      return `unsupported broker time in force ${error.value}`
     case 'FilledQuantityInvalid':
       return `filled quantity ${error.filledQuantityMicros} exceeds or is invalid for order quantity ${error.quantityMicros}`
     case 'UnsupportedOrderStatus':
-      return `unsupported paper order status ${error.value}`
+      return `unsupported broker order status ${error.value}`
     case 'DuplicatePositionAsset':
       return `duplicate Alpaca position asset ${error.assetId}`
     case 'DuplicatePositionSymbol':
@@ -600,11 +600,11 @@ export const renderBrokerObservationError = (error: BrokerObservationError): str
     case 'PositionAccountMismatch':
       return `Alpaca position accounts ${error.accountIds.join(',')} do not match ${error.expectedAccountId}`
     case 'OrderQuantityOrNotionalRequired':
-      return `paper order ${error.brokerOrderId} must contain exactly one of quantity or notional`
+      return `broker order ${error.brokerOrderId} must contain exactly one of quantity or notional`
     case 'ExtendedHoursUnsupported':
-      return `paper execution requires extended hours disabled for ${error.brokerOrderId}`
+      return `execution requires extended hours disabled for ${error.brokerOrderId}`
     case 'OrderUpdatedAtMissing':
-      return `paper order ${error.brokerOrderId} requires Alpaca updated_at`
+      return `broker order ${error.brokerOrderId} requires Alpaca updated_at`
     case 'FillOrderMismatch':
       return `Alpaca fill ${error.activityId} does not match order ${error.brokerOrderId}`
   }

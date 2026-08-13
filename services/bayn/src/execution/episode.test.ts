@@ -4,8 +4,9 @@ import { Result } from 'effect'
 import {
   decideExecutionEpisodeAuthority,
   decideExecutionEpisodeCycleTerminalization,
-  isExecutionEpisodeFailureRestriction,
   executionEpisodeAllocationCapitalMicros,
+  executionEpisodeFailureRestrictionPrefix,
+  isExecutionEpisodeFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
   validateExecutionEpisodeCloseWindow,
@@ -80,6 +81,11 @@ describe('execution episode decisions', () => {
     const cycleId = 'a'.repeat(64)
     const intentId = 'b'.repeat(64)
 
+    expect(
+      isExecutionEpisodeFailureRestriction(
+        `${executionEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`,
+      ),
+    ).toBe(true)
     expect(
       isExecutionEpisodeFailureRestriction(
         'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_RISK',

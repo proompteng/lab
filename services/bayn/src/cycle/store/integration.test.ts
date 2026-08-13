@@ -60,7 +60,7 @@ import { LifecycleCommandStoreLive } from '../../db/lifecycle-command-postgres'
 import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
 import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../execution/intents'
 import { canonicalHashV1, sha256 } from '../../hash'
-import { lifecycleCommandId } from '../../lifecycle-command-contract'
+import { lifecycleCommandId, lifecycleCommandV1StaleExecutionBootstrapReason } from '../../lifecycle-command-contract'
 import { Journal, type JournalService } from '../../ledger'
 import {
   MarketData,
@@ -5428,7 +5428,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             result: 'SUCCESS' as const,
             outcome: 'NOT_DUE' as const,
             observedAt: secondCompletedAt,
-            notDueReason: CycleNotDueReason.StalePaperBootstrap,
+            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
             cadenceDecision: decideMonthEndCadenceEligibility({
               signalSessionDate: '2026-08-10',
               executionSessionDate: '2026-08-11',
@@ -5438,6 +5438,34 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             store.complete({ ...secondCommand, completedAt: secondCompletedAt, observation: secondObservation }),
           )
           const secondReplay = yield* fence.transaction(store.begin(secondCommand))
+          const secondNextCursor = yield* store.readCursor('primary')
+          const sql = yield* PgClient.PgClient
+          const [secondPersisted] = yield* sql<{ readonly not_due_reason: string | null }>`
+            SELECT not_due_reason
+            FROM lifecycle_commands
+            WHERE controller_key = ${secondCommand.controllerKey}
+              AND command_id = ${secondCommand.commandId}
+          `
+          const legacyCommand = {
+            controllerKey: 'primary',
+            commandId: lifecycleCommandId('primary', 3),
+            sequence: 3,
+            issuedAt: new Date(Date.parse(issuedAt) + 2).toISOString(),
+          }
+          const legacyBegin = yield* fence.transaction(store.begin(legacyCommand))
+          yield* sql`
+            UPDATE lifecycle_commands
+            SET
+              status = 'COMPLETED',
+              result = 'SUCCESS',
+              outcome = 'NOT_DUE',
+              observed_at = started_at + interval '1 microsecond',
+              not_due_reason = 'STALE_PAPER_BOOTSTRAP',
+              completed_at = started_at + interval '1 microsecond'
+            WHERE controller_key = ${legacyCommand.controllerKey}
+              AND command_id = ${legacyCommand.commandId}
+          `
+          const legacyReplay = yield* fence.transaction(store.begin(legacyCommand))
           return {
             recoveredCursor,
             resumed,
@@ -5448,6 +5476,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             secondBegin,
             secondCompleted,
             secondReplay,
+            secondNextCursor,
+            secondPersistedReason: secondPersisted?.not_due_reason,
+            legacyBegin,
+            legacyReplay,
           }
         }),
       )
@@ -5462,7 +5494,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         secondCompleted: {
           result: 'SUCCESS',
           outcome: 'NOT_DUE',
-          notDueReason: CycleNotDueReason.StalePaperBootstrap,
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
           cadenceDecision: {
             signalSessionDate: '2026-08-10',
             executionSessionDate: '2026-08-11',
@@ -5473,7 +5505,18 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           observation: {
             result: 'SUCCESS',
             outcome: 'NOT_DUE',
-            notDueReason: CycleNotDueReason.StalePaperBootstrap,
+            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+          },
+        },
+        secondNextCursor: { _tag: 'Next', sequence: 3 },
+        secondPersistedReason: lifecycleCommandV1StaleExecutionBootstrapReason,
+        legacyBegin: { _tag: 'Execute' },
+        legacyReplay: {
+          _tag: 'Completed',
+          observation: {
+            result: 'SUCCESS',
+            outcome: 'NOT_DUE',
+            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
           },
         },
       })

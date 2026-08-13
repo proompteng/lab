@@ -11,6 +11,7 @@ import {
   initialRestateLifecycleState,
   lifecycleCommandFromCursor,
 } from './restate-lifecycle'
+import { CycleNotDueReason } from './cycle/runner/model'
 
 const configInput = {
   schemaVersion: 'bayn.restate-lifecycle-config.v1',
@@ -78,6 +79,38 @@ describe('Restate lifecycle domain', () => {
     expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: -1 }))).toBe(true)
     expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, deliveryAttempt: 0.5 }))).toBe(true)
     expect(Result.isFailure(decodeRestateLifecycleTick({ ...legacyTick, extra: true }))).toBe(true)
+  })
+
+  test('accepts both rolling-deployment v1 bootstrap reasons and normalizes them internally', () => {
+    const response = {
+      schemaVersion: 'bayn.lifecycle-command-response.v1',
+      accepted: true,
+      commandId: 'c'.repeat(64),
+      sequence: 3,
+      sourceRevision: configInput.sourceRevision,
+      replayed: false,
+      nextDelayMs: 30_000,
+      observation: {
+        result: 'SUCCESS',
+        observedAt: '2026-08-10T20:00:00.000Z',
+        outcome: 'NOT_DUE',
+        notDueReason: 'STALE_PAPER_BOOTSTRAP',
+      },
+    } as const
+
+    const legacy = Result.getOrThrow(decodeLifecycleCommandResponse(response))
+    const canonical = Result.getOrThrow(
+      decodeLifecycleCommandResponse({
+        ...response,
+        observation: {
+          ...response.observation,
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+        },
+      }),
+    )
+
+    expect(legacy.observation).toEqual(canonical.observation)
+    expect(legacy.observation).toMatchObject({ notDueReason: CycleNotDueReason.StaleExecutionBootstrap })
   })
 
   test('rejects credentialed, routed, or non-HTTP command URLs', () => {

@@ -8,6 +8,7 @@ export const LifecycleControllerKeySchema = Schema.Trim.check(Schema.isPattern(/
 export const LifecycleSequenceSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
 )
+export const lifecycleCommandV1StaleExecutionBootstrapReason = 'STALE_PAPER_BOOTSTRAP' as const
 
 export const LifecycleCommandSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.lifecycle-command.v1'),

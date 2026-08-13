@@ -85,7 +85,7 @@ export interface AuthorityGenerationStoreShape {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  /** Read-only recovery view used to resume a durable PAPER close lease after process restart. */
+  /** Read-only recovery view used to resume a durable execution close lease after process restart. */
   readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityGeneration?: (
     generationHash: string,
@@ -118,7 +118,7 @@ export interface CapitalGrantLifecycleStoreShape {
   readonly activateCapitalGrant: (proof: CapitalGrantProofBinding) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /**
    * Activates an application PREPARE result. Both the prepared generation and its OBSERVE source are checked while
-   * the authority row is locked, before any PAPER history or authority write can commit.
+   * the authority row is locked, before any execution history or authority write can commit.
    */
   readonly activatePreparedCapitalGrant: (
     proof: CapitalGrantProofBinding,

@@ -2194,7 +2194,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('atomically activates, reads, and exactly replays one reconciliation-bound research PAPER generation', async () => {
+  test('atomically activates, reads, and exactly replays one reconciliation-bound research execution generation', async () => {
     const initialGenerationHash = hash('research-paper-observe-generation')
     const reconciliation = exactReconciliation('research-paper')
     const expected = makeResearchActivation(initialGenerationHash, reconciliation)
@@ -2212,8 +2212,8 @@ describePostgres('paper accounting persistence', () => {
           const readResearch = store.readResearchAuthorityGeneration
           const readQualified = store.readAuthorityGeneration
           assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
-          assert(readResearch !== undefined, 'research PAPER history read must be implemented')
-          assert(readQualified !== undefined, 'qualified PAPER history read must be implemented')
+          assert(readResearch !== undefined, 'research execution history read must be implemented')
+          assert(readQualified !== undefined, 'qualified execution history read must be implemented')
           yield* seedExactReconciliation(reconciliation)
           yield* store.ensureAuthorityGeneration({
             generationHash: initialGenerationHash,
@@ -2558,7 +2558,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('clears a failure-restricted qualified v2 PAPER generation only after fresh exact reconciliation', async () => {
+  test('clears a failure-restricted qualified v2 execution generation only after fresh exact reconciliation', async () => {
     const sourceGenerationHash = hash('qualified-v2-recovery-source')
     const nextSourceGenerationHash = hash('qualified-v2-recovery-next-source')
     const activationReconciliation = exactReconciliation('qualified-v2-recovery-activation')
@@ -2640,7 +2640,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('rolls a settled PAPER generation into one fresh restart-safe OBSERVE successor', async () => {
+  test('rolls a settled execution generation into one fresh restart-safe OBSERVE successor', async () => {
     const configuredObserveGenerationHash = hash('blocked-rollover-configured-observe')
     const activationReconciliation = exactReconciliation('blocked-rollover-activation')
     const activation = makeResearchActivation(configuredObserveGenerationHash, activationReconciliation)
@@ -2817,7 +2817,7 @@ describePostgres('paper accounting persistence', () => {
     ['completed', executionEpisodeCompletedRestrictionReason],
     ['expired', executionActivationExpiredRestrictionReason],
   ] as const)(
-    'rolls a receipt-finalized %s PAPER generation to clear OBSERVE only after durable receipt evidence',
+    'rolls a receipt-finalized %s execution generation to clear OBSERVE only after durable receipt evidence',
     async (fixture, restrictionReason) => {
       const configuredObserveGenerationHash = hash(`receipt-rollover-${fixture}-configured-observe`)
       const activationReconciliation = exactReconciliation(`receipt-rollover-${fixture}-activation`)
@@ -3567,7 +3567,7 @@ describePostgres('paper accounting persistence', () => {
     expect(afterRejected).toEqual(before)
   }, 15_000)
 
-  test('activates one exact QUALIFIED PAPER generation and replays it without writing', async () => {
+  test('activates one exact QUALIFIED execution generation and replays it without writing', async () => {
     const initialGenerationHash = hash('paper-activation-observe-generation')
     const reconciliation = exactReconciliation('paper-activation')
     const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)

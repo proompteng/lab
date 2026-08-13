@@ -1,10 +1,16 @@
 import { Data, Result, Schema } from 'effect'
 
-import { lifecycleCommandId, LifecycleControllerKeySchema, LifecycleSequenceSchema } from './lifecycle-command-contract'
+import {
+  lifecycleCommandId,
+  lifecycleCommandV1StaleExecutionBootstrapReason,
+  LifecycleControllerKeySchema,
+  LifecycleSequenceSchema,
+} from './lifecycle-command-contract'
 import { maximumOperationalThresholdMs, minimumOperationalThresholdMs } from './config/model'
 import { sha256 } from './hash'
 import { AutonomousCyclePassObservationSchema } from './runtime-state'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
+import { CycleNotDueReason } from './cycle/runner/model'
 
 export const OperationalThresholdSchema = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
@@ -184,10 +190,29 @@ export const decodeLifecycleCommandCursorResponse = Schema.decodeUnknownResult(
   LifecycleCommandCursorResponseSchema,
   strictParseOptions,
 )
-export const decodeLifecycleCommandResponse = Schema.decodeUnknownResult(
+const decodeCanonicalLifecycleCommandResponse = Schema.decodeUnknownResult(
   LifecycleCommandResponseSchema,
   strictParseOptions,
 )
+
+const isRecord = (candidate: unknown): candidate is Readonly<Record<string, unknown>> =>
+  typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
+
+const normalizeLifecycleCommandResponseV1 = (candidate: unknown): unknown => {
+  if (!isRecord(candidate) || !isRecord(candidate['observation'])) return candidate
+  return candidate['observation']['notDueReason'] === lifecycleCommandV1StaleExecutionBootstrapReason
+    ? {
+        ...candidate,
+        observation: {
+          ...candidate['observation'],
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+        },
+      }
+    : candidate
+}
+
+export const decodeLifecycleCommandResponse = (candidate: unknown) =>
+  decodeCanonicalLifecycleCommandResponse(normalizeLifecycleCommandResponseV1(candidate))
 
 export const initialRestateLifecycleState = (
   config: RestateLifecycleConfig,

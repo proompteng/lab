@@ -206,7 +206,7 @@ const interpretCycleCalendar = <R>(
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
   observedAt: string,
-  knownMissedPaperBootstrap: boolean,
+  knownMissedCapitalBootstrap: boolean,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   Effect.fromResult(
     selectCycleCalendarCandidate(
@@ -215,7 +215,7 @@ const interpretCycleCalendar = <R>(
       observation,
       calendarReadContentHash,
       observedAt,
-      knownMissedPaperBootstrap,
+      knownMissedCapitalBootstrap,
     ),
   ).pipe(
     Effect.mapError(calendarCandidateFailureError),
@@ -258,7 +258,7 @@ const readCycleCalendar = <R>(
             calendar.value,
             calendar.evidence.contentHash,
             observedAt,
-            selection.reason === 'MISSED_PAPER_BOOTSTRAP',
+            selection.reason === 'MISSED_CAPITAL_BOOTSTRAP',
           ),
         ),
       ),
