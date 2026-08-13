@@ -57,6 +57,9 @@ describe('Bayn cycle operations alert contract', () => {
   test('collects bounded Bayn metrics and trace-correlated logs through the existing cluster collector', () => {
     const rules = baynRules()
     const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+    const grafanaConfiguration = YAML.parse(
+      readRepoFile('argocd/applications/observability/grafana-values.yaml'),
+    ) as Record<string, any>
     const deployment = YAML.parse(
       readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
     ) as Record<string, any>
@@ -77,6 +80,39 @@ describe('Bayn cycle operations alert contract', () => {
       'url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"',
     )
     expect(deployment.spec.template.metadata.annotations['observability.proompteng.ai/config-sha256']).toBe(digest)
+
+    const datasources = grafanaConfiguration.datasources['datasources.yaml'].datasources as ReadonlyArray<
+      Record<string, any>
+    >
+    const lokiDatasource = datasources.find((datasource) => datasource.uid === 'loki')
+    const tempoDatasource = datasources.find((datasource) => datasource.uid === 'tempo')
+    expect(lokiDatasource?.jsonData.derivedFields).toEqual([
+      {
+        datasourceUid: 'tempo',
+        matcherRegex: '"trace_id"\\s*:\\s*"([0-9a-f]{32})"',
+        name: 'TraceID',
+        url: '$${__value.raw}',
+        urlDisplayLabel: 'View trace',
+      },
+    ])
+    expect(
+      new RegExp(lokiDatasource?.jsonData.derivedFields[0].matcherRegex).exec(
+        '{"trace_id":"0123456789abcdef0123456789abcdef"}',
+      )?.[1],
+    ).toBe('0123456789abcdef0123456789abcdef')
+    expect(tempoDatasource?.jsonData.tracesToLogsV2).toEqual({
+      datasourceUid: 'loki',
+      spanStartTimeShift: '-5s',
+      spanEndTimeShift: '5s',
+      tags: [
+        { key: 'service.name', value: 'service' },
+        { key: 'k8s.namespace.name', value: 'namespace' },
+      ],
+      filterByTraceID: false,
+      filterBySpanID: false,
+      customQuery: true,
+      query: '{$${__tags}} |= "$${__trace.traceId}"',
+    })
 
     const collectorRbac = YAML.parseAllDocuments(
       readRepoFile('argocd/applications/observability/cluster-metrics-alloy-rbac.yaml'),
