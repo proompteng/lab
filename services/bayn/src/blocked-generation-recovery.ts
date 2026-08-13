@@ -71,20 +71,45 @@ export const recoverRestrictedGenerationBeforeRollover = <A, E, R>(input: {
   readonly settle: Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R>
 }): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> => {
   const recover = (): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> =>
-    input.advance.pipe(
-      Effect.flatMap((advanced) =>
-        input.settle.pipe(
-          Effect.catchIf(settlementNeedsMutationRecovery, () => input.wait(advanced).pipe(Effect.andThen(recover()))),
-          Effect.flatMap((receipt) =>
-            receipt._tag === 'RolledOver'
-              ? Effect.succeed(receipt)
-              : Effect.fail(recoveryError('restricted generation recovery found no terminal generation to roll over')),
-          ),
-        ),
+    advanceRestrictedGenerationRecovery(input.advance, input.settle).pipe(
+      Effect.flatMap((step) =>
+        step._tag === 'RolledOver'
+          ? Effect.succeed(step.receipt)
+          : input.wait(step.advance).pipe(Effect.andThen(recover())),
       ),
     )
   return Effect.suspend(recover)
 }
+
+export type RestrictedGenerationRecoveryAdvance<A> =
+  | { readonly _tag: 'Waiting'; readonly advance: A }
+  | {
+      readonly _tag: 'RolledOver'
+      readonly advance: A
+      readonly receipt: Extract<TerminalGenerationRolloverReceipt, { readonly _tag: 'RolledOver' }>
+    }
+
+/** Performs exactly one recovery attempt so an external durable owner can schedule every retry. */
+export const advanceRestrictedGenerationRecovery = <A, E, R>(
+  advance: Effect.Effect<A, E, R>,
+  settle: Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R>,
+): Effect.Effect<RestrictedGenerationRecoveryAdvance<A>, E | OperationalError, R> =>
+  advance.pipe(
+    Effect.flatMap((advanced) =>
+      settle.pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            settlementNeedsMutationRecovery(error)
+              ? Effect.succeed({ _tag: 'Waiting' as const, advance: advanced })
+              : Effect.fail(error),
+          onSuccess: (receipt) =>
+            receipt._tag === 'RolledOver'
+              ? Effect.succeed({ _tag: 'RolledOver' as const, advance: advanced, receipt })
+              : Effect.fail(recoveryError('restricted generation recovery found no terminal generation to roll over')),
+        }),
+      ),
+    ),
+  )
 
 /**
  * Settles the terminal generation first, then requires later exact reconciliation before clearing the kill in a new

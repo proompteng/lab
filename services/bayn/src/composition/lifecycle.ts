@@ -20,10 +20,13 @@ import {
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   type LifecycleAdvanceDisposition,
+  type LifecycleAdvanceMaintenance,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverInterpreter,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
+import { notDueReconciliationError } from '../observe-composition/decision-builder'
+import type { ReconciliationPassError } from '../reconciler'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 
@@ -102,8 +105,9 @@ export const lifecycleMaintenanceCycle =
     plan: ApplicationPlanFor<'AutonomousService'>,
     store: LifecycleCommandStoreShape,
     writerFence: WriterFenceService,
-    maintainReconciliation: Effect.Effect<void>,
-    maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+    maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
+    maintainLifecycle: LifecycleAdvanceMaintenance,
+    interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
   (startup) =>
     Semaphore.make(1).pipe(
@@ -120,7 +124,7 @@ export const lifecycleMaintenanceCycle =
           }),
         )
         const advance = operationPermit.withPermit(
-          maintainLifecycle.pipe(
+          runLifecycleMaintenanceAdvance(maintainReconciliation, maintainLifecycle).pipe(
             Effect.andThen(observeSuccess),
             Effect.catch((error) =>
               currentUtcInstant.pipe(
@@ -140,13 +144,49 @@ export const lifecycleMaintenanceCycle =
         )
         const driver: RecoveryFirstCycleDriver = {
           advance,
-          maintainReconciliation: operationPermit.withPermit(maintainReconciliation),
+          maintainReconciliation: operationPermit.withPermit(
+            maintainLifecycle.beforeReconciliation.pipe(
+              Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
+              Effect.catch((error) =>
+                Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
+                  Effect.annotateLogs({
+                    operation: error.operation,
+                    failure: error.failure,
+                    reason: error.message,
+                  }),
+                ),
+              ),
+            ),
+          ),
           nextDelayMs,
           wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
         }
-        return (lifecycleDriverInterpreter(plan, store, writerFence) ?? interpretRecoveryFirstCycleInProcess)(driver)
+        return (
+          interpretCycleDriverOverride ??
+          lifecycleDriverInterpreter(plan, store, writerFence) ??
+          interpretRecoveryFirstCycleInProcess
+        )(driver)
       }),
     )
+
+const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
+  const converted = notDueReconciliationError(cause)
+  return new CycleRunnerError({
+    operation: 'reconcile-not-due',
+    failure: converted.failure,
+    message: converted.message,
+    cause: converted,
+  })
+}
+
+export const runLifecycleMaintenanceAdvance = (
+  maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
+  maintainLifecycle: LifecycleAdvanceMaintenance,
+): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
+  maintainLifecycle.beforeReconciliation.pipe(
+    Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
+    Effect.andThen(maintainLifecycle.afterReconciliation),
+  )
 
 export const observeCycleGenerationHash = (authority: AuthorityState): Result.Result<string, string> =>
   authority.maximum === Authority.Observe && authority.effective === Authority.Observe
@@ -158,8 +198,10 @@ export const observeCycle = (
   lifecycleCommandStore: LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
   authorityGenerationHash: string,
+  interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
 ) => {
-  const interpretCycleDriver = lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
+  const interpretCycleDriver =
+    interpretCycleDriverOverride ?? lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
   return makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash,
@@ -180,7 +222,7 @@ export const mutationCycle = (
   lifecycleCommandStore: LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
-  beforeLifecycleAdvance?: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+  lifecycleMaintenance?: LifecycleAdvanceMaintenance,
   interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
 ) => {
   const interpretCycleDriver =
@@ -203,7 +245,7 @@ export const mutationCycle = (
     executionEpisodeCutoffAt: executionEpisode.cutoffAt,
     executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
     executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
-    ...(beforeLifecycleAdvance === undefined ? {} : { beforeLifecycleAdvance }),
+    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
     ...(interpretCycleDriver === undefined ? {} : { interpretCycleDriver }),
   })
 }

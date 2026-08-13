@@ -21,6 +21,7 @@ import { TestClock } from 'effect/testing'
 
 import { config, fixtureRuntime, readyState } from './app-test-support'
 import {
+  advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
@@ -74,6 +75,8 @@ import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
+import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
+import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
 
@@ -447,6 +450,56 @@ describe('Bayn application platform', () => {
 })
 
 describe('Bayn PAPER receipt retry boundary', () => {
+  test('restricts expired authority before reconciliation and blocks finalization when reconciliation fails', async () => {
+    const events: string[] = []
+    const success = await Effect.runPromise(
+      runLifecycleMaintenanceAdvance(
+        Effect.sync(() => {
+          events.push('reconcile')
+        }),
+        {
+          beforeReconciliation: Effect.sync(() => {
+            events.push('restrict')
+          }),
+          afterReconciliation: Effect.sync(() => {
+            events.push('finalize')
+            return 'CONTINUE' as const
+          }),
+        },
+      ),
+    )
+
+    expect(success).toBe('CONTINUE')
+    expect(events).toEqual(['restrict', 'reconcile', 'finalize'])
+
+    let finalizationRuns = 0
+    const reconciliationFailure = new ReconciliationError({
+      operation: 'snapshot',
+      message: 'receipt reconciliation failed',
+    })
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runLifecycleMaintenanceAdvance(Effect.fail(reconciliationFailure), {
+          beforeReconciliation: Effect.sync(() => {
+            events.push('restrict-after-expiry')
+          }),
+          afterReconciliation: Effect.sync(() => {
+            finalizationRuns += 1
+            return 'CONTINUE' as const
+          }),
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CycleRunnerError',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation failed: receipt reconciliation failed',
+    })
+    expect(finalizationRuns).toBe(0)
+    expect(events).toContain('restrict-after-expiry')
+  })
+
   test('does not bind a generation receipt before its PAPER entry cutoff', () => {
     const cutoffAt = '2026-08-03T12:00:00.000Z'
 
@@ -513,23 +566,71 @@ describe('Bayn PAPER receipt retry boundary', () => {
     const disposition = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-03T20:15:00.000Z'))
-        return yield* runExecutionLifecycleMaintenance(
-          researchRequest,
-          authorityRestrictionStore,
-          writerFence,
-          (cycleId, observedAt) =>
-            Effect.sync(() => {
-              expect(cycleId).toBeUndefined()
-              expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
-              operations.push('finalize')
-              return true
-            }),
+        return yield* runLifecycleMaintenanceAdvance(
+          Effect.sync(() => {
+            operations.push('reconcile')
+          }),
+          runExecutionLifecycleMaintenance(
+            researchRequest,
+            authorityRestrictionStore,
+            writerFence,
+            (cycleId, observedAt) =>
+              Effect.sync(() => {
+                expect(cycleId).toBeUndefined()
+                expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
+                operations.push('finalize')
+                return true
+              }),
+          ),
         )
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(operations).toEqual(['fence', 'restrict', 'finalize'])
+    expect(operations).toEqual(['fence', 'restrict', 'reconcile', 'fence', 'restrict', 'finalize'])
     expect(disposition).toBe('COMPLETED')
+  })
+
+  test('restricts authority when reconciliation crosses the close expiry boundary', async () => {
+    const operations: string[] = []
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          operations.push('restrict')
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.sync(() => {
+          operations.push('fence')
+        }).pipe(Effect.andThen(effect)),
+    }
+
+    const disposition = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-03T20:14:59.999Z'))
+        return yield* runLifecycleMaintenanceAdvance(
+          Effect.sync(() => {
+            operations.push('reconcile')
+          }).pipe(Effect.andThen(TestClock.adjust(1))),
+          runExecutionLifecycleMaintenance(
+            researchRequest,
+            authorityRestrictionStore,
+            writerFence,
+            (_cycleId, observedAt) =>
+              Effect.sync(() => {
+                expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
+                operations.push('finalize')
+                return false
+              }),
+          ),
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(operations).toEqual(['reconcile', 'fence', 'restrict', 'finalize'])
+    expect(disposition).toBe('CONTINUE')
   })
 
   test('leaves a bounded post-close finalization window for late settlement', () => {
@@ -1208,6 +1309,33 @@ describe('Bayn capital startup recovery boundary', () => {
       expiredIntentCount: 0,
       terminalIntentCount: 1,
     })
+  })
+
+  test('exposes one bounded restricted recovery attempt to an external durable scheduler', async () => {
+    let advances = 0
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.sync(() => {
+          advances += 1
+          return 'recovered-once' as const
+        }),
+        Effect.fail(
+          new OperationalError({
+            component: 'strategy',
+            operation: 'terminal-generation-recovery',
+            message: 'blocked generation intent settlement failed',
+            retryable: false,
+            cause: new BlockedCycleIntentStoreError({
+              failure: 'invariant',
+              message: 'intent still requires broker recovery',
+            }),
+          }),
+        ),
+      ),
+    )
+
+    expect(waiting).toEqual({ _tag: 'Waiting', advance: 'recovered-once' })
+    expect(advances).toBe(1)
   })
 
   test('fails closed when restricted recovery cannot identify a generation to roll over', async () => {

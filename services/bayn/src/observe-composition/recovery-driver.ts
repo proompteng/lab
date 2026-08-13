@@ -27,7 +27,6 @@ import type {
   ObserveAutonomousCycleInput,
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
-  LifecycleAdvanceDisposition,
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleDriverInterpreter,
   RecoveryFirstRuntime,
@@ -95,26 +94,16 @@ const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCade
 
 export const runExternalLifecycleAdvanceWithinTimeout = <A, E, R>(
   operationPermit: Semaphore.Semaphore,
-  beforeLifecycleAdvance: Effect.Effect<LifecycleAdvanceDisposition, E, R> | undefined,
-  runCycleAdvance: Effect.Effect<A, E, R>,
-  completeLifecycleAdvance: Effect.Effect<A, E, R>,
+  lifecycleAdvance: Effect.Effect<A, E, R>,
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  operationPermit
-    .withPermit(
-      beforeLifecycleAdvance === undefined
-        ? runCycleAdvance
-        : beforeLifecycleAdvance.pipe(
-            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
-          ),
-    )
-    .pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.millis(timeoutMs),
-        orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-      }),
-    )
+  operationPermit.withPermit(lifecycleAdvance).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(timeoutMs),
+      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
+    }),
+  )
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -372,21 +361,6 @@ const makeRecoveryFirstCycleDriver = (
           ),
       }),
     )
-    const runCycleAdvance =
-      input.interpretCycleDriver === undefined
-        ? advanceCycle
-        : reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
-            Effect.matchEffect({
-              onFailure: (error) =>
-                currentUtcInstant.pipe(
-                  Effect.flatMap((observedAt) =>
-                    observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }),
-                  ),
-                  Effect.map((observation) => ({ observation })),
-                ),
-              onSuccess: () => advanceCycle,
-            }),
-          )
     const completeLifecycleAdvance = currentUtcInstant.pipe(
       Effect.flatMap((observedAt) => {
         const observation: AutonomousCyclePassObservation = {
@@ -397,27 +371,49 @@ const makeRecoveryFirstCycleDriver = (
         return startup.recordPass(observation).pipe(Effect.as({ observation }))
       }),
     )
-    // The external driver owns one bounded command. Include lifecycle maintenance and the reconciliation preflight in
-    // the same aggregate budget as the cycle pass so a stalled prerequisite cannot outlive Restate's command window.
-    const lifecycleAdvance =
-      input.beforeLifecycleAdvance === undefined
-        ? runCycleAdvance
-        : input.beforeLifecycleAdvance.pipe(
-            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+    const continueAfterReconciliation =
+      input.lifecycleMaintenance === undefined
+        ? advanceCycle
+        : input.lifecycleMaintenance.afterReconciliation.pipe(
+            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? advanceCycle : completeLifecycleAdvance)),
           )
+    const requiresReconciliationPreflight =
+      input.interpretCycleDriver !== undefined || input.lifecycleMaintenance !== undefined
+    const reconciliationPreflight =
+      input.lifecycleMaintenance === undefined
+        ? reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
+        : attemptMutationIdleReconciliation(cadence, reconcile)
+    const runCycleAdvance = requiresReconciliationPreflight
+      ? reconciliationPreflight.pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+                Effect.map((observation) => ({ observation })),
+              ),
+            onSuccess: () => continueAfterReconciliation,
+          }),
+        )
+      : advanceCycle
+    // The external driver owns one bounded command. A lifecycle advance may finalize a receipt, so it always performs
+    // a same-command reconciliation rather than reusing the ordinary cadence. Keep that preflight and maintenance in
+    // the aggregate budget so a stalled prerequisite cannot outlive Restate's command window.
+    const lifecycleAdvance =
+      input.lifecycleMaintenance === undefined
+        ? runCycleAdvance
+        : input.lifecycleMaintenance.beforeReconciliation.pipe(Effect.andThen(runCycleAdvance))
     const advance =
       input.interpretCycleDriver === undefined
         ? operationPermit.withPermit(lifecycleAdvance)
         : runExternalLifecycleAdvanceWithinTimeout(
             operationPermit,
-            input.beforeLifecycleAdvance,
-            runCycleAdvance,
-            completeLifecycleAdvance,
+            lifecycleAdvance,
             cyclePassTimeoutMs,
             observeCycleFailure,
           )
     const maintainReconciliation = operationPermit.withPermit(
-      reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
+      (input.lifecycleMaintenance?.beforeReconciliation ?? Effect.void).pipe(
+        Effect.andThen(reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)),
         Effect.catch((error) =>
           // Reconciliation persistence owns guardian readiness; do not replace Restate lifecycle progress.
           Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(

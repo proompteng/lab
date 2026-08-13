@@ -18,9 +18,7 @@ test('the aggregate lifecycle budget interrupts stalled maintenance before cycle
       })
       const advance = yield* runExternalLifecycleAdvanceWithinTimeout(
         operationPermit,
-        maintenance,
-        cycle,
-        Effect.succeed('COMPLETED' as const),
+        maintenance.pipe(Effect.andThen(cycle)),
         100,
         Effect.fail,
       ).pipe(Effect.forkChild({ startImmediately: true }))
@@ -53,12 +51,10 @@ test('the aggregate lifecycle budget includes time queued behind the reconciliat
 
       const advance = yield* runExternalLifecycleAdvanceWithinTimeout(
         operationPermit,
-        undefined,
         Effect.sync(() => {
           cycleRuns += 1
           return 'CYCLE' as const
         }),
-        Effect.succeed('COMPLETED' as const),
         100,
         Effect.fail,
       ).pipe(Effect.forkChild({ startImmediately: true }))
@@ -89,8 +85,6 @@ test('the aggregate lifecycle timeout is handled before returning to the externa
       const advance = yield* runExternalLifecycleAdvanceWithinTimeout(
         operationPermit,
         Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never)),
-        Effect.succeed('CYCLE' as const),
-        Effect.succeed('COMPLETED' as const),
         100,
         (error) =>
           Effect.sync(() => {

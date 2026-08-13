@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Ref, Result, Scope } from 'effect'
+import { Deferred, Effect, Layer, Option, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
@@ -11,6 +11,7 @@ import {
   type AutonomousRuntimeResolver,
 } from '../app'
 import {
+  advanceRestrictedGenerationRecovery,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
   type TerminalGenerationRolloverReceipt,
@@ -95,7 +96,14 @@ import {
   type ConfiguredCapitalActivation,
 } from './capital-activation'
 
-export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export interface AutonomousServiceRuntimeOptions {
+  readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
+}
+
+export const makeAutonomousServiceRuntime = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  options: AutonomousServiceRuntimeOptions = {},
+) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
     const observeConfig = {
@@ -241,6 +249,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                               runtimeServices.lifecycleCommandStore,
                               runtimeServices.writerFence,
                               authorityGenerationHash,
+                              options.interpretCycleDriver,
                             )(startup)
                           }).pipe(
                             // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
@@ -473,9 +482,6 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                               // @effect-diagnostics-next-line strictEffectProvide:off -- value-only reconciliation services have no resource lifetime
                               Effect.provide(cycleResources),
                               Effect.asVoid,
-                              Effect.catch((cause) =>
-                                Effect.logError('Bayn receipt-finalization reconciliation guardian failed', cause),
-                              ),
                             )
                             const maintainLifecycle = runExecutionLifecycleMaintenance(
                               request,
@@ -490,6 +496,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                                 runtimeServices.writerFence,
                                 maintainReconciliation,
                                 maintainLifecycle,
+                                options.interpretCycleDriver,
                               )(startup).pipe(
                                 // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
                                 Effect.provide(cycleResources),
@@ -664,7 +671,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                                           runtimeServices.writerFence,
                                           onClosedCycle,
                                           maintainExecutionLifecycle,
-                                          interpretCycleDriver,
+                                          interpretCycleDriver ?? options.interpretCycleDriver,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                                           Effect.provide(cycleResources),
@@ -694,15 +701,48 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
-                                      const recover: RecoveryFirstCycleDriverInterpreter = (driver) =>
-                                        recoverRestrictedGenerationBeforeRollover({
-                                          advance: driver.advance,
-                                          wait: driver.wait,
-                                          settle: recoverBlockedGeneration,
-                                        }).pipe(
-                                          Effect.asVoid,
-                                          Effect.catch((cause) => Effect.die(cause)),
-                                        )
+                                      const externalInterpreter = options.interpretCycleDriver
+                                      const recover: RecoveryFirstCycleDriverInterpreter =
+                                        externalInterpreter === undefined
+                                          ? (driver) =>
+                                              recoverRestrictedGenerationBeforeRollover({
+                                                advance: driver.advance,
+                                                wait: driver.wait,
+                                                settle: recoverBlockedGeneration,
+                                              }).pipe(
+                                                Effect.asVoid,
+                                                Effect.catch((cause) => Effect.die(cause)),
+                                              )
+                                          : (driver) =>
+                                              Deferred.make<void>().pipe(
+                                                Effect.flatMap((rolledOver) => {
+                                                  const externallyOwnedDriver = {
+                                                    ...driver,
+                                                    advance: advanceRestrictedGenerationRecovery(
+                                                      driver.advance,
+                                                      recoverBlockedGeneration,
+                                                    ).pipe(
+                                                      Effect.catch((cause) =>
+                                                        cause instanceof OperationalError
+                                                          ? Effect.die(cause)
+                                                          : Effect.fail(cause),
+                                                      ),
+                                                      Effect.tap((step) =>
+                                                        step._tag === 'RolledOver'
+                                                          ? Deferred.succeed(rolledOver, undefined)
+                                                          : Effect.void,
+                                                      ),
+                                                      Effect.map((step) => step.advance),
+                                                    ),
+                                                  }
+                                                  return Effect.raceFirst(
+                                                    externalInterpreter(externallyOwnedDriver).pipe(
+                                                      Effect.andThen(Effect.never),
+                                                    ),
+                                                    Deferred.await(rolledOver),
+                                                  )
+                                                }),
+                                              )
                                       return startCycle(
                                         {
                                           qualificationRunId: cycleBindingId,
@@ -790,8 +830,16 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
         ),
       )
     }
-    return yield* runApplication(plan.config, plan.strategy, dependencies, {
-      ...pendingRuntime(),
-      resolveAfterStartup,
-    })
+    return {
+      dependencies,
+      runtime: {
+        ...pendingRuntime(),
+        resolveAfterStartup,
+      },
+    }
   })
+
+export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+  makeAutonomousServiceRuntime(plan).pipe(
+    Effect.flatMap(({ dependencies, runtime }) => runApplication(plan.config, plan.strategy, dependencies, runtime)),
+  )

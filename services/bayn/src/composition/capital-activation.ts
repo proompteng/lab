@@ -55,6 +55,7 @@ import {
   loadObserveRiskPolicy,
   executionEpisodeCloseExpiresAt,
   executionEpisodeReceiptFinalizationExpiresAt,
+  type LifecycleAdvanceMaintenance,
   type LifecycleAdvanceDisposition,
 } from '../observe-composition'
 import { restrictMutationAuthority } from '../observe-composition/mutation-interpreter'
@@ -1107,32 +1108,44 @@ export const runExecutionLifecycleMaintenance = (
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
   writerFence: WriterFenceService,
   finalizeReceipt: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean, CycleRunnerError>,
-): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
-  currentUtcInstant.pipe(
-    Effect.flatMap((observedAt) => {
-      const decision = decideExecutionLifecycleMaintenance({
+): LifecycleAdvanceMaintenance => {
+  const restrictExpiredAuthority = (
+    decision: ExecutionLifecycleMaintenanceDecision,
+  ): Effect.Effect<void, CycleRunnerError> =>
+    decision.restrictExpiredAuthority
+      ? restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
+          Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+          Effect.provideService(WriterFence, writerFence),
+        )
+      : Effect.void
+  const currentDecision = currentUtcInstant.pipe(
+    Effect.map((observedAt) => ({
+      observedAt,
+      decision: decideExecutionLifecycleMaintenance({
         cutoffAt: request.cutoffAt,
         closeExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
         finalizationExpiresAt: executionEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
         observedAt,
-      })
-      const restrict = decision.restrictExpiredAuthority
-        ? restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
-            Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
-            Effect.provideService(WriterFence, writerFence),
-          )
-        : Effect.void
-      return restrict.pipe(
-        Effect.andThen(
-          decision.attemptReceiptFinalization
-            ? finalizeReceipt(undefined, observedAt).pipe(
-                Effect.map((completed) => (completed ? ('COMPLETED' as const) : ('CONTINUE' as const))),
-              )
-            : Effect.succeed('CONTINUE' as const),
-        ),
-      )
-    }),
+      }),
+    })),
   )
+  return {
+    beforeReconciliation: currentDecision.pipe(Effect.flatMap(({ decision }) => restrictExpiredAuthority(decision))),
+    afterReconciliation: currentDecision.pipe(
+      Effect.flatMap(({ decision, observedAt }) =>
+        restrictExpiredAuthority(decision).pipe(
+          Effect.andThen(
+            decision.attemptReceiptFinalization
+              ? finalizeReceipt(undefined, observedAt).pipe(
+                  Effect.map((completed): LifecycleAdvanceDisposition => (completed ? 'COMPLETED' : 'CONTINUE')),
+                )
+              : Effect.succeed('CONTINUE' as const),
+          ),
+        ),
+      ),
+    ),
+  }
+}
 
 export const completeExecutionLifecycle = <A, E, R, RolloverR>(
   finalization: Effect.Effect<boolean, E, R>,
