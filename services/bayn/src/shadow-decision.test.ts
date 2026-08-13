@@ -522,7 +522,7 @@ describe('OBSERVE shadow decision', () => {
     ).toThrow()
   })
 
-  test('revalues unchanged holdings at the Signal reference basis before cumulative PAPER risk', async () => {
+  test('revalues unchanged holdings at the Signal reference basis before cumulative execution risk', async () => {
     const inflatedNvda = {
       ...position('NVDA'),
       marketPriceMicros: '300000000',
@@ -552,7 +552,7 @@ describe('OBSERVE shadow decision', () => {
       }),
     }))
     const executionSession = paperRiskInputs[0]?.state.executionSession
-    if (executionSession === undefined) throw new Error('fixture requires one PAPER risk delta')
+    if (executionSession === undefined) throw new Error('fixture requires one execution risk delta')
 
     const document = await Effect.runPromise(
       buildExecutionDecision({

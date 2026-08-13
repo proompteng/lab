@@ -872,7 +872,7 @@ describe('Bayn continuous health', () => {
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
   })
 
-  test('projects a completed PAPER episode against returned OBSERVE authority', () => {
+  test('projects a completed execution episode against returned OBSERVE authority', () => {
     const checkedAt = '2026-08-12T16:00:00.000Z'
     const generationHash = 'b'.repeat(64)
     const current: RuntimeState = {
@@ -2016,7 +2016,7 @@ describe('Bayn continuous health', () => {
     }
     const journal: JournalService = {
       post: () => Effect.die(new Error('health probes must not write TigerBeetle')),
-      verifyAccount: () => Effect.die(new Error('health probes must not reconcile paper accounting')),
+      verifyAccount: () => Effect.die(new Error('health probes must not reconcile execution accounting')),
       check: Effect.die(new Error('a durable run must use checkRun')),
       checkRun: () => Effect.sync(() => void (accountingChecks += 1)),
       journalAndReconcile: () => Effect.die(new Error('health probes must not write TigerBeetle')),

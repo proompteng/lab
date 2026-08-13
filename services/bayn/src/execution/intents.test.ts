@@ -164,7 +164,7 @@ const storedRow = {
   expires_at: approvedDecision.expiresAt,
 }
 
-describe('deterministic paper intents', () => {
+describe('deterministic execution intents', () => {
   test('derives one stable full intent identity and Alpaca-bounded client order ID', async () => {
     const [first, second] = await Effect.runPromise(Effect.all([plan(input), plan({ ...input })]))
 
@@ -221,7 +221,7 @@ describe('deterministic paper intents', () => {
     expect(Exit.isFailure(result)).toBe(true)
   })
 
-  test('binds a durable PAPER identity to the exact risk-state authority generation', async () => {
+  test('binds a durable execution identity to the exact risk-state authority generation', async () => {
     const [first, replay, rotated, derivedId] = await Effect.runPromise(
       Effect.all([
         planExecutionIntent(input, riskState()),
@@ -260,7 +260,7 @@ describe('deterministic paper intents', () => {
     expect(Exit.isFailure(await Effect.runPromiseExit(executionIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
   })
 
-  test('binds each residual close generation to a distinct PAPER intent identity', async () => {
+  test('binds each residual close generation to a distinct execution intent identity', async () => {
     const [first, second, replay] = await Effect.runPromise(
       Effect.all([
         executionIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
@@ -361,7 +361,7 @@ describe('pure intent commit decisions', () => {
     expect(Result.isFailure(result) && result.failure._tag).toBe('ImmutableIntentMismatch')
   })
 
-  test('requires PAPER maximum, PAPER effective authority, a clear kill, and exact generation history', () => {
+  test('requires execution maximum and effective authority, a clear kill, and exact generation history', () => {
     const variants = [
       authorityRow({ maximum: Authority.Observe }),
       authorityRow({ effective: Authority.Observe }),

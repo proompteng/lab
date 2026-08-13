@@ -223,12 +223,20 @@ const decideMutationAuthorityDataFirst = (
   const storeOperation = startStoreOperationFor(operation)
   if (authority === undefined) {
     return Result.fail(
-      storeError({ operation: storeOperation, failure: 'authority', message: 'paper authority is not initialized' }),
+      storeError({
+        operation: storeOperation,
+        failure: 'authority',
+        message: 'execution authority is not initialized',
+      }),
     )
   }
   if (authority.maximum !== Authority.Execution) {
     return Result.fail(
-      storeError({ operation: storeOperation, failure: 'authority', message: 'GitOps maximum authority is not PAPER' }),
+      storeError({
+        operation: storeOperation,
+        failure: 'authority',
+        message: 'GitOps maximum authority does not permit execution',
+      }),
     )
   }
   const ordinarySubmit = authority.effective === Authority.Execution && authority.killState === KillState.Clear
@@ -241,7 +249,7 @@ const decideMutationAuthorityDataFirst = (
       storeError({
         operation: 'begin-submit',
         failure: 'authority',
-        message: 'effective authority is not PAPER and clear',
+        message: 'effective authority does not permit execution with a clear kill state',
       }),
     )
   }
@@ -254,7 +262,7 @@ const decideMutationAuthorityDataFirst = (
       storeError({
         operation: 'begin-cancel',
         failure: 'authority',
-        message: 'cancellation requires PAPER authority or an active kill',
+        message: 'cancellation requires execution authority or an active kill',
       }),
     )
   }
@@ -263,7 +271,7 @@ const decideMutationAuthorityDataFirst = (
       storeError({
         operation: storeOperation,
         failure: 'authority',
-        message: 'active PAPER authority lacks its immutable account binding',
+        message: 'active execution authority lacks its immutable account binding',
       }),
     )
   }
@@ -319,7 +327,7 @@ export const decideFinalSubmitAuthorization = (
       storeError({
         operation: 'begin-submit',
         failure: 'authority',
-        message: 'final submit no longer matches active PAPER authority and immutable intent bindings',
+        message: 'final submit no longer matches active execution authority and immutable intent bindings',
       }),
     )
   }
@@ -361,7 +369,7 @@ const decideMutationStartDataFirst = (
       storeError({
         operation: storeOperation,
         failure: 'authority',
-        message: 'intent does not match its immutable PAPER authority-generation bindings',
+        message: 'intent does not match its immutable execution authority-generation bindings',
       }),
     )
   }
@@ -370,7 +378,7 @@ const decideMutationStartDataFirst = (
       storeError({
         operation: storeOperation,
         failure: 'authority',
-        message: 'intent account does not match the active PAPER authority generation',
+        message: 'intent account does not match the active execution authority generation',
       }),
     )
   }
@@ -388,7 +396,7 @@ const decideMutationStartDataFirst = (
       storeError({
         operation: 'begin-submit',
         failure: 'authority',
-        message: 'intent authority generation is not the active PAPER generation',
+        message: 'intent authority generation is not the active execution generation',
       }),
     )
   }

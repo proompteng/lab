@@ -1507,7 +1507,7 @@ const readForwardPerformancePostgresDataFirst = (
           SELECT count(*)::integer AS count
           FROM autonomous_cycles AS cycle
           WHERE cycle.account_id = ${accountId}
-            -- A terminally blocked PAPER cycle is terminal evidence of an incomplete generation.
+            -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
             -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
             AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}

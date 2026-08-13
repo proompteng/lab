@@ -704,7 +704,7 @@ export const CapitalGrantGenerationSchema = CapitalGrantGenerationBase.check(
       const expectedHash = canonicalHashV1Result(capitalGrantGenerationIdentity(material))
       return Result.isSuccess(expectedHash) && generationHash === expectedHash.success
     },
-    { expected: 'a generation hash matching the stable PAPER authority identity' },
+    { expected: 'a generation hash matching the stable execution authority identity' },
   ),
 )
 export type CapitalGrantGeneration = typeof CapitalGrantGenerationSchema.Type
@@ -810,7 +810,7 @@ export const ResearchCapitalGrantGenerationSchema = ResearchCapitalGrantGenerati
       const expectedHash = canonicalHashV1Result(researchCapitalGrantGenerationIdentity(material))
       return Result.isSuccess(expectedHash) && generationHash === expectedHash.success
     },
-    { expected: 'a generation hash matching the stable research PAPER authority identity' },
+    { expected: 'a generation hash matching the stable research execution authority identity' },
   ),
 )
 export type ResearchCapitalGrantGeneration = typeof ResearchCapitalGrantGenerationSchema.Type

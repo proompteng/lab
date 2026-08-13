@@ -217,7 +217,7 @@ const authorityFromRow = (row: Row): Result.Result<GrantedCapitalAuthority, Live
       storeError(
         'read',
         'invariant',
-        'live capital grant does not match its PAPER authority-generation strategy identity',
+        'live capital grant does not match its execution authority-generation strategy identity',
         generationBinding.failure,
       ),
     )

@@ -207,7 +207,7 @@ export const nextInstant = Pipeable.dual(3, nextInstantDataFirst)
 const encodeOrderDataFirst = (
   operation: MutationOperation,
   intent: Intent,
-  message = 'intent cannot be represented as an Alpaca paper order',
+  message = 'intent cannot be represented as an Alpaca order',
 ): Result.Result<EncodedOrder, ExecutionDecisionFailure> =>
   orderRequestBody(intent).pipe(
     Result.mapError(
@@ -288,11 +288,7 @@ const makeDryRunSubmitDataFirst = (
 ): Result.Result<DryRunSubmitDecision, ExecutionDecisionFailure> =>
   validateActiveSubmitRiskDecision(stored, currentTimeMillis, 'dry-run submission').pipe(
     Result.flatMap(({ intent }) =>
-      encodeOrder(
-        MutationOperation.Submit,
-        intent,
-        'approved intent cannot be represented as an Alpaca paper order',
-      ).pipe(
+      encodeOrder(MutationOperation.Submit, intent, 'approved intent cannot be represented as an Alpaca order').pipe(
         Result.map(({ request, requestHash }) => ({
           schemaVersion: 'bayn.paper-submit-dry-run.v1' as const,
           intentId: intent.intentId,
@@ -470,7 +466,7 @@ const recoveryRequestHash = (
           (cause): ExecutionDecisionFailure => ({
             _tag: 'OrderCanonicalizationFailed',
             operation: event.operation,
-            message: 'durable submit request cannot be represented by a compatible Alpaca paper order',
+            message: 'durable submit request cannot be represented by a compatible Alpaca order',
             cause,
           }),
         ),

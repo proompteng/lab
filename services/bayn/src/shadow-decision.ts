@@ -359,7 +359,7 @@ const makeRiskIntent = (
           error('contract', 'shadow target delta identity is not canonicalizable', cause),
         )
       : Result.mapError(executionIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
-          error('contract', 'PAPER target delta identity is not canonicalizable', cause),
+          error('contract', 'execution target delta identity is not canonicalizable', cause),
         )
   const identity = Result.mapError(
     Result.map(identityResult, (intentId) => ({
@@ -770,7 +770,7 @@ const assembleExecutionDecisionDocument = (
       expiresAt: submissionCutoffAt,
       createdAt: input.plannerInput.observedAt,
     }),
-    (cause) => error('contract', 'PAPER decision document failed durable contract validation', cause),
+    (cause) => error('contract', 'execution decision document failed durable contract validation', cause),
   )
 }
 

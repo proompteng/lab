@@ -221,7 +221,7 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
-  test('sizes an immutable PAPER target against its bounded allocation instead of full account equity', () => {
+  test('sizes an immutable execution target against its bounded allocation instead of full account equity', () => {
     const bounded = planSuccess(
       fixture({
         allocationCapitalMicros: '1000000000',

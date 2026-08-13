@@ -705,7 +705,7 @@ describe('forward performance read program', () => {
     })
   })
 
-  test('scopes forward-performance PostgreSQL evidence to one PAPER authority generation', async () => {
+  test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
     const observation: SqlObservation = { statements: [] }
     const evidence = await Effect.runPromise(
       readForwardPerformancePostgres(makeReadOnlySql(observation), identityResult.success.accountId, hash('9')),

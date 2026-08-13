@@ -187,7 +187,7 @@ const runStore = <A, E, R>(
       return storeError(
         operation,
         Schema.isSchemaError(cause) ? 'decode' : 'query',
-        `paper reconciliation ${operation} failed`,
+        `execution reconciliation ${operation} failed`,
         cause,
       )
     }),
@@ -199,7 +199,8 @@ const attempt = <A>(
 ): Result.Result<A, ReconciliationStoreError> =>
   Result.try({
     try: evaluate,
-    catch: (cause) => storeError(operation, 'invariant', `paper reconciliation ${operation} invariant failed`, cause),
+    catch: (cause) =>
+      storeError(operation, 'invariant', `execution reconciliation ${operation} invariant failed`, cause),
   })
 
 const isTransientReconciliationRestriction = (reason: string | null): boolean =>

@@ -41,7 +41,7 @@ const failureOf = <A>(result: Result.Result<A, AccountingFailure>): AccountingFa
 const postedMicros = (prepared: PreparedAccounting): bigint =>
   prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n)
 
-describe('paper accounting', () => {
+describe('execution accounting', () => {
   test('posts an exact buy with an explicit fee', () => {
     const prepared = successOf(prepareAccounting(eventId, fill({ feeMicros: '2500' }), emptyPosition, 7001))
 

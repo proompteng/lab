@@ -99,7 +99,7 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
     ) {
       issues.push({
         path: ['deltaRisk', index, 'evaluation', 'decision'],
-        issue: 'OBSERVE risk must remain blocked by non-paper authority',
+        issue: 'OBSERVE risk must remain blocked while execution authority is unavailable',
       })
     }
     if (
@@ -180,7 +180,7 @@ const executionMaterialIssues = (
     issues.push({ path: ['expiresAt'], issue: 'must equal the immutable cycle submission cutoff' })
   }
   if (document.createdAt >= document.expiresAt) {
-    issues.push({ path: ['createdAt'], issue: 'must precede PAPER authority expiry' })
+    issues.push({ path: ['createdAt'], issue: 'must precede execution authority expiry' })
   }
   const targets = document.targetPlan.intentTargets
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
@@ -204,7 +204,7 @@ const executionMaterialIssues = (
   ) {
     issues.push({
       path: ['dispatchable'],
-      issue: 'must be false only for a planned PAPER decision with exact blocked risk evidence',
+      issue: 'must be false only for a planned execution decision with exact blocked risk evidence',
     })
   }
   if (new Set(document.orderedIntentIds).size !== document.orderedIntentIds.length) {
@@ -219,7 +219,7 @@ const executionMaterialIssues = (
       target.accountId !== document.bindings.accountId ||
       target.createdAt !== document.createdAt
     ) {
-      issues.push({ path: ['targetPlan', 'intentTargets', index], issue: 'must match the PAPER decision bindings' })
+      issues.push({ path: ['targetPlan', 'intentTargets', index], issue: 'must match the execution decision bindings' })
     }
     const risk = document.deltaRisk[index]
     if (risk === undefined) continue
@@ -256,7 +256,7 @@ const executionMaterialIssues = (
     ) {
       issues.push({
         path: ['deltaRisk', index],
-        issue: 'must contain complete cumulative PAPER risk evidence through the first blocked delta',
+        issue: 'must contain complete cumulative execution risk evidence through the first blocked delta',
       })
     }
   }
@@ -276,7 +276,7 @@ const executionMaterialIssues = (
     ) {
       issues.push({
         path: ['riskBlock'],
-        issue: 'must bind the final blocked PAPER risk decision and its exact non-authority reasons',
+        issue: 'must bind the final blocked execution risk decision and its exact non-authority reasons',
       })
     }
   }
@@ -293,7 +293,7 @@ export const ExecutionDecisionDocumentSchema = ExecutionDecisionDocumentSemantic
     const { contentHash, ...material } = document
     const expectedHash = canonicalHashV1Result(material)
     return Result.isFailure(expectedHash) || expectedHash.success !== contentHash
-      ? [{ path: ['contentHash'], issue: 'must match the canonical PAPER decision material' }]
+      ? [{ path: ['contentHash'], issue: 'must match the canonical execution decision material' }]
       : []
   }),
 )
@@ -383,15 +383,15 @@ export const makeExecutionDecisionDocument = (
   material: unknown,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionContractFailure> => {
   if (typeof material !== 'object' || material === null || Array.isArray(material)) {
-    return Result.fail(makeDocumentFailure('contract', 'PAPER decision material must be an object'))
+    return Result.fail(makeDocumentFailure('contract', 'execution decision material must be an object'))
   }
   return Result.flatMap(
     Result.mapError(canonicalHashV1Result(material), (cause) =>
-      makeDocumentFailure('canonicalization', 'PAPER decision material is not canonicalizable', cause),
+      makeDocumentFailure('canonicalization', 'execution decision material is not canonicalizable', cause),
     ),
     (contentHash) =>
       Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
-        makeDocumentFailure('contract', 'PAPER decision material failed its durable contract', cause),
+        makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
       ),
   )
 }
@@ -400,5 +400,5 @@ export const decodeExecutionDecisionDocument = (
   input: unknown,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionContractFailure> =>
   Result.mapError(decodeExecutionDocumentResult(input), (cause) =>
-    decodeDocumentFailure('contract', 'PAPER decision document failed its durable contract', cause),
+    decodeDocumentFailure('contract', 'execution decision document failed its durable contract', cause),
   )
