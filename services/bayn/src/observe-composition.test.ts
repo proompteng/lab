@@ -766,7 +766,7 @@ describe('OBSERVE runtime composition', () => {
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
       quantityMicros: '1000000',
-      notionalLimitMicros: '100000000',
+      notionalLimitMicros: '100000001',
       state: IntentState.Acknowledged,
       createdAt: evaluatedAt,
     }
@@ -791,7 +791,7 @@ describe('OBSERVE runtime composition', () => {
       clientOrderId: intent.clientOrderId,
       intentId: intent.intentId,
       orderType: OrderType.Market,
-      notionalMicros: intent.notionalLimitMicros,
+      notionalMicros: '100000000',
       status: OrderStatus.New,
       filledQuantityMicros: '0',
     })

@@ -1,6 +1,11 @@
 import { Result } from 'effect'
 
-import { MutationOperation, compatibleOrderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import {
+  MutationOperation,
+  compatibleOrderRequestBody,
+  orderPriceBoundaryMicros,
+  orderRequestNotionalMicros,
+} from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
 import {
   Authority,
@@ -144,6 +149,19 @@ const decidePreparedMutationIntentDataFirst = (
         })
       }
       const request = representation.success
+      const requestNotionalMicros = orderRequestNotionalMicros(request)
+      if ('notional' in request && requestNotionalMicros === undefined) {
+        return Result.fail({
+          _tag: 'PreparedMutationIntentDecisionFailure',
+          intentId: intent.intentId,
+          eventType: latest.eventType,
+          message: 'accepted submit has an invalid immutable notional representation',
+        })
+      }
+      const orderRepresentation =
+        requestNotionalMicros === undefined
+          ? { quantityMicros: intent.quantityMicros }
+          : { notionalMicros: requestNotionalMicros }
       const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
       if (Result.isFailure(limitPrice)) {
         return Result.fail({
@@ -165,9 +183,7 @@ const decidePreparedMutationIntentDataFirst = (
           side: intent.side,
           orderType: 'limit_price' in request ? OrderType.Limit : OrderType.Market,
           timeInForce: intent.timeInForce,
-          ...('notional' in request
-            ? { notionalMicros: intent.notionalLimitMicros }
-            : { quantityMicros: intent.quantityMicros }),
+          ...orderRepresentation,
           filledQuantityMicros: '0',
           ...(limitPrice.success === undefined ? {} : { limitPriceMicros: limitPrice.success.toString() }),
           status: OrderStatus.New,

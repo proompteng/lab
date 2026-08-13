@@ -11,6 +11,7 @@ export {
 } from './alpaca-mutations/model'
 export {
   OrderRequestError,
+  alpacaBuyNotionalMicros,
   authorizeMutationAccess,
   cancelRequestHash,
   compatibleOrderRequestBody,
@@ -18,6 +19,7 @@ export {
   legacyBoundedLimitOrderRequestBody,
   orderPriceBoundaryMicros,
   orderRequestBody,
+  orderRequestNotionalMicros,
   resolveMutationCapability,
   submitBody,
   type HistoricalMarketOrderRequestBody,

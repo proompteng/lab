@@ -1,5 +1,6 @@
 import { DateTime, Option, Result } from 'effect'
 
+import { alpacaBuyNotionalMicros } from '../broker/alpaca-mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type {
   ForwardPerformanceEvidenceInput,
@@ -162,6 +163,18 @@ const identityMatches = (
   )
 }
 
+const notionalOrderMatchesIntent = (
+  intent: NonNullable<ForwardPerformanceExecutionEvidence['intent']>,
+  orderNotionalMicros: string,
+): boolean => {
+  if (intent.notionalLimitMicros === undefined) return false
+  const currentNotional = alpacaBuyNotionalMicros(intent.notionalLimitMicros)
+  return (
+    orderNotionalMicros === intent.notionalLimitMicros ||
+    (Result.isSuccess(currentNotional) && orderNotionalMicros === currentNotional.success)
+  )
+}
+
 const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean => {
   const intent = evidence.intent
   const order = evidence.terminalOrder
@@ -169,9 +182,7 @@ const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean =>
   const representationMatches =
     order.quantityMicros !== undefined
       ? order.quantityMicros === evidence.plannedQuantityMicros && order.notionalMicros === undefined
-      : order.notionalMicros !== undefined &&
-        intent.notionalLimitMicros !== undefined &&
-        order.notionalMicros === intent.notionalLimitMicros
+      : order.notionalMicros !== undefined && notionalOrderMatchesIntent(intent, order.notionalMicros)
   return (
     SHA256_PATTERN.test(order.eventId) &&
     order.intentId === evidence.intentId &&
@@ -512,7 +523,9 @@ const measureExecutionQuality = (
         ? true
         : orderQuantity !== undefined
           ? orderQuantity === planned && orderNotional === undefined
-          : orderNotional !== undefined && orderNotional === parseUnsigned(evidence.intent?.notionalLimitMicros, true)
+          : orderNotional !== undefined &&
+            evidence.intent !== undefined &&
+            notionalOrderMatchesIntent(evidence.intent, orderNotional.toString())
       if (
         orderFilled === undefined ||
         !representationMatches ||

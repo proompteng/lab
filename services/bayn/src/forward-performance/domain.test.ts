@@ -400,7 +400,7 @@ describe('forward performance domain', () => {
       intent: {
         ...baseIntent,
         side: 'BUY',
-        notionalLimitMicros: '110000000',
+        notionalLimitMicros: '110000001',
       },
       terminalOrder: {
         ...notionalOrder,
