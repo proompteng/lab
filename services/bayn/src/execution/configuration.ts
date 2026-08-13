@@ -3,8 +3,7 @@ import { pipe, Result, Schema } from 'effect'
 import type { BrokerIdentity } from '../broker/identity'
 import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
-import { ResearchCapitalGrantSchema } from './episode'
-import { Authority, type ResearchCapitalGrantGeneration, type ResearchCapitalGrantProofBinding } from './contracts'
+import { Pipeable } from '../pipeable'
 import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
@@ -15,7 +14,8 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
-import { Pipeable } from '../pipeable'
+import { Authority, type ResearchCapitalGrantGeneration, type ResearchCapitalGrantProofBinding } from './contracts'
+import { ResearchCapitalGrantSchema } from './episode'
 
 export enum CapitalAuthoritySelection {
   None = 'none',
@@ -33,12 +33,12 @@ export interface GrantedCapitalRequest {
   readonly persistedGrantHash?: string
 }
 
-export const paperActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
-export const researchPaperActivationRequestSchemaVersion = 'bayn.paper-research-activation-request.v1' as const
-export const researchPaperPlanSchemaVersion = 'bayn.paper-research-plan.v1' as const
-export const researchPaperBuildContinuationSchemaVersion = 'bayn.paper-research-build-continuation.v1' as const
+export const capitalActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
+export const researchCapitalActivationRequestSchemaVersion = 'bayn.paper-research-activation-request.v1' as const
+export const researchCapitalPlanSchemaVersion = 'bayn.paper-research-plan.v1' as const
+export const researchCapitalBuildContinuationSchemaVersion = 'bayn.paper-research-build-continuation.v1' as const
 
-const PaperActivationStrategySchema = Schema.Struct({
+const CapitalActivationStrategySchema = Schema.Struct({
   name: StrictNonEmptyStringSchema,
   behaviorHash: Sha256Schema,
   parameterHash: Sha256Schema,
@@ -46,15 +46,15 @@ const PaperActivationStrategySchema = Schema.Struct({
   protocolHash: Sha256Schema,
 })
 
-const PaperActivationRevisionBindingSchema = Schema.Struct({
+const CapitalActivationRevisionBindingSchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
   imageRepository: ImageRepositorySchema,
   imageDigest: ImageDigestSchema,
 })
-export type PaperActivationRevisionBinding = typeof PaperActivationRevisionBindingSchema.Type
+export type CapitalActivationRevisionBinding = typeof CapitalActivationRevisionBindingSchema.Type
 
-const PaperActivationRequestMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(paperActivationRequestSchemaVersion),
+const CapitalActivationRequestMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(capitalActivationRequestSchemaVersion),
   qualification: Schema.Struct({
     runId: Sha256Schema,
     lockId: Sha256Schema,
@@ -63,8 +63,8 @@ const PaperActivationRequestMaterialSchema = Schema.Struct({
     imageRepository: ImageRepositorySchema,
     imageDigest: ImageDigestSchema,
   }),
-  activation: PaperActivationRevisionBindingSchema,
-  strategy: PaperActivationStrategySchema,
+  activation: CapitalActivationRevisionBindingSchema,
+  strategy: CapitalActivationStrategySchema,
   limits: Schema.Struct({
     maxOpenOrders: Schema.Literal(0),
     maxPositions: Schema.Literal(0),
@@ -73,22 +73,24 @@ const PaperActivationRequestMaterialSchema = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 
-export const QualifiedPaperActivationRequestSchema = Schema.Struct({
-  ...PaperActivationRequestMaterialSchema.fields,
+export const QualifiedCapitalActivationRequestSchema = Schema.Struct({
+  ...CapitalActivationRequestMaterialSchema.fields,
   requestHash: Sha256Schema,
 }).check(
-  Schema.makeFilter((request: typeof PaperActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
-    if (request.expiresAt <= request.cutoffAt) return false
-    const expected = canonicalHashV1Result(requestWithoutHash(request))
-    return Result.isSuccess(expected) && request.requestHash === expected.success
-  }),
+  Schema.makeFilter(
+    (request: typeof CapitalActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
+      if (request.expiresAt <= request.cutoffAt) return false
+      const expected = canonicalHashV1Result(requestWithoutHash(request))
+      return Result.isSuccess(expected) && request.requestHash === expected.success
+    },
+  ),
 )
 
-export type QualifiedPaperActivationRequest = typeof QualifiedPaperActivationRequestSchema.Type
+export type QualifiedCapitalActivationRequest = typeof QualifiedCapitalActivationRequestSchema.Type
 
-const ResearchPaperPlanFields = {
-  activation: PaperActivationRevisionBindingSchema,
-  strategy: PaperActivationStrategySchema,
+const ResearchCapitalPlanFields = {
+  activation: CapitalActivationRevisionBindingSchema,
+  strategy: CapitalActivationStrategySchema,
   broker: Schema.Struct({
     environment: Schema.Literal(BrokerEnvironment.Sandbox),
     accountId: StrictNonEmptyStringSchema,
@@ -104,30 +106,30 @@ const ResearchPaperPlanFields = {
   maximumCloseSessions: Schema.Literal(3),
 } as const
 
-const ResearchPaperPlanMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(researchPaperPlanSchemaVersion),
-  ...ResearchPaperPlanFields,
+const ResearchCapitalPlanMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(researchCapitalPlanSchemaVersion),
+  ...ResearchCapitalPlanFields,
 })
-export type ResearchPaperPlanMaterial = typeof ResearchPaperPlanMaterialSchema.Type
+export type ResearchCapitalPlanMaterial = typeof ResearchCapitalPlanMaterialSchema.Type
 
-export const makeResearchPaperPlanHash = (
-  material: ResearchPaperPlanMaterial,
-): Result.Result<string, 'ResearchPaperPlanCanonicalizationFailed'> =>
+export const makeResearchCapitalPlanHash = (
+  material: ResearchCapitalPlanMaterial,
+): Result.Result<string, 'ResearchCapitalPlanCanonicalizationFailed'> =>
   pipe(
     canonicalHashV1Result(material),
-    Result.mapError(() => 'ResearchPaperPlanCanonicalizationFailed' as const),
+    Result.mapError(() => 'ResearchCapitalPlanCanonicalizationFailed' as const),
   )
 
-const ResearchPaperActivationRequestMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(researchPaperActivationRequestSchemaVersion),
+const ResearchCapitalActivationRequestMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(researchCapitalActivationRequestSchemaVersion),
   grant: ResearchCapitalGrantSchema,
-  ...ResearchPaperPlanFields,
+  ...ResearchCapitalPlanFields,
 })
 
 const researchPlanMaterial = (
-  request: typeof ResearchPaperActivationRequestMaterialSchema.Type,
-): ResearchPaperPlanMaterial => ({
-  schemaVersion: researchPaperPlanSchemaVersion,
+  request: typeof ResearchCapitalActivationRequestMaterialSchema.Type,
+): ResearchCapitalPlanMaterial => ({
+  schemaVersion: researchCapitalPlanSchemaVersion,
   activation: request.activation,
   strategy: request.strategy,
   broker: request.broker,
@@ -138,36 +140,36 @@ const researchPlanMaterial = (
   maximumCloseSessions: request.maximumCloseSessions,
 })
 
-export const ResearchPaperActivationRequestSchema = Schema.Struct({
-  ...ResearchPaperActivationRequestMaterialSchema.fields,
+export const ResearchCapitalActivationRequestSchema = Schema.Struct({
+  ...ResearchCapitalActivationRequestMaterialSchema.fields,
   requestHash: Sha256Schema,
 }).check(
   Schema.makeFilter(
-    (request: typeof ResearchPaperActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
+    (request: typeof ResearchCapitalActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
       if (request.expiresAt <= request.cutoffAt) return false
-      const planHash = makeResearchPaperPlanHash(researchPlanMaterial(request))
+      const planHash = makeResearchCapitalPlanHash(researchPlanMaterial(request))
       if (Result.isFailure(planHash) || request.grant.planHash !== planHash.success) return false
       const expected = canonicalHashV1Result(requestWithoutHash(request))
       return Result.isSuccess(expected) && request.requestHash === expected.success
     },
   ),
 )
-export type ResearchPaperActivationRequest = typeof ResearchPaperActivationRequestSchema.Type
+export type ResearchCapitalActivationRequest = typeof ResearchCapitalActivationRequestSchema.Type
 
-const ResearchPaperBuildContinuationMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(researchPaperBuildContinuationSchemaVersion),
-  request: ResearchPaperActivationRequestSchema,
+const ResearchCapitalBuildContinuationMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(researchCapitalBuildContinuationSchemaVersion),
+  request: ResearchCapitalActivationRequestSchema,
   generationHash: Sha256Schema,
-  activation: PaperActivationRevisionBindingSchema,
+  activation: CapitalActivationRevisionBindingSchema,
 })
 
-export const ResearchPaperBuildContinuationSchema = Schema.Struct({
-  ...ResearchPaperBuildContinuationMaterialSchema.fields,
+export const ResearchCapitalBuildContinuationSchema = Schema.Struct({
+  ...ResearchCapitalBuildContinuationMaterialSchema.fields,
   continuationHash: Sha256Schema,
 }).check(
   Schema.makeFilter(
     (
-      continuation: typeof ResearchPaperBuildContinuationMaterialSchema.Type & {
+      continuation: typeof ResearchCapitalBuildContinuationMaterialSchema.Type & {
         readonly continuationHash: string
       },
     ) => {
@@ -178,27 +180,28 @@ export const ResearchPaperBuildContinuationSchema = Schema.Struct({
     },
   ),
 )
-export type ResearchPaperBuildContinuation = typeof ResearchPaperBuildContinuationSchema.Type
+export type ResearchCapitalBuildContinuation = typeof ResearchCapitalBuildContinuationSchema.Type
 
-export const makeResearchPaperBuildContinuation = (
-  material: typeof ResearchPaperBuildContinuationMaterialSchema.Type,
-): Result.Result<ResearchPaperBuildContinuation, 'ResearchPaperBuildContinuationCanonicalizationFailed'> => {
+export const makeResearchCapitalBuildContinuation = (
+  material: typeof ResearchCapitalBuildContinuationMaterialSchema.Type,
+): Result.Result<ResearchCapitalBuildContinuation, 'ResearchCapitalBuildContinuationCanonicalizationFailed'> => {
   if (material.activation.imageRepository !== material.request.activation.imageRepository) {
-    return Result.fail('ResearchPaperBuildContinuationCanonicalizationFailed')
+    return Result.fail('ResearchCapitalBuildContinuationCanonicalizationFailed')
   }
   return pipe(
     canonicalHashV1Result(material),
-    Result.mapError(() => 'ResearchPaperBuildContinuationCanonicalizationFailed' as const),
-    Result.map((continuationHash) => ({ ...material, continuationHash }) as ResearchPaperBuildContinuation),
+    Result.mapError(() => 'ResearchCapitalBuildContinuationCanonicalizationFailed' as const),
+    Result.map((continuationHash) => ({ ...material, continuationHash }) as ResearchCapitalBuildContinuation),
   )
 }
 
-export const isResearchPaperActivationRequest = (
-  request: PaperActivationRequest,
-): request is ResearchPaperActivationRequest => request.schemaVersion === researchPaperActivationRequestSchemaVersion
+export const isResearchCapitalActivationRequest = (
+  request: CapitalActivationRequest,
+): request is ResearchCapitalActivationRequest =>
+  request.schemaVersion === researchCapitalActivationRequestSchemaVersion
 
 export const researchCapitalGrantProof = (
-  request: ResearchPaperActivationRequest,
+  request: ResearchCapitalActivationRequest,
 ): ResearchCapitalGrantProofBinding => ({
   schemaVersion: 'bayn.research-paper-grant-proof.v1',
   grant: request.grant,
@@ -216,8 +219,8 @@ export const researchCapitalGrantProof = (
   proofPlanHash: request.grant.planHash,
 })
 
-const researchPaperGenerationIsBoundToRequestDataFirst = (
-  request: ResearchPaperActivationRequest,
+const researchCapitalGenerationIsBoundToRequestDataFirst = (
+  request: ResearchCapitalActivationRequest,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
 ): Result.Result<void, string> => {
@@ -226,7 +229,7 @@ const researchPaperGenerationIsBoundToRequestDataFirst = (
     generation.previousGenerationHash !== sourceGenerationHash ||
     generation.grant.planHash !== request.grant.planHash
   ) {
-    return Result.fail('research PAPER generation identity is not bound to the activation request')
+    return Result.fail('research capital generation identity is not bound to the activation request')
   }
   if (
     generation.activationSourceRevision !== request.activation.sourceRevision ||
@@ -238,7 +241,7 @@ const researchPaperGenerationIsBoundToRequestDataFirst = (
     generation.strategyParameterSchemaVersion !== request.strategy.parameterSchemaVersion ||
     generation.strategyProtocolHash !== request.strategy.protocolHash
   ) {
-    return Result.fail('research PAPER generation is not bound to the requested current strategy and build')
+    return Result.fail('research capital generation is not bound to the requested current strategy and build')
   }
   if (
     generation.accountId !== request.broker.accountId ||
@@ -246,21 +249,21 @@ const researchPaperGenerationIsBoundToRequestDataFirst = (
     generation.riskPolicyHash !== request.riskPolicyHash ||
     generation.proofPlanHash !== request.grant.planHash
   ) {
-    return Result.fail('research PAPER generation is not bound to the requested broker and risk controls')
+    return Result.fail('research capital generation is not bound to the requested broker and risk controls')
   }
   return Result.succeed(undefined)
 }
 
-export const researchPaperGenerationIsBoundToRequest = Pipeable.dual(
+export const researchCapitalGenerationIsBoundToRequest = Pipeable.dual(
   3,
-  researchPaperGenerationIsBoundToRequestDataFirst,
+  researchCapitalGenerationIsBoundToRequestDataFirst,
 )
 
-export const researchPaperBuildContinuationIsBound = (
-  continuation: ResearchPaperBuildContinuation,
+export const researchCapitalBuildContinuationIsBound = (
+  continuation: ResearchCapitalBuildContinuation,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
-  currentActivation: PaperActivationRevisionBinding,
+  currentActivation: CapitalActivationRevisionBinding,
 ): Result.Result<void, string> => {
   if (
     continuation.generationHash !== generation.generationHash ||
@@ -268,80 +271,82 @@ export const researchPaperBuildContinuationIsBound = (
     continuation.activation.imageRepository !== currentActivation.imageRepository ||
     continuation.activation.imageDigest !== currentActivation.imageDigest
   ) {
-    return Result.fail('research PAPER build continuation is not bound to the active generation and current build')
+    return Result.fail('research capital build continuation is not bound to the active generation and current build')
   }
-  return researchPaperGenerationIsBoundToRequest(continuation.request, sourceGenerationHash, generation)
+  return researchCapitalGenerationIsBoundToRequest(continuation.request, sourceGenerationHash, generation)
 }
 
-export const PaperActivationRequestSchema = Schema.Union([
-  QualifiedPaperActivationRequestSchema,
-  ResearchPaperActivationRequestSchema,
+export const CapitalActivationRequestSchema = Schema.Union([
+  QualifiedCapitalActivationRequestSchema,
+  ResearchCapitalActivationRequestSchema,
 ])
-export type PaperActivationRequest = typeof PaperActivationRequestSchema.Type
+export type CapitalActivationRequest = typeof CapitalActivationRequestSchema.Type
 
-export const PaperActivationConfigurationSchema = Schema.Union([
-  PaperActivationRequestSchema,
-  ResearchPaperBuildContinuationSchema,
+export const CapitalActivationConfigurationSchema = Schema.Union([
+  CapitalActivationRequestSchema,
+  ResearchCapitalBuildContinuationSchema,
 ])
-export type PaperActivationConfiguration = typeof PaperActivationConfigurationSchema.Type
+export type CapitalActivationConfiguration = typeof CapitalActivationConfigurationSchema.Type
 
-export const isResearchPaperBuildContinuation = (
-  configuration: PaperActivationConfiguration,
-): configuration is ResearchPaperBuildContinuation =>
-  configuration.schemaVersion === researchPaperBuildContinuationSchemaVersion
+export const isResearchCapitalBuildContinuation = (
+  configuration: CapitalActivationConfiguration,
+): configuration is ResearchCapitalBuildContinuation =>
+  configuration.schemaVersion === researchCapitalBuildContinuationSchemaVersion
 
 const requestWithoutHash = (
   request:
-    | QualifiedPaperActivationRequest
-    | ResearchPaperActivationRequest
-    | (typeof PaperActivationRequestMaterialSchema.Type & { readonly requestHash: string }),
+    | QualifiedCapitalActivationRequest
+    | ResearchCapitalActivationRequest
+    | (typeof CapitalActivationRequestMaterialSchema.Type & { readonly requestHash: string }),
 ) => {
   const { requestHash: _requestHash, ...material } = request
   return material
 }
 
-export const makePaperActivationRequest = (
-  material: typeof PaperActivationRequestMaterialSchema.Type,
-): Result.Result<QualifiedPaperActivationRequest, 'PaperActivationRequestCanonicalizationFailed'> =>
+export const makeCapitalActivationRequest = (
+  material: typeof CapitalActivationRequestMaterialSchema.Type,
+): Result.Result<QualifiedCapitalActivationRequest, 'CapitalActivationRequestCanonicalizationFailed'> =>
   pipe(
     canonicalHashV1Result(material),
-    Result.mapError(() => 'PaperActivationRequestCanonicalizationFailed' as const),
-    Result.flatMap((requestHash) => Result.succeed({ ...material, requestHash } as QualifiedPaperActivationRequest)),
+    Result.mapError(() => 'CapitalActivationRequestCanonicalizationFailed' as const),
+    Result.flatMap((requestHash) => Result.succeed({ ...material, requestHash } as QualifiedCapitalActivationRequest)),
   )
 
-export const makeResearchPaperActivationRequest = (
-  material: typeof ResearchPaperActivationRequestMaterialSchema.Type,
+export const makeResearchCapitalActivationRequest = (
+  material: typeof ResearchCapitalActivationRequestMaterialSchema.Type,
 ): Result.Result<
-  ResearchPaperActivationRequest,
-  'PaperActivationRequestCanonicalizationFailed' | 'ResearchPaperCloseWindowInvalid' | 'ResearchPaperPlanHashMismatch'
+  ResearchCapitalActivationRequest,
+  | 'CapitalActivationRequestCanonicalizationFailed'
+  | 'ResearchCapitalCloseWindowInvalid'
+  | 'ResearchCapitalPlanHashMismatch'
 > => {
-  if (material.expiresAt <= material.cutoffAt) return Result.fail('ResearchPaperCloseWindowInvalid')
-  const planHash = makeResearchPaperPlanHash(researchPlanMaterial(material))
-  if (Result.isFailure(planHash)) return Result.fail('PaperActivationRequestCanonicalizationFailed')
-  if (material.grant.planHash !== planHash.success) return Result.fail('ResearchPaperPlanHashMismatch')
+  if (material.expiresAt <= material.cutoffAt) return Result.fail('ResearchCapitalCloseWindowInvalid')
+  const planHash = makeResearchCapitalPlanHash(researchPlanMaterial(material))
+  if (Result.isFailure(planHash)) return Result.fail('CapitalActivationRequestCanonicalizationFailed')
+  if (material.grant.planHash !== planHash.success) return Result.fail('ResearchCapitalPlanHashMismatch')
   return pipe(
     canonicalHashV1Result(material),
-    Result.mapError(() => 'PaperActivationRequestCanonicalizationFailed' as const),
-    Result.map((requestHash) => ({ ...material, requestHash }) as ResearchPaperActivationRequest),
+    Result.mapError(() => 'CapitalActivationRequestCanonicalizationFailed' as const),
+    Result.map((requestHash) => ({ ...material, requestHash }) as ResearchCapitalActivationRequest),
   )
 }
 
-const decodePaperActivationRequestResultDataFirst = Schema.decodeUnknownResult(
-  PaperActivationRequestSchema,
+const decodeCapitalActivationRequestResultDataFirst = Schema.decodeUnknownResult(
+  CapitalActivationRequestSchema,
   strictParseOptions,
 )
 
-export const decodePaperActivationRequestResult = Pipeable.dual(1, (input: unknown) =>
-  decodePaperActivationRequestResultDataFirst(input),
+export const decodeCapitalActivationRequestResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCapitalActivationRequestResultDataFirst(input),
 )
 
-const decodePaperActivationConfigurationResultDataFirst = Schema.decodeUnknownResult(
-  PaperActivationConfigurationSchema,
+const decodeCapitalActivationConfigurationResultDataFirst = Schema.decodeUnknownResult(
+  CapitalActivationConfigurationSchema,
   strictParseOptions,
 )
 
-export const decodePaperActivationConfigurationResult = Pipeable.dual(1, (input: unknown) =>
-  decodePaperActivationConfigurationResultDataFirst(input),
+export const decodeCapitalActivationConfigurationResult = Pipeable.dual(1, (input: unknown) =>
+  decodeCapitalActivationConfigurationResultDataFirst(input),
 )
 
 export type CapitalAuthorityRequest = NoCapitalRequest | GrantedCapitalRequest
