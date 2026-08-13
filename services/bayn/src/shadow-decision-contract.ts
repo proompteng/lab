@@ -4,7 +4,7 @@ import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/in
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
-import { EvaluationSchema, Reason } from './risk'
+import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
 
@@ -95,7 +95,7 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
     }
     if (
       evaluation.decision.outcome !== RiskOutcome.Blocked ||
-      !evaluation.decision.reasonCodes.includes(Reason.AuthorityNotGranted)
+      !evaluation.decision.reasonCodes.some(isAuthorityNotGrantedReason)
     ) {
       issues.push({
         path: ['deltaRisk', index, 'evaluation', 'decision'],
@@ -272,7 +272,7 @@ const executionMaterialIssues = (
       blockedDecision.reasonCodes.length !== document.riskBlock.reasonCodes.length ||
       blockedDecision.reasonCodes.some((reason, index) => reason !== document.riskBlock?.reasonCodes[index]) ||
       blockedDecision.reasonCodes.some((reason) => !knownReasonCodes.includes(reason as Reason)) ||
-      blockedDecision.reasonCodes.includes(Reason.AuthorityNotGranted)
+      blockedDecision.reasonCodes.some(isAuthorityNotGrantedReason)
     ) {
       issues.push({
         path: ['riskBlock'],

@@ -23,7 +23,7 @@ import {
   type ReferenceIntent,
 } from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
-import { evaluate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
+import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
@@ -458,7 +458,7 @@ const reduceShadowDelta = (
   const validOutcome =
     context.authority === Authority.Observe
       ? evaluation.success.decision.outcome === RiskOutcome.Blocked &&
-        evaluation.success.decision.reasonCodes.includes(Reason.AuthorityNotGranted)
+        evaluation.success.decision.reasonCodes.some(isAuthorityNotGrantedReason)
       : evaluation.success.decision.outcome === RiskOutcome.Approved ||
         evaluation.success.decision.outcome === RiskOutcome.Blocked
   if (evaluation.success.policyHash !== context.policyHash || !validOutcome) {

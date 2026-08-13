@@ -1227,6 +1227,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 36, name: 'qualified_cycle_snapshot_binding' },
       { migration_id: 37, name: 'account_neutral_runtime_compatibility' },
       { migration_id: 38, name: 'account_neutral_capital_grants' },
+      { migration_id: 39, name: 'account_neutral_authority_terminalization' },
     ])
   })
 

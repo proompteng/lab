@@ -38,6 +38,7 @@ import notionalMarketOrders from '../../migrations/0035_notional_market_orders'
 import qualifiedCycleSnapshotBinding from '../../migrations/0036_qualified_cycle_snapshot_binding'
 import accountNeutralRuntimeCompatibility from '../../migrations/0037_account_neutral_runtime_compatibility'
 import accountNeutralCapitalGrants from '../../migrations/0038_account_neutral_capital_grants'
+import accountNeutralAuthorityTerminalization from '../../migrations/0039_account_neutral_authority_terminalization'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -78,4 +79,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '36_qualified_cycle_snapshot_binding': qualifiedCycleSnapshotBinding,
   '37_account_neutral_runtime_compatibility': accountNeutralRuntimeCompatibility,
   '38_account_neutral_capital_grants': accountNeutralCapitalGrants,
+  '39_account_neutral_authority_terminalization': accountNeutralAuthorityTerminalization,
 })

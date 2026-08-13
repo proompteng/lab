@@ -91,7 +91,7 @@ import { planExecutionIntent } from '../../execution/intents'
 import { runOnce, type ReconciliationPassResult } from '../../reconciler'
 import { reconciledStateHash } from '../../reconciliation'
 import { readForwardPerformancePostgres } from '../../forward-performance/postgres'
-import { Reason, type Policy } from '../../risk'
+import { Gate, Reason, type Policy } from '../../risk'
 import {
   makeObserveShadowDecisionDocument,
   makeExecutionDecisionDocument,
@@ -4607,6 +4607,101 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       mutations: 0,
       orders: 0,
     })
+  })
+
+  test('rejects the account-neutral authority reason as a durable risk terminalization', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makePlannedDraft('account-neutral-authority-risk-blocked', executionPolicy)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotA, {
+          transformPolicy: (policy) => ({ ...policy, maxOrderNotionalMicros: '1' }),
+        })
+        const blockedIndex = planned.document.deltaRisk.length - 1
+        const blockedRisk = planned.document.deltaRisk[blockedIndex]
+        if (blockedRisk === undefined || planned.document.riskBlock === undefined) {
+          return yield* Effect.die(new Error('authority terminalization fixture requires blocked risk evidence'))
+        }
+
+        const gates = blockedRisk.evaluation.gates.map((gate) => ({
+          ...gate,
+          passed: gate.name !== Gate.Authority,
+        }))
+        const { decisionId: _decisionId, ...decisionMaterial } = blockedRisk.evaluation.decision
+        const authorityDecisionMaterial = {
+          ...decisionMaterial,
+          reasonCodes: [Reason.AuthorityNotGranted],
+        }
+        const authorityDecision = {
+          ...authorityDecisionMaterial,
+          decisionId: canonicalHashV1(authorityDecisionMaterial),
+        }
+        const deltaRisk = planned.document.deltaRisk.map((risk, index) =>
+          index === blockedIndex
+            ? { ...risk, evaluation: { ...risk.evaluation, decision: authorityDecision, gates } }
+            : risk,
+        )
+        const { contentHash: _contentHash, ...documentMaterial } = planned.document
+        const authorityDocumentMaterial = {
+          ...documentMaterial,
+          deltaRisk,
+          riskBlock: {
+            intentId: authorityDecision.intentId,
+            decisionId: authorityDecision.decisionId,
+            reasonCodes: authorityDecision.reasonCodes,
+          },
+        }
+        const authorityDocument = {
+          ...authorityDocumentMaterial,
+          contentHash: canonicalHashV1(authorityDocumentMaterial),
+        }
+
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO autonomous_cycle_shadow_decisions (
+                cycle_id, schema_version, document, created_at
+              ) VALUES (
+                ${draft.identity.cycleId}, ${authorityDocument.schemaVersion},
+                ${sql.json(authorityDocument)}, ${authorityDocument.createdAt}
+              )
+            `
+            yield* sql`
+              UPDATE autonomous_cycles
+              SET
+                decision_hash = ${authorityDocument.contentHash},
+                state_version = state_version + 1,
+                updated_at = ${plannedDecisionAt}
+              WHERE cycle_id = ${draft.identity.cycleId}
+            `
+          }),
+        )
+        const terminalization = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Risk},
+            state_version = state_version + 1,
+            updated_at = ${plannedDecisionAt},
+            terminal_at = ${plannedDecisionAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const [persisted] = yield* sql<{ state: string; terminal_reason: string | null }>`
+          SELECT state, terminal_reason
+          FROM autonomous_cycles
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        return { persisted, terminalization }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.terminalization)).toBeTrue()
+    expect(result.persisted).toEqual({ state: CycleState.Active, terminal_reason: null })
   })
 
   test('terminalizes a known denied PAPER intent and releases oldest-unfinished selection immediately', async () => {

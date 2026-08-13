@@ -117,7 +117,9 @@ export enum Reason {
   MarketDataSymbolMismatch = 'MARKET_DATA_SYMBOL_MISMATCH',
   OrderTypeNotAllowed = 'ORDER_TYPE_NOT_ALLOWED',
   TimeInForceNotAllowed = 'TIME_IN_FORCE_NOT_ALLOWED',
-  AuthorityNotGranted = 'AUTHORITY_NOT_PAPER',
+  AuthorityNotGranted = 'AUTHORITY_NOT_GRANTED',
+  /** Historical reason code retained only for decoding hash-bound risk evidence. */
+  LegacyAuthorityNotGranted = 'AUTHORITY_NOT_PAPER',
   KillActive = 'KILL_ACTIVE',
   ReconciliationNotExact = 'RECONCILIATION_NOT_EXACT',
   BrokerStateStale = 'BROKER_STATE_STALE',
@@ -137,6 +139,9 @@ export enum Reason {
   DailyLossExceeded = 'DAILY_LOSS_EXCEEDED',
   DrawdownExceeded = 'DRAWDOWN_EXCEEDED',
 }
+
+export const isAuthorityNotGrantedReason = (reason: string): boolean =>
+  reason === Reason.AuthorityNotGranted || reason === Reason.LegacyAuthorityNotGranted
 
 export interface RiskGateDefinition {
   readonly name: Gate
@@ -430,7 +435,12 @@ export const EvaluationSchema = EvaluationBase.check(
       evaluation.gates.length !== orderedRiskGateDefinitions.length ||
       evaluation.gates.some((gate, index) => {
         const definition = orderedRiskGateDefinitions[index]
-        return definition === undefined || gate.name !== definition.name || gate.reason !== definition.reason
+        return (
+          definition === undefined ||
+          gate.name !== definition.name ||
+          (gate.reason !== definition.reason &&
+            !(definition.name === Gate.Authority && gate.reason === Reason.LegacyAuthorityNotGranted))
+        )
       })
     ) {
       issues.push({ path: ['gates'], issue: 'must contain every risk gate/reason pair in canonical order' })
