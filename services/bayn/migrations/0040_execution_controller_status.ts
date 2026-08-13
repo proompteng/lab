@@ -45,4 +45,10 @@ export default Effect.gen(function* () {
     BEFORE INSERT OR UPDATE OR DELETE ON execution_controller_status
     FOR EACH ROW EXECUTE FUNCTION enforce_execution_controller_status_transition()
   `
+
+  yield* sql`
+    CREATE TRIGGER execution_controller_status_reject_truncate
+    BEFORE TRUNCATE ON execution_controller_status
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()
+  `
 })

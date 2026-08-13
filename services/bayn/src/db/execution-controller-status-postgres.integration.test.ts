@@ -91,7 +91,10 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           nextDueAt: '2026-08-13T17:01:30.000Z',
         })
         const stored = yield* store.read('primary')
-        return { applied, replayed, stale, conflict, nextEpoch, stored }
+        const sql = yield* PgClient.PgClient
+        const truncate = yield* Effect.exit(sql`TRUNCATE execution_controller_status`)
+        const retainedAfterTruncate = yield* store.read('primary')
+        return { applied, replayed, stale, conflict, nextEpoch, stored, truncate, retainedAfterTruncate }
       }),
     )
 
@@ -108,5 +111,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       status: { epoch: 4, lastSequence: 0, lastOutcome: 'Completed', lastReceiptHash: 'd'.repeat(64) },
     })
     expect(result.stored).toEqual(result.nextEpoch.status)
+    expect(result.truncate._tag).toBe('Failure')
+    expect(result.retainedAfterTruncate).toEqual(result.nextEpoch.status)
   })
 })
