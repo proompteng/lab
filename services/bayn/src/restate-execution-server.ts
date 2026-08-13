@@ -2,13 +2,14 @@ import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Layer, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Redacted, Schema } from 'effect'
 
 import { loadApplicationPlan } from './application-plan'
 import type { ApplicationPlan, ApplicationPlanFor } from './app'
 import { acquireNativeExecutionRuntime } from './composition/native-execution-runtime'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
+  executionBootstrapAuthorizationHash,
   makeBaynExecutionBootstrap,
   makeBaynExecutionController,
   type ExecutionControllerConfig,
@@ -24,6 +25,7 @@ export class RestateExecutionServerError extends Data.TaggedError('RestateExecut
 }> {}
 
 const executionServerConfig = Config.all({
+  bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   port: Config.port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
@@ -52,19 +54,31 @@ export const requireAutonomousApplicationPlan = (
 export const makeRestateExecutionEndpointHandler = (
   config: ExecutionControllerConfig,
   runtime: NativeExecutionRuntime,
+  bootstrapAuthorizationHash: string,
   identityKeys: readonly string[],
   hooks: readonly restate.HooksProvider[] = [],
 ) => {
   const controller = makeBaynExecutionController(config, runtime, hooks)
-  const bootstrap = makeBaynExecutionBootstrap(config, controller, hooks)
+  const bootstrap = makeBaynExecutionBootstrap(config, controller, bootstrapAuthorizationHash, hooks)
   return restate.createEndpointHandler({ services: [controller, bootstrap], identityKeys: [...identityKeys] })
 }
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
-  const [{ port, requestIdentityKeys }, plan] = yield* Effect.all([
+  const [{ bootstrapToken, port, requestIdentityKeys }, plan] = yield* Effect.all([
     executionServerConfig,
     loadApplicationPlan.pipe(Effect.flatMap(requireAutonomousApplicationPlan)),
   ])
+  const bootstrapAuthorizationHash = yield* Effect.fromResult(
+    executionBootstrapAuthorizationHash(Redacted.value(bootstrapToken)),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RestateExecutionServerError({
+          message: 'native Restate bootstrap token is invalid',
+          cause,
+        }),
+    ),
+  )
   const identityKeys = yield* Effect.fromResult(decodeRestateRequestIdentityKeys(requestIdentityKeys)).pipe(
     Effect.mapError(
       (cause) =>
@@ -79,7 +93,9 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
   })
-  const server = createServer(makeRestateExecutionEndpointHandler(config, runtime, identityKeys, telemetry.hooks))
+  const server = createServer(
+    makeRestateExecutionEndpointHandler(config, runtime, bootstrapAuthorizationHash, identityKeys, telemetry.hooks),
+  )
   yield* acquireRestateHttp2Server(server, port)
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(
     Effect.annotateLogs({

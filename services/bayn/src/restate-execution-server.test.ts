@@ -86,6 +86,7 @@ describe('native Restate execution server', () => {
         advance: () => Promise.reject(new Error('discovery must not advance execution')),
         log: () => Promise.resolve(),
       },
+      'd'.repeat(64),
       [],
     )
     const port = await reservePort()
@@ -121,6 +122,7 @@ describe('native Restate execution server', () => {
         advance: () => Promise.reject(new Error('unsigned discovery must not advance execution')),
         log: () => Promise.resolve(),
       },
+      'd'.repeat(64),
       [requestIdentityKey],
     )
     const port = await reservePort()
