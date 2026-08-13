@@ -662,6 +662,37 @@ describe('runtime configuration loading', () => {
     ).not.toContain('sandbox-secret')
   })
 
+  test('loads the canonical capital activation request', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_CAPITAL_ACTIVATION_REQUEST', '{"request":"canonical"}')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+
+    expect(config.capitalActivationRequestJson).toBe('{"request":"canonical"}')
+  })
+
+  test('loads the legacy capital activation request as a compatibility fallback', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_PAPER_ACTIVATION_REQUEST', '{"request":"legacy"}')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+
+    expect(config.capitalActivationRequestJson).toBe('{"request":"legacy"}')
+  })
+
+  test('rejects ambiguous canonical and legacy capital activation requests', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_CAPITAL_ACTIVATION_REQUEST', '{"request":"canonical"}')
+    environment.set('BAYN_PAPER_ACTIVATION_REQUEST', '{"request":"legacy"}')
+
+    const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
+
+    expect(failure).toMatchObject({ component: 'config', operation: 'load', retryable: false })
+    expect(String(failure.cause)).toContain(
+      'BAYN_CAPITAL_ACTIVATION_REQUEST and legacy BAYN_PAPER_ACTIVATION_REQUEST cannot both be configured',
+    )
+  })
+
   test('returns a typed startup error for an invalid authority combination', async () => {
     const environment = new Map(runtimeEnvironment)
     environment.delete('BAYN_OPERATION')

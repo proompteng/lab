@@ -38,7 +38,7 @@ interface FixtureOptions {
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | null
-  readonly paperActivationRequest?: boolean
+  readonly capitalActivationRequest?: 'canonical' | 'legacy'
 }
 
 interface FixturePaths {
@@ -84,9 +84,9 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
     environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', options.parameterHash ?? strategyParameterHash),
     pin === null ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
-    options.paperActivationRequest === true
-      ? '            - name: BAYN_PAPER_ACTIVATION_REQUEST\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: paper-activation-request\n'
-      : '',
+    options.capitalActivationRequest === undefined
+      ? ''
+      : `            - name: ${options.capitalActivationRequest === 'canonical' ? 'BAYN_CAPITAL_ACTIVATION_REQUEST' : 'BAYN_PAPER_ACTIVATION_REQUEST'}\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: paper-activation-request\n`,
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 
@@ -360,13 +360,13 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
-  test('holds source-only research PAPER changes until the build-bound activation request is refreshed', () => {
-    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+  test('holds source-only research capital changes until the build-bound activation request is refreshed', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths)).toMatchObject({
       promotionAction: 'hold',
-      promotionReason: 'research-paper-activation-refresh-required',
+      promotionReason: 'research-capital-activation-refresh-required',
       qualificationMode: 'research',
       hadQualificationPin: false,
       qualificationBindingsMatch: true,
@@ -375,8 +375,8 @@ describe('Bayn manifest promotion', () => {
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
-  test('makes an exact research PAPER release replay a no-op', () => {
-    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+  test('makes an exact research capital release replay a no-op', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
@@ -388,12 +388,23 @@ describe('Bayn manifest promotion', () => {
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
-  test('keeps research PAPER strategy and runtime identity immutable across a service release', () => {
-    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+  test('recognizes the legacy activation env name without emitting it', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'legacy' })
+    const before = readFileSync(paths.deploymentPath, 'utf8')
+
+    expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
+      promotionAction: 'promote',
+      qualificationMode: 'research',
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toBe(before)
+  })
+
+  test('keeps research capital strategy and runtime identity immutable across a service release', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(() => promote(paths, { strategyParameterHash: '6'.repeat(64) })).toThrow(
-      'a research PAPER release cannot change strategy or runtime identity',
+      'a research capital release cannot change strategy or runtime identity',
     )
     expect(() =>
       promote(paths, {
@@ -402,12 +413,12 @@ describe('Bayn manifest promotion', () => {
           BAYN_SIGNAL_SNAPSHOT_ID: '5'.repeat(64),
         },
       }),
-    ).toThrow('a research PAPER release cannot change strategy or runtime identity')
+    ).toThrow('a research capital release cannot change strategy or runtime identity')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
-  test('does not install a qualification pin through an existing PAPER activation request', () => {
-    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+  test('does not install a qualification pin through an existing capital activation request', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(() =>
@@ -419,7 +430,7 @@ describe('Bayn manifest promotion', () => {
         },
         '0'.repeat(40),
       ),
-    ).toThrow('qualification installation cannot reuse a configured PAPER activation request')
+    ).toThrow('qualification installation cannot reuse a configured capital activation request')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
