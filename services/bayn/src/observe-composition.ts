@@ -532,7 +532,7 @@ const requireMutationAuthorityGeneration = (
     return Result.fail(
       compositionFailure(
         'observe-authority',
-        'same-pass reconciliation did not return the configured PAPER authority generation',
+        'same-pass reconciliation did not return the configured execution authority generation',
       ),
     )
   }
@@ -799,7 +799,7 @@ function buildCycleDecision<R>(
             Effect.mapError((cause) =>
               compositionFailure(
                 'execution-episode-allocation',
-                'PAPER entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
+                'execution entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
                 cause,
               ),
             ),
@@ -929,14 +929,14 @@ const makeClosingDecisionPlan = (
   })
 }
 
-const recoverPaperExecutionSession = (
+const recoverExecutionSession = (
   preparation: ObserveStartupPreparation,
   cycle: AutonomousCycle,
   entryDocument: PaperDecisionDocument,
 ): Result.Result<ExecutionSessionBinding, ObserveDecisionCompositionFailure> => {
   const bindRecoveredSession = (input: Parameters<typeof bindCycleExecutionSession>[0]) =>
     Result.mapError(bindCycleExecutionSession(input), (cause) =>
-      compositionFailure('cycle-binding', 'PAPER execution-session binding does not match its cycle', cause),
+      compositionFailure('cycle-binding', 'execution-session binding does not match its cycle', cause),
     )
   const persistedSession = entryDocument.executionSession
   if (persistedSession !== undefined) {
@@ -967,7 +967,7 @@ const recoverPaperExecutionSession = (
   }
   return Result.flatMap(
     Result.mapError(canonicalHashV1Result(legacyCalendarMaterial), (cause) =>
-      compositionFailure('cycle-binding', 'legacy PAPER close calendar material is not canonicalizable', cause),
+      compositionFailure('cycle-binding', 'legacy execution close calendar material is not canonicalizable', cause),
     ),
     (normalizedResponseHash) =>
       bindRecoveredSession({
@@ -987,7 +987,7 @@ const recoverPaperExecutionSession = (
   )
 }
 
-export interface BuildClosingPaperCycleDecisionInput {
+export interface BuildClosingExecutionCycleDecisionInput {
   readonly input: ObserveAutonomousCycleInput
   readonly preparation: ObserveStartupPreparation
   readonly policy: Policy
@@ -998,21 +998,21 @@ export interface BuildClosingPaperCycleDecisionInput {
   readonly replanGenerationHash?: string
 }
 
-export const buildClosingPaperCycleDecision = (
-  request: BuildClosingPaperCycleDecisionInput,
+export const buildClosingExecutionCycleDecision = (
+  request: BuildClosingExecutionCycleDecisionInput,
 ): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER close reconciliation failed', cause })),
+      Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
     )
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const executionSession = yield* Effect.fromResult(
-      recoverPaperExecutionSession(preparation, cycle, entryDocument),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const executionSession = yield* Effect.fromResult(recoverExecutionSession(preparation, cycle, entryDocument)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
     const symbols = [
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),
@@ -1032,7 +1032,7 @@ export const buildClosingPaperCycleDecision = (
       ),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const policyHash = yield* Effect.fromResult(
-      hashObserveMaterial('risk-policy-hash', 'PAPER close risk policy is not canonicalizable', policy),
+      hashObserveMaterial('risk-policy-hash', 'execution close risk policy is not canonicalizable', policy),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const plannerInput: TargetPlannerInput = {
       schemaVersion: 'bayn.paper-target-planner-input.v1',
@@ -1086,7 +1086,7 @@ export const buildClosingPaperCycleDecision = (
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
         return mutationRunnerError({
-          message: 'deterministic PAPER close plan construction failed',
+          message: 'deterministic execution close plan construction failed',
           cause: converted,
           failure: converted.failure,
         })
@@ -1228,11 +1228,11 @@ export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
   readonly executionProgram: ExecutionProgram
 }
 
-type PaperExecutionCapability =
+type ExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
   | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
 
-type PaperMutationLogContext = {
+type ExecutionMutationLogContext = {
   readonly cycleId: string
   readonly intentId: string
   readonly mutationAction: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
@@ -1243,18 +1243,18 @@ type PostMutationReconciliation = {
   readonly _tag: 'PostMutationReconciliation'
   readonly cycle: AutonomousCycle
   readonly delayMs: number
-  readonly logContext: PaperMutationLogContext
+  readonly logContext: ExecutionMutationLogContext
   readonly observedAt: string
 }
 
-type BoundPaperCycleExecutionOutcome = BoundMutationCycleOutcome | PostMutationReconciliation
+type BoundExecutionCycleOutcome = BoundMutationCycleOutcome | PostMutationReconciliation
 type RecoveryFirstCyclePassResult = CycleRunResult | PostMutationReconciliation
 
 const isPostMutationReconciliation = (result: RecoveryFirstCyclePassResult): result is PostMutationReconciliation =>
   '_tag' in result && result._tag === 'PostMutationReconciliation'
 
-export const paperMutationSubmissionAllowed = (input: {
-  readonly capability: PaperExecutionCapability['_tag']
+export const executionMutationSubmissionAllowed = (input: {
+  readonly capability: ExecutionCapability['_tag']
   readonly closeOnly: boolean
   readonly executionEpisodeCutoffAt?: string
   readonly executionEpisodeCloseSubmitCutoffAt?: string
@@ -1357,7 +1357,7 @@ const closePlanNeedsResidualReplan = (
           .read(intentId)
           .pipe(
             Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'PAPER close intent recovery read failed', cause, failure: 'store' }),
+              mutationRunnerError({ message: 'execution close intent recovery read failed', cause, failure: 'store' }),
             ),
           ),
       { concurrency: 1 },
@@ -1370,7 +1370,9 @@ const closePlanNeedsResidualReplan = (
       return false
     }
     const facts = yield* reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER residual close reconciliation failed', cause })),
+      Effect.mapError((cause) =>
+        mutationRunnerError({ message: 'execution residual close reconciliation failed', cause }),
+      ),
     )
     return executionClosePlanNeedsResidualReplan(
       records
@@ -1399,13 +1401,13 @@ const ensureExecutionCycleClosure = (
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
       return yield* mutationRunnerError({
-        message: 'active PAPER cycle has no immutable entry decision hash for its close plan',
+        message: 'active execution cycle has no immutable entry decision hash for its close plan',
         cause: undefined,
         failure: 'contract',
       })
     }
     if (existing === undefined) {
-      const document = yield* buildClosingPaperCycleDecision({
+      const document = yield* buildClosingExecutionCycleDecision({
         input,
         preparation,
         policy,
@@ -1426,14 +1428,14 @@ const ensureExecutionCycleClosure = (
         }),
       ).pipe(
         Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'PAPER close plan canonical binding failed', cause, failure: 'contract' }),
+          mutationRunnerError({ message: 'execution close plan canonical binding failed', cause, failure: 'contract' }),
         ),
       )
       const stored = yield* store
         .bind(closure)
         .pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'PAPER close plan durable bind failed', cause, failure: 'store' }),
+            mutationRunnerError({ message: 'execution close plan durable bind failed', cause, failure: 'store' }),
           ),
         )
       return stored.document
@@ -1443,7 +1445,7 @@ const ensureExecutionCycleClosure = (
     const active = latestReplan ?? existing
     if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
 
-    const document = yield* buildClosingPaperCycleDecision({
+    const document = yield* buildClosingExecutionCycleDecision({
       input,
       preparation,
       policy,
@@ -1466,23 +1468,25 @@ const ensureExecutionCycleClosure = (
     ).pipe(
       Effect.mapError((cause) =>
         mutationRunnerError({
-          message: 'PAPER residual close plan canonical binding failed',
+          message: 'execution residual close plan canonical binding failed',
           cause,
           failure: 'contract',
         }),
       ),
     )
-    const stored = yield* store
-      .bindReplan(closure)
-      .pipe(
-        Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'PAPER residual close plan durable bind failed', cause, failure: 'store' }),
-        ),
-      )
+    const stored = yield* store.bindReplan(closure).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'execution residual close plan durable bind failed',
+          cause,
+          failure: 'store',
+        }),
+      ),
+    )
     return stored.document
   })
 
-const entryPaperCycleHasUnsuccessfulIntent = (
+const entryExecutionCycleHasUnsuccessfulIntent = (
   document: PaperDecisionDocument,
 ): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
   Effect.gen(function* () {
@@ -1494,7 +1498,7 @@ const entryPaperCycleHasUnsuccessfulIntent = (
           .read(intentId)
           .pipe(
             Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'entry PAPER intent read failed', cause, failure: 'store' }),
+              mutationRunnerError({ message: 'entry execution intent read failed', cause, failure: 'store' }),
             ),
           ),
       { concurrency: 1 },
@@ -1570,7 +1574,7 @@ const readCloseMutationPreparationFacts = (
 ): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const reconciliation = yield* request.reconcile.pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: 'PAPER close reconciliation failed', cause })),
+      Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
     )
     const evaluatedAt = yield* currentUtcInstant
     const authority = yield* Effect.fromResult(
@@ -1616,15 +1620,15 @@ export const prepareNextMutationIntent = (
     },
   )
 
-const executeBoundPaperCycle = (
+const executeBoundExecutionCycle = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
   document: PaperDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  capability: PaperExecutionCapability,
-): Effect.Effect<BoundPaperCycleExecutionOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
+  capability: ExecutionCapability,
+): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
     const closeDocument = yield* ensureExecutionCycleClosure(input, preparation, policy, cycle, document, reconcile)
@@ -1641,7 +1645,7 @@ const executeBoundPaperCycle = (
       cycle,
       document: activeDocument,
       reconcile,
-      allowSubmit: paperMutationSubmissionAllowed({
+      allowSubmit: executionMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
         ...(input.executionEpisodeCutoffAt === undefined
@@ -1657,7 +1661,7 @@ const executeBoundPaperCycle = (
       if (step._tag !== 'Complete') return step
       const entryHasUnsuccessfulIntent =
         closeOnly || (input.executionEpisodeCutoffAt !== undefined && observedAt >= input.executionEpisodeCutoffAt)
-          ? yield* entryPaperCycleHasUnsuccessfulIntent(document)
+          ? yield* entryExecutionCycleHasUnsuccessfulIntent(document)
           : false
       const terminalization = decideExecutionEpisodeCycleTerminalization({
         closeOnly,
@@ -1674,13 +1678,13 @@ const executeBoundPaperCycle = (
           return step
       }
     }
-    const logContext: PaperMutationLogContext = {
+    const logContext: ExecutionMutationLogContext = {
       cycleId: cycle.identity.cycleId,
       intentId: step.intentId,
       mutationAction: step.action,
       mutationPhase: closeOnly ? 'CLOSE' : 'ENTRY',
     }
-    yield* Effect.logInfo('PAPER mutation selected').pipe(Effect.annotateLogs(logContext))
+    yield* Effect.logInfo('Execution mutation selected').pipe(Effect.annotateLogs(logContext))
     const execute =
       capability._tag === 'Mutation'
         ? executeMutationIntent(
@@ -1697,10 +1701,12 @@ const executeBoundPaperCycle = (
           })
     const executed = yield* execute.pipe(
       Effect.tapError((error) =>
-        Effect.logError('PAPER mutation failed').pipe(Effect.annotateLogs({ ...logContext, failure: error.failure })),
+        Effect.logError('Execution mutation failed').pipe(
+          Effect.annotateLogs({ ...logContext, failure: error.failure }),
+        ),
       ),
     )
-    yield* Effect.logInfo('PAPER mutation settled').pipe(
+    yield* Effect.logInfo('Execution mutation settled').pipe(
       Effect.annotateLogs({
         ...logContext,
         mutationOperation: executed.operation,
@@ -1736,7 +1742,7 @@ const completePostMutationReconciliation = (
         mutationRunnerError({ message: 'post-mutation reconciliation failed', cause, failure: 'operational' }),
       ),
     )
-    yield* Effect.logInfo('PAPER mutation reconciled').pipe(
+    yield* Effect.logInfo('Execution mutation reconciled').pipe(
       Effect.annotateLogs({
         ...pending.logContext,
         accountingExact: reconciled.report.metrics.accountingExact,
@@ -1778,7 +1784,7 @@ const terminalizeUnboundMutationCycleAtCutoff = (
   CycleStore.pipe(
     Effect.flatMap((store) => store.block(cycle.identity.cycleId, CycleTerminalReason.Authority, observedAt)),
     Effect.mapError((cause) =>
-      mutationRunnerError({ message: 'expired PAPER unbound cycle finalization failed', cause, failure: 'store' }),
+      mutationRunnerError({ message: 'expired execution cycle finalization failed', cause, failure: 'store' }),
     ),
     Effect.map((receipt) => ({
       outcome: 'RECOVERED' as const,
@@ -1788,7 +1794,7 @@ const terminalizeUnboundMutationCycleAtCutoff = (
     })),
   )
 
-const terminalizeBlockedPaperCycleDataFirst = (
+const terminalizeBlockedExecutionCycleDataFirst = (
   cycle: AutonomousCycle,
   outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
   authorityGenerationHash: string,
@@ -1802,7 +1808,7 @@ const terminalizeBlockedPaperCycleDataFirst = (
     const { cycleReceipt, intentReceipt } = yield* fence.transaction(
       store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt).pipe(
         Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'blocked PAPER cycle finalization failed', cause, failure: 'store' }),
+          mutationRunnerError({ message: 'blocked execution cycle finalization failed', cause, failure: 'store' }),
         ),
         Effect.tap(() =>
           restrictionStore
@@ -1813,8 +1819,8 @@ const terminalizeBlockedPaperCycleDataFirst = (
             .pipe(
               Effect.mapError((cause) =>
                 mutationRunnerError({
-                  message: 'authority restriction failed after a bound PAPER cycle failure',
-                  cause: { subject: 'PAPER autonomous cycle loop', reason: restrictionReason, cause },
+                  message: 'authority restriction failed after a bound execution cycle failure',
+                  cause: { subject: 'Bayn execution cycle loop', reason: restrictionReason, cause },
                   failure: 'store',
                 }),
               ),
@@ -1831,7 +1837,7 @@ const terminalizeBlockedPaperCycleDataFirst = (
             .pipe(
               Effect.mapError((cause) =>
                 mutationRunnerError({
-                  message: 'untouched approved intents could not be terminalized with their blocked PAPER cycle',
+                  message: 'untouched approved intents could not be terminalized with their blocked execution cycle',
                   cause,
                   failure: 'store',
                 }),
@@ -1840,7 +1846,7 @@ const terminalizeBlockedPaperCycleDataFirst = (
         ),
       ),
     )
-    yield* Effect.logWarning('Bayn PAPER cycle terminalized with restricted mutation authority').pipe(
+    yield* Effect.logWarning('Bayn execution cycle terminalized with restricted mutation authority').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         cycleId: cycle.identity.cycleId,
@@ -1861,11 +1867,11 @@ const terminalizeBlockedPaperCycleDataFirst = (
     Effect.mapError((cause) =>
       cause instanceof CycleRunnerError
         ? cause
-        : mutationRunnerError({ message: 'blocked PAPER cycle transaction failed', cause, failure: 'store' }),
+        : mutationRunnerError({ message: 'blocked execution cycle transaction failed', cause, failure: 'store' }),
     ),
   )
 
-export const terminalizeBlockedPaperCycle = terminalizeBlockedPaperCycleDataFirst
+export const terminalizeBlockedExecutionCycle = terminalizeBlockedExecutionCycleDataFirst
 
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,
@@ -1887,16 +1893,16 @@ const interpretBoundMutationCycleOutcome = (
       return input.blockedCycleIntentStore === undefined
         ? Effect.fail(
             mutationRunnerError({
-              message: 'blocked PAPER cycle terminalization store is unavailable',
+              message: 'blocked execution cycle terminalization store is unavailable',
               failure: 'contract',
             }),
           )
-        : terminalizeBlockedPaperCycle(cycle, outcome, input.authorityGenerationHash, input.blockedCycleIntentStore)
+        : terminalizeBlockedExecutionCycle(cycle, outcome, input.authorityGenerationHash, input.blockedCycleIntentStore)
     case 'Complete':
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),
         Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'completed PAPER cycle finalization failed', cause, failure: 'store' }),
+          mutationRunnerError({ message: 'completed execution cycle finalization failed', cause, failure: 'store' }),
         ),
         Effect.tap((receipt) =>
           receipt.changed && input.onClosedCycle !== undefined
@@ -1913,9 +1919,9 @@ const interpretBoundMutationCycleOutcome = (
   }
 }
 
-const interpretBoundPaperCycleExecutionOutcome = (
+const interpretBoundExecutionCycleOutcome = (
   input: ObserveAutonomousCycleInput,
-  outcome: BoundPaperCycleExecutionOutcome,
+  outcome: BoundExecutionCycleOutcome,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, CycleStore | ObserveDecisionRuntime> => {
@@ -1932,14 +1938,14 @@ const recoverBoundMutationCycle = (
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  capability: PaperExecutionCapability,
+  capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readBoundMutationDocument(cycle).pipe(
     Effect.flatMap((document) =>
       document.mode === 'OBSERVE'
         ? runAutonomousCyclePass(context)
-        : executeBoundPaperCycle(input, preparation, policy, cycle, document, reconcile, capability).pipe(
-            Effect.flatMap((outcome) => interpretBoundPaperCycleExecutionOutcome(input, outcome, cycle, context)),
+        : executeBoundExecutionCycle(input, preparation, policy, cycle, document, reconcile, capability).pipe(
+            Effect.flatMap((outcome) => interpretBoundExecutionCycleOutcome(input, outcome, cycle, context)),
           ),
     ),
   )
@@ -1950,7 +1956,7 @@ const runRecoveryFirstCyclePass = (
   policy: Policy,
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  capability: PaperExecutionCapability,
+  capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readUnfinishedMutationCycle(context).pipe(
     Effect.flatMap((unfinished) => {
@@ -2243,7 +2249,7 @@ const makeRecoveryFirstCycleDriver = (
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
-  capability: PaperExecutionCapability,
+  capability: ExecutionCapability,
   buildDecision: RecoveryFirstDecisionBuilder,
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
@@ -2369,7 +2375,7 @@ const makeRecoveryFirstAutonomousLoop = (
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
-  capability: PaperExecutionCapability,
+  capability: ExecutionCapability,
   buildDecision: RecoveryFirstDecisionBuilder,
   operation: 'autonomous cycle loop' | 'mutation autonomous cycle loop',
 ): Result.Result<AutonomousCycleLoop<RecoveryFirstRuntime>, OperationalError> => {
@@ -2434,7 +2440,7 @@ export const makeObserveAutonomousCycleStartup =
           operationalError({
             component: 'strategy',
             operation: 'risk-policy',
-            message: 'source-controlled paper risk policy is invalid',
+            message: 'source-controlled execution risk policy is invalid',
             cause,
           }),
         ),
@@ -2467,7 +2473,7 @@ export const makeMutationAutonomousCycleStartup =
           operationalError({
             component: 'strategy',
             operation: 'risk-policy',
-            message: 'source-controlled paper risk policy is invalid',
+            message: 'source-controlled execution risk policy is invalid',
             cause,
           }),
         ),
