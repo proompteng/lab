@@ -9,6 +9,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import type { RuntimeConfig } from '../config'
 import {
   ExecutionControllerOutcome,
+  ExecutionControllerStatusStore,
   type ExecutionControllerStatus,
   type ExecutionControllerStatusProjection,
   ExecutionControllerStatusStoreError,
@@ -19,15 +20,16 @@ import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition'
 import { fixtureProtocol } from '../test-fixtures'
 import {
-  acquireScopedManagedRuntime,
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
   failRecoveryFirstCycleDriverSlot,
+  makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
+  PublishedExecutionCycleDriver,
   readRecoveryFirstCycleDriverSlot,
   type BoundRecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverSlot,
@@ -227,44 +229,41 @@ describe('native execution runtime', () => {
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })
 
-  test('interrupts preparation and releases every managed client when its scope closes', async () => {
-    class RuntimeProbe extends Context.Service<RuntimeProbe, true>()('test/RuntimeProbe') {}
-
-    const acquired: string[] = []
-    const released: string[] = []
-    let preparationInterrupted = false
-    const resource = (name: string) =>
-      Layer.effectDiscard(
+  test('does not acquire execution resources until the first tick and releases them exactly once', async () => {
+    let acquired = 0
+    let released = 0
+    const executionResources = Layer.merge(
+      Layer.effect(
+        PublishedExecutionCycleDriver,
         Effect.acquireRelease(
-          Effect.sync(() => acquired.push(name)),
-          () => Effect.sync(() => released.push(name)),
+          Effect.sync(() => {
+            acquired += 1
+            return driver
+          }),
+          () =>
+            Effect.sync(() => {
+              released += 1
+            }),
         ),
-      )
-    const resources = Layer.mergeAll(
-      Layer.succeed(RuntimeProbe, true),
-      resource('postgresql'),
-      resource('clickhouse'),
-      resource('broker'),
-      resource('status-projection'),
+      ),
+      Layer.succeed(
+        ExecutionControllerStatusStore,
+        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+      ),
     )
+    const managed = ManagedRuntime.make(executionResources)
+    const runtime = makeManagedNativeExecutionRuntimeAdapter(managed, {
+      runPromise: (effect, options) => Effect.runPromise(effect, options),
+    })
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>()
-        const preparation = Effect.gen(function* () {
-          yield* RuntimeProbe
-          yield* Deferred.succeed(started, undefined)
-          return yield* Effect.never
-        }).pipe(Effect.onInterrupt(() => Effect.sync(() => (preparationInterrupted = true))))
-
-        yield* acquireScopedManagedRuntime(ManagedRuntime.make(resources), preparation)
-        yield* Deferred.await(started)
-      }).pipe(Effect.scoped),
-    )
-
-    expect(acquired.toSorted()).toEqual(['broker', 'clickhouse', 'postgresql', 'status-projection'])
-    expect(released.toSorted()).toEqual(acquired.toSorted())
-    expect(preparationInterrupted).toBe(true)
+    expect(acquired).toBe(0)
+    await runtime.log('info', 'inactive worker discovery', {})
+    expect(acquired).toBe(0)
+    await runtime.advance(command, new AbortController().signal)
+    await runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal)
+    expect(acquired).toBe(1)
+    await managed.dispose()
+    expect(released).toBe(1)
   })
 
   test('fails initialization deterministically when preparation never publishes a driver', async () => {
