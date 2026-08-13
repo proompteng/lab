@@ -2,10 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
 import type { ApplicationPlanFor } from '../app'
-import type {
-  ExecutionControllerStatus,
-  ExecutionControllerStatusProjection,
-  ExecutionControllerStatusStoreShape,
+import {
+  ExecutionControllerOutcome,
+  type ExecutionControllerStatus,
+  type ExecutionControllerStatusProjection,
+  type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
@@ -45,7 +46,7 @@ const status = (overrides: Partial<ExecutionControllerStatus> = {}): ExecutionCo
   controllerKey: command.controllerKey,
   epoch: command.epoch,
   lastSequence: command.sequence,
-  lastOutcome: 'Blocked',
+  lastOutcome: ExecutionControllerOutcome.Blocked,
   lastReceiptHash: hash('2'),
   completedAt,
   nextDueAt: '2026-08-13T18:00:30.000Z',

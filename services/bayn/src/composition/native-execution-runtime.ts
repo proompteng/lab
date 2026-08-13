@@ -2,6 +2,7 @@ import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Result, 
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
+  ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
@@ -112,6 +113,9 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
     cause,
   })
 
+const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
+  outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
+
 export const executeNativeExecutionAdvance = (
   command: AdvanceExecutionCommand,
   driver: BoundRecoveryFirstCycleDriver,
@@ -125,7 +129,7 @@ export const executeNativeExecutionAdvance = (
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
         outcome: {
-          _tag: outcome._tag,
+          _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
           nextDelayMs: outcome.nextDelayMs,
         },
@@ -138,7 +142,7 @@ export const executeNativeExecutionAdvance = (
           controllerKey: command.controllerKey,
           epoch: command.epoch,
           lastSequence: command.sequence,
-          lastOutcome: outcome._tag,
+          lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
           nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
