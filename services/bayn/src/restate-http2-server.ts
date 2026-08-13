@@ -46,7 +46,10 @@ const listen = (
     server.once('error', onError)
     server.once('listening', onListening)
     return Effect.sync(() => {
-      server.off('error', onError)
+      // Keep the one-shot bind-error listener until the pending listen settles. Node can queue an asynchronous bind
+      // error before cancellation, and close() does not retract that event; removing this listener here would turn the
+      // delayed error into an uncaught process-level event. If close wins without an error, the unreachable server and
+      // listener are collected together.
       server.off('listening', onListening)
       server.off('session', onSession)
       for (const session of sessions) session.destroy()

@@ -142,8 +142,9 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
     expect(server.listenerCount('session')).toBe(0)
   })
 
-  test('cancels a pending listen without retaining callbacks or accepting a later session', async () => {
+  test('cancels a pending listen while safely absorbing an already queued bind error', async () => {
     const server = new PendingHttp2Server()
+    const queuedBindFailure = new Error('address became unavailable')
 
     await Effect.runPromise(
       Effect.scoped(
@@ -161,11 +162,13 @@ describe('Bayn Restate lifecycle HTTP/2 server', () => {
           yield* Fiber.interrupt(acquisition)
 
           expect(server.closeCount).toBe(1)
-          expect(server.listenerCount('error')).toBe(0)
+          expect(server.listenerCount('error')).toBe(1)
           expect(server.listenerCount('listening')).toBe(0)
           expect(server.listenerCount('session')).toBe(0)
           expect(server.completeListen()).toBe(false)
           expect(server.acceptSession()).toBe(false)
+          expect(server.emit('error', queuedBindFailure)).toBe(true)
+          expect(server.listenerCount('error')).toBe(0)
         }),
       ),
     )
