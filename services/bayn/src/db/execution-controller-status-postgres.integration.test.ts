@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
 
 import { config as fixtureConfig } from '../app-test-support'
-import { ExecutionControllerStatusStore } from '../execution/controller-status'
+import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import { ExecutionControllerStatusStoreLive } from './execution-controller-status-postgres'
@@ -64,7 +64,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       controllerKey: 'primary',
       epoch: 3,
       lastSequence: 8,
-      lastOutcome: 'Blocked' as const,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
       lastReceiptHash: 'a'.repeat(64),
       completedAt: '2026-08-13T17:00:00.000Z',
       nextDueAt: '2026-08-13T17:00:30.000Z',
@@ -85,7 +85,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           ...initial,
           epoch: 4,
           lastSequence: 0,
-          lastOutcome: 'Completed',
+          lastOutcome: ExecutionControllerOutcome.Completed,
           lastReceiptHash: 'd'.repeat(64),
           completedAt: '2026-08-13T17:01:00.000Z',
           nextDueAt: '2026-08-13T17:01:30.000Z',

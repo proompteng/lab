@@ -5,12 +5,17 @@ import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../sch
 
 const ControllerCounterSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 
+export enum ExecutionControllerOutcome {
+  Completed = 'Completed',
+  Blocked = 'Blocked',
+}
+
 export const ExecutionControllerStatusSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   controllerKey: LifecycleControllerKeySchema,
   epoch: ControllerCounterSchema,
   lastSequence: ControllerCounterSchema,
-  lastOutcome: Schema.Literals(['Completed', 'Blocked']),
+  lastOutcome: Schema.Enum(ExecutionControllerOutcome),
   lastReceiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
   nextDueAt: Schema.optionalKey(UtcInstantSchema),

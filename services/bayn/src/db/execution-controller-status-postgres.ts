@@ -3,6 +3,7 @@ import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
+  ExecutionControllerOutcome,
   ExecutionControllerStatusSchema,
   ExecutionControllerStatusStore,
   ExecutionControllerStatusStoreError,
@@ -17,7 +18,7 @@ const StatusRow = Schema.Struct({
   controller_key: LifecycleControllerKeySchema,
   epoch: Schema.BigIntFromString,
   last_sequence: Schema.BigIntFromString,
-  last_outcome: Schema.Literals(['Completed', 'Blocked']),
+  last_outcome: Schema.Enum(ExecutionControllerOutcome),
   last_receipt_hash: Sha256Schema,
   completed_at: UtcInstantSchema,
   next_due_at: Schema.NullOr(UtcInstantSchema),
