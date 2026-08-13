@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import type { ApplicationPlanFor } from '../app'
 import {
@@ -11,10 +12,14 @@ import {
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
+  acquireScopedManagedRuntime,
+  awaitNativeExecutionRuntimeDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
   makeNativeExecutionRuntimeAdapter,
+  NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
+  type BoundRecoveryFirstCycleDriver,
 } from './native-execution-runtime'
 
 const hash = (character: string): string => character.repeat(64)
@@ -39,6 +44,7 @@ type PlanOverrides = {
   readonly imageDigest?: string
   readonly cyclePollIntervalMs?: number
   readonly qualificationRunId?: string
+  readonly persistedGrantHash?: string
   readonly marketDataBinding?: typeof marketDataBinding
 }
 
@@ -94,6 +100,14 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
       build: { sourceRevision, imageDigest: overrides.imageDigest ?? `sha256:${hash('3')}` },
       qualificationRunId: overrides.qualificationRunId ?? hash('9'),
       clickhouse: overrides.marketDataBinding ?? marketDataBinding,
+      execution: {
+        brokerAccess: 'mutation',
+        capitalAuthority: {
+          _tag: 'granted-capital',
+          authorityGenerationHash: hash('4'),
+          persistedGrantHash: overrides.persistedGrantHash ?? hash('c'),
+        },
+      },
       capitalActivationRequestJson: '{"schemaVersion":"test"}',
       cyclePollIntervalMs: overrides.cyclePollIntervalMs ?? 30_000,
       operationTimeoutMs: 30_000,
@@ -119,6 +133,7 @@ describe('native execution runtime', () => {
       plan({ imageDigest: `sha256:${hash('a')}` }),
       plan({ cyclePollIntervalMs: 60_000 }),
       plan({ qualificationRunId: hash('a') }),
+      plan({ persistedGrantHash: hash('d') }),
       plan({ marketDataBinding: { ...marketDataBinding, snapshotId: hash('b') } }),
       plan({ marketDataBinding: { ...marketDataBinding, publicationAsOf: '2026-08-13' } }),
       plan({ marketDataBinding: { ...marketDataBinding, calendarVersion: 'xnys-2026-v2' } }),
@@ -144,6 +159,60 @@ describe('native execution runtime', () => {
       if (Result.isSuccess(changed)) expect(first.success.planHash).not.toBe(changed.success.planHash)
     }
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
+  })
+
+  test('interrupts preparation and releases every managed client when its scope closes', async () => {
+    class RuntimeProbe extends Context.Service<RuntimeProbe, true>()('test/RuntimeProbe') {}
+
+    const acquired: string[] = []
+    const released: string[] = []
+    let preparationInterrupted = false
+    const resource = (name: string) =>
+      Layer.effectDiscard(
+        Effect.acquireRelease(
+          Effect.sync(() => acquired.push(name)),
+          () => Effect.sync(() => released.push(name)),
+        ),
+      )
+    const resources = Layer.mergeAll(
+      Layer.succeed(RuntimeProbe, true),
+      resource('postgresql'),
+      resource('clickhouse'),
+      resource('broker'),
+      resource('status-projection'),
+    )
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const preparation = Effect.gen(function* () {
+          yield* RuntimeProbe
+          yield* Deferred.succeed(started, undefined)
+          return yield* Effect.never
+        }).pipe(Effect.onInterrupt(() => Effect.sync(() => (preparationInterrupted = true))))
+
+        yield* acquireScopedManagedRuntime(ManagedRuntime.make(resources), preparation)
+        yield* Deferred.await(started)
+      }).pipe(Effect.scoped),
+    )
+
+    expect(acquired.toSorted()).toEqual(['broker', 'clickhouse', 'postgresql', 'status-projection'])
+    expect(released.toSorted()).toEqual(acquired.toSorted())
+    expect(preparationInterrupted).toBe(true)
+  })
+
+  test('fails initialization deterministically when preparation never publishes a driver', async () => {
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        const target = yield* Deferred.make<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>()
+        const awaiting = yield* Effect.forkChild(awaitNativeExecutionRuntimeDriver(target, 20))
+        yield* TestClock.adjust(nativeExecutionRuntimeInitializationTimeoutMs(20))
+        return yield* Fiber.join(awaiting).pipe(Effect.flip)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(failure).toBeInstanceOf(NativeExecutionRuntimeError)
+    expect(failure).toMatchObject({ operation: 'initialize' })
   })
 
   test('projects the exact completed tick before returning the compact Restate result', async () => {

@@ -37,7 +37,7 @@ export interface NativeExecutionRuntimeResource {
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs * 5
 
-type BoundRecoveryFirstCycleDriver = {
+export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
   readonly maintainReconciliation: Effect.Effect<void>
   readonly nextDelayMs: number
@@ -74,6 +74,10 @@ export const executionControllerConfig = (
       },
       capitalActivationRequestHash: sha256(plan.config.capitalActivationRequestJson ?? ''),
       authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+      persistedCapitalGrantHash:
+        'persistedGrantHash' in plan.config.execution.capitalAuthority
+          ? (plan.config.execution.capitalAuthority.persistedGrantHash ?? null)
+          : null,
       cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
       operationTimeoutMs: plan.config.operationTimeoutMs,
@@ -269,6 +273,30 @@ const startRuntimePreparation = (
     ),
   )
 
+export const acquireScopedManagedRuntime = <R, E>(
+  managed: ManagedRuntime.ManagedRuntime<R, E>,
+  preparation: Effect.Effect<unknown, never, R>,
+): Effect.Effect<void, never, Scope.Scope> =>
+  Effect.gen(function* () {
+    const owned = yield* Effect.acquireRelease(Effect.succeed(managed), (runtime) => runtime.disposeEffect)
+    yield* Effect.acquireRelease(
+      Effect.sync(() => owned.runFork(preparation)),
+      (fiber) => Fiber.interrupt(fiber),
+    )
+  })
+
+export const awaitNativeExecutionRuntimeDriver = (
+  target: Deferred.Deferred<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
+  operationTimeoutMs: number,
+): Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError> =>
+  Deferred.await(target).pipe(
+    Effect.timeoutOrElse({
+      duration: nativeExecutionRuntimeInitializationTimeoutMs(operationTimeoutMs),
+      orElse: () =>
+        Effect.fail(runtimeError('initialize', 'native execution runtime did not publish its cycle driver in time')),
+    }),
+  )
+
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
@@ -279,23 +307,10 @@ export const acquireNativeExecutionRuntime = (
       ExecutionControllerStatusResourceLive(plan.config),
       makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
     )
-    const managed = yield* Effect.acquireRelease(
-      Effect.sync(() => ManagedRuntime.make(resources)),
-      (runtime) =>
-        Effect.tryPromise({
-          try: () => runtime.dispose(),
-          catch: (cause) => runtimeError('dispose', 'native execution runtime did not dispose cleanly', cause),
-        }).pipe(Effect.ignore),
-    )
     const driverReady = yield* Deferred.make<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>()
-    managed.runFork(startRuntimePreparation(plan, driverReady))
-    const driver = yield* Deferred.await(driverReady).pipe(
-      Effect.timeoutOrElse({
-        duration: nativeExecutionRuntimeInitializationTimeoutMs(plan.config.operationTimeoutMs),
-        orElse: () =>
-          Effect.fail(runtimeError('initialize', 'native execution runtime did not publish its cycle driver in time')),
-      }),
-    )
+    const managed = ManagedRuntime.make(resources)
+    yield* acquireScopedManagedRuntime(managed, startRuntimePreparation(plan, driverReady))
+    const driver = yield* awaitNativeExecutionRuntimeDriver(driverReady, plan.config.operationTimeoutMs)
     const context = yield* Effect.tryPromise({
       try: () => managed.context(),
       catch: (cause) => runtimeError('initialize', 'native execution runtime resources failed to initialize', cause),
