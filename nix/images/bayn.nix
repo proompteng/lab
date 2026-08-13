@@ -21,9 +21,9 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after adding the Bayn OTLP dependencies.
-    x86_64-linux = "sha256-OXXU8ob6Sa7ylLmMWFLwsnsLph2zGdbUAu9vw0A71hI=";
-    aarch64-linux = "sha256-iBX5jd7TVJ1waeXA8NOQ7zSx7ONyHmO5e/MEtF4XQyM=";
+    # Refreshed from the two authoritative Linux image builders after pruning the dormant proof command.
+    x86_64-linux = "sha256-x+7iylMeLnnZ/JoZD7BuqcfITSrsrglWrdzFMfLeBp4=";
+    aarch64-linux = "sha256-sM4vqzetLeO2urcY+pGPI1eYu1dD2dmFnMDofC2f1ZM=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
