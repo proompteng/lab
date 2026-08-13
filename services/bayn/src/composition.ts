@@ -76,7 +76,7 @@ import {
   type CapitalGrantLifecycleStoreShape,
   type PreparedCapitalGrantActivation,
 } from './db/execution-store'
-import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capital-grant'
+import { PersistedCapitalGrantStore, PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
 import { BrokerAccess, CapitalAuthorityKind, noCapitalAuthority } from './execution/authority'
 import {
   Authority,
@@ -240,7 +240,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     BlockedCycleIntentStoreLive,
     IntentStoreLive,
     MutationStoreLive,
-    LiveCapitalGrantStoreLive,
+    PersistedCapitalGrantStoreLive,
     ExecutionCycleClosureStorePostgresLive,
     ForwardPerformanceReceiptStoreLive,
     LifecycleCommandStoreLive,
@@ -1807,7 +1807,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                       pgClient: PgClient.PgClient,
                       session: BrokerSession,
                       alpacaHttpClient: AlpacaHttpClient,
-                      persistedCapitalGrants: LiveCapitalGrantStore,
+                      persistedCapitalGrants: PersistedCapitalGrantStore,
                       intentStore: IntentStore,
                       blockedCycleIntentStore: BlockedCycleIntentStore,
                       lifecycleCommandStore: LifecycleCommandStore,

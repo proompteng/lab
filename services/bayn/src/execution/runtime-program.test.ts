@@ -23,7 +23,7 @@ import {
   CapitalAuthorityKind,
   grantedCapitalAuthority,
   makeExecutionAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   noCapitalAuthority,
   type ExecutionStrategyIdentity,
 } from './authority'
@@ -93,8 +93,9 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
   riskPolicy,
   persistedCapitalGrants: {
-    lockForSubmit: () => Effect.die(new Error(`${label} live grant lock must not run during composition proof`)),
-    read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
+    lockForSubmit: () =>
+      Effect.die(new Error(`${label} persisted capital grant lock must not run during composition proof`)),
+    read: () => Effect.die(new Error(`${label} persisted capital grant read must not run during composition proof`)),
   },
   currentUtcInstant: Effect.succeed(observedAt),
 })
@@ -154,8 +155,8 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
 const finalLiveFixture = () => {
   const liveIdentity = identity(BrokerEnvironment.Live)
   const grant = Result.getOrThrow(
-    makeLiveCapitalGrant({
-      schemaVersion: 'bayn.live-capital-grant.v1',
+    makeCapitalGrantRecord({
+      schemaVersion: 'bayn.capital-grant.v2',
       brokerIdentity: liveIdentity,
       authorityGenerationHash,
       strategy,
@@ -245,8 +246,8 @@ describe('same-code execution program composition', () => {
       }),
     )
     const grant = Result.getOrThrow(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: liveIdentity,
         authorityGenerationHash,
         strategy,
@@ -343,7 +344,7 @@ describe('same-code execution program composition', () => {
           lockForSubmit:
             authority.brokerIdentity.environment === BrokerEnvironment.Live
               ? () => Effect.succeed(grantedCapitalAuthority(live.grant))
-              : () => Effect.die(new Error('sandbox final authorization must not read a live grant')),
+              : () => Effect.die(new Error('sandbox final authorization must not read a persisted capital grant')),
         },
       }
 
@@ -364,7 +365,7 @@ describe('same-code execution program composition', () => {
     }
   })
 
-  test('revalidates a live grant after broker refresh and before transmission', async () => {
+  test('revalidates a persisted capital grant after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
     let instantReads = 0
     let posts = 0
@@ -678,8 +679,8 @@ describe('same-code execution program composition', () => {
   test('keeps a distinct live-grant order cap on an exposure-reducing close', async () => {
     const liveIdentity = identity(BrokerEnvironment.Live)
     const grant = Result.getOrThrow(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: liveIdentity,
         authorityGenerationHash,
         strategy,
@@ -746,8 +747,8 @@ describe('same-code execution program composition', () => {
     const liveIdentity = identity(BrokerEnvironment.Live)
     const expiresAt = '2026-07-28T08:00:00.010Z'
     const grant = Result.getOrThrow(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: liveIdentity,
         authorityGenerationHash,
         strategy,

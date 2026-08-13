@@ -58,9 +58,9 @@ import {
   BrokerEnvironment,
   grantedCapitalAuthority,
   makeExecutionAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   noCapitalAuthority,
-  type LiveCapitalGrantRevocation,
+  type CapitalGrantRevocation,
 } from '../execution/authority'
 import { validatePersistedCapitalGrantForSubmit } from '../execution/mutation-authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
@@ -117,7 +117,7 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from './execution-store'
-import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './live-capital-grant'
+import { PersistedCapitalGrantStore, PersistedCapitalGrantStoreLive } from './persisted-capital-grant'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 
 class TestFailure extends Data.TaggedError('TestFailure')<{ readonly message: string }> {}
@@ -198,16 +198,16 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
 const makeEvidenceRuntime = (config = makeConfig()) => {
   const postgres = PostgresClientLive(config)
   return ManagedRuntime.make(
-    Layer.merge(EvidenceStoreFromPostgres(config), LiveCapitalGrantStoreLive).pipe(
+    Layer.merge(EvidenceStoreFromPostgres(config), PersistedCapitalGrantStoreLive).pipe(
       Layer.provideMerge(postgres),
       Layer.provide(NodeServices.layer),
     ),
   )
 }
 
-const makeLiveGrantSubmitRuntime = (config = makeConfig()) =>
+const makePersistedGrantSubmitRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
-    Layer.merge(LiveCapitalGrantStoreLive, WriterFenceLive).pipe(
+    Layer.merge(PersistedCapitalGrantStoreLive, WriterFenceLive).pipe(
       Layer.provideMerge(PostgresClientLive(config)),
       Layer.provide(NodeServices.layer),
     ),
@@ -979,7 +979,11 @@ const activateAuditedCapitalGrant = async () => {
   return activation
 }
 
-const insertLivePaperGeneration = (source: CapitalGrantGeneration, generationHash: string, identity: BrokerIdentity) =>
+const insertCapitalGrantGeneration = (
+  source: CapitalGrantGeneration,
+  generationHash: string,
+  identity: BrokerIdentity,
+) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const inserted = yield* sql<{ generation_hash: string }>`
@@ -1018,7 +1022,7 @@ const insertLivePaperGeneration = (source: CapitalGrantGeneration, generationHas
       RETURNING generation_hash
     `
     if (inserted.length !== 1 || inserted[0]?.generation_hash !== generationHash) {
-      return yield* Effect.die(new Error('live PAPER authority-generation fixture was not inserted exactly once'))
+      return yield* Effect.die(new Error('execution authority-generation fixture was not inserted exactly once'))
     }
   })
 
@@ -1222,15 +1226,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 35, name: 'notional_market_orders' },
       { migration_id: 36, name: 'qualified_cycle_snapshot_binding' },
       { migration_id: 37, name: 'account_neutral_runtime_compatibility' },
+      { migration_id: 38, name: 'account_neutral_capital_grants' },
     ])
   })
 
-  test('preserves historical authority evidence and binds live grants to exact PAPER strategy identity', async () => {
+  test('preserves legacy grants and persists the neutral grant contract for either broker environment', async () => {
     const auditedPaper = await activateAuditedCapitalGrant()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const store = yield* LiveCapitalGrantStore
+        const store = yield* PersistedCapitalGrantStore
         const identity = successOfResult(
           makeBrokerIdentity({
             schemaVersion: 'bayn.broker-identity.v2',
@@ -1240,7 +1245,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           }),
         )
         const liveGenerationHash = fixtureHash('explicit-execution-authority-live-generation')
-        yield* insertLivePaperGeneration(auditedPaper, liveGenerationHash, identity)
+        yield* insertCapitalGrantGeneration(auditedPaper, liveGenerationHash, identity)
 
         const historicalGenerationHash = fixtureHash('explicit-execution-authority-historical-generation')
         yield* sql`
@@ -1281,7 +1286,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           broker_environment: historical.broker_environment,
         })
         const grant = successOfResult(
-          makeLiveCapitalGrant({
+          makeCapitalGrantRecord({
             schemaVersion: 'bayn.live-capital-grant.v1',
             brokerIdentity: identity,
             authorityGenerationHash: liveGenerationHash,
@@ -1307,6 +1312,32 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const recorded = yield* store.record(grant)
         const readBack = yield* store.read(grant.grantHash)
 
+        const sandboxIdentity = successOfResult(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: 'sandbox-account-integration',
+          }),
+        )
+        const sandboxGenerationHash = fixtureHash('explicit-execution-authority-sandbox-generation')
+        yield* insertCapitalGrantGeneration(auditedPaper, sandboxGenerationHash, sandboxIdentity)
+        const sandboxGrant = successOfResult(
+          makeCapitalGrantRecord({
+            schemaVersion: 'bayn.capital-grant.v2',
+            brokerIdentity: sandboxIdentity,
+            authorityGenerationHash: sandboxGenerationHash,
+            strategy: grant.strategy,
+            limits: grant.limits,
+            validFrom: grant.validFrom,
+            validUntil: grant.validUntil,
+            issuedAt: grant.issuedAt,
+            issuedBy: grant.issuedBy,
+          }),
+        )
+        const sandboxRecorded = yield* store.record(sandboxGrant)
+        const sandboxReadBack = yield* store.read(sandboxGrant.grantHash)
+
         const observeGenerationHash = fixtureHash('explicit-execution-authority-live-observe-generation')
         yield* sql`
           INSERT INTO authority_generations (
@@ -1323,13 +1354,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         const { grantHash: _grantHash, ...grantMaterial } = grant
         const crossEnvironmentGrant = successOfResult(
-          makeLiveCapitalGrant({ ...grantMaterial, authorityGenerationHash: auditedPaper.generationHash }),
+          makeCapitalGrantRecord({ ...grantMaterial, authorityGenerationHash: auditedPaper.generationHash }),
         )
         const observeGenerationGrant = successOfResult(
-          makeLiveCapitalGrant({ ...grantMaterial, authorityGenerationHash: observeGenerationHash }),
+          makeCapitalGrantRecord({ ...grantMaterial, authorityGenerationHash: observeGenerationHash }),
         )
         const mismatchedStrategyGrant = successOfResult(
-          makeLiveCapitalGrant({
+          makeCapitalGrantRecord({
             ...grantMaterial,
             strategy: { ...grant.strategy, behaviorHash: fixtureHash('mismatched-live-grant-strategy') },
           }),
@@ -1340,7 +1371,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const [grantCount] = yield* sql<{ count: number }>`
           SELECT count(*)::integer AS count FROM live_capital_grants
         `
-        const revocation: LiveCapitalGrantRevocation = {
+        const revocation: CapitalGrantRevocation = {
           schemaVersion: 'bayn.live-capital-grant-revocation.v1',
           revokedAt: '2026-07-28T08:15:00.000Z',
           revokedBy: 'integration:test',
@@ -1378,6 +1409,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           decodedHistorical,
           recorded,
           readBack,
+          sandboxRecorded,
+          sandboxReadBack,
           revoked,
           crossEnvironmentRecord,
           observeGenerationRecord,
@@ -1405,10 +1438,15 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       accountId: 'live-account-integration',
     })
     expect(result.readBack).toEqual(result.recorded)
+    expect(result.sandboxRecorded.persistedGrant?.grant).toMatchObject({
+      schemaVersion: 'bayn.capital-grant.v2',
+      brokerIdentity: { environment: BrokerEnvironment.Sandbox, accountId: 'sandbox-account-integration' },
+    })
+    expect(result.sandboxReadBack).toEqual(result.sandboxRecorded)
     expect(Exit.isFailure(result.crossEnvironmentRecord)).toBe(true)
     expect(Exit.isFailure(result.observeGenerationRecord)).toBe(true)
     expect(Exit.isFailure(result.mismatchedStrategyRecord)).toBe(true)
-    expect(result.grantCount).toBe(1)
+    expect(result.grantCount).toBe(2)
     expect(result.revoked.persistedGrant?.revocation).toMatchObject({
       schemaVersion: 'bayn.live-capital-grant-revocation.v1',
       reason: 'integration containment proof',
@@ -1424,7 +1462,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
   })
 
-  test('serializes revocation ahead of final live submit authorization with zero broker POSTs', async () => {
+  test('serializes revocation ahead of final submit authorization with zero broker POSTs', async () => {
     const auditedPaper = await activateAuditedCapitalGrant()
     const identity = successOfResult(
       makeBrokerIdentity({
@@ -1436,8 +1474,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     const generationHash = fixtureHash('live-grant-final-submit-race-generation')
     const grant = successOfResult(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: identity,
         authorityGenerationHash: generationHash,
         strategy: {
@@ -1472,8 +1510,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     const preflight = await runtime.runPromise(
       Effect.gen(function* () {
-        const store = yield* LiveCapitalGrantStore
-        yield* insertLivePaperGeneration(auditedPaper, generationHash, identity)
+        const store = yield* PersistedCapitalGrantStore
+        yield* insertCapitalGrantGeneration(auditedPaper, generationHash, identity)
         yield* store.record(grant)
         return yield* store.read(grant.grantHash)
       }),
@@ -1482,8 +1520,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     const revocationLockHeld = await Effect.runPromise(Deferred.make<void>())
     const releaseRevocation = await Effect.runPromise(Deferred.make<void>())
-    const revocation: LiveCapitalGrantRevocation = {
-      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+    const revocation: CapitalGrantRevocation = {
+      schemaVersion: 'bayn.capital-grant-revocation.v2',
       revokedAt: '2026-07-28T08:05:00.000Z',
       revokedBy: 'integration:test',
       reason: 'race containment',
@@ -1491,7 +1529,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const revocationPromise = runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const store = yield* LiveCapitalGrantStore
+        const store = yield* PersistedCapitalGrantStore
         return yield* sql.withTransaction(
           sql`
             SELECT grant_hash
@@ -1508,12 +1546,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     await Effect.runPromise(Deferred.await(revocationLockHeld))
 
-    const authorizationRuntime = makeLiveGrantSubmitRuntime()
+    const authorizationRuntime = makePersistedGrantSubmitRuntime()
     let brokerPosts = 0
     const authorizationPromise = authorizationRuntime.runPromiseExit(
       Effect.gen(function* () {
         const fence = yield* WriterFence
-        const store = yield* LiveCapitalGrantStore
+        const store = yield* PersistedCapitalGrantStore
         return yield* fence.transaction(
           Effect.gen(function* () {
             const persisted = yield* store.lockForSubmit(grant.grantHash)

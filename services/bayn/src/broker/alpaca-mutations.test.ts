@@ -11,7 +11,7 @@ import {
   BrokerEnvironment,
   grantedCapitalAuthority,
   makeExecutionAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   noCapitalAuthority,
   type ExecutionStrategyIdentity,
   type ExecutionAuthority,
@@ -327,8 +327,8 @@ describe('Alpaca broker mutations', () => {
       }),
     )
     const grant = Result.getOrThrow(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: liveConnection.identity,
         authorityGenerationHash,
         strategy: strategyIdentity,

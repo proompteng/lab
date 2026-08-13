@@ -7,16 +7,12 @@ import {
   BrokerAccess,
   CapitalAuthorityKind,
   grantedCapitalAuthority,
-  makeLiveCapitalGrant,
+  makeCapitalGrantRecord,
   noCapitalAuthority,
   type ExecutionStrategyIdentity,
 } from './authority'
 import type { ExecutionPolicy } from './configuration'
-import {
-  resolvePreparedExecutionAuthority,
-  resolvePreparedExecutionPolicy,
-  resolvePreparedSandboxAuthority,
-} from './runtime-authority'
+import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from './runtime-authority'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const generationHash = '1'.repeat(64)
@@ -58,11 +54,12 @@ const sandboxPolicy: ExecutionPolicy = {
 describe('runtime authority resolution', () => {
   test('constructs sandbox authority from the exact realized PREPARE generation', async () => {
     const authority = await Effect.runPromise(
-      resolvePreparedSandboxAuthority({
+      resolvePreparedExecutionAuthority({
+        executionPolicy: sandboxPolicy,
         brokerIdentity: identity,
         strategy,
-        generationHash,
         observedAt: '2026-07-28T08:00:00.000Z',
+        readPersistedCapitalGrant: () => Effect.die('generation-bound sandbox authority must not read a grant record'),
       }),
     )
 
@@ -107,7 +104,7 @@ describe('runtime authority resolution', () => {
     )
   })
 
-  test('preserves the configured live grant while binding the prepared episode generation', () => {
+  test('preserves the configured persisted capital grant while binding the prepared episode generation', () => {
     const persistedGrantHash = '8'.repeat(64)
     expect(
       resolvePreparedExecutionPolicy({
@@ -136,10 +133,10 @@ describe('runtime authority resolution', () => {
     )
   })
 
-  test('loads and validates live capital through the same prepared authority boundary', async () => {
+  test('loads and validates a persisted capital grant through the same prepared authority boundary', async () => {
     const grant = Result.getOrThrow(
-      makeLiveCapitalGrant({
-        schemaVersion: 'bayn.live-capital-grant.v1',
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
         brokerIdentity: liveIdentity,
         authorityGenerationHash: generationHash,
         strategy,
@@ -193,6 +190,56 @@ describe('runtime authority resolution', () => {
         authorityGenerationHash: generationHash,
         persistedGrant: { grant: { grantHash: grant.grantHash } },
       },
+    })
+  })
+
+  test('loads the same persisted capital grant contract for a sandbox broker identity', async () => {
+    const grant = Result.getOrThrow(
+      makeCapitalGrantRecord({
+        schemaVersion: 'bayn.capital-grant.v2',
+        brokerIdentity: identity,
+        authorityGenerationHash: generationHash,
+        strategy,
+        limits: {
+          maxGrossNotionalMicros: '100000000000',
+          maxOrderNotionalMicros: '10000000000',
+          maxPositionNotionalMicros: '25000000000',
+          maxDailyLossMicros: '1000000000',
+          maxOpenOrders: 5,
+        },
+        validFrom: '2026-07-28T07:00:00.000Z',
+        validUntil: '2026-07-28T09:00:00.000Z',
+        issuedAt: '2026-07-28T06:00:00.000Z',
+        issuedBy: 'operator:test',
+      }),
+    )
+    const policy = Result.getOrThrow(
+      resolvePreparedExecutionPolicy({
+        configured: {
+          ...sandboxPolicy,
+          capitalAuthority: {
+            ...sandboxPolicy.capitalAuthority,
+            persistedGrantHash: grant.grantHash,
+          },
+        },
+        brokerIdentity: identity,
+        preparedGenerationHash: generationHash,
+      }),
+    )
+
+    const authority = await Effect.runPromise(
+      resolvePreparedExecutionAuthority({
+        executionPolicy: policy,
+        brokerIdentity: identity,
+        strategy,
+        observedAt: '2026-07-28T08:00:00.000Z',
+        readPersistedCapitalGrant: () => Effect.succeed(grantedCapitalAuthority(grant)),
+      }),
+    )
+
+    expect(authority).toMatchObject({
+      brokerIdentity: identity,
+      capitalAuthority: { persistedGrant: { grant: { grantHash: grant.grantHash } } },
     })
   })
 })

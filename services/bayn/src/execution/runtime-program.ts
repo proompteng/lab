@@ -3,7 +3,7 @@ import { Clock, Effect, Result } from 'effect'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
-import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
+import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
 import { canonicalHashV1Result } from '../hash'
 import type { Policy } from '../risk'
 import { MutationOperation } from '../broker/alpaca-mutations'
@@ -37,7 +37,7 @@ export interface ExecutionProgramDependencies {
   readonly intentStore: IntentStoreService
   readonly mutationStore: MutationStoreShape
   readonly writerFence: WriterFenceService
-  readonly persistedCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
+  readonly persistedCapitalGrants: Pick<PersistedCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly riskPolicy: Policy
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed entry lease, checked at the final writer fence. */

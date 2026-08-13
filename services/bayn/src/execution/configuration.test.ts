@@ -74,6 +74,7 @@ describe('execution policy configuration', () => {
       ['none', BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
       [BrokerEnvironment.Sandbox, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
       [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthoritySelection.Granted, undefined],
+      [BrokerEnvironment.Sandbox, BrokerAccess.Mutation, CapitalAuthoritySelection.Granted, persistedCapitalGrantHash],
       [BrokerEnvironment.Live, BrokerAccess.ReadOnly, CapitalAuthoritySelection.None, undefined],
       [BrokerEnvironment.Live, BrokerAccess.Mutation, CapitalAuthoritySelection.Granted, persistedCapitalGrantHash],
     ])
@@ -106,7 +107,10 @@ describe('execution policy configuration', () => {
         authorityGenerationHash,
         persistedCapitalGrantHash: undefined,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedCapitalGrantRequired' } })
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'PersistedCapitalGrantRequired', environment: BrokerEnvironment.Live },
+    })
   })
 
   test('produces one no-capital or granted-capital request for either broker environment', () => {
