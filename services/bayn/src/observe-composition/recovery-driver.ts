@@ -379,8 +379,12 @@ const makeRecoveryFirstCycleDriver = (
           )
     const requiresReconciliationPreflight =
       input.interpretCycleDriver !== undefined || input.lifecycleMaintenance !== undefined
+    const reconciliationPreflight =
+      input.lifecycleMaintenance === undefined
+        ? reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
+        : attemptMutationIdleReconciliation(cadence, reconcile)
     const runCycleAdvance = requiresReconciliationPreflight
-      ? reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile).pipe(
+      ? reconciliationPreflight.pipe(
           Effect.matchEffect({
             onFailure: (error) =>
               currentUtcInstant.pipe(
@@ -391,8 +395,9 @@ const makeRecoveryFirstCycleDriver = (
           }),
         )
       : advanceCycle
-    // The external driver owns one bounded command. Include lifecycle maintenance and the reconciliation preflight in
-    // the same aggregate budget as the cycle pass so a stalled prerequisite cannot outlive Restate's command window.
+    // The external driver owns one bounded command. A lifecycle advance may finalize a receipt, so it always performs
+    // a same-command reconciliation rather than reusing the ordinary cadence. Keep that preflight and maintenance in
+    // the aggregate budget so a stalled prerequisite cannot outlive Restate's command window.
     const lifecycleAdvance =
       input.lifecycleMaintenance === undefined
         ? runCycleAdvance

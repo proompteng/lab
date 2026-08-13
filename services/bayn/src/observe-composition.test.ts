@@ -4175,6 +4175,7 @@ describe('OBSERVE runtime composition', () => {
         }),
         afterReconciliation: Effect.sync(() => {
           lifecycleFinalizationRuns += 1
+          mutationEvents.push(`finalize:${lifecycleFinalizationRuns.toString()}`)
           return lifecycleFinalizationRuns === 3 ? ('COMPLETED' as const) : ('CONTINUE' as const)
         }),
       },
@@ -4241,11 +4242,15 @@ describe('OBSERVE runtime composition', () => {
     expect(externalObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
     expect(lifecycleMaintenanceRuns).toBe(4)
     expect(lifecycleFinalizationRuns).toBe(3)
-    expect(mutationReconciliations).toBe(3)
+    expect(mutationReconciliations).toBe(4)
     expect(mutationEvents.indexOf('maintenance:1')).toBeLessThan(mutationEvents.indexOf('reconcile:1'))
+    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('finalize:1'))
     expect(mutationEvents.indexOf('maintenance:2')).toBeLessThan(mutationEvents.indexOf('reconcile:2'))
+    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('finalize:2'))
     expect(mutationEvents.indexOf('maintenance:3')).toBeLessThan(mutationEvents.indexOf('reconcile:3'))
     expect(mutationEvents.indexOf('reconcile:3')).toBeLessThan(mutationEvents.indexOf('maintenance:4'))
+    expect(mutationEvents.indexOf('maintenance:4')).toBeLessThan(mutationEvents.indexOf('reconcile:4'))
+    expect(mutationEvents.indexOf('reconcile:4')).toBeLessThan(mutationEvents.indexOf('finalize:3'))
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
     expect(mutationEvents).not.toContain('publication:3')
