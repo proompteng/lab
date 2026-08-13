@@ -45,6 +45,11 @@ export const CycleObservabilityResourceLive = CycleObservabilityLive
 
 export const ExecutionStoreResourceLive = (config: LoadedRuntimeConfig) => ExecutionStoreLive(config)
 
+export const ExecutionControllerStatusResourceLive = (config: LoadedRuntimeConfig) => {
+  const postgres = sqlResource(PostgresClientResourceLive(config))
+  return ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres), Layer.provideMerge(ApplicationPlatformLive))
+}
+
 export const CycleStoreResourceLive = CycleStoreLive
 
 export const WriterFenceResourceLive = WriterFenceLive
@@ -84,6 +89,17 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+}
+
+export const AutonomousWorkerApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+  const postgres = PostgresAuthorityLive(plan.config)
+  const journal = JournalResourceLive(plan.config)
+  return Layer.mergeAll(
+    SignalMarketDataLive(plan),
+    postgres,
+    journal,
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {

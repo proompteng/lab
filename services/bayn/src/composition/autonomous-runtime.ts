@@ -95,7 +95,14 @@ import {
   type ConfiguredCapitalActivation,
 } from './capital-activation'
 
-export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export interface AutonomousServiceRuntimeOptions {
+  readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
+}
+
+export const makeAutonomousServiceRuntime = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  options: AutonomousServiceRuntimeOptions = {},
+) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
     const observeConfig = {
@@ -241,6 +248,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                               runtimeServices.lifecycleCommandStore,
                               runtimeServices.writerFence,
                               authorityGenerationHash,
+                              options.interpretCycleDriver,
                             )(startup)
                           }).pipe(
                             // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
@@ -490,6 +498,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                                 runtimeServices.writerFence,
                                 maintainReconciliation,
                                 maintainLifecycle,
+                                options.interpretCycleDriver,
                               )(startup).pipe(
                                 // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
                                 Effect.provide(cycleResources),
@@ -664,7 +673,7 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
                                           runtimeServices.writerFence,
                                           onClosedCycle,
                                           maintainExecutionLifecycle,
-                                          interpretCycleDriver,
+                                          interpretCycleDriver ?? options.interpretCycleDriver,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                                           Effect.provide(cycleResources),
@@ -790,8 +799,16 @@ export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService
         ),
       )
     }
-    return yield* runApplication(plan.config, plan.strategy, dependencies, {
-      ...pendingRuntime(),
-      resolveAfterStartup,
-    })
+    return {
+      dependencies,
+      runtime: {
+        ...pendingRuntime(),
+        resolveAfterStartup,
+      },
+    }
   })
+
+export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+  makeAutonomousServiceRuntime(plan).pipe(
+    Effect.flatMap(({ dependencies, runtime }) => runApplication(plan.config, plan.strategy, dependencies, runtime)),
+  )

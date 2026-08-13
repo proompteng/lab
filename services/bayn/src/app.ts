@@ -189,6 +189,12 @@ const resolveRuntimeAfterStartup = <StartupR, LoopR>(
     ? runtime.resolveAfterStartup(state)
     : Effect.succeed(runtime)
 
+export interface PreparedAutonomousApplication<StartupR, LoopR> {
+  readonly cycleFiber: Fiber.Fiber<void, never>
+  readonly runtime: AutonomousRuntime<StartupR, LoopR>
+  readonly state: Ref.Ref<RuntimeState>
+}
+
 const currentUtcInstant = Clock.currentTimeMillis.pipe(
   Effect.flatMap((millis) =>
     Effect.try({
@@ -244,6 +250,36 @@ const startAutonomousCycle = <StartupR, LoopR>(
             : forkAutonomousCycle(runtime, state, cycleBindingId)
         }),
       )
+
+export const prepareAutonomousApplication = <StartupR, LoopR>(
+  config: RuntimeConfig,
+  strategy: StrategyRuntime,
+  dependencies: ApplicationDependencies,
+  runtime: AutonomousRuntime<StartupR, LoopR>,
+): Effect.Effect<PreparedAutonomousApplication<StartupR, LoopR>, OperationalError, StartupR | LoopR | Scope.Scope> =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(initialRuntimeState(config, runtime))
+    if (qualificationEvidenceRequired(runtime)) {
+      yield* runStartup(config, state, strategy, dependencies)
+    }
+    const resolvedRuntime = yield* resolveRuntimeAfterStartup(runtime, state)
+    if (resolvedRuntime._tag === 'Brokerless') {
+      return yield* operationalError({
+        component: 'config',
+        operation: 'prepare-autonomous-application',
+        message: 'native execution preparation requires an autonomous runtime',
+      })
+    }
+    const cycleFiber = yield* startAutonomousCycle(resolvedRuntime, state)
+    if (cycleFiber === undefined) {
+      return yield* operationalError({
+        component: 'config',
+        operation: 'prepare-autonomous-application',
+        message: 'native execution preparation requires a durable cycle binding',
+      })
+    }
+    return { cycleFiber, runtime: resolvedRuntime, state }
+  })
 
 const runApplicationDataFirst = <StartupR, LoopR>(
   config: RuntimeConfig,

@@ -104,6 +104,7 @@ export const lifecycleMaintenanceCycle =
     writerFence: WriterFenceService,
     maintainReconciliation: Effect.Effect<void>,
     maintainLifecycle: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>,
+    interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
   (startup) =>
     Semaphore.make(1).pipe(
@@ -144,7 +145,11 @@ export const lifecycleMaintenanceCycle =
           nextDelayMs,
           wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
         }
-        return (lifecycleDriverInterpreter(plan, store, writerFence) ?? interpretRecoveryFirstCycleInProcess)(driver)
+        return (
+          interpretCycleDriverOverride ??
+          lifecycleDriverInterpreter(plan, store, writerFence) ??
+          interpretRecoveryFirstCycleInProcess
+        )(driver)
       }),
     )
 
@@ -158,8 +163,10 @@ export const observeCycle = (
   lifecycleCommandStore: LifecycleCommandStoreShape,
   writerFence: WriterFenceService,
   authorityGenerationHash: string,
+  interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
 ) => {
-  const interpretCycleDriver = lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
+  const interpretCycleDriver =
+    interpretCycleDriverOverride ?? lifecycleDriverInterpreter(plan, lifecycleCommandStore, writerFence)
   return makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash,
