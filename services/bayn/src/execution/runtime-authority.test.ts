@@ -36,7 +36,7 @@ describe('runtime authority resolution', () => {
 
     expect(authority).toMatchObject({
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox, authorityGenerationHash: generationHash },
+      capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash: generationHash },
     })
   })
 })

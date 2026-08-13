@@ -304,7 +304,7 @@ const statusFactsDataFirst = (
   const paperActivationRealized = state.paperActivation?._tag === 'Realized'
   const effectiveBrokerAccess = paperActivationRealized ? BrokerAccess.Mutation : execution.brokerAccess
   const effectiveCapitalAuthority = paperActivationRealized
-    ? CapitalAuthorityKind.Sandbox
+    ? CapitalAuthorityKind.Granted
     : execution.capitalAuthority._tag
   return {
     service: 'bayn',
@@ -715,7 +715,7 @@ const renderPrometheusMetricsDataFirst = (
       (authority) =>
         `bayn_capital_authority{authority="${authority}"} ${
           paperActivationRealized
-            ? authority === CapitalAuthorityKind.Sandbox
+            ? authority === CapitalAuthorityKind.Granted
               ? 1
               : 0
             : config.execution.capitalAuthority._tag === authority

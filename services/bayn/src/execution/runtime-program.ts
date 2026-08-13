@@ -12,10 +12,9 @@ import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordin
 import type { Intent } from './contracts'
 import {
   BrokerAccess,
-  CapitalAuthorityKind,
   type ExecutionCapitalLimits,
   type ExecutionAuthority,
-  type LiveCapitalAuthority,
+  type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
 import { IntentStore, type IntentStoreService } from './intents'
@@ -56,7 +55,7 @@ export interface ExecutionProgramConstructionFailure {
 interface FinalExecutionCapitalAuthorization {
   readonly limits: ExecutionCapitalLimits
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
-  readonly liveGrant?: LiveCapitalAuthority
+  readonly persistedAuthority?: GrantedCapitalAuthority
 }
 
 const executionPolicyLimits = (
@@ -93,8 +92,8 @@ const finalExecutionGrantAuthorization = (
   const policyLimits = executionPolicyLimits(authority, intent, dependencies)
   if (Result.isFailure(policyLimits)) return Effect.fail(policyLimits.failure)
   const capital = authority.capitalAuthority
-  if (capital._tag !== CapitalAuthorityKind.LiveGrant) return Effect.succeed({ limits: policyLimits.success })
-  const grantHash = capital.grant.grantHash
+  if (capital.persistedGrant === undefined) return Effect.succeed({ limits: policyLimits.success })
+  const grantHash = capital.persistedGrant.grant.grantHash
   return Effect.gen(function* () {
     const persisted = yield* dependencies.liveCapitalGrants.lockForSubmit(grantHash)
     if (persisted === undefined) {
@@ -103,11 +102,11 @@ const finalExecutionGrantAuthorization = (
     const observedAt = yield* dependencies.currentUtcInstant
     const validated = validateLiveGrantForSubmit(authority, persisted, observedAt)
     if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
-    const grantLimits = validated.success.capitalAuthority.grant.limits
+    const grantLimits = validated.success.capitalAuthority.persistedGrant.grant.limits
     return {
       limits: constrainExecutionCapitalLimits(policyLimits.success, grantLimits),
       hardCloseLimits: grantLimits,
-      liveGrant: persisted,
+      persistedAuthority: persisted,
     }
   })
 }
@@ -123,9 +122,9 @@ const finalBrokerAuthorization = (
     const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
     const refreshedAuthority =
-      capital.liveGrant === undefined
+      capital.persistedAuthority === undefined
         ? Result.succeed(authority)
-        : validateLiveGrantForSubmit(authority, capital.liveGrant, observedAt)
+        : validateLiveGrantForSubmit(authority, capital.persistedAuthority, observedAt)
     if (Result.isFailure(refreshedAuthority)) return yield* Effect.fail(refreshedAuthority.failure)
     const validation = validateExecutionBrokerSubmitSnapshot(
       refreshedAuthority.success,

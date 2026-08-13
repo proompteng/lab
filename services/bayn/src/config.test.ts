@@ -217,7 +217,7 @@ describe('pure runtime configuration resolution', () => {
       runtimeMode: 'AutonomousService',
       execution: {
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox, authorityGenerationHash },
+        capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash },
       },
     })
     expect(live).toMatchObject({
@@ -225,9 +225,9 @@ describe('pure runtime configuration resolution', () => {
       execution: {
         brokerAccess: BrokerAccess.Mutation,
         capitalAuthority: {
-          _tag: CapitalAuthorityKind.LiveGrant,
-          grantHash: liveCapitalGrantHash,
+          _tag: CapitalAuthorityKind.Granted,
           authorityGenerationHash,
+          persistedGrantHash: liveCapitalGrantHash,
         },
       },
     })
@@ -249,7 +249,7 @@ describe('pure runtime configuration resolution', () => {
       alpaca: { reconciliationIntervalMs: 59_999 },
       execution: {
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox },
+        capitalAuthority: { _tag: CapitalAuthorityKind.Granted },
       },
     })
 
@@ -318,7 +318,7 @@ describe('pure runtime configuration resolution', () => {
       alpaca: { reconciliationIntervalMs: 59_999 },
       execution: {
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: { _tag: CapitalAuthorityKind.LiveGrant, grantHash: liveCapitalGrantHash },
+        capitalAuthority: { _tag: CapitalAuthorityKind.Granted, persistedGrantHash: liveCapitalGrantHash },
       },
     })
     expectFailure(

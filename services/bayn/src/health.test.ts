@@ -752,8 +752,8 @@ describe('Bayn continuous health', () => {
         brokerIdentity: liveIdentity,
         brokerAccess: BrokerAccess.Mutation,
         capitalAuthority: {
-          _tag: CapitalAuthorityKind.LiveGrant,
-          grantHash: 'b'.repeat(64),
+          _tag: CapitalAuthorityKind.Granted,
+          persistedGrantHash: 'b'.repeat(64),
           authorityGenerationHash: 'c'.repeat(64),
         },
       },

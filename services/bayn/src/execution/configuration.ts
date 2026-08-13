@@ -27,15 +27,10 @@ export interface NoCapitalRequest {
   readonly _tag: CapitalAuthorityKind.None
 }
 
-export interface SandboxCapitalRequest {
-  readonly _tag: CapitalAuthorityKind.Sandbox
+export interface GrantedCapitalRequest {
+  readonly _tag: CapitalAuthorityKind.Granted
   readonly authorityGenerationHash: string
-}
-
-export interface LiveCapitalGrantRequest {
-  readonly _tag: CapitalAuthorityKind.LiveGrant
-  readonly grantHash: string
-  readonly authorityGenerationHash: string
+  readonly persistedGrantHash?: string
 }
 
 export const paperActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
@@ -349,7 +344,7 @@ export const decodePaperActivationConfigurationResult = Pipeable.dual(1, (input:
   decodePaperActivationConfigurationResultDataFirst(input),
 )
 
-export type CapitalAuthorityRequest = NoCapitalRequest | SandboxCapitalRequest | LiveCapitalGrantRequest
+export type CapitalAuthorityRequest = NoCapitalRequest | GrantedCapitalRequest
 
 export type ExecutionPolicy =
   | {
@@ -363,14 +358,9 @@ export type ExecutionPolicy =
       readonly capitalAuthority: NoCapitalRequest
     }
   | {
-      readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Sandbox }
+      readonly brokerIdentity: BrokerIdentity
       readonly brokerAccess: BrokerAccess.Mutation
-      readonly capitalAuthority: SandboxCapitalRequest
-    }
-  | {
-      readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Live }
-      readonly brokerAccess: BrokerAccess.Mutation
-      readonly capitalAuthority: LiveCapitalGrantRequest
+      readonly capitalAuthority: GrantedCapitalRequest
     }
 
 export interface ExecutionPolicyInput {
@@ -502,12 +492,9 @@ export const resolveExecutionPolicy = (
       return Result.fail({ _tag: 'SandboxCapitalRequiresAuthorityGeneration' })
     }
     return Result.succeed({
-      brokerIdentity: input.brokerIdentity as BrokerIdentity & { readonly environment: BrokerEnvironment.Sandbox },
+      brokerIdentity: input.brokerIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: {
-        _tag: CapitalAuthorityKind.Sandbox,
-        authorityGenerationHash: input.authorityGenerationHash,
-      },
+      capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash: input.authorityGenerationHash },
     })
   }
 
@@ -524,12 +511,12 @@ export const resolveExecutionPolicy = (
     return Result.fail({ _tag: 'LiveCapitalRequiresAuthorityGeneration' })
   }
   return Result.succeed({
-    brokerIdentity: input.brokerIdentity as BrokerIdentity & { readonly environment: BrokerEnvironment.Live },
+    brokerIdentity: input.brokerIdentity,
     brokerAccess: BrokerAccess.Mutation,
     capitalAuthority: {
-      _tag: CapitalAuthorityKind.LiveGrant,
-      grantHash: input.liveCapitalGrantHash,
+      _tag: CapitalAuthorityKind.Granted,
       authorityGenerationHash: input.authorityGenerationHash,
+      persistedGrantHash: input.liveCapitalGrantHash,
     },
   })
 }

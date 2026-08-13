@@ -458,7 +458,7 @@ const mutationCycle = (
   return makeMutationAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash:
-      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
+      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
         ? plan.config.execution.capitalAuthority.authorityGenerationHash
         : plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,

@@ -27,17 +27,11 @@ export const BrokerAccessSchema = Schema.Enum(BrokerAccess)
 
 export enum CapitalAuthorityKind {
   None = 'none',
-  Sandbox = 'sandbox-capital',
-  LiveGrant = 'live-capital-grant',
+  Granted = 'granted-capital',
 }
 
 export interface NoCapitalAuthority {
   readonly _tag: CapitalAuthorityKind.None
-}
-
-export interface SandboxCapitalAuthority {
-  readonly _tag: CapitalAuthorityKind.Sandbox
-  readonly authorityGenerationHash: string
 }
 
 export interface ExecutionCapitalLimits {
@@ -120,42 +114,46 @@ export const LiveCapitalGrantRevocationSchema = Schema.Struct({
 })
 export type LiveCapitalGrantRevocation = typeof LiveCapitalGrantRevocationSchema.Type
 
-export interface LiveCapitalAuthority {
-  readonly _tag: CapitalAuthorityKind.LiveGrant
+export interface PersistedCapitalGrant {
   readonly grant: LiveCapitalGrant
   readonly revocation?: LiveCapitalGrantRevocation
 }
 
-export type CapitalAuthority = NoCapitalAuthority | SandboxCapitalAuthority | LiveCapitalAuthority
+export interface GrantedCapitalAuthority {
+  readonly _tag: CapitalAuthorityKind.Granted
+  readonly authorityGenerationHash: string
+  readonly persistedGrant?: PersistedCapitalGrant
+}
+
+export type CapitalAuthority = NoCapitalAuthority | GrantedCapitalAuthority
 
 export const noCapitalAuthority: NoCapitalAuthority = Object.freeze({ _tag: CapitalAuthorityKind.None })
 
-export const sandboxCapitalAuthority = (authorityGenerationHash: string): SandboxCapitalAuthority => ({
-  _tag: CapitalAuthorityKind.Sandbox,
-  authorityGenerationHash,
-})
-
-const liveCapitalAuthorityDataFirst = (
+const persistedGrantBinding = (
   grant: LiveCapitalGrant,
   revocation?: LiveCapitalGrantRevocation,
-): LiveCapitalAuthority => ({
-  _tag: CapitalAuthorityKind.LiveGrant,
+): PersistedCapitalGrant => ({
   grant,
   ...(revocation === undefined ? {} : { revocation }),
 })
 
-export const liveCapitalAuthority = Pipeable.by<
-  (
-    revocation?: LiveCapitalGrantRevocation,
-  ) => (grant: LiveCapitalGrant) => ReturnType<typeof liveCapitalAuthorityDataFirst>,
-  typeof liveCapitalAuthorityDataFirst
->(
-  (arguments_) =>
-    typeof arguments_[0] === 'object' &&
-    arguments_[0] !== null &&
-    arguments_[0].schemaVersion === 'bayn.live-capital-grant.v1',
-  liveCapitalAuthorityDataFirst,
-)
+export function grantedCapitalAuthority(authorityGenerationHash: string): GrantedCapitalAuthority
+export function grantedCapitalAuthority(
+  grant: LiveCapitalGrant,
+  revocation?: LiveCapitalGrantRevocation,
+): GrantedCapitalAuthority
+export function grantedCapitalAuthority(
+  input: string | LiveCapitalGrant,
+  revocation?: LiveCapitalGrantRevocation,
+): GrantedCapitalAuthority {
+  const authorityGenerationHash = typeof input === 'string' ? input : input.authorityGenerationHash
+  const persistedGrant = typeof input === 'string' ? undefined : persistedGrantBinding(input, revocation)
+  return {
+    _tag: CapitalAuthorityKind.Granted,
+    authorityGenerationHash,
+    ...(persistedGrant === undefined ? {} : { persistedGrant }),
+  }
+}
 
 export type ExecutionAuthority =
   | {
@@ -165,15 +163,9 @@ export type ExecutionAuthority =
       readonly strategy: ExecutionStrategyIdentity
     }
   | {
-      readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Sandbox }
+      readonly brokerIdentity: BrokerIdentity
       readonly brokerAccess: BrokerAccess.Mutation
-      readonly capitalAuthority: SandboxCapitalAuthority
-      readonly strategy: ExecutionStrategyIdentity
-    }
-  | {
-      readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Live }
-      readonly brokerAccess: BrokerAccess.Mutation
-      readonly capitalAuthority: LiveCapitalAuthority
+      readonly capitalAuthority: GrantedCapitalAuthority
       readonly strategy: ExecutionStrategyIdentity
     }
 
@@ -189,12 +181,15 @@ export type ExecutionAuthorityConstructionFailure =
       readonly environment: BrokerEnvironment
     }
   | {
-      readonly _tag: 'SandboxBrokerRequiresSandboxCapital'
-      readonly capitalAuthority: CapitalAuthorityKind
+      readonly _tag: 'SandboxBrokerForbidsPersistedGrant'
     }
   | {
-      readonly _tag: 'LiveBrokerRequiresLiveGrant'
-      readonly capitalAuthority: CapitalAuthorityKind
+      readonly _tag: 'LiveBrokerRequiresPersistedGrant'
+    }
+  | {
+      readonly _tag: 'LiveGrantAuthorityGenerationMismatch'
+      readonly authorityGenerationHash: string
+      readonly grantAuthorityGenerationHash: string
     }
   | {
       readonly _tag: 'LiveGrantBrokerIdentityMismatch'
@@ -261,67 +256,67 @@ export const makeExecutionAuthority = (
   }
 
   if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox) {
-    return input.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
-      ? Result.succeed({
-          brokerIdentity: input.brokerIdentity as BrokerIdentity & {
-            readonly environment: BrokerEnvironment.Sandbox
-          },
-          brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: input.capitalAuthority,
-          strategy: input.strategy,
-        })
-      : Result.fail({
-          _tag: 'SandboxBrokerRequiresSandboxCapital',
-          capitalAuthority: input.capitalAuthority._tag,
-        })
-  }
-
-  if (input.capitalAuthority._tag !== CapitalAuthorityKind.LiveGrant) {
-    return Result.fail({
-      _tag: 'LiveBrokerRequiresLiveGrant',
-      capitalAuthority: input.capitalAuthority._tag,
+    if (input.capitalAuthority.persistedGrant !== undefined) {
+      return Result.fail({ _tag: 'SandboxBrokerForbidsPersistedGrant' })
+    }
+    return Result.succeed({
+      brokerIdentity: input.brokerIdentity,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: input.capitalAuthority,
+      strategy: input.strategy,
     })
   }
-  const capital = input.capitalAuthority
-  if (capital.grant.brokerIdentity.identityHash !== input.brokerIdentity.identityHash) {
+
+  const persistedGrant = input.capitalAuthority.persistedGrant
+  if (persistedGrant === undefined) {
+    return Result.fail({ _tag: 'LiveBrokerRequiresPersistedGrant' })
+  }
+  if (input.capitalAuthority.authorityGenerationHash !== persistedGrant.grant.authorityGenerationHash) {
+    return Result.fail({
+      _tag: 'LiveGrantAuthorityGenerationMismatch',
+      authorityGenerationHash: input.capitalAuthority.authorityGenerationHash,
+      grantAuthorityGenerationHash: persistedGrant.grant.authorityGenerationHash,
+    })
+  }
+  if (persistedGrant.grant.brokerIdentity.identityHash !== input.brokerIdentity.identityHash) {
     return Result.fail({
       _tag: 'LiveGrantBrokerIdentityMismatch',
       authorityIdentityHash: input.brokerIdentity.identityHash,
-      grantIdentityHash: capital.grant.brokerIdentity.identityHash,
+      grantIdentityHash: persistedGrant.grant.brokerIdentity.identityHash,
     })
   }
-  if (!sameStrategy(capital.grant.strategy, input.strategy)) {
+  if (!sameStrategy(persistedGrant.grant.strategy, input.strategy)) {
     return Result.fail({
       _tag: 'LiveGrantStrategyMismatch',
       expected: input.strategy,
-      observed: capital.grant.strategy,
+      observed: persistedGrant.grant.strategy,
     })
   }
-  if (capital.revocation !== undefined) {
+  if (persistedGrant.revocation !== undefined) {
     return Result.fail({
       _tag: 'LiveGrantRevoked',
-      revokedAt: capital.revocation.revokedAt,
-      reason: capital.revocation.reason,
+      revokedAt: persistedGrant.revocation.revokedAt,
+      reason: persistedGrant.revocation.reason,
     })
   }
-  if (input.observedAt < capital.grant.validFrom) {
+  if (input.observedAt < persistedGrant.grant.validFrom) {
     return Result.fail({
       _tag: 'LiveGrantNotYetValid',
-      validFrom: capital.grant.validFrom,
+      validFrom: persistedGrant.grant.validFrom,
       observedAt: input.observedAt,
     })
   }
-  if (input.observedAt >= capital.grant.validUntil) {
+  if (input.observedAt >= persistedGrant.grant.validUntil) {
     return Result.fail({
       _tag: 'LiveGrantExpired',
-      validUntil: capital.grant.validUntil,
+      validUntil: persistedGrant.grant.validUntil,
       observedAt: input.observedAt,
     })
   }
   return Result.succeed({
-    brokerIdentity: input.brokerIdentity as BrokerIdentity & { readonly environment: BrokerEnvironment.Live },
+    brokerIdentity: input.brokerIdentity,
     brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: capital,
+    capitalAuthority: input.capitalAuthority,
     strategy: input.strategy,
   })
 }

@@ -50,7 +50,7 @@ import {
   type ValuationStoreShape,
 } from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
-import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
+import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
   IntentStore,
   planPaperIntent,
@@ -497,7 +497,7 @@ const sandboxExecutionProgram = (
     makeExecutionAuthority({
       brokerIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+      capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
       strategy,
       observedAt: evaluatedAt,
     }),

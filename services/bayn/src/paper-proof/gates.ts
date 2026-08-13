@@ -25,7 +25,7 @@ const sameStrategy = (left: PaperProofSourcePlan['strategy'], right: PaperProofR
   left.parameterSchemaVersion === right.parameterSchemaVersion
 
 export const hasPaperProofMutationAuthority = (runtime: PaperProofRuntimeBinding): boolean =>
-  runtime.brokerAccess === BrokerAccess.Mutation || runtime.capitalAuthority === CapitalAuthorityKind.Sandbox
+  runtime.brokerAccess === BrokerAccess.Mutation || runtime.capitalAuthority === CapitalAuthorityKind.Granted
 
 const validatePaperProofEntryDataFirst = (
   command: PaperProofCommand,
@@ -88,7 +88,7 @@ const validatePaperProofEntryDataFirst = (
     }
     return mismatch('PREPARE requires read-only broker access and no capital authority')
   }
-  if (runtime.brokerAccess === BrokerAccess.Mutation && runtime.capitalAuthority === CapitalAuthorityKind.Sandbox) {
+  if (runtime.brokerAccess === BrokerAccess.Mutation && runtime.capitalAuthority === CapitalAuthorityKind.Granted) {
     return Result.succeed(undefined)
   }
   return mismatch('SUBMIT, CANCEL, and RECOVER require explicit sandbox mutation authority')

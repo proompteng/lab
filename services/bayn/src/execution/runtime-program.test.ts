@@ -21,11 +21,10 @@ import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
   CapitalAuthorityKind,
-  liveCapitalAuthority,
+  grantedCapitalAuthority,
   makeExecutionAuthority,
   makeLiveCapitalGrant,
   noCapitalAuthority,
-  sandboxCapitalAuthority,
   type ExecutionStrategyIdentity,
 } from './authority'
 import {
@@ -177,7 +176,7 @@ const finalLiveFixture = () => {
     makeExecutionAuthority({
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: liveCapitalAuthority(grant),
+      capitalAuthority: grantedCapitalAuthority(grant),
       strategy,
       observedAt,
     }),
@@ -240,7 +239,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: sandboxIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -268,7 +267,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: liveIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: liveCapitalAuthority(grant),
+        capitalAuthority: grantedCapitalAuthority(grant),
         strategy,
         observedAt,
       }),
@@ -281,8 +280,8 @@ describe('same-code execution program composition', () => {
     expect(liveProgram.schemaVersion).toBe(sandboxProgram.schemaVersion)
     expect(sandboxProgram.authority.brokerIdentity.environment).toBe(BrokerEnvironment.Sandbox)
     expect(liveProgram.authority.brokerIdentity.environment).toBe(BrokerEnvironment.Live)
-    expect(sandboxProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Sandbox)
-    expect(liveProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.LiveGrant)
+    expect(sandboxProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Granted)
+    expect(liveProgram.authority.capitalAuthority._tag).toBe(CapitalAuthorityKind.Granted)
   })
 
   test('cannot construct a mutation program from read-only authority', () => {
@@ -310,7 +309,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -343,7 +342,7 @@ describe('same-code execution program composition', () => {
           read: () => Effect.die(new Error('final authorization must use the locked grant read')),
           lockForSubmit:
             authority.brokerIdentity.environment === BrokerEnvironment.Live
-              ? () => Effect.succeed(liveCapitalAuthority(live.grant))
+              ? () => Effect.succeed(grantedCapitalAuthority(live.grant))
               : () => Effect.die(new Error('sandbox final authorization must not read a live grant')),
         },
       }
@@ -380,7 +379,7 @@ describe('same-code execution program composition', () => {
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       liveCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
-        lockForSubmit: () => Effect.succeed(liveCapitalAuthority(fixture.grant)),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
       },
       currentUtcInstant: Effect.sync(() => {
         instantReads += 1
@@ -410,7 +409,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -459,7 +458,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -505,7 +504,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: sandboxIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -597,7 +596,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: identity(BrokerEnvironment.Sandbox),
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),
@@ -701,7 +700,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: liveIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: liveCapitalAuthority(grant),
+        capitalAuthority: grantedCapitalAuthority(grant),
         strategy,
         observedAt,
       }),
@@ -723,7 +722,7 @@ describe('same-code execution program composition', () => {
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
       liveCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
-        lockForSubmit: () => Effect.succeed(liveCapitalAuthority(grant)),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(grant)),
       },
       isCloseOnlyIntent: () => Effect.succeed(true),
     }
@@ -769,7 +768,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: liveIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: liveCapitalAuthority(grant),
+        capitalAuthority: grantedCapitalAuthority(grant),
         strategy,
         observedAt,
       }),
@@ -840,7 +839,7 @@ describe('same-code execution program composition', () => {
         lockForSubmit: () =>
           Effect.sync(() => {
             locks += 1
-          }).pipe(Effect.andThen(TestClock.setTime(Date.parse(expiresAt))), Effect.as(liveCapitalAuthority(grant))),
+          }).pipe(Effect.andThen(TestClock.setTime(Date.parse(expiresAt))), Effect.as(grantedCapitalAuthority(grant))),
       },
       currentUtcInstant: Effect.succeed(observedAt),
     }
@@ -907,7 +906,7 @@ describe('same-code execution program composition', () => {
         lockForSubmit: () =>
           Effect.sync(() => {
             trace.push('lock')
-            return liveCapitalAuthority(grant)
+            return grantedCapitalAuthority(grant)
           }),
       },
       currentUtcInstant: Effect.succeed(observedAt),
@@ -970,7 +969,7 @@ describe('same-code execution program composition', () => {
         lockForSubmit: () =>
           Effect.sync(() => {
             trace.push('lock')
-            return liveCapitalAuthority(grant)
+            return grantedCapitalAuthority(grant)
           }),
       },
       currentUtcInstant: Effect.succeed(authorizationObservedAt),
@@ -998,7 +997,7 @@ describe('same-code execution program composition', () => {
       makeExecutionAuthority({
         brokerIdentity: sandboxIdentity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
         strategy,
         observedAt,
       }),

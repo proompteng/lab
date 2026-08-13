@@ -666,7 +666,7 @@ describe('EXECUTION_PREPARE pure validation', () => {
       { runtime: { ...runtime, riskPolicyHash: hash('changed-policy') }, field: 'riskPolicyHash' },
       { runtime: { ...runtime, brokerEnvironment: BrokerEnvironment.Live }, field: 'brokerEnvironment' },
       { runtime: { ...runtime, brokerAccess: BrokerAccess.Mutation }, field: 'brokerAccess' },
-      { runtime: { ...runtime, capitalAuthority: CapitalAuthorityKind.Sandbox }, field: 'capitalAuthority' },
+      { runtime: { ...runtime, capitalAuthority: CapitalAuthorityKind.Granted }, field: 'capitalAuthority' },
     ]
 
     for (const entry of cases) {

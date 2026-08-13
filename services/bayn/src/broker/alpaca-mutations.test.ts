@@ -9,11 +9,10 @@ import { canonicalHashV1 } from '../hash'
 import {
   BrokerAccess,
   BrokerEnvironment,
-  liveCapitalAuthority,
+  grantedCapitalAuthority,
   makeExecutionAuthority,
   makeLiveCapitalGrant,
   noCapitalAuthority,
-  sandboxCapitalAuthority,
   type ExecutionStrategyIdentity,
   type ExecutionAuthority,
 } from '../execution/authority'
@@ -75,7 +74,7 @@ const submitAuthority = Result.getOrThrow(
   makeExecutionAuthority({
     brokerIdentity: connection.identity,
     brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+    capitalAuthority: grantedCapitalAuthority(authorityGenerationHash),
     strategy: strategyIdentity,
     observedAt: authorityObservedAt,
   }),
@@ -350,7 +349,7 @@ describe('Alpaca broker mutations', () => {
       makeExecutionAuthority({
         brokerIdentity: liveConnection.identity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: liveCapitalAuthority(grant),
+        capitalAuthority: grantedCapitalAuthority(grant),
         strategy: strategyIdentity,
         observedAt: authorityObservedAt,
       }),

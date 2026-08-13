@@ -73,7 +73,7 @@ const sandboxMutationExecution: ExecutionPolicy = {
   ),
   brokerAccess: BrokerAccess.Mutation,
   capitalAuthority: {
-    _tag: CapitalAuthorityKind.Sandbox,
+    _tag: CapitalAuthorityKind.Granted,
     authorityGenerationHash: 'a'.repeat(64),
   },
 }
@@ -338,7 +338,7 @@ describe('Bayn HTTP pure decisions', () => {
     const facts = statusFacts(realized, readOnlyExecution, provenance, 'embedded')
     expect(facts.authority).toMatchObject({
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: CapitalAuthorityKind.Sandbox,
+      capitalAuthority: CapitalAuthorityKind.Granted,
       brokerOrders: true,
       capitalPromotion: true,
     })
@@ -687,7 +687,7 @@ describe('Bayn HTTP pure decisions', () => {
           observationAvailable: true,
           brokerEnvironment: BrokerEnvironment.Sandbox,
           brokerAccess: BrokerAccess.Mutation,
-          capitalAuthority: CapitalAuthorityKind.Sandbox,
+          capitalAuthority: CapitalAuthorityKind.Granted,
           durable: {
             available: true,
             configured: true,
@@ -1696,7 +1696,7 @@ describe('Bayn HTTP probes', () => {
                 authority: {
                   brokerEnvironment: BrokerEnvironment.Sandbox,
                   brokerAccess: BrokerAccess.Mutation,
-                  capitalAuthority: CapitalAuthorityKind.Sandbox,
+                  capitalAuthority: CapitalAuthorityKind.Granted,
                   brokerOrders: true,
                   capitalPromotion: true,
                 },
