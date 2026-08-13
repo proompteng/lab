@@ -36,6 +36,26 @@ Expected:
 - no Bayn `RestateDeployment` exists at this foundation layer;
 - the existing Restate admin and ingress Services retain ready endpoints.
 
+The same revision extends the auto-synced observability application with Restate server and operator scrapes. Its
+configuration hash change replaces the single `observability-cluster-metrics-alloy` pod. A short scrape gap and a new
+pod identity are expected; loss of the pre-existing Bayn, CNPG, Ceph, kubelet, or kube-state-metrics targets is not.
+The two new unavailable alerts may remain pending for at most their two-minute evaluation window while Restate and the
+operator converge.
+
+Verify the collector rollout and both new targets without changing cluster state:
+
+```sh
+kubectl rollout status deployment/observability-cluster-metrics-alloy -n observability --timeout=180s
+kubectl get pods -n observability -l app.kubernetes.io/name=observability-cluster-metrics-alloy -o wide
+kubectl logs -n observability deployment/observability-cluster-metrics-alloy --since=10m | grep -E 'restate|error'
+```
+
+In Mimir or Grafana, require `up{job="restate-server"} == 1` and `up{job="restate-operator"} == 1`, then confirm the
+pre-existing `bayn`, `cnpg-postgres`, `ceph-storage`, `kubelet`, `kubelet-cadvisor`, and `kube-state-metrics` jobs still
+report `up == 1`. If the Alloy rollout fails or an existing target disappears, revert this foundation commit through a
+normal PR. Argo will restore the prior Alloy configuration hash and alert rules; wait for the replacement collector to
+become available and recheck every pre-existing target before resuming the worker layer.
+
 If the operator or signing-key rollout does not converge, revert this foundation commit through a normal PR and let
 Argo reconcile the prior StatefulSet. Before removing operator CRDs, prove that no `RestateDeployment` objects exist;
 remove the operator application before its CRD application, and never manually delete a CRD that still has instances.

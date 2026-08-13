@@ -94,25 +94,25 @@ spec:
     {{- $hasValuesObject := hasKey . "valuesObject" -}}
     {{- $hasManagedNamespaceMetadata := hasKey . "managedNamespaceMetadata" -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasManagedNamespaceMetadata -}}
-        {{- if $needsSpec }}
-        spec:
-          {{- if or $hasDestServer $hasDestName }}
-          destination:
-            namespace: "{{.namespace}}"
-            {{- if $hasDestServer }}
-            server: '{{ .destinationServer }}'
-            {{- end }}
-            {{- if $hasDestName }}
-            name: '{{ .destinationName }}'
-        {{- end }}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: "{{.namespace}}"
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
       {{- end }}
-      {{- if $hasValuesObject }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $hasValuesObject }}
       source:
         helm:
-          valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
-      {{- end }}
-      {{- if $hasManagedNamespaceMetadata }}
+          valuesObject: {{- .valuesObject | toYaml | nindent 8 }}
+    {{- end }}
+    {{- if $hasManagedNamespaceMetadata }}
       syncPolicy:
-        managedNamespaceMetadata: {{- .managedNamespaceMetadata | toYaml | nindent 10 }}
-      {{- end }}
+        managedNamespaceMetadata: {{- .managedNamespaceMetadata | toYaml | nindent 6 }}
+    {{- end }}
     {{- end }}
