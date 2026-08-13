@@ -2,6 +2,46 @@
 
 This application deploys the self-hosted Restate server and its private admin UI exposure.
 
+## Operator and request-identity foundation rollout
+
+This rollout installs the Restate Operator foundation but does not register, activate, or move any Bayn execution.
+The root ApplicationSet creates two independently reconciled automated applications: `restate-operator-crds` and
+`restate-operator`, whose chart is configured with `installCrds: false`. The operational order is CRDs first, operator
+second: the CRD application must report `Synced` and `Healthy` before any `RestateDeployment` is committed. If the
+operator application reconciles while its CRDs are still settling, hold the Bayn worker layer and verify that both
+applications converge; do not create resources by hand.
+
+The same GitOps revision mounts the sealed request-identity private key into the existing single-replica Restate
+StatefulSet. That change replaces the Restate pod and can briefly make the control plane unavailable. Existing Bayn
+execution remains on its legacy fail-closed owner during this foundation rollout, so this restart must not create a
+second lifecycle writer or broker mutation path. The PVC, Restate metadata, and existing deployment registrations are
+preserved.
+
+After Argo reconciles `main`, verify the ordered foundation without printing the private key:
+
+```sh
+kubectl get application -n argocd restate-operator-crds restate-operator restate -o wide
+kubectl get crd -n restate-operator restatedeployments.restate.dev -o name
+kubectl rollout status deployment/restate-operator -n restate-operator --timeout=180s
+kubectl rollout status statefulset/restate -n restate --timeout=300s
+kubectl exec -n restate statefulset/restate -- test -s /var/run/secrets/restate/request-identity/private.pem
+kubectl get restatedeployment -n bayn
+```
+
+Expected:
+
+- both operator applications and `restate` are `Synced` and `Healthy`;
+- the operator deployment and Restate StatefulSet complete rollout;
+- the request-identity file exists and is non-empty without its contents entering logs;
+- no Bayn `RestateDeployment` exists at this foundation layer;
+- the existing Restate admin and ingress Services retain ready endpoints.
+
+If the operator or signing-key rollout does not converge, revert this foundation commit through a normal PR and let
+Argo reconcile the prior StatefulSet. Before removing operator CRDs, prove that no `RestateDeployment` objects exist;
+remove the operator application before its CRD application, and never manually delete a CRD that still has instances.
+The rollback must leave the Restate PVC and prior service registrations intact. Recheck the StatefulSet, Services, and
+admin API after the revert before resuming the Bayn worker layer.
+
 ## Admin UI exposure
 
 `restate-admin-tailscale` exposes the Restate admin/UI port only through the Tailscale Kubernetes operator:
