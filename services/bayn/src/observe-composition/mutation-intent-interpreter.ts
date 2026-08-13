@@ -22,18 +22,18 @@ import type { PaperDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
 import type { CausalProtocol } from '../protocol'
 import {
-  decidePaperCycleCompletion,
+  decideExecutionCycleCompletion,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
   decidePendingMutationObservation,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
-  expiredPaperPlanTerminalReason,
+  expiredExecutionPlanTerminalReason,
   mutationRecoveryIsDue,
-  paperCycleHasFilledIntent,
-  paperSubmitExpiresAt,
-  type PaperCycleIntentTerminalEvidence,
+  executionCycleHasFilledIntent,
+  executionSubmitExpiresAt,
+  type ExecutionCycleIntentTerminalEvidence,
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
@@ -447,10 +447,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     if (uncommittedIntents.length > 0) {
       const commitObservedAt = yield* dependencies.now
       const commitExpiresAt = uncommittedIntents.reduce(
-        (expiresAt, prepared) => paperSubmitExpiresAt(expiresAt, prepared.riskBinding.evaluation.decision.expiresAt),
+        (expiresAt, prepared) =>
+          executionSubmitExpiresAt(expiresAt, prepared.riskBinding.evaluation.decision.expiresAt),
         document.expiresAt,
       )
-      const expirationReason = expiredPaperPlanTerminalReason(commitObservedAt, commitExpiresAt, submissionCutoffAt)
+      const expirationReason = expiredExecutionPlanTerminalReason(commitObservedAt, commitExpiresAt, submissionCutoffAt)
       if (expirationReason !== undefined) {
         return {
           _tag: 'Block',
@@ -502,7 +503,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       })
     }
 
-    const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
+    const terminalEvidence: ExecutionCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
     let unsuccessfulIntentFound = false
     let deferredExpiration:
@@ -511,7 +512,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           readonly observedAt: string
         }
       | undefined
-    const hasFilledIntent = paperCycleHasFilledIntent({
+    const hasFilledIntent = executionCycleHasFilledIntent({
       intents: preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
       orders: facts.reconciliation.brokerState.orders,
     })
@@ -589,11 +590,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             : { _tag: 'Wait', observedAt: facts.evaluatedAt }
         case 'Submit': {
           if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
-          const submitExpiresAt = paperSubmitExpiresAt(
+          const submitExpiresAt = executionSubmitExpiresAt(
             submissionCutoffAt,
             prepared.riskBinding.evaluation.decision.expiresAt,
           )
-          const expirationReason = expiredPaperPlanTerminalReason(
+          const expirationReason = expiredExecutionPlanTerminalReason(
             facts.evaluatedAt,
             submitExpiresAt,
             submissionCutoffAt,
@@ -680,7 +681,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    const completion = decidePaperCycleCompletion(document.createdAt, terminalEvidence, {
+    const completion = decideExecutionCycleCompletion(document.createdAt, terminalEvidence, {
       status: facts.reconciliation.brokerState.reconciliation.status,
       reconciledAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
       accountingExact: facts.reconciliation.report.metrics.accountingExact,
