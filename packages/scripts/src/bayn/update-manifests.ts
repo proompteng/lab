@@ -281,9 +281,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   }
   const researchCapitalRelease =
     !hadQualificationPin && hasCapitalActivationRequest && acceptedQualificationRunId === undefined
-  if (researchCapitalRelease && (!strategyIdentityMatches || !candidateRuntimeMatchesDeployment)) {
-    throw new Error('a research capital release cannot change strategy or runtime identity')
-  }
   const unpinnedCandidateReplay =
     !hadQualificationPin && !hasCapitalActivationRequest && acceptedQualificationRunId === undefined
   if (
@@ -331,7 +328,10 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       ...updateDetails,
     }
   }
-  if (researchCapitalRelease && !activationBuildMatches) {
+  if (
+    researchCapitalRelease &&
+    (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
+  ) {
     return {
       promotionAction: 'hold',
       promotionReason: 'research-capital-activation-refresh-required',

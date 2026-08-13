@@ -399,21 +399,27 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toBe(before)
   })
 
-  test('keeps research capital strategy and runtime identity immutable across a service release', () => {
+  test('holds research capital strategy and runtime identity changes without writing files', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
-    expect(() => promote(paths, { strategyParameterHash: '6'.repeat(64) })).toThrow(
-      'a research capital release cannot change strategy or runtime identity',
-    )
-    expect(() =>
+    expect(promote(paths, { strategyParameterHash: '6'.repeat(64) })).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'research-capital-activation-refresh-required',
+      qualificationMode: 'research',
+    })
+    expect(
       promote(paths, {
         candidateRuntime: {
           ...currentBindings,
           BAYN_SIGNAL_SNAPSHOT_ID: '5'.repeat(64),
         },
       }),
-    ).toThrow('a research capital release cannot change strategy or runtime identity')
+    ).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'research-capital-activation-refresh-required',
+      qualificationMode: 'research',
+    })
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
