@@ -16,7 +16,40 @@ spec:
                   suffix: ""
                   destinationServer: https://kubernetes.default.svc
           - list:
-              elements: &helm_elements []
+              elements: &helm_elements
+                - name: restate-operator-crds
+                  namespace: restate-operator
+                  repoUrl: ghcr.io/restatedev
+                  chart: restate-operator-crds
+                  version: 3.0.0
+                  releaseName: restate-operator-crds
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: restricted
+                      pod-security.kubernetes.io/audit: restricted
+                      pod-security.kubernetes.io/warn: restricted
+                    annotations:
+                      argocd.argoproj.io/sync-options: Prune=false
+                - name: restate-operator
+                  namespace: restate-operator
+                  repoUrl: ghcr.io/restatedev
+                  chart: restate-operator-helm
+                  version: 3.0.0
+                  releaseName: restate-operator
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: restricted
+                      pod-security.kubernetes.io/audit: restricted
+                      pod-security.kubernetes.io/warn: restricted
+                    annotations:
+                      argocd.argoproj.io/sync-options: Prune=false
+                  valuesObject:
+                    installCrds: false
+                    version: 3.0.0
+                    logging:
+                      env_filter: info,restate=info
             selector:
               matchExpressions:
                 - key: enabled
@@ -59,7 +92,8 @@ spec:
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $hasValuesObject := hasKey . "valuesObject" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject -}}
+    {{- $hasManagedNamespaceMetadata := hasKey . "managedNamespaceMetadata" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject $hasManagedNamespaceMetadata -}}
         {{- if $needsSpec }}
         spec:
           {{- if or $hasDestServer $hasDestName }}
@@ -76,5 +110,9 @@ spec:
       source:
         helm:
           valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
+      {{- end }}
+      {{- if $hasManagedNamespaceMetadata }}
+      syncPolicy:
+        managedNamespaceMetadata: {{- .managedNamespaceMetadata | toYaml | nindent 10 }}
       {{- end }}
     {{- end }}

@@ -94,6 +94,8 @@ spec:
               value: 1Gi
             - name: RESTATE_LISTEN_MODE
               value: tcp
+            - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE
+              value: /var/run/secrets/restate/request-identity/private.pem
           readinessProbe:
             httpGet:
               path: /restate/health
@@ -105,7 +107,14 @@ spec:
               name: storage
             - mountPath: /tmp
               name: tmp
+            - mountPath: /var/run/secrets/restate/request-identity
+              name: request-identity
+              readOnly: true
       volumes:
+        - name: request-identity
+          secret:
+            secretName: restate-request-identity
+            defaultMode: 0440
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:
