@@ -4,7 +4,6 @@ import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
 import { compatibleOrderRequestBody, MutationOperation, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
-import type { RuntimeConfig } from '../config'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
@@ -87,7 +86,10 @@ export interface AccountingVerification {
 }
 
 type AccountingLedgerIdentity = {
-  readonly tigerBeetle: Pick<RuntimeConfig['tigerBeetle'], 'clusterId' | 'ledger'>
+  readonly tigerBeetle: {
+    readonly clusterId: bigint
+    readonly ledger: number
+  }
 }
 
 export interface AccountingComparison {
@@ -210,94 +212,94 @@ const decodeReconciliation = Schema.decodeUnknownResult(ReconciliationSchema, st
 const fail = (failure: ReconciliationAlgebraFailure): Result.Result<never, ReconciliationAlgebraFailure> =>
   Result.fail(failure)
 
+type SubmittedOrderRepresentation = Pick<
+  IntentExpectation,
+  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
+>
+
+const invalidSubmitRepresentation = (row: IntentProjectionRow, cause: unknown): ReconciliationAlgebraFailure => ({
+  _tag: 'IntentSubmitRepresentationInvalid',
+  intentId: row.intent_id,
+  requestHash: row.submit_request_hash,
+  cause,
+})
+
+const submittedOrderRepresentation = (
+  row: IntentProjectionRow,
+): Result.Result<SubmittedOrderRepresentation, ReconciliationAlgebraFailure> => {
+  if (row.broker_order_id === null) return Result.succeed({ submittedOrderType: row.order_type })
+  if (row.submit_request_hash === null) {
+    return Result.fail(
+      invalidSubmitRepresentation(row, 'accepted broker order is missing its durable submit request hash'),
+    )
+  }
+
+  const requestIntent = {
+    clientOrderId: row.client_order_id,
+    notionalLimitMicros: row.notional_limit_micros,
+    orderType: row.order_type,
+    quantityMicros: row.quantity_micros,
+    side: row.side,
+    symbol: row.symbol,
+    timeInForce: row.time_in_force,
+  }
+  return Result.flatMap(
+    Result.mapError(compatibleOrderRequestBody(requestIntent, row.submit_request_hash), (cause) =>
+      invalidSubmitRepresentation(row, cause),
+    ),
+    (body) => {
+      if (!('limit_price' in body)) {
+        return Result.succeed({
+          submittedOrderType: OrderType.Market,
+          ...('notional' in body
+            ? { submittedNotionalMicros: row.notional_limit_micros }
+            : { submittedQuantityMicros: row.quantity_micros }),
+        })
+      }
+      return Result.map(
+        Result.mapError(orderPriceBoundaryMicros(requestIntent), (cause) => invalidSubmitRepresentation(row, cause)),
+        (boundary): SubmittedOrderRepresentation => ({
+          submittedOrderType: OrderType.Limit,
+          submittedQuantityMicros: row.quantity_micros,
+          submittedLimitPriceMicros: boundary.toString(),
+        }),
+      )
+    },
+  )
+}
+
+const mutationIsUnresolved = (row: IntentProjectionRow): boolean =>
+  row.mutation_event_type !== null &&
+  (unresolvedEvents.has(row.mutation_event_type) ||
+    (row.mutation_operation === MutationOperation.Cancel &&
+      row.mutation_event_type === MutationEventType.RecoveryFound &&
+      row.state !== IntentState.Terminal))
+
+const projectIntentExpectation = (
+  row: IntentProjectionRow,
+): Result.Result<IntentExpectation, ReconciliationAlgebraFailure> =>
+  Result.map(submittedOrderRepresentation(row), (submitted) => ({
+    intentId: row.intent_id,
+    clientOrderId: row.client_order_id,
+    symbol: row.symbol,
+    side: row.side,
+    orderType: row.order_type,
+    ...submitted,
+    timeInForce: row.time_in_force,
+    quantityMicros: row.quantity_micros,
+    state: row.state,
+    ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
+    expectsBrokerOrder: row.broker_order_id !== null,
+    ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
+    ...(mutationIsUnresolved(row) && row.mutation_occurred_at !== null
+      ? { unknownSince: row.mutation_occurred_at }
+      : {}),
+  }))
+
 export const projectIntentExpectations = (
   rows: readonly IntentProjectionRow[],
 ): Result.Result<IntentProjection, ReconciliationAlgebraFailure> => {
-  const intents = Result.all(
-    rows.map((row): Result.Result<IntentExpectation, ReconciliationAlgebraFailure> => {
-      const requestIntent = {
-        clientOrderId: row.client_order_id,
-        notionalLimitMicros: row.notional_limit_micros,
-        orderType: row.order_type,
-        quantityMicros: row.quantity_micros,
-        side: row.side,
-        symbol: row.symbol,
-        timeInForce: row.time_in_force,
-      }
-      const representation = (): Result.Result<
-        Pick<
-          IntentExpectation,
-          'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
-        >,
-        ReconciliationAlgebraFailure
-      > => {
-        if (row.broker_order_id === null) {
-          return Result.succeed({ submittedOrderType: row.order_type })
-        }
-        if (row.submit_request_hash === null) {
-          return Result.fail({
-            _tag: 'IntentSubmitRepresentationInvalid',
-            intentId: row.intent_id,
-            requestHash: null,
-            cause: 'accepted broker order is missing its durable submit request hash',
-          })
-        }
-        const compatibleBody = compatibleOrderRequestBody(requestIntent, row.submit_request_hash)
-        if (Result.isFailure(compatibleBody)) {
-          return Result.fail({
-            _tag: 'IntentSubmitRepresentationInvalid',
-            intentId: row.intent_id,
-            requestHash: row.submit_request_hash,
-            cause: compatibleBody.failure,
-          })
-        }
-        if (!('limit_price' in compatibleBody.success)) {
-          return Result.succeed({
-            submittedOrderType: OrderType.Market,
-            ...('notional' in compatibleBody.success
-              ? { submittedNotionalMicros: row.notional_limit_micros }
-              : { submittedQuantityMicros: row.quantity_micros }),
-          })
-        }
-        const boundary = orderPriceBoundaryMicros(requestIntent)
-        if (Result.isFailure(boundary)) {
-          return Result.fail({
-            _tag: 'IntentSubmitRepresentationInvalid',
-            intentId: row.intent_id,
-            requestHash: row.submit_request_hash,
-            cause: boundary.failure,
-          })
-        }
-        return Result.succeed({
-          submittedOrderType: OrderType.Limit,
-          submittedQuantityMicros: row.quantity_micros,
-          submittedLimitPriceMicros: boundary.success.toString(),
-        })
-      }
-      return Result.map(representation(), (submitted) => ({
-        intentId: row.intent_id,
-        clientOrderId: row.client_order_id,
-        symbol: row.symbol,
-        side: row.side,
-        orderType: row.order_type,
-        ...submitted,
-        timeInForce: row.time_in_force,
-        quantityMicros: row.quantity_micros,
-        state: row.state,
-        ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
-        expectsBrokerOrder: row.broker_order_id !== null,
-        ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
-        ...(row.mutation_event_type !== null &&
-        (unresolvedEvents.has(row.mutation_event_type) ||
-          (row.mutation_operation === MutationOperation.Cancel &&
-            row.mutation_event_type === MutationEventType.RecoveryFound &&
-            row.state !== IntentState.Terminal)) &&
-        row.mutation_occurred_at !== null
-          ? { unknownSince: row.mutation_occurred_at }
-          : {}),
-      }))
-    }),
-  )
+  const intents = Result.all(rows.map(projectIntentExpectation))
   return Result.map(intents, (projected) => ({
     intents: projected,
     unknownMutationCount: projected.filter((intent) => intent.unknownSince !== undefined).length,
@@ -567,15 +569,14 @@ export const makeReconciliationIdentity = (input: {
         cause,
       }),
     )
-    const decoded = decodeReconciliation({ ...material, reconciliationId, contentHash })
-    if (Result.isFailure(decoded)) {
-      return yield* fail({
+    return yield* Result.mapError(
+      decodeReconciliation({ ...material, reconciliationId, contentHash }),
+      (cause): ReconciliationAlgebraFailure => ({
         _tag: 'ReconciliationIdentityFailed',
         operation: 'decode',
-        cause: decoded.failure,
-      })
-    }
-    return decoded.success
+        cause,
+      }),
+    )
   })
 
 export const decideReconciliation = (input: {
@@ -683,30 +684,30 @@ const riskContextFromRowDataFirst = (
     }
 
     const authorityUpdatedAt = yield* timestamp('authority_updated_at', row.authority_updated_at)
-    const decodedAuthority = decodeAuthorityState({
-      schemaVersion: row.authority_schema_version,
-      generationHash: row.authority_generation_hash,
-      maximum: row.authority_maximum,
-      effective: row.authority_effective,
-      kill: row.authority_kill,
-      ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
-      version,
-      updatedAt: authorityUpdatedAt,
-    })
-    if (Result.isFailure(decodedAuthority)) {
-      return yield* fail({ _tag: 'AuthorityStateDecodeFailed', cause: decodedAuthority.failure })
-    }
+    const authority = yield* Result.mapError(
+      decodeAuthorityState({
+        schemaVersion: row.authority_schema_version,
+        generationHash: row.authority_generation_hash,
+        maximum: row.authority_maximum,
+        effective: row.authority_effective,
+        kill: row.authority_kill,
+        ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
+        version,
+        updatedAt: authorityUpdatedAt,
+      }),
+      (cause): ReconciliationAlgebraFailure => ({ _tag: 'AuthorityStateDecodeFailed', cause }),
+    )
     const authorityObservedAt = yield* timestamp('authority_observed_at', row.authority_observed_at)
-    if (decodedAuthority.success.updatedAt > authorityObservedAt) {
+    if (authority.updatedAt > authorityObservedAt) {
       return yield* fail({
         _tag: 'InvalidRiskContext',
         reason: 'authority-update-after-observation',
-        details: { authorityUpdatedAt: decodedAuthority.success.updatedAt, authorityObservedAt },
+        details: { authorityUpdatedAt: authority.updatedAt, authorityObservedAt },
       })
     }
     return {
       ...riskMaterial(row, unknownMutationCount),
-      authority: decodedAuthority.success,
+      authority,
       authorityObservedAt,
     }
   })
