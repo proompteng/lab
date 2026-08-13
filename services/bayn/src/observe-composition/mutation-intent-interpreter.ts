@@ -53,8 +53,8 @@ export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-  readonly paperEpisodeCutoffAt?: string
-  readonly paperEpisodeExpiresAt?: string
+  readonly executionEpisodeCutoffAt?: string
+  readonly executionEpisodeExpiresAt?: string
 }
 
 export type MutationPreparation = {
@@ -141,9 +141,9 @@ const boundPaperSubmissionCutoff = (
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
-      input.paperEpisodeExpiresAt === undefined ||
-      document.submissionCutoffAt !== input.paperEpisodeExpiresAt ||
-      document.expiresAt !== input.paperEpisodeExpiresAt
+      input.executionEpisodeExpiresAt === undefined ||
+      document.submissionCutoffAt !== input.executionEpisodeExpiresAt ||
+      document.expiresAt !== input.executionEpisodeExpiresAt
     ) {
       return Result.fail(
         mutationRunnerError({
@@ -153,7 +153,7 @@ const boundPaperSubmissionCutoff = (
         }),
       )
     }
-    return Result.succeed(input.paperEpisodeExpiresAt)
+    return Result.succeed(input.executionEpisodeExpiresAt)
   }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -657,7 +657,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     if (unsuccessfulIntentFound) {
       const recoveryDeadline =
-        input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
+        input.mutationPhase === 'CLOSE' ? input.executionEpisodeExpiresAt : input.executionEpisodeCutoffAt
       if (
         (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
         recoveryDeadline !== undefined &&

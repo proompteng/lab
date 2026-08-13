@@ -2,16 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import {
-  decidePaperEpisodeAuthority,
-  decidePaperEpisodeCycleTerminalization,
-  isPaperEpisodeFailureRestriction,
-  paperEpisodeAllocationCapitalMicros,
-  paperGrantFromGeneration,
-  paperGrantKey,
-  validatePaperEpisodeCloseWindow,
-} from './paper-episode'
+  decideExecutionEpisodeAuthority,
+  decideExecutionEpisodeCycleTerminalization,
+  isExecutionEpisodeFailureRestriction,
+  executionEpisodeAllocationCapitalMicros,
+  capitalGrantFromLegacyGeneration,
+  capitalGrantKey,
+  validateExecutionEpisodeCloseWindow,
+} from './episode'
 
-describe('paperEpisodeAllocationCapitalMicros', () => {
+describe('executionEpisodeAllocationCapitalMicros', () => {
   test('selects the smallest account, exposure, and remaining-turnover bound', () => {
     const common = {
       accountEquityMicros: 100_000_000_000n,
@@ -24,17 +24,21 @@ describe('paperEpisodeAllocationCapitalMicros', () => {
       referencePriceMicros: {},
     }
 
-    expect(Result.getOrThrow(paperEpisodeAllocationCapitalMicros(common))).toBe(1_000_000_000n)
+    expect(Result.getOrThrow(executionEpisodeAllocationCapitalMicros(common))).toBe(1_000_000_000n)
     expect(
-      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n })),
+      Result.getOrThrow(
+        executionEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n }),
+      ),
     ).toBe(250_000_000n)
     expect(
-      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
+      Result.getOrThrow(executionEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
     ).toBe(200_000_000n)
     expect(
-      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n })),
+      Result.getOrThrow(
+        executionEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n }),
+      ),
     ).toBe(0n)
-    expect(Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
+    expect(Result.getOrThrow(executionEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
       999_000_999n,
     )
   })
@@ -50,12 +54,12 @@ describe('paperEpisodeAllocationCapitalMicros', () => {
       referencePriceMicros: { SPY: '100000000' },
     }
     const scalable = Result.getOrThrow(
-      paperEpisodeAllocationCapitalMicros({
+      executionEpisodeAllocationCapitalMicros({
         ...common,
         positions: [{ symbol: 'SPY', quantityMicros: '1000000' }],
       }),
     )
-    const rejected = paperEpisodeAllocationCapitalMicros({
+    const rejected = executionEpisodeAllocationCapitalMicros({
       ...common,
       positions: [{ symbol: 'SPY', quantityMicros: '10000000' }],
     })
@@ -71,47 +75,47 @@ describe('paperEpisodeAllocationCapitalMicros', () => {
   })
 })
 
-describe('paper episode decisions', () => {
+describe('execution episode decisions', () => {
   test('recognizes only canonical and exact legacy system failure restrictions', () => {
     const cycleId = 'a'.repeat(64)
     const intentId = 'b'.repeat(64)
 
     expect(
-      isPaperEpisodeFailureRestriction(
+      isExecutionEpisodeFailureRestriction(
         'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_RISK',
       ),
     ).toBe(true)
     expect(
-      isPaperEpisodeFailureRestriction(
+      isExecutionEpisodeFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} submit settled denied`,
       ),
     ).toBe(true)
     expect(
-      isPaperEpisodeFailureRestriction(
+      isExecutionEpisodeFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended REJECTED`,
       ),
     ).toBe(true)
-    expect(isPaperEpisodeFailureRestriction('operator requested PAPER stop')).toBe(false)
+    expect(isExecutionEpisodeFailureRestriction('operator requested PAPER stop')).toBe(false)
     expect(
-      isPaperEpisodeFailureRestriction(
+      isExecutionEpisodeFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended FILLED`,
       ),
     ).toBe(false)
     expect(
-      isPaperEpisodeFailureRestriction(
+      isExecutionEpisodeFailureRestriction(
         `bound PAPER cycle ${cycleId.slice(1)} restricted effective authority: intent ${intentId} submit settled denied`,
       ),
     ).toBe(false)
   })
 
   test('adapts legacy qualification history and research history to one grant boundary', () => {
-    const qualified = paperGrantFromGeneration({
+    const qualified = capitalGrantFromLegacyGeneration({
       schemaVersion: 'bayn.paper-authority-generation.v2',
       qualificationRunId: 'a'.repeat(64),
       qualificationLockId: 'b'.repeat(64),
       qualificationResultHash: 'c'.repeat(64),
     })
-    const research = paperGrantFromGeneration({
+    const research = capitalGrantFromLegacyGeneration({
       schemaVersion: 'bayn.paper-authority-generation.v3',
       grant: { _tag: 'Research', planHash: 'd'.repeat(64) },
     })
@@ -124,14 +128,14 @@ describe('paper episode decisions', () => {
         resultHash: 'c'.repeat(64),
       },
     })
-    expect(paperGrantKey(qualified)).toBe('a'.repeat(64))
-    expect(paperGrantKey(research)).toBe('d'.repeat(64))
+    expect(capitalGrantKey(qualified)).toBe('a'.repeat(64))
+    expect(capitalGrantKey(research)).toBe('d'.repeat(64))
   })
 
   test('keeps the entry cycle active through holding and terminalizes only after close evidence', () => {
     const cutoff = '2026-09-01T13:00:00.000Z'
     expect(
-      decidePaperEpisodeCycleTerminalization({
+      decideExecutionEpisodeCycleTerminalization({
         closeOnly: false,
         observedAt: '2026-08-31T20:00:00.000Z',
         entryCutoffAt: cutoff,
@@ -139,7 +143,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual({ _tag: 'WaitForClose' })
     expect(
-      decidePaperEpisodeCycleTerminalization({
+      decideExecutionEpisodeCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -147,7 +151,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
-      decidePaperEpisodeCycleTerminalization({
+      decideExecutionEpisodeCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -155,7 +159,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
-      decidePaperEpisodeCycleTerminalization({
+      decideExecutionEpisodeCycleTerminalization({
         closeOnly: false,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -170,7 +174,7 @@ describe('paper episode decisions', () => {
       currentGenerationMatchesRequest: false,
     }
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: common.sourceGenerationHash,
         maximum: 'OBSERVE',
@@ -179,7 +183,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Activate' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -189,7 +193,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Resume' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -199,7 +203,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -210,7 +214,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -221,7 +225,7 @@ describe('paper episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         generationHash: 'c'.repeat(64),
         maximum: 'PAPER',
@@ -240,18 +244,18 @@ describe('paper episode decisions', () => {
       kill: 'ACTIVE' as const,
       currentGenerationMatchesRequest: false,
     }
-    expect(decidePaperEpisodeAuthority({ ...common, reason: 'operator kill' })).toEqual(
+    expect(decideExecutionEpisodeAuthority({ ...common, reason: 'operator kill' })).toEqual(
       Result.fail({ _tag: 'IdentityDrift' }),
     )
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         sourceGenerationHash: common.generationHash,
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
     expect(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         ...common,
         sourceGenerationHash: common.generationHash,
         maximum: 'PAPER',
@@ -259,11 +263,11 @@ describe('paper episode decisions', () => {
         kill: 'CLEAR',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
-    expect(decidePaperEpisodeAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(decideExecutionEpisodeAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
 
   test('rejects source-generation drift instead of activating over unknown OBSERVE history', () => {
-    const result = decidePaperEpisodeAuthority({
+    const result = decideExecutionEpisodeAuthority({
       generationHash: 'c'.repeat(64),
       sourceGenerationHash: 'a'.repeat(64),
       maximum: 'OBSERVE',
@@ -281,7 +285,7 @@ describe('paper episode decisions', () => {
       { date: '2026-09-03', openAt: '2026-09-03T13:30:00.000Z', closeAt: '2026-09-03T20:00:00.000Z' },
     ]
     expect(
-      validatePaperEpisodeCloseWindow({
+      validateExecutionEpisodeCloseWindow({
         cutoffAt: sessions[0].openAt,
         expiresAt: sessions[2].closeAt,
         maximumCloseSessions: 3,
@@ -318,7 +322,7 @@ describe('paper episode decisions', () => {
       },
     ]
     for (const input of invalid) {
-      const result = validatePaperEpisodeCloseWindow(input)
+      const result = validateExecutionEpisodeCloseWindow(input)
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result)) expect(result.failure._tag).toBe('InvalidCloseWindow')
     }

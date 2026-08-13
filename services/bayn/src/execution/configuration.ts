@@ -3,7 +3,7 @@ import { pipe, Result, Schema } from 'effect'
 import type { BrokerIdentity } from '../broker/identity'
 import { BrokerEnvironment } from '../broker/identity'
 import { canonicalHashV1Result } from '../hash'
-import { ResearchPaperGrantSchema } from '../paper-episode'
+import { ResearchCapitalGrantSchema } from './episode'
 import { Authority, type ResearchCapitalGrantGeneration, type ResearchCapitalGrantProofBinding } from './contracts'
 import {
   GitSourceRevisionSchema,
@@ -125,7 +125,7 @@ export const makeResearchPaperPlanHash = (
 
 const ResearchPaperActivationRequestMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(researchPaperActivationRequestSchemaVersion),
-  grant: ResearchPaperGrantSchema,
+  grant: ResearchCapitalGrantSchema,
   ...ResearchPaperPlanFields,
 })
 

@@ -138,7 +138,7 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     paperMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: false,
-      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T12:59:59.000Z',
     }),
   ).toBe(true)
@@ -146,7 +146,7 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     paperMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: false,
-      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
       observedAt: '2020-05-01T13:00:00.000Z',
     }),
   ).toBe(false)
@@ -154,8 +154,8 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     paperMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: true,
-      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
-      paperEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
+      executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      executionEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-01T13:05:00.000Z',
     }),
   ).toBe(true)
@@ -163,8 +163,8 @@ test('PAPER submissions obey separate entry and final close-session cutoffs', ()
     paperMutationSubmissionAllowed({
       capability: 'Mutation',
       closeOnly: true,
-      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
-      paperEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
+      executionEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      executionEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-03T20:00:00.000Z',
     }),
   ).toBe(false)
@@ -671,8 +671,8 @@ const prepareStoredPaperStep = async (
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-    readonly paperEpisodeCutoffAt?: string
-    readonly paperEpisodeExpiresAt?: string
+    readonly executionEpisodeCutoffAt?: string
+    readonly executionEpisodeExpiresAt?: string
   } = fixture.input,
   latestCancel?: MutationEvent,
   allowSubmit = true,
@@ -2588,8 +2588,8 @@ describe('OBSERVE runtime composition', () => {
           input: {
             ...fixture.input,
             mutationPhase: 'CLOSE',
-            paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
-            paperEpisodeExpiresAt: closeExpiresAt,
+            executionEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+            executionEpisodeExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -2650,8 +2650,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
-        paperEpisodeExpiresAt: closeExpiresAt,
+        executionEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+        executionEpisodeExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -2796,8 +2796,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
-        paperEpisodeExpiresAt: closeExpiresAt,
+        executionEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+        executionEpisodeExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -2867,7 +2867,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
       0,
       (reason) => restrictions.push(reason),
-      { ...fixture.input, paperEpisodeCutoffAt: cutoffAt },
+      { ...fixture.input, executionEpisodeCutoffAt: cutoffAt },
       undefined,
       true,
       fixture.policy,
@@ -2929,7 +2929,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
       0,
       (reason) => restrictions.push(reason),
-      { ...fixture.input, paperEpisodeCutoffAt: cutoffAt },
+      { ...fixture.input, executionEpisodeCutoffAt: cutoffAt },
       undefined,
       true,
       fixture.policy,
@@ -2956,8 +2956,8 @@ describe('OBSERVE runtime composition', () => {
       {
         ...fixture.input,
         mutationPhase: 'CLOSE',
-        paperEpisodeCutoffAt: cutoffAt,
-        paperEpisodeExpiresAt: closeExpiresAt,
+        executionEpisodeCutoffAt: cutoffAt,
+        executionEpisodeExpiresAt: closeExpiresAt,
       },
       undefined,
       true,
@@ -3287,7 +3287,7 @@ describe('OBSERVE runtime composition', () => {
 
     expect(failure).toMatchObject({
       _tag: 'ObserveDecisionCompositionFailure',
-      operation: 'paper-episode-allocation',
+      operation: 'execution-episode-allocation',
       cause: { _tag: 'CurrentExposureExceedsRemainingTurnover' },
     })
   })
@@ -5174,7 +5174,7 @@ describe('OBSERVE runtime composition', () => {
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
-      paperEpisodeCutoffAt: cutoffAt,
+      executionEpisodeCutoffAt: cutoffAt,
     })
 
     const observation = await Effect.runPromise(

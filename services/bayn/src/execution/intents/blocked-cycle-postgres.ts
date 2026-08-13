@@ -4,11 +4,11 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import {
-  legacyPaperEpisodeFailureRestrictionPattern,
-  paperActivationExpiredRestrictionReason,
-  paperEpisodeCompletedRestrictionReason,
-  paperEpisodeFailureRestrictionPrefix,
-} from '../../paper-episode'
+  legacyExecutionEpisodeFailureRestrictionPattern,
+  executionActivationExpiredRestrictionReason,
+  executionEpisodeCompletedRestrictionReason,
+  executionEpisodeFailureRestrictionPrefix,
+} from '../episode'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreError,
@@ -172,7 +172,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           SELECT
             state.generation_hash,
             generation.account_id,
-            state.reason ~ ${legacyPaperEpisodeFailureRestrictionPattern} AS legacy_failure_restriction
+            state.reason ~ ${legacyExecutionEpisodeFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
           JOIN authority_generations AS generation
             ON generation.generation_hash = state.generation_hash
@@ -182,11 +182,11 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND state.kill_state = 'ACTIVE'
             AND (
               state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
-              OR state.reason ~ ${legacyPaperEpisodeFailureRestrictionPattern}
+              OR state.reason ~ ${legacyExecutionEpisodeFailureRestrictionPattern}
               OR (
                 state.reason IN (
-                  ${paperEpisodeCompletedRestrictionReason},
-                  ${paperActivationExpiredRestrictionReason}
+                  ${executionEpisodeCompletedRestrictionReason},
+                  ${executionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
                   SELECT 1
@@ -270,7 +270,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         ), canonicalized_authority AS (
           UPDATE authority_state AS state
           SET
-            reason = ${paperEpisodeFailureRestrictionPrefix} || ' ' || state.reason,
+            reason = ${executionEpisodeFailureRestrictionPrefix} || ' ' || state.reason,
             version = state.version + 1,
             updated_at = GREATEST(
               ${input.observedAt}::timestamptz,

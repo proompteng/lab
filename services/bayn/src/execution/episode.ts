@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
-import { notionalMicros } from './execution-model'
-import { Sha256Schema } from './schemas'
+import { notionalMicros } from '../execution-model'
+import { Sha256Schema } from '../schemas'
 
 export const QualificationBindingSchema = Schema.Struct({
   runId: Sha256Schema,
@@ -10,16 +10,16 @@ export const QualificationBindingSchema = Schema.Struct({
 })
 export type QualificationBinding = typeof QualificationBindingSchema.Type
 
-export const QualifiedPaperGrantSchema = Schema.TaggedStruct('Qualified', {
+export const QualifiedCapitalGrantSchema = Schema.TaggedStruct('Qualified', {
   qualification: QualificationBindingSchema,
 })
-export const ResearchPaperGrantSchema = Schema.TaggedStruct('Research', {
+export const ResearchCapitalGrantSchema = Schema.TaggedStruct('Research', {
   planHash: Sha256Schema,
 })
-export const PaperGrantSchema = Schema.Union([QualifiedPaperGrantSchema, ResearchPaperGrantSchema])
-export type PaperGrant = typeof PaperGrantSchema.Type
+export const CapitalGrantSchema = Schema.Union([QualifiedCapitalGrantSchema, ResearchCapitalGrantSchema])
+export type CapitalGrant = typeof CapitalGrantSchema.Type
 
-export interface PaperEpisodeAllocationFacts {
+export interface ExecutionEpisodeAllocationFacts {
   readonly accountEquityMicros: bigint
   readonly dailyTradedNotionalMicros: bigint
   readonly maxGrossExposureMicros: bigint
@@ -33,7 +33,7 @@ export interface PaperEpisodeAllocationFacts {
   readonly referencePriceMicros: Readonly<Record<string, string>>
 }
 
-export type PaperEpisodeAllocationFailure =
+export type ExecutionEpisodeAllocationFailure =
   | {
       readonly _tag: 'CurrentExposureExceedsRemainingTurnover'
       readonly currentReferenceGrossExposureMicros: bigint
@@ -47,9 +47,9 @@ const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const BASIS_POINTS = 10_000n
 
 const currentReferenceGrossExposureMicros = (
-  facts: PaperEpisodeAllocationFacts,
-): Result.Result<bigint, PaperEpisodeAllocationFailure> =>
-  facts.positions.reduce<Result.Result<bigint, PaperEpisodeAllocationFailure>>(
+  facts: ExecutionEpisodeAllocationFacts,
+): Result.Result<bigint, ExecutionEpisodeAllocationFailure> =>
+  facts.positions.reduce<Result.Result<bigint, ExecutionEpisodeAllocationFailure>>(
     (total, position) =>
       Result.flatMap(total, (current) => {
         const price = facts.referencePriceMicros[position.symbol]
@@ -61,7 +61,7 @@ const currentReferenceGrossExposureMicros = (
             notionalMicros(absolute(BigInt(position.quantityMicros)), BigInt(price)),
             (notional) => current + notional,
           ),
-          (cause): PaperEpisodeAllocationFailure => ({
+          (cause): ExecutionEpisodeAllocationFailure => ({
             _tag: 'InvalidPositionReferenceNotional',
             cause,
             symbol: position.symbol,
@@ -76,9 +76,9 @@ const currentReferenceGrossExposureMicros = (
  * target gross capital bounds every absolute target delta, including rotations; an infeasible current portfolio is
  * rejected before target planning instead of producing a risk-blocked authority transition.
  */
-export const paperEpisodeAllocationCapitalMicros = (
-  facts: PaperEpisodeAllocationFacts,
-): Result.Result<bigint, PaperEpisodeAllocationFailure> => {
+export const executionEpisodeAllocationCapitalMicros = (
+  facts: ExecutionEpisodeAllocationFacts,
+): Result.Result<bigint, ExecutionEpisodeAllocationFailure> => {
   const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
   const remainingReferenceTurnover =
     (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
@@ -104,10 +104,10 @@ export const paperEpisodeAllocationCapitalMicros = (
   })
 }
 
-export const paperGrantKey = (grant: PaperGrant): string =>
+export const capitalGrantKey = (grant: CapitalGrant): string =>
   grant._tag === 'Qualified' ? grant.qualification.runId : grant.planHash
 
-export type PersistedPaperGrantBinding =
+export type LegacyCapitalGrantGenerationBinding =
   | {
       readonly schemaVersion: 'bayn.paper-authority-generation.v2'
       readonly qualificationRunId: string
@@ -116,11 +116,11 @@ export type PersistedPaperGrantBinding =
     }
   | {
       readonly schemaVersion: 'bayn.paper-authority-generation.v3'
-      readonly grant: Extract<PaperGrant, { readonly _tag: 'Research' }>
+      readonly grant: Extract<CapitalGrant, { readonly _tag: 'Research' }>
     }
 
 /** Projects legacy qualification-bound history into the episode grant without rewriting durable rows. */
-export const paperGrantFromGeneration = (generation: PersistedPaperGrantBinding): PaperGrant =>
+export const capitalGrantFromLegacyGeneration = (generation: LegacyCapitalGrantGenerationBinding): CapitalGrant =>
   generation.schemaVersion === 'bayn.paper-authority-generation.v3'
     ? generation.grant
     : {
@@ -132,17 +132,17 @@ export const paperGrantFromGeneration = (generation: PersistedPaperGrantBinding)
         },
       }
 
-export type PaperEpisodeFailure =
+export type ExecutionEpisodeFailure =
   | { readonly _tag: 'IdentityDrift' }
   | { readonly _tag: 'InvalidCloseWindow'; readonly reason: string }
 
-export interface PaperEpisodeMarketSession {
+export interface ExecutionEpisodeMarketSession {
   readonly date: string
   readonly openAt: string
   readonly closeAt: string
 }
 
-export interface PaperEpisodeAuthorityFacts {
+export interface ExecutionEpisodeAuthorityFacts {
   readonly generationHash: string
   readonly sourceGenerationHash: string
   readonly currentGenerationMatchesRequest: boolean
@@ -152,30 +152,30 @@ export interface PaperEpisodeAuthorityFacts {
   readonly reason?: string
 }
 
-export const paperEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
-export const legacyPaperEpisodeFailureRestrictionPattern =
+export const executionEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
+export const legacyExecutionEpisodeFailureRestrictionPattern =
   '^bound PAPER cycle [0-9a-f]{64} restricted effective authority: intent [0-9a-f]{64} (submit settled (denied|rejected)|ended (BLOCKED|CANCELED|EXPIRED|REJECTED|without outcome))$'
-const legacyPaperEpisodeFailureRestriction = new RegExp(legacyPaperEpisodeFailureRestrictionPattern)
+const legacyExecutionEpisodeFailureRestriction = new RegExp(legacyExecutionEpisodeFailureRestrictionPattern)
 
 /** Accepts only system-authored failure restrictions; operator kills and malformed legacy reasons stay fail-closed. */
-export const isPaperEpisodeFailureRestriction = (reason: string | undefined): boolean =>
-  reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true ||
-  (reason !== undefined && legacyPaperEpisodeFailureRestriction.test(reason))
+export const isExecutionEpisodeFailureRestriction = (reason: string | undefined): boolean =>
+  reason?.startsWith(executionEpisodeFailureRestrictionPrefix) === true ||
+  (reason !== undefined && legacyExecutionEpisodeFailureRestriction.test(reason))
 
-export const paperEpisodeCompletedRestrictionReason =
+export const executionEpisodeCompletedRestrictionReason =
   'PAPER episode restricted effective authority: flat exact receipt finalized'
-export const paperActivationExpiredRestrictionReason =
+export const executionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
 
-export type PaperEpisodeAuthorityDecision =
+export type ExecutionEpisodeAuthorityDecision =
   | { readonly _tag: 'Activate' }
   | { readonly _tag: 'Rearm' }
   | { readonly _tag: 'Resume' }
   | { readonly _tag: 'ResumeRestricted' }
 
-export const decidePaperEpisodeAuthority = (
-  facts: PaperEpisodeAuthorityFacts,
-): Result.Result<PaperEpisodeAuthorityDecision, PaperEpisodeFailure> => {
+export const decideExecutionEpisodeAuthority = (
+  facts: ExecutionEpisodeAuthorityFacts,
+): Result.Result<ExecutionEpisodeAuthorityDecision, ExecutionEpisodeFailure> => {
   if (
     facts.maximum === 'OBSERVE' &&
     facts.effective === 'OBSERVE' &&
@@ -206,19 +206,19 @@ export const decidePaperEpisodeAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash &&
-    isPaperEpisodeFailureRestriction(facts.reason)
+    isExecutionEpisodeFailureRestriction(facts.reason)
   ) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })
 }
 
-export const validatePaperEpisodeCloseWindow = (input: {
+export const validateExecutionEpisodeCloseWindow = (input: {
   readonly cutoffAt: string
   readonly expiresAt: string
   readonly maximumCloseSessions: number
-  readonly sessions: readonly PaperEpisodeMarketSession[]
-}): Result.Result<readonly PaperEpisodeMarketSession[], PaperEpisodeFailure> => {
+  readonly sessions: readonly ExecutionEpisodeMarketSession[]
+}): Result.Result<readonly ExecutionEpisodeMarketSession[], ExecutionEpisodeFailure> => {
   if (!Number.isSafeInteger(input.maximumCloseSessions) || input.maximumCloseSessions < 1) {
     return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'maximum close sessions must be positive' })
   }
@@ -254,17 +254,17 @@ export const validatePaperEpisodeCloseWindow = (input: {
   return Result.succeed(closeSessions)
 }
 
-export type PaperEpisodeCycleTerminalizationDecision =
+export type ExecutionEpisodeCycleTerminalizationDecision =
   | { readonly _tag: 'WaitForClose' }
   | { readonly _tag: 'Block' }
   | { readonly _tag: 'Complete' }
 
-export const decidePaperEpisodeCycleTerminalization = (input: {
+export const decideExecutionEpisodeCycleTerminalization = (input: {
   readonly closeOnly: boolean
   readonly observedAt: string
   readonly entryCutoffAt?: string
   readonly entryHasUnsuccessfulIntent: boolean
-}): PaperEpisodeCycleTerminalizationDecision => {
+}): ExecutionEpisodeCycleTerminalizationDecision => {
   if (!input.closeOnly && input.entryCutoffAt !== undefined && input.observedAt < input.entryCutoffAt) {
     return { _tag: 'WaitForClose' }
   }

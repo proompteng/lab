@@ -119,18 +119,18 @@ import { HttpServerLive } from './http'
 import { Journal, JournalLive } from './ledger'
 import { MarketData, MarketDataLive } from './market-data'
 import {
-  decidePaperEpisodeAuthority,
-  isPaperEpisodeFailureRestriction,
-  paperGrantFromGeneration,
-  paperGrantKey,
-  validatePaperEpisodeCloseWindow,
-} from './paper-episode'
+  decideExecutionEpisodeAuthority,
+  isExecutionEpisodeFailureRestriction,
+  capitalGrantFromLegacyGeneration,
+  capitalGrantKey,
+  validateExecutionEpisodeCloseWindow,
+} from './execution/episode'
 import {
   loadObserveRiskPolicy,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
-  paperEpisodeCloseExpiresAt,
-  paperEpisodeReceiptFinalizationExpiresAt,
+  executionEpisodeCloseExpiresAt,
+  executionEpisodeReceiptFinalizationExpiresAt,
   interpretRecoveryFirstCycleInProcess,
   type LifecycleAdvanceDisposition,
   type RecoveryFirstCycleDriver,
@@ -444,7 +444,7 @@ const observeCycle = (
 const mutationCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   executionProgram: ExecutionProgram,
-  paperEpisode: PaperActivationRequest,
+  executionEpisode: PaperActivationRequest,
   paperCycleClosureStore: PaperCycleClosureStoreShape,
   blockedCycleIntentStore: BlockedCycleIntentStoreShape,
   lifecycleCommandStore: import('./db/lifecycle-command').LifecycleCommandStoreShape,
@@ -465,14 +465,14 @@ const mutationCycle = (
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
-    ...(isResearchPaperActivationRequest(paperEpisode) ? { cycleCadence: 'PAPER_BOOTSTRAP' as const } : {}),
+    ...(isResearchPaperActivationRequest(executionEpisode) ? { cycleCadence: 'PAPER_BOOTSTRAP' as const } : {}),
     executionProgram,
     paperCycleClosureStore,
     blockedCycleIntentStore,
     onClosedCycle,
-    paperEpisodeCutoffAt: paperEpisode.cutoffAt,
-    paperEpisodeCloseSubmitCutoffAt: paperEpisode.expiresAt,
-    paperEpisodeExpiresAt: paperEpisodeCloseExpiresAt(paperEpisode.expiresAt),
+    executionEpisodeCutoffAt: executionEpisode.cutoffAt,
+    executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
+    executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
     ...(beforeLifecycleAdvance === undefined ? {} : { beforeLifecycleAdvance }),
     ...(interpretCycleDriver === undefined ? {} : { interpretCycleDriver }),
   })
@@ -917,7 +917,7 @@ export const recoverPaperActivationGeneration = (
         buildContinuation,
       }),
     ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
-    const closeExpiresAt = paperEpisodeCloseExpiresAt(request.expiresAt)
+    const closeExpiresAt = executionEpisodeCloseExpiresAt(request.expiresAt)
     if (observedAt >= closeExpiresAt) {
       yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
       return yield* paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease')
@@ -945,7 +945,7 @@ const recoverPaperReceiptFinalizationGeneration = (
         buildContinuation,
       }),
     ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
-    if (observedAt < paperEpisodeCloseExpiresAt(request.expiresAt)) {
+    if (observedAt < executionEpisodeCloseExpiresAt(request.expiresAt)) {
       return yield* paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease')
     }
     yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
@@ -1138,7 +1138,7 @@ const validateResearchPaperCloseLease = (
     ),
     Effect.flatMap((sessions) =>
       Effect.fromResult(
-        validatePaperEpisodeCloseWindow({
+        validateExecutionEpisodeCloseWindow({
           cutoffAt: request.cutoffAt,
           expiresAt: request.expiresAt,
           maximumCloseSessions: request.maximumCloseSessions,
@@ -1292,7 +1292,7 @@ export const prepareOrRecoverResearchPaperActivation = (
             ),
       )
     const decision = yield* Effect.fromResult(
-      decidePaperEpisodeAuthority({
+      decideExecutionEpisodeAuthority({
         generationHash: authority.generationHash,
         sourceGenerationHash: currentSourceGenerationHash,
         currentGenerationMatchesRequest,
@@ -1502,8 +1502,8 @@ export const runExecutionLifecycleMaintenance = (
     Effect.flatMap((observedAt) => {
       const decision = decideExecutionLifecycleMaintenance({
         cutoffAt: request.cutoffAt,
-        closeExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
-        finalizationExpiresAt: paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
+        closeExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
+        finalizationExpiresAt: executionEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
         observedAt,
       })
       const restrict = decision.restrictExpiredAuthority
@@ -1646,7 +1646,7 @@ const makeClosedCycleReceiptEmitter =
       ),
     )
 
-const finalizePaperEpisodeDataFirst = (
+const finalizeExecutionEpisodeDataFirst = (
   state: Ref.Ref<RuntimeState>,
   request: PaperActivationRequest,
   generationHash: string,
@@ -1680,7 +1680,7 @@ const finalizePaperEpisodeDataFirst = (
     ),
   )
 
-export const finalizePaperEpisode = Pipeable.dual(8, finalizePaperEpisodeDataFirst)
+export const finalizeExecutionEpisode = Pipeable.dual(8, finalizeExecutionEpisodeDataFirst)
 
 const closedCycleReceiptEmissionAllowedDataFirst = (cutoffAt: string, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(cutoffAt)
@@ -1689,8 +1689,8 @@ export const closedCycleReceiptEmissionAllowed = Pipeable.dual(2, closedCycleRec
 
 const paperReceiptFinalizationWindowOpenDataFirst = (authorityExpiresAt: string, observedAt: string): boolean => {
   const observedMs = Date.parse(observedAt)
-  const closeExpiresMs = Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt))
-  const finalizationExpiresMs = Date.parse(paperEpisodeReceiptFinalizationExpiresAt(authorityExpiresAt))
+  const closeExpiresMs = Date.parse(executionEpisodeCloseExpiresAt(authorityExpiresAt))
+  const finalizationExpiresMs = Date.parse(executionEpisodeReceiptFinalizationExpiresAt(authorityExpiresAt))
   return Number.isFinite(observedMs) && observedMs >= closeExpiresMs && observedMs < finalizationExpiresMs
 }
 
@@ -1936,7 +1936,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           currentUtcInstant.pipe(
                             Effect.flatMap(
                               (observedAt): Effect.Effect<PaperActivationStartupResolution, OperationalError> =>
-                                observedAt >= paperEpisodeCloseExpiresAt(request.expiresAt)
+                                observedAt >= executionEpisodeCloseExpiresAt(request.expiresAt)
                                   ? recoverPaperReceiptFinalizationGeneration(
                                       observePlan,
                                       request,
@@ -2008,7 +2008,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             runtimeServices.forwardPerformanceReceiptStore,
                           )
                           const finalizeClosedCycleReceipt = (cycleId: string | undefined, observedAt: string) =>
-                            finalizePaperEpisode(
+                            finalizeExecutionEpisode(
                               state,
                               request,
                               prepared.generation.generationHash,
@@ -2039,7 +2039,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                 )
                               if (Option.isSome(existing)) {
                                 yield* completeExecutionLifecycle(
-                                  finalizePaperEpisode(
+                                  finalizeExecutionEpisode(
                                     state,
                                     request,
                                     prepared.generation.generationHash,
@@ -2120,7 +2120,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                 authorityState.maximum === Authority.Paper &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
-                                isPaperEpisodeFailureRestriction(authorityState.reason)
+                                isExecutionEpisodeFailureRestriction(authorityState.reason)
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }
@@ -2177,8 +2177,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     strategy: observePlan.strategy,
                                     strategyProtocolHash: observePlan.strategyProtocolHash,
                                   }) as ApplicationPlanFor<'AutonomousService'>
-                                  const paperGrant = paperGrantFromGeneration(prepared.generation)
-                                  const cycleBindingId = paperGrantKey(paperGrant)
+                                  const capitalGrant = capitalGrantFromLegacyGeneration(prepared.generation)
+                                  const cycleBindingId = capitalGrantKey(capitalGrant)
                                   const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
                                     realizedPlan.config,
                                     runtimeServices.pgClient,
@@ -2189,7 +2189,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     cycleId: string | undefined,
                                     observedAt: string,
                                   ) =>
-                                    finalizePaperEpisode(
+                                    finalizeExecutionEpisode(
                                       state,
                                       request,
                                       prepared.generation.generationHash,
@@ -2235,7 +2235,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                               riskPolicy,
                                               currentUtcInstant,
                                               entrySubmitExpiresAt: request.cutoffAt,
-                                              closeSubmitExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+                                              closeSubmitExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
                                                 runtimeServices.paperCycleClosureStore
                                                   .containsIntent(intentId)
@@ -2291,7 +2291,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                         state,
                                         request,
                                         prepared.generation.generationHash,
-                                        paperGrant._tag,
+                                        capitalGrant._tag,
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
