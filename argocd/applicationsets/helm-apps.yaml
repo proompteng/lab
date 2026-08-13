@@ -38,13 +38,6 @@ spec:
                   version: 3.0.0
                   releaseName: restate-operator
                   enabled: "true"
-                  managedNamespaceMetadata:
-                    labels:
-                      pod-security.kubernetes.io/enforce: restricted
-                      pod-security.kubernetes.io/audit: restricted
-                      pod-security.kubernetes.io/warn: restricted
-                    annotations:
-                      argocd.argoproj.io/sync-options: Prune=false
                   valuesObject:
                     installCrds: false
                     version: 3.0.0
