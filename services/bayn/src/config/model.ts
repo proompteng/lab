@@ -24,7 +24,7 @@ export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId?: string | undefined
-  readonly paperActivationRequestJson?: string | undefined
+  readonly capitalActivationRequestJson?: string | undefined
   readonly execution: ExecutionPolicy
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -128,7 +128,7 @@ export interface ParsedRuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId: string | undefined
-  readonly paperActivationRequestJson?: string | undefined
+  readonly capitalActivationRequestJson?: string | undefined
   readonly configuredOperation: RuntimeOperation | undefined
   readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly legacyMaximumAuthority: LegacyAuthorityToken | undefined

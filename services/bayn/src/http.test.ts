@@ -325,7 +325,7 @@ describe('Bayn HTTP pure decisions', () => {
           acknowledgedIntentCount: 1,
         },
       },
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized' as const,
         requestHash: 'a'.repeat(64),
         generationHash: 'b'.repeat(64),
@@ -358,7 +358,7 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_mutation_recovery_found_events_total 185')
     expect(metrics).toContain('bayn_intents{state="approved"} 3')
     expect(metrics).toContain('bayn_intents{state="acknowledged"} 1')
-    expect(metrics).toContain('bayn_paper_activation_recovery_only 0')
+    expect(metrics).toContain('bayn_capital_activation_recovery_only 0')
 
     const restrictedMetrics = renderPrometheusMetrics(
       {
@@ -366,7 +366,7 @@ describe('Bayn HTTP pure decisions', () => {
         cycle: {
           ...realized.cycle,
           authority: {
-            generationHash: realized.paperActivation.generationHash,
+            generationHash: realized.capitalActivation.generationHash,
             maximum: Authority.Paper,
             effective: Authority.Observe,
             kill: KillState.Active,
@@ -380,7 +380,7 @@ describe('Bayn HTTP pure decisions', () => {
       provenance,
       'embedded',
     )
-    expect(restrictedMetrics).toContain('bayn_paper_activation_recovery_only 1')
+    expect(restrictedMetrics).toContain('bayn_capital_activation_recovery_only 1')
     expect(restrictedMetrics).toContain('bayn_authority_effective{authority="observe"} 1')
   })
 
@@ -1237,11 +1237,11 @@ describe('Bayn HTTP probes', () => {
     )
   })
 
-  test('reports an evidence-free realized research PAPER runtime as ready', async () => {
+  test('reports an evidence-free realized research capital runtime as ready', async () => {
     const researchState: RuntimeState = {
       ...readyState(),
       evidence: null,
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized',
         requestHash: 'a'.repeat(64),
         generationHash: 'b'.repeat(64),
@@ -1262,12 +1262,12 @@ describe('Bayn HTTP probes', () => {
               body: {
                 operational: { ready: true },
                 evidence: { status: 'UNKNOWN', runId: null },
-                paperActivation: { _tag: 'Realized', grant: 'Research' },
+                capitalActivation: { _tag: 'Realized', grant: 'Research' },
               },
             })
             expect(metrics.body).toContain('bayn_runtime_ready 1')
-            expect(metrics.body).toContain('bayn_paper_activation_state{state="realized"} 1')
-            expect(metrics.body).toContain('bayn_paper_activation_state{state="pending"} 0')
+            expect(metrics.body).toContain('bayn_capital_activation_state{state="realized"} 1')
+            expect(metrics.body).toContain('bayn_capital_activation_state{state="pending"} 0')
           }),
         ),
         Effect.asVoid,
@@ -1536,7 +1536,7 @@ describe('Bayn HTTP probes', () => {
           notDueReason: CycleNotDueReason.StalePaperBootstrap,
         },
       },
-      paperActivation: {
+      capitalActivation: {
         _tag: 'Realized',
         requestHash: '6'.repeat(64),
         generationHash,
@@ -1932,7 +1932,7 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_cycle_reason{reason="observation_unavailable"} 1')
     expect(metrics).toContain('bayn_cycle_phase{phase="unknown"} 1')
     expect(metrics).toContain('bayn_cycle_terminal_reason{reason="unknown"} 1')
-    expect(metrics).toContain('bayn_paper_activation_state{state="not_configured"} 1')
+    expect(metrics).toContain('bayn_capital_activation_state{state="not_configured"} 1')
     expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
     expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
     expect(metrics).not.toContain('bayn_mutation_events_total ')

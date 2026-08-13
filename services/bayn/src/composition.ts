@@ -1401,11 +1401,11 @@ export const prepareOrRecoverResearchCapitalActivation = (
 const pendingCapitalActivation = (
   state: Ref.Ref<RuntimeState>,
   request: CapitalActivationRequest | null,
-  reason: Extract<NonNullable<RuntimeState['paperActivation']>, { readonly _tag: 'Pending' }>['reason'],
+  reason: Extract<NonNullable<RuntimeState['capitalActivation']>, { readonly _tag: 'Pending' }>['reason'],
 ): Effect.Effect<void> =>
   Ref.update(state, (current) => ({
     ...current,
-    paperActivation: { _tag: 'Pending' as const, requestHash: request?.requestHash ?? null, reason },
+    capitalActivation: { _tag: 'Pending' as const, requestHash: request?.requestHash ?? null, reason },
     broker:
       current.broker === null
         ? null
@@ -1425,7 +1425,7 @@ const realizedCapitalActivation = (
 ): Effect.Effect<void> =>
   Ref.update(state, (current) => ({
     ...current,
-    paperActivation: {
+    capitalActivation: {
       _tag: 'Realized' as const,
       requestHash: request.requestHash,
       generationHash,
@@ -1447,7 +1447,7 @@ const completedCapitalActivation = (
 ): Effect.Effect<void> =>
   Ref.update(state, (current) => ({
     ...current,
-    paperActivation: {
+    capitalActivation: {
       _tag: 'Completed' as const,
       requestHash: request.requestHash,
       generationHash,
@@ -1724,7 +1724,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       strategy: plan.strategy,
       strategyProtocolHash: plan.strategyProtocolHash,
     }) as ApplicationPlanFor<'AutonomousService'>
-    const serializedRequest = observePlan.config.paperActivationRequestJson
+    const serializedRequest = observePlan.config.capitalActivationRequestJson
     const decodedActivation: Result.Result<ConfiguredCapitalActivation | null, string> =
       serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serializedRequest)
     const startupEvidenceMode =

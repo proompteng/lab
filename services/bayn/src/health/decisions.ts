@@ -42,7 +42,7 @@ import type {
 } from './model'
 import { Pipeable } from '../pipeable'
 
-export interface ResearchPaperBootstrapPassObservation {
+export interface ResearchCapitalBootstrapPassObservation {
   readonly result: 'SUCCESS' | 'FAILURE'
   readonly outcome?: CycleRunResult['outcome']
   readonly notDueReason?: CycleNotDueReason
@@ -54,7 +54,7 @@ export interface ResearchPaperBootstrapPassObservation {
 
 const observesMissedOrNewerBootstrap = (
   last: NonNullable<CycleOperationsStatus['last']>,
-  cadence: NonNullable<ResearchPaperBootstrapPassObservation['cadenceDecision']> | undefined,
+  cadence: NonNullable<ResearchCapitalBootstrapPassObservation['cadenceDecision']> | undefined,
 ): boolean => {
   if (cadence === undefined || cadence.signalSessionDate === null || cadence.executionSessionDate === null) return false
   const exact =
@@ -69,10 +69,10 @@ const observesMissedOrNewerBootstrap = (
  * immutable missed cycle remains visible, but it is no longer an operational failure after a matching NOT_DUE pass
  * and fresh exact reconciliation prove that no mutation is pending. Every other blocked-cycle state remains failed.
  */
-export const projectResearchPaperBootstrapWaiting = (
+export const projectResearchCapitalBootstrapWaiting = (
   status: CycleOperationsStatus,
   enabled: boolean,
-  lastPass: ResearchPaperBootstrapPassObservation | null,
+  lastPass: ResearchCapitalBootstrapPassObservation | null,
 ): CycleOperationsStatus => {
   const last = status.last
   const cadence = lastPass?.cadenceDecision
@@ -346,7 +346,7 @@ const deriveCycleStatus = (
       deriveCycleOperationsStatusResult(
         result.value,
         clock.checkedAtMs,
-        runtime.paperActivation?._tag === 'Realized' ? Authority.Paper : historicalSandboxAuthority(config.execution),
+        runtime.capitalActivation?._tag === 'Realized' ? Authority.Paper : historicalSandboxAuthority(config.execution),
         config,
       ),
       {
@@ -355,9 +355,9 @@ const deriveCycleStatus = (
           checkedAt: null,
         }),
         onSuccess: (status) =>
-          projectResearchPaperBootstrapWaiting(
+          projectResearchCapitalBootstrapWaiting(
             status,
-            runtime.paperActivation?._tag === 'Realized' && runtime.paperActivation.grant === 'Research',
+            runtime.capitalActivation?._tag === 'Realized' && runtime.capitalActivation.grant === 'Research',
             runtime.autonomousCycleLoop.lastPass,
           ),
       },
