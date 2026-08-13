@@ -138,26 +138,26 @@ const existingCommitError = (failure: ExistingCommitFailure): IntentStoreError =
 const authorityError = (failure: AuthorityBindingFailure): IntentStoreError => {
   switch (failure._tag) {
     case 'AuthorityMissing':
-      return storeError('invariant', 'commit', 'PAPER authority is not initialized', failure)
+      return storeError('invariant', 'commit', 'execution authority is not initialized', failure)
     case 'MultipleAuthorityRows':
-      return storeError('invariant', 'commit', 'PAPER authority singleton returned multiple rows', failure)
+      return storeError('invariant', 'commit', 'execution authority singleton returned multiple rows', failure)
     case 'MaximumAuthorityNotGranted':
-      return storeError('invariant', 'commit', 'GitOps maximum authority is not PAPER', failure)
+      return storeError('invariant', 'commit', 'GitOps maximum authority does not permit execution', failure)
     case 'EffectiveAuthorityNotGranted':
-      return storeError('invariant', 'commit', 'effective authority is not PAPER', failure)
+      return storeError('invariant', 'commit', 'effective authority does not permit execution', failure)
     case 'AuthorityKillNotClear':
-      return storeError('invariant', 'commit', 'PAPER authority kill is not CLEAR', failure)
+      return storeError('invariant', 'commit', 'execution authority kill is not CLEAR', failure)
     case 'AuthorityGenerationMismatch':
-      return storeError('invariant', 'commit', 'intent does not bind the active PAPER generation', failure)
+      return storeError('invariant', 'commit', 'intent does not bind the active execution generation', failure)
     case 'AuthorityGenerationHistoryMismatch':
       return storeError(
         'invariant',
         'commit',
-        `active PAPER generation ${failure.generationHash} has mismatched ${failure.field}`,
+        `active execution generation ${failure.generationHash} has mismatched ${failure.field}`,
         failure,
       )
     case 'ClosingIntentMustSell':
-      return storeError('invariant', 'commit', 'a PAPER close intent must be sell-only', failure)
+      return storeError('invariant', 'commit', 'an execution close intent must be sell-only', failure)
   }
 }
 

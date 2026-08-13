@@ -484,7 +484,7 @@ describe('risk-balanced trend candidate', () => {
     })
   })
 
-  test('compiles a same-month PAPER bootstrap decision while preserving binding validation', () => {
+  test('compiles a same-month capital bootstrap decision while preserving binding validation', () => {
     const snapshot = makeSnapshot()
     const definition = makeRiskBalancedTrendDefinition(fixtureProtocol)
 

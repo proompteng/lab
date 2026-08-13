@@ -65,7 +65,7 @@ export type IntentCanonicalMaterial =
       readonly symbol: string
     }
   | {
-      readonly _tag: 'PaperIntentIdentity'
+      readonly _tag: 'ExecutionIntentIdentity'
       readonly authorityGenerationHash: string
       readonly strategyName: string
       readonly cycleId: string
@@ -142,7 +142,7 @@ const executionIntentIdResult = (
 ): Result.Result<string, IntentCanonicalizationFailure> =>
   canonicalHashResult(
     {
-      _tag: 'PaperIntentIdentity',
+      _tag: 'ExecutionIntentIdentity',
       authorityGenerationHash,
       strategyName: input.strategyName,
       cycleId: input.cycleId,
@@ -183,7 +183,7 @@ type IntentConstructionFailure =
   | IntentCanonicalizationFailure
   | {
       readonly _tag: 'ConstructedIntentDecodeFailed'
-      readonly intentKind: 'reference' | 'paper'
+      readonly intentKind: 'reference' | 'execution'
       readonly cause: unknown
     }
 
@@ -243,7 +243,7 @@ const makeExecutionIntentResult = (
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
-    (cause): IntentConstructionFailure => ({ _tag: 'ConstructedIntentDecodeFailed', intentKind: 'paper', cause }),
+    (cause): IntentConstructionFailure => ({ _tag: 'ConstructedIntentDecodeFailed', intentKind: 'execution', cause }),
   )
 }
 
@@ -292,7 +292,7 @@ const planExecutionIntentDataFirst = (
   if (state.authority.maximum !== Authority.Execution) {
     return Effect.fail(
       new ExecutionIntentBindingError({
-        message: 'a durable PAPER intent requires a PAPER authority generation from risk state',
+        message: 'a durable execution intent requires an execution authority generation from risk state',
       }),
     )
   }
@@ -329,7 +329,7 @@ export interface IntentStoreService {
     intent: Intent,
     decision: RiskDecision,
   ) => Effect.Effect<IntentReceipt, IntentStoreError | WriterFenceError>
-  /** Commits a pre-registered sell-only close intent after effective PAPER is restricted. */
+  /** Commits a pre-registered sell-only close intent after effective execution authority is restricted. */
   readonly commitClosing?: (
     intent: Intent,
     decision: RiskDecision,

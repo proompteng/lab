@@ -759,7 +759,7 @@ export const reconciliationAlgebraFailureDetails = (
     case 'AccountingProjectionFailed':
       return {
         failure: 'invariant',
-        message: `paper accounting ${failure.operation} computation failed`,
+        message: `execution accounting ${failure.operation} computation failed`,
         cause: failure.cause,
       }
     case 'ReconciliationDecisionFailed':

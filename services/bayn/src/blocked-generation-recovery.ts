@@ -12,7 +12,7 @@ const observeSuccessorSchemaVersion = 'bayn.paper-observe-successor-generation.v
 
 /**
  * Derives the immutable OBSERVE successor for one terminal execution generation. The configured generation is only a
- * bootstrap key, not a reusable history key; the terminal PAPER hash makes retries deterministic and independent of
+ * bootstrap key, not a reusable history key; the terminal execution hash makes retries deterministic and independent of
  * which reviewed build performs recovery.
  */
 export const executionObserveSuccessorGenerationHash = (input: {

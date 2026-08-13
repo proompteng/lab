@@ -1200,7 +1200,7 @@ const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Resu
       return Result.fail(
         bindRiskAuthorityFailure(
           'authority-maximum',
-          'authority-generation-bound risk intent requires PAPER maximum authority',
+          'authority-generation-bound risk intent requires execution maximum authority',
           { intentId: intent.intentId, maximum: state.authority.maximum },
         ),
       )
@@ -1209,7 +1209,7 @@ const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Resu
       return Result.fail(
         bindRiskAuthorityFailure(
           'authority-generation',
-          'PAPER risk intent must bind the exact PAPER authority generation from risk state',
+          'execution risk intent must bind the exact execution authority generation from risk state',
           {
             intentId: intent.intentId,
             expectedGenerationHash: state.authority.generationHash,
@@ -1222,7 +1222,7 @@ const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Resu
     return Result.fail(
       bindRiskAuthorityFailure(
         'authority-contract',
-        'PAPER risk evaluation requires an authority-generation-bound intent',
+        'execution risk evaluation requires an authority-generation-bound intent',
         { intentId: intent.intentId },
       ),
     )

@@ -139,7 +139,7 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
   ...overrides,
 })
 
-describe('paper reconciliation', () => {
+describe('execution reconciliation', () => {
   test('returns one exact hash for a completely reconciled state', () => {
     const result = successOf(compareReconciliation(snapshot()))
 

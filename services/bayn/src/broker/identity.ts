@@ -149,7 +149,7 @@ const historicalIdentity = (row: PersistedBrokerIdentityRow): HistoricalBrokerId
       }
 
 /**
- * Historical authority generations persisted only an account ID under the old PAPER contract.
+ * Historical authority generations persisted only an account ID under the legacy execution contract.
  * That token represented Alpaca sandbox execution exclusively. The inference is intentionally
  * isolated here; new durable identities must use bayn.broker-identity.v2.
  */

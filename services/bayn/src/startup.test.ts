@@ -776,7 +776,7 @@ describe('Bayn startup lifecycle', () => {
         }),
         Effect.provideService(Journal, {
           post: () => forbidden('pinned startup must not write TigerBeetle'),
-          verifyAccount: () => forbidden('pinned startup must not reconcile paper accounting'),
+          verifyAccount: () => forbidden('pinned startup must not reconcile execution accounting'),
           check: forbidden('pinned startup must not check TigerBeetle'),
           checkRun: () => forbidden('pinned startup must not check a TigerBeetle run'),
           journalAndReconcile: () => forbidden('pinned startup must not write TigerBeetle'),

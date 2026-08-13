@@ -125,7 +125,7 @@ export interface CapitalGrantLifecycleStoreShape {
     prepared: PreparedCapitalGrantActivation,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /**
-   * Atomically derives a reconciliation-bound research generation, records it, and activates PAPER authority. The
+   * Atomically derives a reconciliation-bound research generation, records it, and activates execution authority. The
    * static request intentionally cannot predict this generation hash because reconciliation continues until the
    * activation transaction acquires its fence. The source hash is the durable OBSERVE generation validated by the
    * caller and is checked again under the activation transaction lock.

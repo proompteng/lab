@@ -313,7 +313,7 @@ describe('Bayn HTTP pure decisions', () => {
     })
   })
 
-  test('projects realized PAPER capability from the actual prepared generation', () => {
+  test('projects realized execution capability from the actual prepared generation', () => {
     const realized = {
       ...readyState(),
       cycle: {

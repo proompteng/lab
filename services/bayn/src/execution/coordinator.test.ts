@@ -270,36 +270,36 @@ describe('MutationStore decision algebra', () => {
     ).toMatchObject({ failure: 'authority' })
 
     const failures: readonly [MutationOperation, MutationAuthoritySnapshot | undefined, string][] = [
-      [MutationOperation.Submit, undefined, 'paper authority is not initialized'],
+      [MutationOperation.Submit, undefined, 'execution authority is not initialized'],
       [
         MutationOperation.Submit,
         { ...decisionAuthority, maximum: Authority.Observe },
-        'GitOps maximum authority is not PAPER',
+        'GitOps maximum authority does not permit execution',
       ],
       [
         MutationOperation.Submit,
         { ...decisionAuthority, effective: Authority.Observe },
-        'effective authority is not PAPER and clear',
+        'effective authority does not permit execution with a clear kill state',
       ],
       [
         MutationOperation.Submit,
         { ...decisionAuthority, killState: KillState.Active },
-        'effective authority is not PAPER and clear',
+        'effective authority does not permit execution with a clear kill state',
       ],
       [
         MutationOperation.Cancel,
         { ...decisionAuthority, effective: Authority.Observe },
-        'cancellation requires PAPER authority or an active kill',
+        'cancellation requires execution authority or an active kill',
       ],
       [
         MutationOperation.Submit,
         { ...decisionAuthority, generationMaximum: Authority.Observe },
-        'active PAPER authority lacks its immutable account binding',
+        'active execution authority lacks its immutable account binding',
       ],
       [
         MutationOperation.Submit,
         { ...decisionAuthority, generationAccountId: null },
-        'active PAPER authority lacks its immutable account binding',
+        'active execution authority lacks its immutable account binding',
       ],
     ]
     for (const [operation, authority, message] of failures) {
@@ -432,23 +432,23 @@ describe('MutationStore decision algebra', () => {
     const bindingFailures: readonly [MutationIntentSnapshot, string][] = [
       [
         { ...decisionIntent(), generationMaximum: Authority.Observe },
-        'intent does not match its immutable PAPER authority-generation bindings',
+        'intent does not match its immutable execution authority-generation bindings',
       ],
       [
         { ...decisionIntent(), generationAccountId: null },
-        'intent does not match its immutable PAPER authority-generation bindings',
+        'intent does not match its immutable execution authority-generation bindings',
       ],
       [
         { ...decisionIntent(), generationAccountId: 'another-account' },
-        'intent does not match its immutable PAPER authority-generation bindings',
+        'intent does not match its immutable execution authority-generation bindings',
       ],
       [
         { ...decisionIntent(), generationRiskPolicyHash: '4'.repeat(64) },
-        'intent does not match its immutable PAPER authority-generation bindings',
+        'intent does not match its immutable execution authority-generation bindings',
       ],
       [
         { ...decisionIntent(), generationStrategyName: 'another-strategy' },
-        'intent does not match its immutable PAPER authority-generation bindings',
+        'intent does not match its immutable execution authority-generation bindings',
       ],
     ]
     for (const [snapshot, message] of bindingFailures) {
@@ -467,7 +467,7 @@ describe('MutationStore decision algebra', () => {
         ),
       ),
     ).toMatchObject({
-      message: 'intent account does not match the active PAPER authority generation',
+      message: 'intent account does not match the active execution authority generation',
     })
     expect(
       resultFailure(
@@ -480,7 +480,7 @@ describe('MutationStore decision algebra', () => {
         ),
       ),
     ).toMatchObject({
-      message: 'intent authority generation is not the active PAPER generation',
+      message: 'intent authority generation is not the active execution generation',
     })
     expect(
       resultFailure(
@@ -1643,7 +1643,7 @@ const mismatchedSubmissionError = () =>
     brokerOrderId: orderId,
   })
 
-describe('paper execution coordinator', () => {
+describe('execution coordinator', () => {
   test('renders the exact committed request without touching the broker or mutation store', async () => {
     const harness = makeHarness()
     const result = await Effect.runPromise(harness.provideIntentRead(dryRunSubmit(intentId)))

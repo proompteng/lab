@@ -374,7 +374,7 @@ const openOrder = (brokerOrderId: string) => ({
   observedAt,
 })
 
-describe('bounded paper risk', () => {
+describe('bounded execution risk', () => {
   test('uses the execution-model half-up notional at the intent and mutation boundary', () => {
     const intent = makeIntent({ quantityMicros: '1', notionalLimitMicros: '100' })
     const state = makeState({
@@ -912,7 +912,7 @@ describe('bounded paper risk', () => {
     expect(intentCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
   })
 
-  test('requires the exact authority generation for PAPER evaluation and hashes that binding', () => {
+  test('requires the exact authority generation for execution evaluation and hashes that binding', () => {
     const baselineState = makeState()
     const baseline = evaluateSuccess(makeIntent(), baselineState, makePolicy())
     const rotatedAuthority = { ...baselineState.authority, generationHash: hash('9') }

@@ -354,7 +354,7 @@ describe('reconciliation pure decisions', () => {
   })
 })
 
-describe('paper reconciliation loop', () => {
+describe('execution reconciliation loop', () => {
   test('reads every broker page before persisting and binds fills to their orders', async () => {
     const allOrders = Array.from({ length: 501 }, (_, index) => order(index))
     const allFills = Array.from({ length: 101 }, (_, index) => fill(index, allOrders[index]))

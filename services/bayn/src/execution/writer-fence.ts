@@ -68,7 +68,7 @@ const acquire = Effect.gen(function* () {
     return yield* new WriterFenceError({
       failure: 'busy',
       operation: 'acquire',
-      message: 'another PostgreSQL session owns the paper writer fence',
+      message: 'another PostgreSQL session owns the execution writer fence',
     })
   }
 
@@ -103,7 +103,7 @@ const acquire = Effect.gen(function* () {
       return yield* new WriterFenceError({
         failure: 'unavailable',
         operation: 'check',
-        message: 'PostgreSQL paper writer fence is no longer held',
+        message: 'PostgreSQL execution writer fence is no longer held',
       })
     }
   })

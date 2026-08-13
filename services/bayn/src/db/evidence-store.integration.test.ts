@@ -1999,7 +1999,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         _tag: 'IntentStoreError',
         failure: 'invariant',
         operation: 'commit',
-        message: 'intent does not bind the active PAPER generation',
+        message: 'intent does not bind the active execution generation',
         cause: {
           _tag: 'AuthorityGenerationMismatch',
           observed: rotated.generationHash,
@@ -2089,7 +2089,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       {
         killState: KillState.Clear,
         expected: {
-          message: 'effective authority is not PAPER',
+          message: 'effective authority does not permit execution',
           cause: { _tag: 'EffectiveAuthorityNotGranted', observed: Authority.Observe },
         },
         commits: commits.slice(0, 2),
@@ -2097,7 +2097,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       {
         killState: KillState.Active,
         expected: {
-          message: 'PAPER authority kill is not CLEAR',
+          message: 'execution authority kill is not CLEAR',
           cause: { _tag: 'AuthorityKillNotClear', observed: KillState.Active },
         },
         commits: commits.slice(2),
@@ -2191,7 +2191,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           _tag: 'IntentStoreError',
           failure: 'invariant',
           operation: 'commit',
-          message: `active PAPER generation ${generation.generationHash} has mismatched ${mismatch.field}`,
+          message: `active execution generation ${generation.generationHash} has mismatched ${mismatch.field}`,
           cause: {
             _tag: 'AuthorityGenerationHistoryMismatch',
             generationHash: generation.generationHash,
@@ -2235,7 +2235,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         _tag: 'IntentStoreError',
         failure: 'invariant',
         operation: 'commit',
-        message: `active PAPER generation ${generation.generationHash} has mismatched accountId`,
+        message: `active execution generation ${generation.generationHash} has mismatched accountId`,
         cause: {
           _tag: 'AuthorityGenerationHistoryMismatch',
           generationHash: generation.generationHash,
@@ -3650,12 +3650,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     expect(Exit.isFailure(observed.blockedSubmit)).toBe(true)
     if (Exit.isFailure(observed.blockedSubmit)) {
-      expect(Cause.pretty(observed.blockedSubmit.cause)).toContain('effective authority is not PAPER and clear')
+      expect(Cause.pretty(observed.blockedSubmit.cause)).toContain(
+        'effective authority does not permit execution with a clear kill state',
+      )
     }
     expect(Exit.isFailure(observed.blockedFinalAuthorization)).toBe(true)
     if (Exit.isFailure(observed.blockedFinalAuthorization)) {
       expect(Cause.pretty(observed.blockedFinalAuthorization.cause)).toContain(
-        'effective authority is not PAPER and clear',
+        'effective authority does not permit execution with a clear kill state',
       )
     }
     expect(observed.notFound).toMatchObject({
@@ -3728,7 +3730,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         expect(Exit.isFailure(observed.submission)).toBe(true)
         if (Exit.isFailure(observed.submission)) {
           expect(Cause.pretty(observed.submission.cause)).toContain(
-            'intent does not match its immutable PAPER authority-generation bindings',
+            'intent does not match its immutable execution authority-generation bindings',
           )
         }
         expect(observed.after).toEqual(observed.before)
@@ -3755,7 +3757,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(Exit.isFailure(cancelObserved.cancellation)).toBe(true)
       if (Exit.isFailure(cancelObserved.cancellation)) {
         expect(Cause.pretty(cancelObserved.cancellation.cause)).toContain(
-          'intent does not match its immutable PAPER authority-generation bindings',
+          'intent does not match its immutable execution authority-generation bindings',
         )
       }
       expect(cancelObserved.after).toEqual(cancelObserved.before)
@@ -3837,7 +3839,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(Exit.isFailure(observed.submitExit)).toBe(true)
       if (Exit.isFailure(observed.submitExit)) {
         expect(Cause.pretty(observed.submitExit.cause)).toContain(
-          'intent authority generation is not the active PAPER generation',
+          'intent authority generation is not the active execution generation',
         )
       }
       expect(observed.after).toEqual(observed.before)
@@ -3949,12 +3951,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(Exit.isFailure(observed.cancelExit)).toBe(true)
       if (Exit.isFailure(observed.submitExit)) {
         expect(Cause.pretty(observed.submitExit.cause)).toContain(
-          'intent account does not match the active PAPER authority generation',
+          'intent account does not match the active execution authority generation',
         )
       }
       if (Exit.isFailure(observed.cancelExit)) {
         expect(Cause.pretty(observed.cancelExit.cause)).toContain(
-          'intent account does not match the active PAPER authority generation',
+          'intent account does not match the active execution authority generation',
         )
       }
       expect(observed.submitAfter).toEqual(observed.submitBefore)

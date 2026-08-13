@@ -462,7 +462,7 @@ const program = (
   )
 }
 
-describe('paper candidate discovery', () => {
+describe('execution candidate discovery', () => {
   test('preserves the public facade exports', () => {
     expect(ExecutionCandidateIneligibility).toBe(ExecutionCandidateIneligibilityImplementation)
     expect(discoverExecutionCandidates).toBe(discoverExecutionCandidatesImplementation)
@@ -492,7 +492,7 @@ describe('paper candidate discovery', () => {
         observedGenerationHash: null,
       })
       expect(renderExecutionCandidateDiscoveryError(snapshotFailure.failure)).toBe(
-        `paper candidate authority mismatch: expectedGeneration=${authorityGenerationHash} observedGeneration=none maximum=none effective=none`,
+        `execution candidate authority mismatch: expectedGeneration=${authorityGenerationHash} observedGeneration=none maximum=none effective=none`,
       )
     }
 
@@ -566,7 +566,7 @@ describe('paper candidate discovery', () => {
         },
       })
       expect(renderExecutionCandidateDiscoveryError(invalidCapture.failure)).toBe(
-        'paper candidate observation capture time is invalid: observedMs=-8640000000000001',
+        'execution candidate observation capture time is invalid: observedMs=-8640000000000001',
       )
     }
 
@@ -1161,7 +1161,7 @@ describe('paper candidate discovery', () => {
 const postgresUrl = baynTestPostgresUrl
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 
-describePostgres('paper candidate discovery PostgreSQL transaction', () => {
+describePostgres('execution candidate discovery PostgreSQL transaction', () => {
   test('runs every domain read in one repeatable-read read-only transaction', async () => {
     const runtime = ManagedRuntime.make(
       PostgresClientLive({

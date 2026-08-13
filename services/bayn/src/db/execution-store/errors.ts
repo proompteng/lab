@@ -50,7 +50,7 @@ const runExecutionOperationDataFirst = <A, E, R>(
                 : cause.failure === 'invariant'
                   ? 'invariant'
                   : 'query',
-          message: 'paper reconciliation operation failed',
+          message: 'execution reconciliation operation failed',
           cause,
         })
       }
@@ -58,19 +58,24 @@ const runExecutionOperationDataFirst = <A, E, R>(
         return executionStoreError({
           operation,
           failure: 'decode',
-          message: 'paper store contract decoding failed',
+          message: 'execution store contract decoding failed',
           cause,
         })
       }
       if (isSqlError(cause)) {
         const failure =
           cause.reason._tag === 'ConstraintError' || cause.reason._tag === 'UniqueViolation' ? 'conflict' : 'query'
-        return executionStoreError({ operation, failure, message: 'paper store PostgreSQL operation failed', cause })
+        return executionStoreError({
+          operation,
+          failure,
+          message: 'execution store PostgreSQL operation failed',
+          cause,
+        })
       }
       return executionStoreError({
         operation,
         failure: 'invariant',
-        message: 'paper store operation failed unexpectedly',
+        message: 'execution store operation failed unexpectedly',
         cause,
       })
     }),

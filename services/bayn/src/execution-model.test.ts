@@ -29,7 +29,7 @@ const failure = <A>(result: Result.Result<A, ExecutionModelFailure>): ExecutionM
   return result.failure
 }
 
-describe('explicit paper execution model', () => {
+describe('explicit execution model', () => {
   test('rounds price adversely and separates spread from slippage', () => {
     const reference = success(referencePriceMicros(100, defaultExecutionModel))
     const buy = success(makeFillTerms('buy', MICROS, reference, defaultExecutionModel, MICROS))

@@ -404,89 +404,89 @@ export const isExecutionCandidateDiscoveryError = (cause: unknown): cause is Exe
 export const renderExecutionCandidateDiscoveryError = (error: ExecutionCandidateDiscoveryError): string => {
   switch (error._tag) {
     case 'IdentityDecodeFailed':
-      return 'paper candidate identity decoding failed'
+      return 'execution candidate identity decoding failed'
     case 'StrategyProtocolMismatch':
-      return `paper candidate strategy protocol mismatch: expected=${error.expectedStrategyProtocolHash} observed=${error.observedStrategyProtocolHash}`
+      return `execution candidate strategy protocol mismatch: expected=${error.expectedStrategyProtocolHash} observed=${error.observedStrategyProtocolHash}`
     case 'CycleUnfinished':
-      return `paper candidate discovery requires zero unfinished cycles: count=${error.unfinishedCycleCount} current=${error.currentCycleId ?? 'none'}`
+      return `execution candidate discovery requires zero unfinished cycles: count=${error.unfinishedCycleCount} current=${error.currentCycleId ?? 'none'}`
     case 'CycleMissing':
-      return `paper candidate cycle is missing: source=${error.source} cycle=${error.cycleId ?? 'none'}`
+      return `execution candidate cycle is missing: source=${error.source} cycle=${error.cycleId ?? 'none'}`
     case 'DocumentMissing':
-      return `paper candidate decision document is missing: cycle=${error.cycleId}`
+      return `execution candidate decision document is missing: cycle=${error.cycleId}`
     case 'SnapshotTransactionFailed':
-      return `paper candidate read-only snapshot transaction failed: qualification=${error.qualificationRunId} account=${error.accountId}`
+      return `execution candidate read-only snapshot transaction failed: qualification=${error.qualificationRunId} account=${error.accountId}`
     case 'CycleStateMismatch':
-      return `paper candidate cycle state mismatch: source=${error.source} observed=${error.observedState}`
+      return `execution candidate cycle state mismatch: source=${error.source} observed=${error.observedState}`
     case 'CycleTerminalAtMissing':
-      return `paper candidate completed cycle has no terminal timestamp: cycle=${error.cycleId}`
+      return `execution candidate completed cycle has no terminal timestamp: cycle=${error.cycleId}`
     case 'CycleIdentityMismatch':
-      return `paper candidate cycle identity mismatch: expected=${error.expectedCycleId} observed=${error.observedCycleId}`
+      return `execution candidate cycle identity mismatch: expected=${error.expectedCycleId} observed=${error.observedCycleId}`
     case 'CycleAccountMismatch':
-      return `paper candidate cycle account mismatch: expected=${error.expectedAccountId} projection=${error.projectedAccountId} stored=${error.storedAccountId}`
+      return `execution candidate cycle account mismatch: expected=${error.expectedAccountId} projection=${error.projectedAccountId} stored=${error.storedAccountId}`
     case 'CycleQualificationMismatch':
-      return `paper candidate cycle qualification mismatch: expected=${error.expectedQualificationRunId} observed=${error.observedQualificationRunId}`
+      return `execution candidate cycle qualification mismatch: expected=${error.expectedQualificationRunId} observed=${error.observedQualificationRunId}`
     case 'CycleStrategyMismatch':
-      return `paper candidate cycle strategy mismatch: expected=${error.expectedStrategyProtocolHash} observed=${error.observedStrategyProtocolHash}`
+      return `execution candidate cycle strategy mismatch: expected=${error.expectedStrategyProtocolHash} observed=${error.observedStrategyProtocolHash}`
     case 'CycleChronologyMismatch':
-      return `paper candidate cycle chronology mismatch: cycle=${error.cycleId} projection=${JSON.stringify(error.projected)} stored=${JSON.stringify(error.stored)}`
+      return `execution candidate cycle chronology mismatch: cycle=${error.cycleId} projection=${JSON.stringify(error.projected)} stored=${JSON.stringify(error.stored)}`
     case 'CycleBindingMissing':
-      return `paper candidate cycle ${error.binding} binding is missing: cycle=${error.cycleId}`
+      return `execution candidate cycle ${error.binding} binding is missing: cycle=${error.cycleId}`
     case 'SnapshotBindingMismatch':
-      return `paper candidate snapshot binding mismatch: stored=${error.storedSnapshotId} projection=${error.projectedSnapshotId ?? 'none'} document=${error.documentSnapshotId}`
+      return `execution candidate snapshot binding mismatch: stored=${error.storedSnapshotId} projection=${error.projectedSnapshotId ?? 'none'} document=${error.documentSnapshotId}`
     case 'DecisionBindingMismatch':
-      return `paper candidate decision binding mismatch: stored=${error.storedDecisionHash} projection=${error.projectedDecisionHash ?? 'none'} document=${error.documentContentHash}`
+      return `execution candidate decision binding mismatch: stored=${error.storedDecisionHash} projection=${error.projectedDecisionHash ?? 'none'} document=${error.documentContentHash}`
     case 'DocumentIdentityMismatch':
-      return `paper candidate document identity mismatch: expected=${JSON.stringify(error.expected)} observed=${JSON.stringify(error.observed)}`
+      return `execution candidate document identity mismatch: expected=${JSON.stringify(error.expected)} observed=${JSON.stringify(error.observed)}`
     case 'DocumentPolicyMismatch':
-      return `paper candidate policy mismatch: expected=${error.expectedPolicyHash} observed=${error.observedPolicyHash}`
+      return `execution candidate policy mismatch: expected=${error.expectedPolicyHash} observed=${error.observedPolicyHash}`
     case 'TargetPlanUnavailable':
-      return `paper candidate target plan is unavailable: status=${error.status} intents=${error.intentTargetCount}`
+      return `execution candidate target plan is unavailable: status=${error.status} intents=${error.intentTargetCount}`
     case 'RiskCountMismatch':
-      return `paper candidate risk count mismatch: risks=${error.deltaRiskCount} intents=${error.intentTargetCount}`
+      return `execution candidate risk count mismatch: risks=${error.deltaRiskCount} intents=${error.intentTargetCount}`
     case 'DocumentCutoffMismatch':
-      return `paper candidate cutoff mismatch: cycle=${error.cycleSubmissionCutoffAt} document=${error.documentSubmissionCutoffAt} expires=${error.documentExpiresAt}`
+      return `execution candidate cutoff mismatch: cycle=${error.cycleSubmissionCutoffAt} document=${error.documentSubmissionCutoffAt} expires=${error.documentExpiresAt}`
     case 'DocumentStale':
-      return `paper candidate document is stale: observedMs=${error.observedAtMs} expires=${error.expiresAt}`
+      return `execution candidate document is stale: observedMs=${error.observedAtMs} expires=${error.expiresAt}`
     case 'AuthorityMismatch':
-      return `paper candidate authority mismatch: expectedGeneration=${error.expectedGenerationHash} observedGeneration=${error.observedGenerationHash ?? 'none'} maximum=${error.observedMaximum ?? 'none'} effective=${error.observedEffective ?? 'none'}`
+      return `execution candidate authority mismatch: expectedGeneration=${error.expectedGenerationHash} observedGeneration=${error.observedGenerationHash ?? 'none'} maximum=${error.observedMaximum ?? 'none'} effective=${error.observedEffective ?? 'none'}`
     case 'RiskAuthorityMismatch':
-      return `paper candidate risk ${error.index} is not blocked only by authority: outcome=${error.outcome} reasons=${error.reasonCodes.join(',')}`
+      return `execution candidate risk ${error.index} is not blocked only by authority: outcome=${error.outcome} reasons=${error.reasonCodes.join(',')}`
     case 'ReconciliationMissing':
-      return `paper candidate reconciliation is missing: account=${error.accountId}`
+      return `execution candidate reconciliation is missing: account=${error.accountId}`
     case 'ReconciliationMismatch':
-      return `paper candidate reconciliation mismatch: expectedAccount=${error.expectedAccountId} observedAccount=${error.observedAccountId} expectedId=${error.expectedReconciliationId} observedId=${error.observedReconciliationId}`
+      return `execution candidate reconciliation mismatch: expectedAccount=${error.expectedAccountId} observedAccount=${error.observedAccountId} expectedId=${error.expectedReconciliationId} observedId=${error.observedReconciliationId}`
     case 'UnresolvedMutations':
-      return `paper candidate unresolved mutations remain: reconciliation=${error.reconciliationId} count=${error.unresolvedMutationCount}`
+      return `execution candidate unresolved mutations remain: reconciliation=${error.reconciliationId} count=${error.unresolvedMutationCount}`
     case 'BrokerReadFailed':
       return error.read === 'assets'
-        ? `paper candidate broker assets read failed: account=${error.accountId} symbols=${error.symbols.join(',')}`
-        : `paper candidate broker ${error.read} read failed: account=${error.accountId}`
+        ? `execution candidate broker assets read failed: account=${error.accountId} symbols=${error.symbols.join(',')}`
+        : `execution candidate broker ${error.read} read failed: account=${error.accountId}`
     case 'AccountMismatch':
-      return `paper candidate account mismatch: expected=${error.expectedAccountId} observed=${error.observedAccountId}`
+      return `execution candidate account mismatch: expected=${error.expectedAccountId} observed=${error.observedAccountId}`
     case 'ObservationTimeMismatch':
-      return `paper candidate ${error.observation} evidence time mismatch: symbol=${error.symbol ?? 'none'} value=${error.valueObservedAt} evidence=${error.evidenceObservedAt}`
+      return `execution candidate ${error.observation} evidence time mismatch: symbol=${error.symbol ?? 'none'} value=${error.valueObservedAt} evidence=${error.evidenceObservedAt}`
     case 'ObservationChronologyMismatch':
-      return `paper candidate observation chronology mismatch: earlier=${error.earlier}:${error.earlierObservedAt} later=${error.later}:${error.laterObservedAt} symbol=${error.symbol ?? 'none'}`
+      return `execution candidate observation chronology mismatch: earlier=${error.earlier}:${error.earlierObservedAt} later=${error.later}:${error.laterObservedAt} symbol=${error.symbol ?? 'none'}`
     case 'ObservationCaptureTimeInvalid':
-      return `paper candidate observation capture time is invalid: observedMs=${error.observedAtMs}`
+      return `execution candidate observation capture time is invalid: observedMs=${error.observedAtMs}`
     case 'AssetMissing':
-      return `paper candidate asset observation is missing: ordinal=${error.ordinal} symbol=${error.symbol}`
+      return `execution candidate asset observation is missing: ordinal=${error.ordinal} symbol=${error.symbol}`
     case 'AssetSymbolMismatch':
-      return `paper candidate asset symbol mismatch: ordinal=${error.ordinal} planned=${error.plannedSymbol} requested=${error.requestedSymbol} observed=${error.observedSymbol}`
+      return `execution candidate asset symbol mismatch: ordinal=${error.ordinal} planned=${error.plannedSymbol} requested=${error.requestedSymbol} observed=${error.observedSymbol}`
     case 'AssetCountMismatch':
-      return `paper candidate asset count mismatch: expected=${error.expectedAssetCount} observed=${error.observedAssetCount}`
+      return `execution candidate asset count mismatch: expected=${error.expectedAssetCount} observed=${error.observedAssetCount}`
     case 'CandidateMaterialMissing':
-      return `paper candidate ${error.material} is missing: ordinal=${error.ordinal} symbol=${error.symbol ?? 'none'}`
+      return `execution candidate ${error.material} is missing: ordinal=${error.ordinal} symbol=${error.symbol ?? 'none'}`
     case 'BindingHashFailed':
-      return `paper candidate binding hash failed: cycle=${error.cycleId} document=${error.documentContentHash}`
+      return `execution candidate binding hash failed: cycle=${error.cycleId} document=${error.documentContentHash}`
     case 'CandidateFactsDecodeFailed':
-      return `paper candidate facts decoding failed: binding=${error.immutableBindingHash} candidates=${error.candidateCount}`
+      return `execution candidate facts decoding failed: binding=${error.immutableBindingHash} candidates=${error.candidateCount}`
     case 'CandidateFactsHashFailed':
-      return `paper candidate facts hash failed: binding=${error.immutableBindingHash} candidates=${error.candidateCount}`
+      return `execution candidate facts hash failed: binding=${error.immutableBindingHash} candidates=${error.candidateCount}`
     case 'ReceiptHashFailed':
-      return `paper candidate receipt hash failed: schema=${error.schemaVersion} facts=${error.candidateFactsHash}`
+      return `execution candidate receipt hash failed: schema=${error.schemaVersion} facts=${error.candidateFactsHash}`
     case 'ReceiptDecodeFailed':
-      return `paper candidate receipt decoding failed: schema=${error.schemaVersion} facts=${error.candidateFactsHash}`
+      return `execution candidate receipt decoding failed: schema=${error.schemaVersion} facts=${error.candidateFactsHash}`
   }
 }
 
