@@ -1163,12 +1163,12 @@ export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const executionModel = strategyApplication(input.strategy).definition.parameters.executionModel
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
+  if (executionModel.schemaVersion !== 'bayn.execution-model.v3') {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require the causal v2 execution model',
+        message: 'autonomous cycles require the account-neutral v3 execution model',
       }),
     )
   }

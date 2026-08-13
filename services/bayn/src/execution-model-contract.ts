@@ -11,7 +11,6 @@ const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum:
 const SubmissionCutoffLeadMinutes = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
 
 const ExecutionModelCommon = {
-  venue: Schema.Literal('alpaca-paper'),
   assetClass: Schema.Literal('us-equity'),
   precision: Schema.Struct({
     quantityIncrementMicros: PositiveMicros,
@@ -48,6 +47,7 @@ const ExecutionModelCommon = {
 
 const ExecutionModelV1Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-model.v1'),
+  venue: Schema.Literal('alpaca-paper'),
   ...ExecutionModelCommon,
   order: Schema.Struct({
     type: Schema.Literal('market'),
@@ -61,6 +61,7 @@ const ExecutionModelV1Base = Schema.Struct({
 
 const ExecutionModelV2Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-model.v2'),
+  venue: Schema.Literal('alpaca-paper'),
   ...ExecutionModelCommon,
   order: Schema.Struct({
     type: Schema.Literal('market'),
@@ -77,8 +78,15 @@ const ExecutionModelV2Base = Schema.Struct({
   }),
 })
 
+const ExecutionModelV3Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v3'),
+  venue: Schema.Literal('alpaca-us-equity'),
+  ...ExecutionModelCommon,
+  order: ExecutionModelV2Base.fields.order,
+})
+
 const executionModelIssues = (
-  model: typeof ExecutionModelV1Base.Type | typeof ExecutionModelV2Base.Type,
+  model: typeof ExecutionModelV1Base.Type | typeof ExecutionModelV2Base.Type | typeof ExecutionModelV3Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
@@ -95,5 +103,15 @@ const executionModelIssues = (
 
 export const ExecutionModelV1Schema = ExecutionModelV1Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV2Schema = ExecutionModelV2Base.check(Schema.makeFilter(executionModelIssues))
-export const ExecutionModelSchema = Schema.Union([ExecutionModelV1Schema, ExecutionModelV2Schema])
+export const ExecutionModelV3Schema = ExecutionModelV3Base.check(Schema.makeFilter(executionModelIssues))
+export const SupportedExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
+export const ExecutionModelSchema = Schema.Union([
+  ExecutionModelV1Schema,
+  ExecutionModelV2Schema,
+  ExecutionModelV3Schema,
+])
+export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
+
+export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
+  model.schemaVersion === 'bayn.execution-model.v2' || model.schemaVersion === 'bayn.execution-model.v3'

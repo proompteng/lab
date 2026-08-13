@@ -9,8 +9,8 @@ export const BPS = 10_000n
 export const WEIGHT_SCALE = 1_000_000_000_000n
 
 export const defaultExecutionModel: ExecutionModel = {
-  schemaVersion: 'bayn.execution-model.v2',
-  venue: 'alpaca-paper',
+  schemaVersion: 'bayn.execution-model.v3',
+  venue: 'alpaca-us-equity',
   assetClass: 'us-equity',
   order: {
     type: 'market',

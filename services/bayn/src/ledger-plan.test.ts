@@ -460,20 +460,20 @@ describe('ledger plan Result algebra', () => {
     const replay = assertSuccess(buildLedgerPlan(result, ledger))
 
     expect(replay).toEqual(first)
-    expect(first.runKey).toBe(69_942_771_251_131_843_050_516_581_237_517_927_397n)
-    expect(first.runTag).toBe(2_699_395_039_088_034_789n)
+    expect(first.runKey).toBe(100_257_341_598_242_058_062_434_127_766_625_376_875n)
+    expect(first.runTag).toBe(726_392_870_966_057_579n)
     expect(first.accounts).toHaveLength(11)
     expect(first.transfers).toHaveLength(258)
-    expect(first.accounts[0].id).toBe(43_249_501_142_936_952_057_395_946_051_265_147_876n)
-    expect(first.accounts.at(-1)?.id).toBe(187_166_520_106_165_147_592_061_639_881_212_135_452n)
-    expect(first.transfers[0].id).toBe(843_588_107_247_104_286_364_813_362_505_705_787n)
-    expect(first.transfers.at(-1)?.id).toBe(339_931_206_364_908_967_505_523_512_953_605_189_254n)
+    expect(first.accounts[0].id).toBe(2_970_598_649_684_824_442_973_761_769_707_759_048n)
+    expect(first.accounts.at(-1)?.id).toBe(339_925_297_129_109_245_321_197_359_265_899_419_184n)
+    expect(first.transfers[0].id).toBe(183_619_258_809_011_164_751_320_621_571_850_867n)
+    expect(first.transfers.at(-1)?.id).toBe(339_002_083_348_206_757_513_540_362_579_226_259_023n)
     expect(first.transfers.find((transfer) => transfer.code === TransferCode.funding)?.id).toBe(
-      91_698_455_022_344_017_785_425_376_077_893_533_948n,
+      43_544_014_534_615_543_974_349_286_024_987_648_964n,
     )
     expect(first.accounts.every((account) => account.flags === AccountFlags.history)).toBeTrue()
     expect(first.transfers.every((transfer) => transfer.flags === 0 && transfer.amount > 0n)).toBeTrue()
-    expect(hashPlan(first)).toBe('9e4f815019e89744429af0ce5add0de162b088607ffcc37d9e5eee49695efd4a')
+    expect(hashPlan(first)).toBe('219bf6f33309648fed00e46185697e9b7b93c73fe0884e141c24c64b36defd5e')
   })
 
   test('preserves the same balanced plan across deterministic event permutations', () => {

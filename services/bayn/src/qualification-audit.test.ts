@@ -406,7 +406,7 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
-    expect(first.auditHash).toBe('8a362e971730ff6808f93658f1364650ffc3ddc445830714b1452113fac4b9f7')
+    expect(first.auditHash).toBe('7228ed49d7589fd27ccf3527dbd466125f85ac321c50db480a47cd2d384b2693')
   })
 
   test('passes for a later candidate when prior terminal result lineage is complete', () => {

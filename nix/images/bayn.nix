@@ -12,7 +12,7 @@ let
   # SHA-256 identity for bayn.risk-balanced-trend.behavior.v4, verified by the production executable.
   strategyBehaviorHash = "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46";
   # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v4 document.
-  strategyParameterHash = "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9";
+  strategyParameterHash = "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"

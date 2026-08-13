@@ -812,6 +812,7 @@ describe('Bayn startup lifecycle', () => {
         executionModel: {
           ...defaultProtocolDocument.executionModel,
           schemaVersion: 'bayn.execution-model.v1',
+          venue: 'alpaca-paper',
           order: {
             type: 'market',
             timeInForce: 'day',

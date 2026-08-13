@@ -90,7 +90,7 @@ export type ReferenceEvaluationFailure =
   | {
       readonly _tag: 'UnsupportedReferenceExecutionModel'
       readonly actual: string
-      readonly required: 'bayn.execution-model.v2'
+      readonly required: 'bayn.execution-model.v2-or-v3'
     }
   | {
       readonly _tag: 'ReferenceInputRowCountMismatch'

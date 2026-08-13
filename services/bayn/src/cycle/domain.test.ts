@@ -120,9 +120,9 @@ const makeIdentityMaterial = (
 })
 
 describe('autonomous cycle identity and calendar', () => {
-  test('derives the one source-controlled runner policy from the loaded v2 execution model', () => {
-    if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v2') {
-      throw new Error('default execution model must be the causal v2 contract')
+  test('derives the source-controlled runner policy from the account-neutral execution model', () => {
+    if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v3') {
+      throw new Error('default execution model must be the account-neutral v3 contract')
     }
     const policy = makeCycleExecutionPolicyFromModelSuccess(defaultExecutionModel)
 

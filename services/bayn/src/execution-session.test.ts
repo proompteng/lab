@@ -37,8 +37,8 @@ const bindCycleExecutionSessionSuccess = (input: BindCycleExecutionSessionInput)
   resultValue(bindCycleExecutionSession(input))
 
 const causalExecutionModel = (() => {
-  if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v2') {
-    throw new Error('execution-session cycle fixtures require the causal v2 execution model')
+  if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v3') {
+    throw new Error('execution-session cycle fixtures require the account-neutral v3 execution model')
   }
   return defaultExecutionModel
 })()

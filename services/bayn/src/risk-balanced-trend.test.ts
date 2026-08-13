@@ -37,6 +37,11 @@ const { signal: _candidateSignal, ...historicalProtocolBase } = fixtureProtocol
 const historicalProtocol: HistoricalProtocol = {
   ...historicalProtocolBase,
   schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+  executionModel: {
+    ...historicalProtocolBase.executionModel,
+    schemaVersion: 'bayn.execution-model.v2',
+    venue: 'alpaca-paper',
+  },
 }
 
 const shortProtocol = (overrides: Partial<HistoricalProtocol> = {}): HistoricalProtocol => ({
@@ -695,9 +700,9 @@ describe('risk-balanced trend candidate', () => {
     )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('e071381cf1ad78bb0c85cba343e4009e99147393ff95687a27d8bf31968b9d4d')
+    expect(canonicalHashV1(first)).toBe('684749c1ed5394c0dee9bb2ffc6de898e963371b7b95738a7d1bd5b22cb222a6')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
-      'a7ee602d168b076e56759e852ac3a207d7f74774ee0f2650c0922ad1e1f4e272',
+      '95d181f2be11c6581b5c2cd7ecc96c0d404eb8e151f71ae17275e9725484b7dc',
     )
   })
 })

@@ -1,7 +1,7 @@
 import { Data, DateTime, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { ExecutionModelV2Schema } from '../protocol'
+import { SupportedExecutionModelSchema } from '../protocol'
 import { strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import {
@@ -34,7 +34,10 @@ const decodeSelectedExecutionCalendarSessionResult = Schema.decodeUnknownResult(
   strictParseOptions,
 )
 const decodeSignalCycleSessionResult = Schema.decodeUnknownResult(SignalCycleSessionSchema, strictParseOptions)
-const decodeExecutionModelV2Result = Schema.decodeUnknownResult(ExecutionModelV2Schema, strictParseOptions)
+const decodeSupportedExecutionModelResult = Schema.decodeUnknownResult(
+  SupportedExecutionModelSchema,
+  strictParseOptions,
+)
 
 interface CycleDraftConstructionIssue {
   readonly operation: 'cycle-draft'
@@ -152,7 +155,7 @@ export const makeCycleExecutionPolicyFromModel = (
   executionModel: unknown,
 ): Result.Result<CycleExecutionPolicy, CycleConstructionFailure> =>
   Result.gen(function* () {
-    const decodedModel = yield* Result.mapError(decodeExecutionModelV2Result(executionModel), (cause) =>
+    const decodedModel = yield* Result.mapError(decodeSupportedExecutionModelResult(executionModel), (cause) =>
       failure('execution-policy', 'decode', 'strategy execution model is invalid', {}, cause),
     )
     const strategyExecutionModelHash = yield* Result.mapError(canonicalHashV1Result(decodedModel), (cause) =>

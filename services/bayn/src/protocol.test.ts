@@ -4,6 +4,7 @@ import { Effect, Exit, Result } from 'effect'
 
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { verifyBehaviorHash, verifyParameterHash, type EmbeddedBuildMetadata } from './build'
+import { canonicalHashV1 } from './hash'
 import {
   decodeDefaultProtocol,
   decodeProtocol,
@@ -14,7 +15,19 @@ import {
   ProtocolDecodeError,
 } from './protocol'
 
+const legacyExecutionModelV2 = {
+  ...defaultProtocolDocument.executionModel,
+  schemaVersion: 'bayn.execution-model.v2',
+  venue: 'alpaca-paper',
+} as const
+
 describe('strategy protocol', () => {
+  test('pins the current account-neutral causal parameter identity', () => {
+    const decoded = decodeDefaultProtocol()
+    if (Result.isFailure(decoded)) throw decoded.failure
+    expect(hashParameters(decoded.success)).toBe('150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b')
+  })
+
   test('decodes unknown protocol documents once into a typed pure result', () => {
     const decodedDefault = decodeDefaultProtocol()
     expect(Result.isSuccess(decodedDefault)).toBeTrue()
@@ -48,7 +61,8 @@ describe('strategy protocol', () => {
         allocation: 'conviction-inverse-volatility',
       },
       executionModel: {
-        schemaVersion: 'bayn.execution-model.v2',
+        schemaVersion: 'bayn.execution-model.v3',
+        venue: 'alpaca-us-equity',
         order: {
           planningPriceReference: 'signal-session-close',
           planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
@@ -120,6 +134,7 @@ describe('strategy protocol', () => {
       executionModel: {
         ...defaultProtocolDocument.executionModel,
         schemaVersion: 'bayn.execution-model.v1',
+        venue: 'alpaca-paper',
         order: {
           type: 'market',
           timeInForce: 'day',
@@ -140,11 +155,27 @@ describe('strategy protocol', () => {
   test('decodes the frozen v3 protocol only for immutable historical evidence', async () => {
     const { signal: _signal, ...historicalBase } = defaultProtocolDocument
     const protocol = await Effect.runPromise(
-      loadProtocol({ ...historicalBase, schemaVersion: 'bayn.risk-balanced-trend.protocol.v3' }),
+      loadProtocol({
+        ...historicalBase,
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+        executionModel: legacyExecutionModelV2,
+      }),
     )
 
     expect(protocol.schemaVersion).toBe('bayn.risk-balanced-trend.protocol.v3')
     expect('signal' in protocol).toBe(false)
+    expect(protocol.executionModel.venue).toBe('alpaca-paper')
+  })
+
+  test('decodes frozen v4 evidence without changing its legacy execution-model bytes', async () => {
+    const protocol = await Effect.runPromise(
+      loadProtocol({ ...defaultProtocolDocument, executionModel: legacyExecutionModelV2 }),
+    )
+
+    if (protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
+      throw new Error('historical causal protocol must retain its v4 envelope')
+    }
+    expect(canonicalHashV1(protocol.executionModel)).toBe(canonicalHashV1(legacyExecutionModelV2))
   })
 
   test('requires every execution fact', async () => {

@@ -10,6 +10,7 @@ import {
   saleCostBasisMicros,
   scaleQuantityMicros,
 } from '../../execution-model'
+import { isSupportedExecutionModel } from '../../execution-model-contract'
 import type {
   CashChange,
   DailyPerformancePoint,
@@ -70,11 +71,11 @@ const replayDataFirst = (
   retainTrace: boolean,
   closeAtEnd = false,
 ): ReferenceComputation<ReplayWithWork> => {
-  if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
+  if (!isSupportedExecutionModel(protocol.executionModel)) {
     return Result.fail({
       _tag: 'UnsupportedReferenceExecutionModel',
       actual: protocol.executionModel.schemaVersion,
-      required: 'bayn.execution-model.v2',
+      required: 'bayn.execution-model.v2-or-v3',
     })
   }
   const targetBySession = new Map(targets.map((target) => [target.executionIndex, target]))

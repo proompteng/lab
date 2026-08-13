@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import {
   MICROS,
@@ -16,6 +16,8 @@ import {
   scaleQuantityMicros,
   type ExecutionModelFailure,
 } from './execution-model'
+import { ExecutionModelSchema, SupportedExecutionModelSchema } from './execution-model-contract'
+import { strictParseOptions } from './schemas'
 
 const success = <A>(result: Result.Result<A, ExecutionModelFailure>): A => {
   expect(Result.isSuccess(result)).toBe(true)
@@ -30,6 +32,25 @@ const failure = <A>(result: Result.Result<A, ExecutionModelFailure>): ExecutionM
 }
 
 describe('explicit execution model', () => {
+  test('uses one environment-neutral model while decoding immutable legacy models', () => {
+    const decodeExecutionModel = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
+    const decodeSupportedExecutionModel = Schema.decodeUnknownResult(SupportedExecutionModelSchema, strictParseOptions)
+    const legacy = {
+      ...defaultExecutionModel,
+      schemaVersion: 'bayn.execution-model.v2',
+      venue: 'alpaca-paper',
+    }
+
+    expect(defaultExecutionModel).toMatchObject({
+      schemaVersion: 'bayn.execution-model.v3',
+      venue: 'alpaca-us-equity',
+    })
+    expect(Result.isSuccess(decodeExecutionModel(legacy))).toBeTrue()
+    expect(Result.isSuccess(decodeSupportedExecutionModel(legacy))).toBeTrue()
+    expect(Result.isSuccess(decodeSupportedExecutionModel(defaultExecutionModel))).toBeTrue()
+    expect(Result.isFailure(decodeExecutionModel({ ...defaultExecutionModel, venue: 'alpaca-paper' }))).toBeTrue()
+  })
+
   test('rounds price adversely and separates spread from slippage', () => {
     const reference = success(referencePriceMicros(100, defaultExecutionModel))
     const buy = success(makeFillTerms('buy', MICROS, reference, defaultExecutionModel, MICROS))
