@@ -9,7 +9,7 @@ import {
   OrderType as DomainOrderType,
   TimeInForce as DomainTimeInForce,
   type Intent,
-} from '../../paper'
+} from '../../execution/contracts'
 import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'

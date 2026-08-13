@@ -8,7 +8,7 @@ import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
 import type { RuntimeConfig } from './config'
 import { provideTestLayer } from './effect-test-support'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
-import { OrderSide, type Fill } from './paper'
+import { OrderSide, type Fill } from './execution/contracts'
 import {
   assembleAccountPlan,
   buildLedgerPlan,

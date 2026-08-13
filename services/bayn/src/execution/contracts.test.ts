@@ -34,7 +34,7 @@ import {
   decodeValuation,
   isIntentTransitionAllowed,
   makeCapitalGrantGenerationResult,
-} from './execution/contracts'
+} from './contracts'
 
 const instant = '2026-07-22T06:00:00.000Z'
 const later = '2026-07-22T06:01:00.000Z'
@@ -154,7 +154,7 @@ const intent = {
   createdAt: instant,
 }
 
-describe('paper contracts', () => {
+describe('execution contracts', () => {
   test('strictly decodes every broker payload and tagged event', async () => {
     const contracts: ReadonlyArray<{
       decode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>
@@ -439,7 +439,7 @@ describe('paper contracts', () => {
     ).toMatchObject({ effective: Authority.Observe, kill: KillState.Active })
   })
 
-  test('binds a PAPER authority generation to exact qualification, runtime, account, policy, and proof evidence', async () => {
+  test('binds a capital authority generation to exact qualification, runtime, account, policy, and proof evidence', async () => {
     const proof = {
       schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
       riskPolicyHash: hash('c'),

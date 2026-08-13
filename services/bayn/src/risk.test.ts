@@ -20,7 +20,7 @@ import {
   TimeInForce,
   type Intent,
   type ReferenceIntent,
-} from './paper'
+} from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
 import { utcDateFromEpochMillis, utcInstantFromEpochMillis } from './time'
 import {

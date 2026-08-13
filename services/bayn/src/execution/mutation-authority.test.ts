@@ -22,7 +22,7 @@ import {
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { BrokerMutationShape } from '../broker/alpaca-mutations'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
-import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {
   BrokerAccess,
   grantedCapitalAuthority,

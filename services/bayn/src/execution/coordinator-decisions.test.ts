@@ -29,7 +29,7 @@ import {
   TimeInForce,
   type Intent,
   type RiskDecision,
-} from '../paper'
+} from './contracts'
 import {
   decideRecoverySuccess,
   decideSubmitSuccess,

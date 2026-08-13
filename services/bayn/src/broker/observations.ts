@@ -12,7 +12,7 @@ import {
   OrderType,
   PositionSchema,
   TimeInForce,
-} from '../paper'
+} from '../execution/contracts'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,

@@ -42,7 +42,7 @@ import {
   TimeInForce,
   type Intent,
   type RiskDecision,
-} from '../paper'
+} from './contracts'
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 

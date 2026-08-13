@@ -2,7 +2,7 @@ import { Cause, Effect } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
-import type { Intent } from '../../paper'
+import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import type { BrokerSessionShape } from '../alpaca'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'

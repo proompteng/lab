@@ -26,7 +26,7 @@ import {
 } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
-import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
+import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './execution/contracts'
 import {
   BrokerEventStore,
   AuthorityRestrictionStore,
