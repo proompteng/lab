@@ -293,6 +293,37 @@ describe('execution coordinator decisions', () => {
     ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
+  test('recovers a legacy sub-dollar BUY without permitting a new sub-dollar submission', () => {
+    const unknownIntent = {
+      ...intent,
+      notionalLimitMicros: '999999',
+      state: IntentState.Unknown,
+    }
+    const legacyRequest = {
+      symbol: unknownIntent.symbol,
+      notional: '0.999999',
+      side: 'buy',
+      type: 'market',
+      time_in_force: 'day',
+      client_order_id: unknownIntent.clientOrderId,
+      extended_hours: false,
+    }
+    const legacyEvent = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+      intentId: unknownIntent.intentId,
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+
+    expect(Result.isFailure(orderRequestBody(unknownIntent))).toBe(true)
+    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
+    expect(
+      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
+        value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
+        evidence,
+      }),
+    ).toMatchObject({ _tag: 'RecoveryFound' })
+  })
+
   test('does not append another mutation event for the same known open recovery', () => {
     const current = {
       ...mutation(MutationOperation.Submit, MutationEventType.RecoveryFound),

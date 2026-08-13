@@ -67,6 +67,14 @@ export interface SellQuantityMarketOrderRequestBody {
 
 export type OrderRequestBody = BuyNotionalMarketOrderRequestBody | SellQuantityMarketOrderRequestBody
 
+type MarketOrderRequestCommon = Omit<BuyNotionalMarketOrderRequestBody, 'notional'>
+
+interface ValidatedMarketOrderRequest {
+  readonly common: MarketOrderRequestCommon
+  readonly notional: bigint
+  readonly quantity: bigint
+}
+
 export interface LegacyBoundedLimitOrderRequestBody {
   readonly symbol: string
   readonly qty: string
@@ -371,7 +379,9 @@ export const legacyBoundedLimitOrderRequestBody = (
   })
 }
 
-export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+const validateMarketOrderRequest = (
+  intent: OrderRequestIntent,
+): Result.Result<ValidatedMarketOrderRequest, OrderRequestError> => {
   if (intent.orderType !== DomainOrderType.Market) {
     return Result.fail(
       new OrderRequestError({
@@ -403,10 +413,17 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
     client_order_id: intent.clientOrderId,
     extended_hours: false,
   } as const
+  return Result.succeed({ common, notional: notional.success, quantity: quantity.success })
+}
+
+export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  const validated = validateMarketOrderRequest(intent)
+  if (Result.isFailure(validated)) return Result.fail(validated.failure)
+  const { common, notional, quantity } = validated.success
   if (intent.side === DomainSide.Sell) {
-    return Result.succeed({ ...common, qty: microsToDecimal(quantity.success) })
+    return Result.succeed({ ...common, qty: microsToDecimal(quantity) })
   }
-  const brokerNotional = alpacaBuyNotionalMicros(notional.success.toString())
+  const brokerNotional = alpacaBuyNotionalMicros(notional.toString())
   return Result.isFailure(brokerNotional)
     ? Result.fail(brokerNotional.failure)
     : Result.succeed({ ...common, notional: microsToDecimal(BigInt(brokerNotional.success)) })
@@ -416,12 +433,10 @@ const legacyUnquantizedNotionalMarketOrderRequestBody = (
   intent: OrderRequestIntent,
 ): Result.Result<OrderRequestBody, OrderRequestError> => {
   if (intent.side !== DomainSide.Buy) return orderRequestBody(intent)
-  const current = orderRequestBody(intent)
-  if (Result.isFailure(current)) return Result.fail(current.failure)
-  const notional = notionalMicros(intent.notionalLimitMicros)
-  return Result.isFailure(notional)
-    ? Result.fail(notional.failure)
-    : Result.succeed({ ...current.success, notional: microsToDecimal(notional.success) })
+  return Result.map(validateMarketOrderRequest(intent), ({ common, notional }) => ({
+    ...common,
+    notional: microsToDecimal(notional),
+  }))
 }
 
 export const orderRequestNotionalMicros = (request: CompatibleOrderRequestBody): string | undefined =>

@@ -3,7 +3,12 @@ import { Result, Schema } from 'effect'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import { compatibleOrderRequestBody, MutationOperation, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import {
+  compatibleOrderRequestBody,
+  MutationOperation,
+  orderPriceBoundaryMicros,
+  orderRequestNotionalMicros,
+} from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
@@ -249,11 +254,15 @@ const submittedOrderRepresentation = (
     ),
     (body) => {
       if (!('limit_price' in body)) {
+        if ('notional' in body) {
+          const submittedNotionalMicros = orderRequestNotionalMicros(body)
+          return submittedNotionalMicros === undefined
+            ? Result.fail(invalidSubmitRepresentation(row, 'accepted broker notional is not canonical micros'))
+            : Result.succeed({ submittedOrderType: OrderType.Market, submittedNotionalMicros })
+        }
         return Result.succeed({
           submittedOrderType: OrderType.Market,
-          ...('notional' in body
-            ? { submittedNotionalMicros: row.notional_limit_micros }
-            : { submittedQuantityMicros: row.quantity_micros }),
+          submittedQuantityMicros: row.quantity_micros,
         })
       }
       return Result.map(
