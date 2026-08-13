@@ -12,7 +12,7 @@ import {
   type CapitalGrantProofBinding,
   type ResearchCapitalGrantGenerationMaterial,
   type ResearchCapitalGrantProofBinding,
-} from '../execution/contracts'
+} from './contracts'
 import { makeQualificationResult } from '../qualification'
 import {
   analyzeQualification,

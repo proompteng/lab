@@ -1,7 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
-import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../capital-grant-algebra'
+import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../../execution/capital-grant-algebra'
 import { ReconciliationStoreError } from '../reconciliation'
 import { ExecutionStoreError } from './contract'
 import type { ExecutionStoreDecisionFailure } from './decisions'

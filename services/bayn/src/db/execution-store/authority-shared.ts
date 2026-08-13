@@ -14,7 +14,7 @@ import {
   validateAuthorityObservation,
   validateCurrentGenerationHistory,
   type AuthorityGenerationHistoryFacts,
-} from '../capital-grant-algebra'
+} from '../../execution/capital-grant-algebra'
 import type { ExecutionStoreError } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {

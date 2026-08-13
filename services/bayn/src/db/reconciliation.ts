@@ -55,7 +55,7 @@ import {
   validateReconciliationReadback,
   verifyAccountingReceipts,
   type ReconciliationAlgebraFailure,
-} from './reconciliation-algebra'
+} from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
 
 export interface IntentBinding {

@@ -9,7 +9,7 @@ import {
   ExecutionStoreError,
   type CapitalGrantLifecycleStoreShape,
 } from '../db/execution-store'
-import { validateDerivedCapitalGrantGeneration } from '../db/capital-grant-algebra'
+import { validateDerivedCapitalGrantGeneration } from '../execution/capital-grant-algebra'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority, makeCapitalGrantGenerationResult, type CapitalGrantGeneration } from '../execution/contracts'
 import { canonicalHashV1OrThrow, sha256 } from '../hash'

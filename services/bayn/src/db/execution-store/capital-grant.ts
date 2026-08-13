@@ -37,7 +37,7 @@ import {
   type CapitalGrantEvidenceFacts,
   type CapitalGrantRuntimeBinding,
   type PreparedCapitalGrantActivationBinding,
-} from '../capital-grant-algebra'
+} from '../../execution/capital-grant-algebra'
 import {
   authorityStateFromRow,
   capitalGrantGenerationFromRow,
