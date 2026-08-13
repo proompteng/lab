@@ -187,6 +187,11 @@ export type ExecutionAuthorityConstructionFailure =
       readonly _tag: 'LiveBrokerRequiresPersistedGrant'
     }
   | {
+      readonly _tag: 'LiveGrantAuthorityGenerationMismatch'
+      readonly authorityGenerationHash: string
+      readonly grantAuthorityGenerationHash: string
+    }
+  | {
       readonly _tag: 'LiveGrantBrokerIdentityMismatch'
       readonly authorityIdentityHash: string
       readonly grantIdentityHash: string
@@ -265,6 +270,13 @@ export const makeExecutionAuthority = (
   const persistedGrant = input.capitalAuthority.persistedGrant
   if (persistedGrant === undefined) {
     return Result.fail({ _tag: 'LiveBrokerRequiresPersistedGrant' })
+  }
+  if (input.capitalAuthority.authorityGenerationHash !== persistedGrant.grant.authorityGenerationHash) {
+    return Result.fail({
+      _tag: 'LiveGrantAuthorityGenerationMismatch',
+      authorityGenerationHash: input.capitalAuthority.authorityGenerationHash,
+      grantAuthorityGenerationHash: persistedGrant.grant.authorityGenerationHash,
+    })
   }
   if (persistedGrant.grant.brokerIdentity.identityHash !== input.brokerIdentity.identityHash) {
     return Result.fail({

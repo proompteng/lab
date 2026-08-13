@@ -147,6 +147,16 @@ describe('execution authority construction', () => {
   })
 
   test('fails closed for revoked, expired, not-yet-valid, and mismatched live grants', () => {
+    const generationMismatch = makeExecutionAuthority({
+      brokerIdentity: liveIdentity,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: {
+        ...grantedCapitalAuthority(liveGrant()),
+        authorityGenerationHash: '9'.repeat(64),
+      },
+      strategy,
+      observedAt,
+    })
     const revoked = makeExecutionAuthority({
       brokerIdentity: liveIdentity,
       brokerAccess: BrokerAccess.Mutation,
@@ -201,6 +211,14 @@ describe('execution authority construction', () => {
       observedAt,
     })
 
+    expect(generationMismatch).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'LiveGrantAuthorityGenerationMismatch',
+        authorityGenerationHash: '9'.repeat(64),
+        grantAuthorityGenerationHash: authorityGenerationHash,
+      },
+    })
     expect(revoked).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantRevoked' } })
     expect(expired).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantExpired' } })
     expect(notYetValid).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantNotYetValid' } })
