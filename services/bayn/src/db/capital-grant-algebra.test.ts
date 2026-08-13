@@ -114,7 +114,7 @@ const reconciliation: ExactReconciliationFacts = {
 const researchProof = (): ResearchCapitalGrantProofBinding => {
   const material: ResearchCapitalGrantGenerationMaterial = {
     schemaVersion: 'bayn.paper-authority-generation.v3' as const,
-    maximum: Authority.Paper,
+    maximum: Authority.Execution,
     previousGenerationHash: observeGenerationHash,
     grant: { _tag: 'Research' as const, planHash: hash('research-plan') },
     activationSourceRevision: config.build.sourceRevision,
@@ -242,8 +242,10 @@ describe('PAPER authority algebra', () => {
       authorityVersion: 2,
     })
     expect(
-      failureOf(validateObserveGenerationRequest({ generationHash: hash('paper-request'), maximum: Authority.Paper })),
-    ).toEqual({ _tag: 'ObserveMaximumRequired', maximum: Authority.Paper })
+      failureOf(
+        validateObserveGenerationRequest({ generationHash: hash('paper-request'), maximum: Authority.Execution }),
+      ),
+    ).toEqual({ _tag: 'ObserveMaximumRequired', maximum: Authority.Execution })
     expect(
       failureOf(
         requireUnusedAuthorityGeneration(rotatedGenerationHash, {
@@ -259,14 +261,14 @@ describe('PAPER authority algebra', () => {
       failureOf(
         decideObserveGeneration(observeRequest, {
           ...observeAuthority,
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
         }),
       ),
     ).toEqual({
       _tag: 'AuthorityMaximumConflict',
       generationHash: observeGenerationHash,
       requestedMaximum: Authority.Observe,
-      durableMaximum: Authority.Paper,
+      durableMaximum: Authority.Execution,
     })
     const exhausted = failureOf(
       decideObserveGeneration(rotationRequest, {
@@ -356,7 +358,7 @@ describe('PAPER authority algebra', () => {
     const missing = failureOf(
       bindPaperGenerationRuntime(
         {
-          maximumAuthority: Authority.Paper,
+          maximumAuthority: Authority.Execution,
           alpaca: undefined,
           qualificationRunId: undefined,
         },
@@ -368,7 +370,7 @@ describe('PAPER authority algebra', () => {
       _tag: 'PaperRuntimeBindingUnavailable',
       operation: 'PREPARE',
       expectedMaximum: Authority.Observe,
-      configuredMaximum: Authority.Paper,
+      configuredMaximum: Authority.Execution,
       hasAccountBinding: false,
       hasQualificationBinding: false,
     })
@@ -387,8 +389,8 @@ describe('PAPER authority algebra', () => {
       failureOf(
         validatePaperSourceAuthority({
           ...observeAuthority,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
         }),
       ),
     ).toMatchObject({ _tag: 'PaperSourceAuthorityNotObserve' })
@@ -535,7 +537,7 @@ describe('PAPER authority algebra', () => {
     )
 
     expect(derived.generation).toMatchObject({
-      maximum: Authority.Paper,
+      maximum: Authority.Execution,
       previousGenerationHash: observeGenerationHash,
       qualificationRunId: fixtureQualification.runId,
       accountId,
@@ -582,8 +584,8 @@ describe('PAPER authority algebra', () => {
     const capitalGrant: AuthorityState = {
       ...observeAuthority,
       generationHash: derived.generation.generationHash,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       version: 2,
       updatedAt: observedAt.toISOString(),
     }
@@ -674,7 +676,7 @@ describe('PAPER authority algebra', () => {
       _tag: 'DerivedPaperGenerationMismatch',
       derivedGenerationHash: derived.generation.generationHash,
     })
-    expect(paperActivationEffectiveAuthority(KillState.Clear)).toBe(Authority.Paper)
+    expect(paperActivationEffectiveAuthority(KillState.Clear)).toBe(Authority.Execution)
     expect(paperActivationEffectiveAuthority(KillState.Active)).toBe(Authority.Observe)
   })
 

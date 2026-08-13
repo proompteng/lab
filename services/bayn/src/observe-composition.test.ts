@@ -53,7 +53,7 @@ import { operationalError, type OperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from './execution/authority'
 import {
   IntentStore,
-  planPaperIntent,
+  planExecutionIntent,
   type BlockedCycleIntentStoreShape,
   type IntentStoreService,
   type StoredIntent,
@@ -113,7 +113,7 @@ import {
 import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
-import { decodePaperDecisionDocument, makePaperDecisionDocument } from './shadow-decision-contract'
+import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
@@ -537,7 +537,7 @@ const paperLifecycleFixture = async (
         cycle,
         executionModel: fixtureProtocol.executionModel,
         policy,
-        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
         strategy: runtimeWithDecision(() => Result.succeed(strategyDecision)),
       })
     }).pipe(
@@ -558,7 +558,7 @@ const paperLifecycleFixture = async (
       const risk = document.deltaRisk[index]
       if (risk === undefined) throw new Error('PAPER lifecycle fixture risk binding is missing')
       return Effect.runPromise(
-        planPaperIntent(
+        planExecutionIntent(
           {
             schemaVersion: 'bayn.paper-intent-plan.v1',
             ...target,
@@ -569,8 +569,8 @@ const paperLifecycleFixture = async (
             authority: {
               schemaVersion: 'bayn.paper-authority.v1',
               generationHash,
-              maximum: Authority.Paper,
-              effective: Authority.Paper,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
               kill: KillState.Clear,
               version: 1,
               updatedAt: document.createdAt,
@@ -593,7 +593,7 @@ const reconciliationResultAt = (
   positions: readonly Position[] = [],
   orders: readonly Order[] = [],
 ): ReconciliationPassResult => {
-  const result = reconciliationResult(generationHash, Authority.Paper, positions, orders)
+  const result = reconciliationResult(generationHash, Authority.Execution, positions, orders)
   const authority = result.riskContext.authority
   if (authority === null) throw new Error('post-cutoff reconciliation fixture requires PAPER authority')
   const account = { ...result.brokerState.account, observedAt }
@@ -1057,7 +1057,7 @@ describe('OBSERVE runtime composition', () => {
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
             submit,
-            Authority.Paper,
+            Authority.Execution,
             cycle.window.submissionCutoffAt,
             cycle.window.submissionCutoffAt,
             0,
@@ -1070,7 +1070,7 @@ describe('OBSERVE runtime composition', () => {
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
             submit,
-            Authority.Paper,
+            Authority.Execution,
             evaluatedAt,
             cycle.window.submissionCutoffAt,
             1,
@@ -1083,7 +1083,7 @@ describe('OBSERVE runtime composition', () => {
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
             submit,
-            Authority.Paper,
+            Authority.Execution,
             evaluatedAt,
             cycle.window.submissionCutoffAt,
             0,
@@ -1097,7 +1097,7 @@ describe('OBSERVE runtime composition', () => {
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
             submit,
-            Authority.Paper,
+            Authority.Execution,
             evaluatedAt,
             cycle.window.submissionCutoffAt,
             0,
@@ -1112,7 +1112,7 @@ describe('OBSERVE runtime composition', () => {
         Result.getFailure(
           decidePreparedMutationIntentAdmission(
             submit,
-            Authority.Paper,
+            Authority.Execution,
             evaluatedAt,
             cycle.window.submissionCutoffAt,
             0,
@@ -1702,7 +1702,7 @@ describe('OBSERVE runtime composition', () => {
       },
     })
     expect(fixture.document.riskBlock?.reasonCodes).toContain(Reason.OrderNotionalExceeded)
-    expect(fixture.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotPaper)
+    expect(fixture.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotGranted)
     expect(fixture.document.deltaRisk).toHaveLength(1)
     expect(fixture.document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Blocked)
     const attached = attachCycleDecisionStoreEvidence(fixture.document, {
@@ -1710,7 +1710,7 @@ describe('OBSERVE runtime composition', () => {
       paperGenerationIsSuperseded: true,
     })
     expect(Reflect.ownKeys(attached)).toEqual(Reflect.ownKeys(fixture.document))
-    expect(Result.isSuccess(decodePaperDecisionDocument(attached))).toBe(true)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(attached))).toBe(true)
     expect(cycleDecisionStoreEvidence(attached)).toEqual({
       paperCompletionEvidenceMatches: false,
       paperGenerationIsSuperseded: true,
@@ -2733,7 +2733,7 @@ describe('OBSERVE runtime composition', () => {
         const risk = close.deltaRisk[index]
         if (risk === undefined) throw new Error('PAPER close fixture risk binding is missing')
         return Effect.runPromise(
-          planPaperIntent(
+          planExecutionIntent(
             {
               schemaVersion: 'bayn.paper-intent-plan.v1',
               ...target,
@@ -2744,8 +2744,8 @@ describe('OBSERVE runtime composition', () => {
               authority: {
                 schemaVersion: 'bayn.paper-authority.v1',
                 generationHash,
-                maximum: Authority.Paper,
-                effective: Authority.Paper,
+                maximum: Authority.Execution,
+                effective: Authority.Execution,
                 kill: KillState.Clear,
                 version: 1,
                 updatedAt: close.createdAt,
@@ -3091,7 +3091,7 @@ describe('OBSERVE runtime composition', () => {
           evaluation: {
             decision: {
               outcome: RiskOutcome.Blocked,
-              reasonCodes: [Reason.AuthorityNotPaper],
+              reasonCodes: [Reason.AuthorityNotGranted],
             },
           },
         },
@@ -3110,7 +3110,7 @@ describe('OBSERVE runtime composition', () => {
         cycle,
         executionModel: fixtureProtocol.executionModel,
         policy,
-        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
         strategy: runtimeWithDecision(() => Result.succeed(decision)),
       })
     }).pipe(
@@ -3150,22 +3150,22 @@ describe('OBSERVE runtime composition', () => {
     expect(risk).toBeDefined()
     if (target === undefined || risk === undefined) return expect.unreachable('PAPER decision target evidence missing')
 
-    const alteredGeneration = makePaperDecisionDocument({
+    const alteredGeneration = makeExecutionDecisionDocument({
       ...material,
       bindings: { ...material.bindings, authorityGenerationHash: '9'.repeat(64) },
     })
-    const alteredTarget = makePaperDecisionDocument({
+    const alteredTarget = makeExecutionDecisionDocument({
       ...material,
       targetPlan: {
         ...material.targetPlan,
         intentTargets: [{ ...target, accountId: 'different-paper-account' }],
       },
     })
-    const alteredOrder = makePaperDecisionDocument({
+    const alteredOrder = makeExecutionDecisionDocument({
       ...material,
       orderedIntentIds: ['8'.repeat(64)],
     })
-    const alteredCumulativeRisk = makePaperDecisionDocument({
+    const alteredCumulativeRisk = makeExecutionDecisionDocument({
       ...material,
       deltaRisk: [
         {
@@ -3180,7 +3180,7 @@ describe('OBSERVE runtime composition', () => {
         },
       ],
     })
-    const alteredExpiry = makePaperDecisionDocument({
+    const alteredExpiry = makeExecutionDecisionDocument({
       ...material,
       expiresAt: utcInstantFromEpochMillis(Date.parse(material.expiresAt) - 1),
     })
@@ -3215,7 +3215,9 @@ describe('OBSERVE runtime composition', () => {
         cycle,
         executionModel: fixtureProtocol.executionModel,
         policy,
-        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper, [], [], highBalanceAccount)),
+        reconcile: Effect.succeed(
+          reconciliationResult(generationHash, Authority.Execution, [], [], highBalanceAccount),
+        ),
         strategy: runtimeWithDecision(() => Result.succeed(fullyAllocatedDecision)),
       })
     }).pipe(
@@ -3259,7 +3261,13 @@ describe('OBSERVE runtime composition', () => {
       unrealizedPnlMicros: '0',
       observedAt: reconciledAt,
     }
-    const reconciled = reconciliationResult(generationHash, Authority.Paper, [existingPosition], [], highBalanceAccount)
+    const reconciled = reconciliationResult(
+      generationHash,
+      Authority.Execution,
+      [existingPosition],
+      [],
+      highBalanceAccount,
+    )
     const failure = await Effect.runPromise(
       Effect.flip(
         Effect.gen(function* () {
@@ -4547,7 +4555,7 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationReconciliations).toBe(2)
     expect(authorityRestrictions).toBe(2)
 
-    const paperResult = reconciliationResult(generationHash, Authority.Paper)
+    const paperResult = reconciliationResult(generationHash, Authority.Execution)
     const paperAuthority = paperResult.riskContext.authority
     if (paperAuthority === null) return expect.unreachable('post-reconcile fixture requires PAPER authority')
     const paperPersisted: ReconciliationWriteResult = {
@@ -4707,7 +4715,7 @@ describe('OBSERVE runtime composition', () => {
       return expect.unreachable('post-mutation timeout fixture requires one approved intent')
     }
     const boundaryIntent = await Effect.runPromise(
-      planPaperIntent(
+      planExecutionIntent(
         {
           schemaVersion: 'bayn.paper-intent-plan.v1',
           ...boundaryTarget,

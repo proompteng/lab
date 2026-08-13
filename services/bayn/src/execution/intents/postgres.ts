@@ -141,9 +141,9 @@ const authorityError = (failure: AuthorityBindingFailure): IntentStoreError => {
       return storeError('invariant', 'commit', 'PAPER authority is not initialized', failure)
     case 'MultipleAuthorityRows':
       return storeError('invariant', 'commit', 'PAPER authority singleton returned multiple rows', failure)
-    case 'MaximumAuthorityNotPaper':
+    case 'MaximumAuthorityNotGranted':
       return storeError('invariant', 'commit', 'GitOps maximum authority is not PAPER', failure)
-    case 'EffectiveAuthorityNotPaper':
+    case 'EffectiveAuthorityNotGranted':
       return storeError('invariant', 'commit', 'effective authority is not PAPER', failure)
     case 'AuthorityKillNotClear':
       return storeError('invariant', 'commit', 'PAPER authority kill is not CLEAR', failure)

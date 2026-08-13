@@ -53,7 +53,7 @@ const strategy: ExecutionStrategyIdentity = {
 const riskPolicy: Policy = {
   schemaVersion: 'bayn.paper-risk-policy.v2',
   accountId,
-  brokerMode: BrokerMode.Paper,
+  brokerMode: BrokerMode.Execution,
   allowedSymbols: ['AMD'],
   allowedOrderTypes: [OrderType.Market],
   allowedTimeInForce: [TimeInForce.Day],

@@ -76,14 +76,14 @@ import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, decodePolicy, type Policy, type State } from './risk'
 import {
   buildObserveShadowDecision,
-  buildPaperDecision,
+  buildExecutionDecision,
   type ShadowDecisionError,
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
 import type {
   CycleDecisionDocument,
   ObserveShadowDecisionDocument,
-  PaperDecisionDocument,
+  ExecutionDecisionDocument,
 } from './shadow-decision-contract'
 import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import type { AutonomousCyclePassObservation } from './runtime-state'
@@ -192,7 +192,7 @@ const loadObserveRiskPolicyDataFirst = (accountId: string, allowedSymbols: reado
   decodePolicy({
     schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId,
-    brokerMode: BrokerMode.Paper,
+    brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [OrderType.Market],
     allowedTimeInForce: [TimeInForce.Day],
@@ -489,7 +489,7 @@ const readObserveDecisionFacts = <R>(
     return { snapshot, calendar, reconciliation, evaluatedAt }
   })
 
-type DecisionAuthorityRequirement = Authority.Observe | Authority.Paper
+type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
 
 const requireDecisionAuthority = (
   result: ReconciliationPassResult,
@@ -526,7 +526,7 @@ const requireMutationAuthorityGeneration = (
     authority === null ||
     result.riskContext.authorityObservedAt === null ||
     authority.generationHash !== authorityGenerationHash ||
-    authority.maximum !== Authority.Paper ||
+    authority.maximum !== Authority.Execution ||
     result.brokerState.account.accountId !== policy.accountId
   ) {
     return Result.fail(
@@ -698,7 +698,7 @@ const reduceRiskInputs = (
           (fillTerms): ShadowDeltaRiskInput => {
             const state: State = {
               schemaVersion: 'bayn.paper-risk-state.v2',
-              brokerMode: BrokerMode.Paper,
+              brokerMode: BrokerMode.Execution,
               account: input.reconciliation.brokerState.account,
               positions: input.reconciliation.brokerState.positions,
               positionsObservedAt: input.reconciliation.brokerState.positionsObservedAt,
@@ -768,8 +768,8 @@ function buildCycleDecision<R>(
 ): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
-  authorityRequirement: Authority.Paper,
-): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R>
+  authorityRequirement: Authority.Execution,
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   authorityRequirement: DecisionAuthorityRequirement,
@@ -783,7 +783,7 @@ function buildCycleDecision<R>(
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
     const allocationCapitalMicros =
-      authorityRequirement === Authority.Paper
+      authorityRequirement === Authority.Execution
         ? yield* Effect.fromResult(
             executionEpisodeAllocationCapitalMicros({
               accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
@@ -810,7 +810,7 @@ function buildCycleDecision<R>(
         input,
         facts,
         compiled,
-        authorityRequirement === Authority.Paper && allocationCapitalMicros !== undefined
+        authorityRequirement === Authority.Execution && allocationCapitalMicros !== undefined
           ? { allocationCapitalMicros: allocationCapitalMicros.toString() }
           : {},
       ),
@@ -842,7 +842,7 @@ function buildCycleDecision<R>(
     }
     return authorityRequirement === Authority.Observe
       ? yield* buildObserveShadowDecision(decisionInput)
-      : yield* buildPaperDecision({
+      : yield* buildExecutionDecision({
           ...decisionInput,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
@@ -852,11 +852,11 @@ function buildCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
-  buildCycleDecision(input, Authority.Paper)
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
+  buildCycleDecision(input, Authority.Execution)
 
 const makeClosingReferencePrices = (
-  entryDocument: PaperDecisionDocument,
+  entryDocument: ExecutionDecisionDocument,
   positions: ReconciliationPassResult['brokerState']['positions'],
   signalDate: SignalSessionReferencePrices['signalDate'],
   observedAt: string,
@@ -932,7 +932,7 @@ const makeClosingDecisionPlan = (
 const recoverExecutionSession = (
   preparation: ObserveStartupPreparation,
   cycle: AutonomousCycle,
-  entryDocument: PaperDecisionDocument,
+  entryDocument: ExecutionDecisionDocument,
 ): Result.Result<ExecutionSessionBinding, ObserveDecisionCompositionFailure> => {
   const bindRecoveredSession = (input: Parameters<typeof bindCycleExecutionSession>[0]) =>
     Result.mapError(bindCycleExecutionSession(input), (cause) =>
@@ -992,7 +992,7 @@ export interface BuildClosingExecutionCycleDecisionInput {
   readonly preparation: ObserveStartupPreparation
   readonly policy: Policy
   readonly cycle: AutonomousCycle
-  readonly entryDocument: PaperDecisionDocument
+  readonly entryDocument: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
   readonly closeExpiresAt: string
   readonly replanGenerationHash?: string
@@ -1000,7 +1000,7 @@ export interface BuildClosingExecutionCycleDecisionInput {
 
 export const buildClosingExecutionCycleDecision = (
   request: BuildClosingExecutionCycleDecisionInput,
-): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> => {
+): Effect.Effect<ExecutionDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const reconciliation = yield* reconcile.pipe(
@@ -1066,7 +1066,7 @@ export const buildClosingExecutionCycleDecision = (
         closeOnlyExpiresAt: closeExpiresAt,
       }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    return yield* buildPaperDecision({
+    return yield* buildExecutionDecision({
       cycle,
       snapshot: {
         snapshotId: entryDocument.bindings.snapshotId,
@@ -1345,7 +1345,7 @@ const readLatestExecutionCycleCloseReplan = (
   )
 
 const closePlanNeedsResidualReplan = (
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<boolean, CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
   Effect.gen(function* () {
@@ -1387,9 +1387,9 @@ const ensureExecutionCycleClosure = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
-  entryDocument: PaperDecisionDocument,
+  entryDocument: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<PaperDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<ExecutionDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cutoffAt = input.executionEpisodeCutoffAt
     const closeExpiresAt = input.executionEpisodeExpiresAt
@@ -1487,7 +1487,7 @@ const ensureExecutionCycleClosure = (
   })
 
 const entryExecutionCycleHasUnsuccessfulIntent = (
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
 ): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
   Effect.gen(function* () {
     const store = yield* IntentStore
@@ -1596,7 +1596,7 @@ export interface PrepareNextMutationIntentInput {
   readonly preparation: ObserveStartupPreparation
   readonly policy: Policy
   readonly cycle: AutonomousCycle
-  readonly document: PaperDecisionDocument
+  readonly document: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
   readonly allowSubmit?: boolean
 }
@@ -1625,7 +1625,7 @@ const executeBoundExecutionCycle = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
-  document: PaperDecisionDocument,
+  document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   capability: ExecutionCapability,
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>

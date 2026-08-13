@@ -367,7 +367,7 @@ describe('Bayn HTTP pure decisions', () => {
           ...realized.cycle,
           authority: {
             generationHash: realized.capitalActivation.generationHash,
-            maximum: Authority.Paper,
+            maximum: Authority.Execution,
             effective: Authority.Observe,
             kill: KillState.Active,
             reason: 'PAPER autonomous cycle loop restricted effective authority: bounded recovery',
@@ -568,7 +568,7 @@ describe('Bayn HTTP pure decisions', () => {
         ...healthy.cycle,
         authority: {
           generationHash: 'a'.repeat(64),
-          maximum: Authority.Paper,
+          maximum: Authority.Execution,
           effective: Authority.Observe,
           kill: KillState.Active,
           reason: 'operator kill',
@@ -1507,8 +1507,8 @@ describe('Bayn HTTP probes', () => {
         },
         authority: {
           generationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
           kill: KillState.Clear,
           reason: null,
           updatedAt: checkedAt,

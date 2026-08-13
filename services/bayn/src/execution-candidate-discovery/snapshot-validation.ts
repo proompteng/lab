@@ -15,7 +15,7 @@ import {
   type ExecutionCandidateDiscoveryBinding,
   type ExecutionCandidateDiscoveryIdentity,
   type ExecutionCandidateDiscoverySnapshot,
-  type ValidatedPaperCandidateSnapshot,
+  type ValidatedExecutionCandidateSnapshot,
 } from './model'
 import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 import { Pipeable } from '../pipeable'
@@ -262,10 +262,10 @@ const validateRisk = (document: ObserveShadowDecisionDocument): Result.Result<vo
       return requireCondition(
         risk.evaluation.decision.outcome === RiskOutcome.Blocked &&
           risk.evaluation.decision.reasonCodes.length === 1 &&
-          risk.evaluation.decision.reasonCodes[0] === Reason.AuthorityNotPaper &&
+          risk.evaluation.decision.reasonCodes[0] === Reason.AuthorityNotGranted &&
           failed.length === 1 &&
           failed[0]?.name === Gate.Authority &&
-          failed[0]?.reason === Reason.AuthorityNotPaper,
+          failed[0]?.reason === Reason.AuthorityNotGranted,
         {
           _tag: 'RiskAuthorityMismatch',
           failure: 'risk-mismatch',
@@ -352,7 +352,7 @@ const validateSnapshotForIdentityDataFirst = (
   identity: ExecutionCandidateDiscoveryIdentity,
   snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
-): Result.Result<ValidatedPaperCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
+): Result.Result<ValidatedExecutionCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.Do,
     Result.bind('last', () =>
@@ -418,7 +418,7 @@ const validateExecutionCandidateDiscoverySnapshotDataFirst = (
   identity: ExecutionCandidateDiscoveryIdentity,
   snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
-): Result.Result<ValidatedPaperCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
+): Result.Result<ValidatedExecutionCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
   pipe(
     validateIdentity(identity),
     Result.flatMap((validatedIdentity) => validateSnapshotForIdentity(validatedIdentity, snapshot, now)),

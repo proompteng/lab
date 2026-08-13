@@ -1,7 +1,7 @@
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { PaperDecisionDocumentSchema } from '../shadow-decision-contract'
+import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { Pipeable } from '../pipeable'
 
@@ -9,7 +9,7 @@ const ExecutionCycleClosureMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-cycle-closure.v1'),
   cycleId: Sha256Schema,
   entryDecisionHash: Sha256Schema,
-  document: PaperDecisionDocumentSchema,
+  document: ExecutionDecisionDocumentSchema,
   createdAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
 }).check(

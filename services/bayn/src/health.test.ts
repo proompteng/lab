@@ -789,8 +789,8 @@ describe('Bayn continuous health', () => {
             ...emptyCycleProjection(),
             authority: {
               generationHash: 'c'.repeat(64),
-              maximum: Authority.Paper,
-              effective: Authority.Paper,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
               kill: KillState.Clear,
               reason: null,
               updatedAt: checkedAt,
@@ -845,8 +845,8 @@ describe('Bayn continuous health', () => {
             ...emptyCycleProjection(),
             authority: {
               generationHash: 'b'.repeat(64),
-              maximum: Authority.Paper,
-              effective: Authority.Paper,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
               kill: KillState.Clear,
               reason: null,
               updatedAt: checkedAt,
@@ -974,8 +974,8 @@ describe('Bayn continuous health', () => {
             },
             authority: {
               generationHash,
-              maximum: Authority.Paper,
-              effective: Authority.Paper,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
               kill: KillState.Clear,
               reason: null,
               updatedAt: checkedAt,
@@ -1032,8 +1032,8 @@ describe('Bayn continuous health', () => {
       ...emptyCycleProjection(),
       authority: {
         generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
         reason: null,
         updatedAt: checkedAt,

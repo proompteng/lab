@@ -21,7 +21,7 @@ import { TestClock } from 'effect/testing'
 
 import { config, fixtureRuntime, readyState } from './app-test-support'
 import {
-  paperObserveSuccessorGenerationHash,
+  executionObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
@@ -164,7 +164,7 @@ const continuationRequest = Result.getOrThrow(
 const continuationGeneration = Result.getOrThrow(
   makeResearchCapitalGrantGenerationResult({
     schemaVersion: 'bayn.paper-authority-generation.v3',
-    maximum: Authority.Paper,
+    maximum: Authority.Execution,
     previousGenerationHash: continuationSourceGenerationHash,
     grant: continuationRequest.grant,
     activationSourceRevision: continuationRequest.activation.sourceRevision,
@@ -257,8 +257,8 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
 const continuationAuthority: AuthorityState = {
   schemaVersion: 'bayn.paper-authority.v1',
   generationHash: continuationGeneration.generationHash,
-  maximum: Authority.Paper,
-  effective: Authority.Paper,
+  maximum: Authority.Execution,
+  effective: Authority.Execution,
   kill: KillState.Clear,
   version: 2,
   updatedAt: '2026-08-10T18:00:00.000Z',
@@ -361,8 +361,8 @@ describe('Bayn application platform', () => {
           return {
             schemaVersion: 'bayn.paper-authority.v1' as const,
             generationHash,
-            maximum: Authority.Paper,
-            effective: Authority.Paper,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
             kill: KillState.Clear,
             version: 2,
             updatedAt: '2026-08-12T16:00:00.000Z',
@@ -376,8 +376,8 @@ describe('Bayn application platform', () => {
     expect(activationCalls).toBe(1)
     expect(activated).toMatchObject({
       generationHash,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
     })
 
@@ -546,7 +546,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
 describe('Bayn capital startup recovery boundary', () => {
   test('starts OBSERVE cycles from the persisted successor and never from stale PAPER authority', () => {
     const successorGenerationHash = Result.getOrThrow(
-      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash: hash('12') }),
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: hash('12') }),
     )
     const observeAuthority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
@@ -563,8 +563,8 @@ describe('Bayn capital startup recovery boundary', () => {
       observeCycleGenerationHash({
         ...observeAuthority,
         generationHash: hash('34'),
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
       }),
     ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
   })
@@ -617,7 +617,7 @@ describe('Bayn capital startup recovery boundary', () => {
     const generation = Result.getOrThrow(
       makeCapitalGrantGenerationResult({
         schemaVersion: 'bayn.paper-authority-generation.v2',
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         previousGenerationHash: continuationApplicationPlan.config.alpaca.authorityGenerationHash,
         qualificationRunId: request.qualification.runId,
         qualificationLockId: request.qualification.lockId,
@@ -646,8 +646,8 @@ describe('Bayn capital startup recovery boundary', () => {
       readAuthorityState: Effect.succeed({
         schemaVersion: 'bayn.paper-authority.v1',
         generationHash: generation.generationHash,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
         kill: KillState.Clear,
         version: 2,
         updatedAt: '2026-08-12T19:00:00.000Z',
@@ -679,8 +679,8 @@ describe('Bayn capital startup recovery boundary', () => {
 
   test('recognizes the receipt-completed OBSERVE successor before retrying PAPER recovery on restart', async () => {
     const successorGenerationHash = Result.getOrThrow(
-      paperObserveSuccessorGenerationHash({
-        previousPaperGenerationHash: continuationGeneration.generationHash,
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: continuationGeneration.generationHash,
       }),
     )
     const receiptHash = hash('receipt')
@@ -823,9 +823,9 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {
-    const previousPaperGenerationHash = continuationGeneration.generationHash
+    const previousExecutionGenerationHash = continuationGeneration.generationHash
     const successorGenerationHash = Result.getOrThrow(
-      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }),
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
     )
     const riskPolicy = await Effect.runPromise(
       loadObserveRiskPolicy(continuationAccountId, continuationApplicationPlan.strategy.definition.parameters.universe),
@@ -843,7 +843,7 @@ describe('Bayn capital startup recovery boundary', () => {
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
         schemaVersion: 'bayn.paper-authority-generation.v3',
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         previousGenerationHash: successorGenerationHash,
         grant: request.grant,
         activationSourceRevision: request.activation.sourceRevision,
@@ -864,9 +864,9 @@ describe('Bayn capital startup recovery boundary', () => {
     )
     let authority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
-      generationHash: previousPaperGenerationHash,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      generationHash: previousExecutionGenerationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       version: 2,
       updatedAt: '2026-08-31T19:59:59.000Z',
@@ -912,8 +912,8 @@ describe('Bayn capital startup recovery boundary', () => {
           authority = {
             schemaVersion: 'bayn.paper-authority.v1',
             generationHash: generation.generationHash,
-            maximum: Authority.Paper,
-            effective: Authority.Paper,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
             kill: KillState.Clear,
             version: 4,
             updatedAt: '2026-08-31T20:00:01.000Z',
@@ -1055,8 +1055,8 @@ describe('Bayn capital startup recovery boundary', () => {
     const operations: string[] = []
     const previousGenerationHash = hash('2')
     const successorGenerationHash = Result.getOrThrow(
-      paperObserveSuccessorGenerationHash({
-        previousPaperGenerationHash: previousGenerationHash,
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: previousGenerationHash,
       }),
     )
     const blockedIntents: BlockedCycleIntentStoreShape = {
@@ -1122,17 +1122,18 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('derives one stable OBSERVE successor per immutable capital generation', () => {
-    const previousPaperGenerationHash = hash('2')
-    const first = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
-    const replay = Result.getOrThrow(paperObserveSuccessorGenerationHash({ previousPaperGenerationHash }))
+    const previousExecutionGenerationHash = hash('2')
+    const first = Result.getOrThrow(executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }))
+    const replay = Result.getOrThrow(executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }))
     const nextEpisode = Result.getOrThrow(
-      paperObserveSuccessorGenerationHash({
-        previousPaperGenerationHash: hash('3'),
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: hash('3'),
       }),
     )
 
     expect(first).toBe(replay)
-    expect(first).not.toBe(previousPaperGenerationHash)
+    expect(first).toBe('4a7bc5e5312820740ccdce4d25358985badba54e94af3a2037f5cf87f4a106c7')
+    expect(first).not.toBe(previousExecutionGenerationHash)
     expect(nextEpisode).not.toBe(first)
   })
 

@@ -39,7 +39,7 @@ import {
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
 import {
-  buildPaperDecision,
+  buildExecutionDecision,
   buildObserveShadowDecision,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
@@ -236,7 +236,7 @@ const makePolicy = (): Policy =>
   decodePolicy({
     schemaVersion: 'bayn.paper-risk-policy.v2',
     accountId,
-    brokerMode: BrokerMode.Paper,
+    brokerMode: BrokerMode.Execution,
     allowedSymbols: ['AMD', 'NVDA'],
     allowedOrderTypes: [OrderType.Market],
     allowedTimeInForce: [TimeInForce.Day],
@@ -337,7 +337,7 @@ const makeRiskState = (
   })
   return decodeState({
     schemaVersion: 'bayn.paper-risk-state.v2',
-    brokerMode: BrokerMode.Paper,
+    brokerMode: BrokerMode.Execution,
     account: brokerState.account,
     positions: brokerState.positions,
     positionsObservedAt: brokerObservedAt,
@@ -477,8 +477,8 @@ describe('OBSERVE shadow decision', () => {
       '1000000000',
     ])
     expect(first.deltaRisk.map(({ evaluation }) => evaluation.decision.reasonCodes)).toEqual([
-      [Reason.AuthorityNotPaper],
-      [Reason.AuthorityNotPaper],
+      [Reason.AuthorityNotGranted],
+      [Reason.AuthorityNotGranted],
     ])
     expect(
       first.deltaRisk.every(
@@ -493,7 +493,7 @@ describe('OBSERVE shadow decision', () => {
       first.deltaRisk.every(
         ({ evaluation }) =>
           evaluation.decision.outcome === RiskOutcome.Blocked &&
-          evaluation.decision.reasonCodes.includes(Reason.AuthorityNotPaper) &&
+          evaluation.decision.reasonCodes.includes(Reason.AuthorityNotGranted) &&
           evaluation.decision.expiresAt <= first.submissionCutoffAt,
       ),
     ).toBe(true)
@@ -546,8 +546,8 @@ describe('OBSERVE shadow decision', () => {
         authority: {
           ...riskInput.state.authority,
           generationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
         },
       }),
     }))
@@ -555,7 +555,7 @@ describe('OBSERVE shadow decision', () => {
     if (executionSession === undefined) throw new Error('fixture requires one PAPER risk delta')
 
     const document = await Effect.runPromise(
-      buildPaperDecision({
+      buildExecutionDecision({
         ...input,
         riskInputs: paperRiskInputs,
         authorityGenerationHash: generationHash,
@@ -675,7 +675,7 @@ describe('OBSERVE shadow decision', () => {
                 ...riskInput,
                 state: {
                   ...riskInput.state,
-                  authority: { ...riskInput.state.authority, effective: Authority.Paper },
+                  authority: { ...riskInput.state.authority, effective: Authority.Execution },
                 },
               }
             : riskInput,
@@ -805,7 +805,7 @@ describe('OBSERVE shadow decision', () => {
           ...riskInput.state,
           authority: {
             ...riskInput.state.authority,
-            maximum: Authority.Paper,
+            maximum: Authority.Execution,
           },
         },
       })),

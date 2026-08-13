@@ -551,12 +551,12 @@ const renderPrometheusMetricsDataFirst = (
   const effectiveAuthority =
     state.cycle.authority === null
       ? 'unknown'
-      : state.cycle.authority.effective === Authority.Paper
+      : state.cycle.authority.effective === Authority.Execution
         ? 'paper'
         : 'observe'
   const capitalActivationRecoveryOnly =
     capitalActivationRealized &&
-    state.cycle.authority?.maximum === Authority.Paper &&
+    state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Observe &&
     state.cycle.alerts.killActive
   const lines = [

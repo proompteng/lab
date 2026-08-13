@@ -144,7 +144,8 @@ export enum DiscrepancyKind {
 
 export enum Authority {
   Observe = 'OBSERVE',
-  Paper = 'PAPER',
+  /** Durable wire value retained while execution is account-environment neutral. */
+  Execution = 'PAPER',
 }
 
 export enum KillState {
@@ -653,7 +654,7 @@ export type ResearchCapitalGrantProofBinding = typeof ResearchCapitalGrantProofB
 
 const CapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority-generation.v2'),
-  maximum: Schema.Literal(Authority.Paper),
+  maximum: Schema.Literal(Authority.Execution),
   previousGenerationHash: Sha256,
   qualificationRunId: Sha256,
   qualificationLockId: Sha256,
@@ -764,7 +765,7 @@ export const makeCapitalGrantGenerationResult = (
 
 const ResearchCapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority-generation.v3'),
-  maximum: Schema.Literal(Authority.Paper),
+  maximum: Schema.Literal(Authority.Execution),
   previousGenerationHash: Sha256,
   grant: ResearchCapitalGrantSchema,
   activationSourceRevision: SourceRevision,

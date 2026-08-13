@@ -26,7 +26,7 @@ import authorityBoundIntents from '../../migrations/0016_authority_bound_intents
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
-import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
+import { IntentStore, IntentStoreLive, planExecutionIntent, type IntentPlan } from '../execution/intents'
 import {
   MutationEventType,
   MutationStore,
@@ -756,7 +756,7 @@ const makeMutationCapitalGrantGeneration = (
   const config = makeConfig()
   return makeCapitalGrantGeneration({
     schemaVersion: 'bayn.paper-authority-generation.v2',
-    maximum: Authority.Paper,
+    maximum: Authority.Execution,
     previousGenerationHash,
     qualificationRunId: mutationQualificationResult.runId,
     qualificationLockId: mutationQualificationLock.lockId,
@@ -791,12 +791,12 @@ const mutationPaperActivation = () =>
     mutationReconciliationContentHash,
   )
 const planForGeneration = (input: IntentPlan, generationHash: string) =>
-  planPaperIntent(input, {
+  planExecutionIntent(input, {
     authority: {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash,
-      maximum: Authority.Paper,
-      effective: Authority.Paper,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
       kill: KillState.Clear,
       version: 2,
       updatedAt: '2026-07-22T10:00:00.000Z',
@@ -2089,7 +2089,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         killState: KillState.Clear,
         expected: {
           message: 'effective authority is not PAPER',
-          cause: { _tag: 'EffectiveAuthorityNotPaper', observed: Authority.Observe },
+          cause: { _tag: 'EffectiveAuthorityNotGranted', observed: Authority.Observe },
         },
         commits: commits.slice(0, 2),
       },

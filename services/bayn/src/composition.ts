@@ -32,7 +32,7 @@ import {
   type AutonomousRuntimeResolver,
 } from './app'
 import {
-  paperObserveSuccessorGenerationHash,
+  executionObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
   recoverRestrictedGenerationBeforeRollover,
   type TerminalGenerationRolloverReceipt,
@@ -143,7 +143,7 @@ import { serveLifecycleCommands } from './lifecycle-command-http'
 import { sqlResource } from './operations'
 import { runOnce, type ReconciliationPassError } from './reconciler'
 import {
-  discoverPaperCandidates as discoverExecutionCandidatesHistoricalCodec,
+  discoverExecutionCandidates as discoverExecutionCandidatesHistoricalCodec,
   renderExecutionCandidateDiscoveryError,
   type ExecutionCandidateDiscoveryReceipt,
 } from './execution-candidate-discovery'
@@ -516,8 +516,8 @@ export const activatePreparedQualifiedCapitalGeneration = (
       )
     if (
       activated.generationHash !== prepared.generationHash ||
-      activated.maximum !== Authority.Paper ||
-      (activated.kill === KillState.Clear && activated.effective !== Authority.Paper) ||
+      activated.maximum !== Authority.Execution ||
+      (activated.kill === KillState.Clear && activated.effective !== Authority.Execution) ||
       (activated.kill === KillState.Active && activated.effective !== Authority.Observe)
     ) {
       return yield* capitalActivationOperationalError(
@@ -744,11 +744,11 @@ const readBoundCapitalActivationGeneration = (
     const authority = yield* authorityStore.readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('durable capital authority read failed', cause)),
     )
-    if (authority.maximum !== Authority.Paper) {
+    if (authority.maximum !== Authority.Execution) {
       return yield* capitalActivationOperationalError('durable capital recovery requires mutation-capable authority')
     }
     const closeAuthorityIsBound =
-      (authority.effective === Authority.Paper && authority.kill === KillState.Clear) ||
+      (authority.effective === Authority.Execution && authority.kill === KillState.Clear) ||
       (authority.effective === Authority.Observe && authority.kill === KillState.Active)
     if (!closeAuthorityIsBound) {
       return yield* capitalActivationOperationalError(
@@ -886,7 +886,7 @@ export const readCompletedExecutionLifecycle = (
     if (Result.isFailure(binding)) return undefined
 
     const expectedSuccessorHash = yield* Effect.fromResult(
-      paperObserveSuccessorGenerationHash({ previousPaperGenerationHash: generation.generationHash }),
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: generation.generationHash }),
     ).pipe(
       Effect.mapError((cause) =>
         capitalActivationOperationalError('completed execution lifecycle successor hashing failed', cause),
@@ -1097,7 +1097,7 @@ export const prepareOrRecoverQualifiedCapitalActivation = (
     const authority = yield* authorityStore.readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('qualified capital authority read failed', cause)),
     )
-    if (authority.maximum === Authority.Paper) {
+    if (authority.maximum === Authority.Execution) {
       return yield* readBoundCapitalActivationGeneration(plan, request, null, authorityStore)
     }
     return (yield* prepare).generation
@@ -1168,7 +1168,9 @@ const validateResearchCapitalCloseLease = (
 }
 
 const validateActivatedResearchAuthority = (authority: AuthorityState): Result.Result<void, string> =>
-  authority.maximum === Authority.Paper && authority.effective === Authority.Paper && authority.kill === KillState.Clear
+  authority.maximum === Authority.Execution &&
+  authority.effective === Authority.Execution &&
+  authority.kill === KillState.Clear
     ? Result.succeed(undefined)
     : Result.fail('research capital activation did not return clear effective mutation authority')
 
@@ -1176,7 +1178,7 @@ const readCurrentResearchCapitalGeneration = (
   authority: AuthorityState,
   authorityStore: AuthorityGenerationStoreShape,
 ): Effect.Effect<ResearchCapitalGrantGeneration | undefined, OperationalError> => {
-  if (authority.maximum !== Authority.Paper) return Effect.as(Effect.void, undefined)
+  if (authority.maximum !== Authority.Execution) return Effect.as(Effect.void, undefined)
   if (authorityStore.readResearchAuthorityGeneration === undefined) {
     return Effect.fail(
       capitalActivationOperationalError('research capital startup requires v3 authority history reads'),
@@ -1329,8 +1331,8 @@ export const prepareOrRecoverResearchCapitalActivation = (
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
         ? yield* Effect.fromResult(
-            paperObserveSuccessorGenerationHash({
-              previousPaperGenerationHash: authority.generationHash,
+            executionObserveSuccessorGenerationHash({
+              previousExecutionGenerationHash: authority.generationHash,
             }),
           ).pipe(
             Effect.mapError((cause) =>
@@ -2143,7 +2145,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             Effect.flatMap((authorityState) => {
                               const restricted =
                                 authorityState.generationHash === prepared.generation.generationHash &&
-                                authorityState.maximum === Authority.Paper &&
+                                authorityState.maximum === Authority.Execution &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
                                 isExecutionEpisodeFailureRestriction(authorityState.reason)

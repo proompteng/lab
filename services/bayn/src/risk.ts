@@ -70,7 +70,8 @@ const SortedUniqueStrings = Schema.makeFilter((values: ReadonlyArray<string>) =>
 })
 
 export enum BrokerMode {
-  Paper = 'PAPER',
+  /** Durable wire value retained for compatibility with stored evaluations. */
+  Execution = 'PAPER',
 }
 
 export enum Gate {
@@ -116,7 +117,7 @@ export enum Reason {
   MarketDataSymbolMismatch = 'MARKET_DATA_SYMBOL_MISMATCH',
   OrderTypeNotAllowed = 'ORDER_TYPE_NOT_ALLOWED',
   TimeInForceNotAllowed = 'TIME_IN_FORCE_NOT_ALLOWED',
-  AuthorityNotPaper = 'AUTHORITY_NOT_PAPER',
+  AuthorityNotGranted = 'AUTHORITY_NOT_PAPER',
   KillActive = 'KILL_ACTIVE',
   ReconciliationNotExact = 'RECONCILIATION_NOT_EXACT',
   BrokerStateStale = 'BROKER_STATE_STALE',
@@ -160,7 +161,7 @@ const riskGateDefinitionByName: RiskGateDefinitionByName = {
   [Gate.MarketDataSymbol]: { name: Gate.MarketDataSymbol, reason: Reason.MarketDataSymbolMismatch },
   [Gate.OrderType]: { name: Gate.OrderType, reason: Reason.OrderTypeNotAllowed },
   [Gate.TimeInForce]: { name: Gate.TimeInForce, reason: Reason.TimeInForceNotAllowed },
-  [Gate.Authority]: { name: Gate.Authority, reason: Reason.AuthorityNotPaper },
+  [Gate.Authority]: { name: Gate.Authority, reason: Reason.AuthorityNotGranted },
   [Gate.Kill]: { name: Gate.Kill, reason: Reason.KillActive },
   [Gate.Reconciliation]: { name: Gate.Reconciliation, reason: Reason.ReconciliationNotExact },
   [Gate.BrokerStateFreshness]: { name: Gate.BrokerStateFreshness, reason: Reason.BrokerStateStale },
@@ -189,7 +190,7 @@ export const orderedRiskGateDefinitions: ReadonlyArray<RiskGateDefinition> = Obj
 export const PolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-risk-policy.v2'),
   accountId: NonEmptyString,
-  brokerMode: Schema.Literal(BrokerMode.Paper),
+  brokerMode: Schema.Literal(BrokerMode.Execution),
   allowedSymbols: Schema.Array(SymbolName).check(Schema.isMinLength(1), Schema.isUnique(), SortedUniqueStrings),
   allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
   allowedTimeInForce: Schema.Array(Schema.Enum(TimeInForce)).check(
@@ -215,7 +216,7 @@ export type Policy = typeof PolicySchema.Type
 
 const StateBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-risk-state.v2'),
-  brokerMode: Schema.Literal(BrokerMode.Paper),
+  brokerMode: Schema.Literal(BrokerMode.Execution),
   account: AccountSnapshotSchema,
   positions: Schema.Array(PositionSchema),
   positionsObservedAt: UtcInstant,
@@ -842,7 +843,8 @@ const buildAuthorityAndStateGates = (
   return [
     makeGate(
       Gate.Authority,
-      state.authority.maximum === Authority.Paper && (closeOnly || state.authority.effective === Authority.Paper),
+      state.authority.maximum === Authority.Execution &&
+        (closeOnly || state.authority.effective === Authority.Execution),
       `${state.authority.maximum}:${state.authority.effective}`,
       closeOnly ? 'PAPER:(PAPER|OBSERVE)' : 'PAPER:PAPER',
     ),
@@ -1194,7 +1196,7 @@ const makeRiskEvaluation = (
 
 const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Result<void, RiskEvaluationFailure> => {
   if (intent.schemaVersion === 'bayn.paper-intent.v3') {
-    if (state.authority.maximum !== Authority.Paper) {
+    if (state.authority.maximum !== Authority.Execution) {
       return Result.fail(
         bindRiskAuthorityFailure(
           'authority-maximum',
@@ -1216,7 +1218,7 @@ const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Resu
         ),
       )
     }
-  } else if (state.authority.maximum === Authority.Paper) {
+  } else if (state.authority.maximum === Authority.Execution) {
     return Result.fail(
       bindRiskAuthorityFailure(
         'authority-contract',

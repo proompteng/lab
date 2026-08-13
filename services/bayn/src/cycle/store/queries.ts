@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
-import type { CycleDecisionDocument, PaperDecisionDocument } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
 import type { CycleAuthoritySlot, CycleRecoveryScope, CycleStoreInternalError } from './model'
@@ -23,11 +23,11 @@ export interface CycleQueries {
   ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
   readonly decisionEvidenceMatches: (document: CycleDecisionDocument) => Effect.Effect<boolean, CycleStoreInternalError>
   readonly paperCompletionEvidenceMatches: (
-    document: PaperDecisionDocument,
+    document: ExecutionDecisionDocument,
     observedAt: string,
   ) => Effect.Effect<boolean, CycleStoreInternalError>
   readonly paperGenerationIsSuperseded: (
-    document: PaperDecisionDocument,
+    document: ExecutionDecisionDocument,
   ) => Effect.Effect<boolean, CycleStoreInternalError>
 }
 

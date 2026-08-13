@@ -160,11 +160,11 @@ const decisionStartInput = (operation: MutationOperation, brokerOrderId?: string
 })
 
 const decisionAuthority: MutationAuthoritySnapshot = {
-  maximum: Authority.Paper,
-  effective: Authority.Paper,
+  maximum: Authority.Execution,
+  effective: Authority.Execution,
   killState: KillState.Clear,
   generationHash: intent.authorityGenerationHash,
-  generationMaximum: Authority.Paper,
+  generationMaximum: Authority.Execution,
   generationAccountId: accountId,
 }
 
@@ -177,7 +177,7 @@ const decisionIntent = (state: IntentState = IntentState.Approved): MutationInte
   strategyName: intent.strategyName,
   updatedAt: initialTime,
   generationAccountId: accountId,
-  generationMaximum: Authority.Paper,
+  generationMaximum: Authority.Execution,
   generationRiskPolicyHash: intent.policyHash,
   generationStrategyName: intent.strategyName,
 })

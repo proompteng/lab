@@ -520,7 +520,7 @@ const validatePreparedPaperActivationDataFirst = (
       configuredGenerationHash: runtime.configuredGenerationHash,
     })
   }
-  if (current.maximum === Authority.Paper) return Result.succeed(undefined)
+  if (current.maximum === Authority.Execution) return Result.succeed(undefined)
   return validatePaperPrepareGenerationDataFirst(current, {
     ...runtime,
     configuredGenerationHash: prepared.sourceGenerationHash,
@@ -708,7 +708,7 @@ const readCapitalGrantGenerationMaterial = (input: {
   Result.try({
     try: () => ({
       schemaVersion: 'bayn.paper-authority-generation.v2',
-      maximum: Authority.Paper,
+      maximum: Authority.Execution,
       previousGenerationHash: input.current.generationHash,
       qualificationRunId: input.evidence.result.runId,
       qualificationLockId: input.evidence.result.lockId,
@@ -798,7 +798,7 @@ const researchCapitalGrantGenerationMaterial = (input: {
   readonly reconciliation: ExactReconciliationFacts
 }): ResearchCapitalGrantGenerationMaterial => ({
   schemaVersion: 'bayn.paper-authority-generation.v3',
-  maximum: Authority.Paper,
+  maximum: Authority.Execution,
   previousGenerationHash: input.current.generationHash,
   grant: input.proof.grant,
   activationSourceRevision: input.proof.activationSourceRevision,
@@ -882,7 +882,7 @@ const decidePaperActivationDataFirst = (
   current: AuthorityState,
   binding: Pick<PaperGenerationRuntimeBinding, 'configuredGenerationHash'>,
 ): Result.Result<PaperActivationDecision, CapitalGrantAlgebraFailure> => {
-  if (current.maximum !== Authority.Paper) {
+  if (current.maximum !== Authority.Execution) {
     return Result.map(
       nextAuthorityVersion(current),
       (authorityVersion): PaperActivationDecision => ({
@@ -943,7 +943,7 @@ const validateDerivedPaperGenerationDataFirst = (
 export const validateDerivedPaperGeneration = Pipeable.dual(2, validateDerivedPaperGenerationDataFirst)
 
 export const paperActivationEffectiveAuthority = (kill: KillState): Authority =>
-  kill === KillState.Active ? Authority.Observe : Authority.Paper
+  kill === KillState.Active ? Authority.Observe : Authority.Execution
 
 export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure): CapitalGrantFailureDetails => {
   switch (failure._tag) {

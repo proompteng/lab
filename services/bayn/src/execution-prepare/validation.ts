@@ -274,7 +274,7 @@ const equalGenerationBinding = (
   input: ValidatedExecutionPrepareInput,
 ): Result.Result<void, ExecutionPrepareFailure> => {
   const binding = input.proofPlan.binding
-  if (generation.maximum !== Authority.Paper) return generationMismatch('maximum')
+  if (generation.maximum !== Authority.Execution) return generationMismatch('maximum')
   if (generation.previousGenerationHash !== binding.authorityGenerationHash) {
     return generationMismatch('previousGenerationHash')
   }

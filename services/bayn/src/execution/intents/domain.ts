@@ -106,7 +106,7 @@ const referenceIdentityMaterial = (input: IntentPlan) => ({
   notionalLimitMicros: input.notionalLimitMicros,
 })
 
-const paperIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
+const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
   schemaVersion:
     input.replanGenerationHash === undefined ? 'bayn.paper-intent-identity.v2' : 'bayn.paper-intent-identity.v3',
   authorityGenerationHash,
@@ -136,7 +136,7 @@ const referenceIntentIdResult = (input: IntentPlan): Result.Result<string, Inten
     referenceIdentityMaterial(input),
   )
 
-const paperIntentIdResult = (
+const executionIntentIdResult = (
   input: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<string, IntentCanonicalizationFailure> =>
@@ -151,10 +151,10 @@ const paperIntentIdResult = (
       symbol: input.symbol,
       ...(input.replanGenerationHash === undefined ? {} : { replanGenerationHash: input.replanGenerationHash }),
     },
-    paperIdentityMaterial(input, authorityGenerationHash),
+    executionIdentityMaterial(input, authorityGenerationHash),
   )
 
-export const paperIntentIdForDecodedPlan = Pipeable.dual(2, paperIntentIdResult)
+export const executionIntentIdForDecodedPlan = Pipeable.dual(2, executionIntentIdResult)
 
 export const intentIdForPlan = referenceIntentIdResult
 
@@ -216,11 +216,11 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
   )
 }
 
-const makePaperIntentResult = (
+const makeExecutionIntentResult = (
   decoded: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<Intent, IntentConstructionFailure> => {
-  const intentId = paperIntentIdResult(decoded, authorityGenerationHash)
+  const intentId = executionIntentIdResult(decoded, authorityGenerationHash)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
     decodeIntentResult({
@@ -263,7 +263,7 @@ export const plan = (input: unknown): Effect.Effect<ReferenceIntent, IntentPlann
   return Effect.fromResult(Result.flatMap(decoded, makeReferenceIntentResult))
 }
 
-const paperIntentIdForPlanDataFirst = (
+const executionIntentIdForPlanDataFirst = (
   input: unknown,
   authorityGenerationHash: string,
 ): Effect.Effect<string, IntentPlanningFailure> => {
@@ -274,36 +274,36 @@ const paperIntentIdForPlanDataFirst = (
   )
   return Effect.fromResult(
     Result.flatMap(decoded, (intentPlan) =>
-      Result.flatMap(generation, (generationHash) => paperIntentIdResult(intentPlan, generationHash)),
+      Result.flatMap(generation, (generationHash) => executionIntentIdResult(intentPlan, generationHash)),
     ),
   )
 }
 
-export const paperIntentIdForPlan = Pipeable.dual(2, paperIntentIdForPlanDataFirst)
+export const executionIntentIdForPlan = Pipeable.dual(2, executionIntentIdForPlanDataFirst)
 
-export class PaperIntentBindingError extends Data.TaggedError('PaperIntentBindingError')<{
+export class ExecutionIntentBindingError extends Data.TaggedError('ExecutionIntentBindingError')<{
   readonly message: string
 }> {}
 
-const planPaperIntentDataFirst = (
+const planExecutionIntentDataFirst = (
   input: unknown,
   state: Pick<State, 'authority'>,
-): Effect.Effect<Intent, IntentPlanningFailure | PaperIntentBindingError> => {
-  if (state.authority.maximum !== Authority.Paper) {
+): Effect.Effect<Intent, IntentPlanningFailure | ExecutionIntentBindingError> => {
+  if (state.authority.maximum !== Authority.Execution) {
     return Effect.fail(
-      new PaperIntentBindingError({
+      new ExecutionIntentBindingError({
         message: 'a durable PAPER intent requires a PAPER authority generation from risk state',
       }),
     )
   }
   return Effect.fromResult(
     Result.flatMap(decodePlanForPlanning(input), (decoded) =>
-      makePaperIntentResult(decoded, state.authority.generationHash),
+      makeExecutionIntentResult(decoded, state.authority.generationHash),
     ),
   )
 }
 
-export const planPaperIntent = Pipeable.dual(2, planPaperIntentDataFirst)
+export const planExecutionIntent = Pipeable.dual(2, planExecutionIntentDataFirst)
 
 export class IntentStoreError extends Data.TaggedError('IntentStoreError')<{
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
@@ -524,7 +524,10 @@ const validateCommitIdentityDataFirst = (
 ): Result.Result<PreparedCommit, CommitMaterialFailure> => {
   const intent = decodeIntentResult(inputIntent)
   if (Result.isFailure(intent)) return Result.fail({ _tag: 'IntentDecodeFailed', cause: intent.failure })
-  const expectedIntent = makePaperIntentResult(planFromIntent(intent.success), intent.success.authorityGenerationHash)
+  const expectedIntent = makeExecutionIntentResult(
+    planFromIntent(intent.success),
+    intent.success.authorityGenerationHash,
+  )
   if (Result.isFailure(expectedIntent)) return Result.fail(expectedIntent.failure)
   if (!intentEquivalent(intent.success, expectedIntent.success)) {
     return Result.fail({ _tag: 'IntentIdentityMismatch', intentId: intent.success.intentId })
@@ -655,8 +658,8 @@ export const classifyExistingCommit = Pipeable.dual(2, classifyExistingCommitDat
 export type AuthorityBindingFailure =
   | { readonly _tag: 'AuthorityMissing' }
   | { readonly _tag: 'MultipleAuthorityRows'; readonly count: number }
-  | { readonly _tag: 'MaximumAuthorityNotPaper'; readonly observed: Authority }
-  | { readonly _tag: 'EffectiveAuthorityNotPaper'; readonly observed: Authority }
+  | { readonly _tag: 'MaximumAuthorityNotGranted'; readonly observed: Authority }
+  | { readonly _tag: 'EffectiveAuthorityNotGranted'; readonly observed: Authority }
   | { readonly _tag: 'AuthorityKillNotClear'; readonly observed: KillState }
   | { readonly _tag: 'AuthorityGenerationMismatch'; readonly observed: string; readonly expected: string }
   | {
@@ -690,14 +693,14 @@ const validateCurrentAuthorityDataFirst = (
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
   const [authority] = rows
   if (authority === undefined) return Result.fail({ _tag: 'AuthorityMissing' })
-  if (authority.maximum !== Authority.Paper) {
-    return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
+  if (authority.maximum !== Authority.Execution) {
+    return Result.fail({ _tag: 'MaximumAuthorityNotGranted', observed: authority.maximum })
   }
   if (authority.kill_state !== KillState.Clear) {
     return Result.fail({ _tag: 'AuthorityKillNotClear', observed: authority.kill_state })
   }
-  if (authority.effective !== Authority.Paper) {
-    return Result.fail({ _tag: 'EffectiveAuthorityNotPaper', observed: authority.effective })
+  if (authority.effective !== Authority.Execution) {
+    return Result.fail({ _tag: 'EffectiveAuthorityNotGranted', observed: authority.effective })
   }
   if (authority.generation_hash !== intent.authorityGenerationHash) {
     return Result.fail({
@@ -707,7 +710,7 @@ const validateCurrentAuthorityDataFirst = (
     })
   }
   const generationFields = [
-    ['maximum', authority.generation_maximum, Authority.Paper],
+    ['maximum', authority.generation_maximum, Authority.Execution],
     ['accountId', authority.generation_account_id, intent.accountId],
     ['riskPolicyHash', authority.generation_risk_policy_hash, intent.policyHash],
     ['strategyName', authority.generation_strategy_name, intent.strategyName],
@@ -740,8 +743,8 @@ const validateCurrentClosingAuthorityDataFirst = (
   if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
   const [authority] = rows
   if (authority === undefined) return Result.fail({ _tag: 'AuthorityMissing' })
-  if (authority.maximum !== Authority.Paper) {
-    return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
+  if (authority.maximum !== Authority.Execution) {
+    return Result.fail({ _tag: 'MaximumAuthorityNotGranted', observed: authority.maximum })
   }
   if (authority.kill_state !== KillState.Clear && authority.kill_state !== KillState.Active) {
     return Result.fail({ _tag: 'AuthorityKillNotClear', observed: authority.kill_state })
@@ -754,7 +757,7 @@ const validateCurrentClosingAuthorityDataFirst = (
     })
   }
   const generationFields = [
-    ['maximum', authority.generation_maximum, Authority.Paper],
+    ['maximum', authority.generation_maximum, Authority.Execution],
     ['accountId', authority.generation_account_id, intent.accountId],
     ['riskPolicyHash', authority.generation_risk_policy_hash, intent.policyHash],
     ['strategyName', authority.generation_strategy_name, intent.strategyName],

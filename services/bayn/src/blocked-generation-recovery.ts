@@ -15,12 +15,14 @@ const observeSuccessorSchemaVersion = 'bayn.paper-observe-successor-generation.v
  * bootstrap key, not a reusable history key; the terminal PAPER hash makes retries deterministic and independent of
  * which reviewed build performs recovery.
  */
-export const paperObserveSuccessorGenerationHash = (input: {
-  readonly previousPaperGenerationHash: string
+export const executionObserveSuccessorGenerationHash = (input: {
+  readonly previousExecutionGenerationHash: string
 }): Result.Result<string, CanonicalHashFailure> =>
   canonicalHashV1Result({
     schemaVersion: observeSuccessorSchemaVersion,
-    previousPaperGenerationHash: input.previousPaperGenerationHash,
+    // This property name is part of the immutable v1 hash material. Keep it stable while the runtime API remains
+    // account-neutral; changing it would orphan successors already persisted by earlier releases.
+    previousPaperGenerationHash: input.previousExecutionGenerationHash,
   })
 
 export type TerminalGenerationRolloverReceipt =
@@ -111,8 +113,8 @@ export const recoverTerminalGenerationToObserve = <R>(
 
     yield* input.reconcileAfterSettlement
     const successorGenerationHash = yield* Effect.fromResult(
-      paperObserveSuccessorGenerationHash({
-        previousPaperGenerationHash: settlement.authorityGenerationHash,
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: settlement.authorityGenerationHash,
       }),
     ).pipe(Effect.mapError((cause) => recoveryError('terminal generation OBSERVE successor hashing failed', cause)))
     const authority = yield* input.authorityStore

@@ -975,14 +975,14 @@ describePostgres('PostgreSQL cycle observability projection', () => {
           ...projected,
           authority: {
             ...projected.authority,
-            maximum: Authority.Paper,
-            effective: Authority.Paper,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
           },
         }
         const status = deriveCycleOperationsStatus(
           paperProjection,
           Date.parse('2026-03-06T21:03:30.000Z'),
-          Authority.Paper,
+          Authority.Execution,
           {
             cycleStallThresholdMs: 300_000,
             reconciliationStaleThresholdMs: 300_000,

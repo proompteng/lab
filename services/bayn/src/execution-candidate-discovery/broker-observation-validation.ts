@@ -11,7 +11,7 @@ import {
   type ReadResult,
 } from '../broker/alpaca'
 import {
-  PaperCandidateIneligibility,
+  ExecutionCandidateIneligibility,
   ReadEvidenceSchema,
   ValidatedAccountConfigurationTypeId,
   ValidatedAccountTypeId,
@@ -22,22 +22,22 @@ import {
   type ValidatedAccount,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
-  type ValidatedPaperCandidateObservations,
-  type ValidatedPaperCandidateSnapshot,
+  type ValidatedExecutionCandidateObservations,
+  type ValidatedExecutionCandidateSnapshot,
 } from './model'
 import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 import { Pipeable } from '../pipeable'
 import { utcInstantFromEpochMillisResult } from '../time'
 
 const assetEligibilityRules = [
-  [PaperCandidateIneligibility.AssetClass, (asset: AssetObservation) => asset.assetClass !== AssetClass.UsEquity],
-  [PaperCandidateIneligibility.Inactive, (asset: AssetObservation) => asset.status !== AssetStatus.Active],
-  [PaperCandidateIneligibility.NotTradable, (asset: AssetObservation) => !asset.tradable],
-  [PaperCandidateIneligibility.NotFractionable, (asset: AssetObservation) => !asset.fractionable],
-  [PaperCandidateIneligibility.Otc, (asset: AssetObservation) => asset.exchange === AssetExchange.Otc],
-  [PaperCandidateIneligibility.Ipo, (asset: AssetObservation) => asset.attributes.includes('ipo')],
+  [ExecutionCandidateIneligibility.AssetClass, (asset: AssetObservation) => asset.assetClass !== AssetClass.UsEquity],
+  [ExecutionCandidateIneligibility.Inactive, (asset: AssetObservation) => asset.status !== AssetStatus.Active],
+  [ExecutionCandidateIneligibility.NotTradable, (asset: AssetObservation) => !asset.tradable],
+  [ExecutionCandidateIneligibility.NotFractionable, (asset: AssetObservation) => !asset.fractionable],
+  [ExecutionCandidateIneligibility.Otc, (asset: AssetObservation) => asset.exchange === AssetExchange.Otc],
+  [ExecutionCandidateIneligibility.Ipo, (asset: AssetObservation) => asset.attributes.includes('ipo')],
   [
-    PaperCandidateIneligibility.PtpNoException,
+    ExecutionCandidateIneligibility.PtpNoException,
     (asset: AssetObservation) => asset.attributes.includes('ptp_no_exception'),
   ],
 ] as const
@@ -46,7 +46,7 @@ export const assetEligibility = (
   asset: AssetObservation,
 ): {
   readonly eligible: boolean
-  readonly reasons: ReadonlyArray<PaperCandidateIneligibility>
+  readonly reasons: ReadonlyArray<ExecutionCandidateIneligibility>
 } => {
   const reasons = assetEligibilityRules.flatMap(([reason, applies]) => (applies(asset) ? [reason] : []))
   return { eligible: reasons.length === 0, reasons }
@@ -193,12 +193,12 @@ const validateAssetObservationsDataFirst = (
 export const validateAssetObservations = Pipeable.dual(3, validateAssetObservationsDataFirst)
 
 const assembleValidatedObservationsDataFirst = (
-  validatedSnapshot: ValidatedPaperCandidateSnapshot,
+  validatedSnapshot: ValidatedExecutionCandidateSnapshot,
   account: ValidatedAccount,
   accountConfiguration: ValidatedAccountConfiguration,
   assets: ValidatedAssets,
   capturedAtMs: number,
-): Result.Result<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError> => {
+): Result.Result<ValidatedExecutionCandidateObservations, ExecutionCandidateDiscoveryError> => {
   if (!Number.isSafeInteger(capturedAtMs)) {
     return Result.fail({
       _tag: 'ObservationCaptureTimeInvalid',
@@ -253,14 +253,14 @@ const assembleValidatedObservationsDataFirst = (
 export const assembleValidatedObservations = Pipeable.dual(5, assembleValidatedObservationsDataFirst)
 
 const validateExecutionCandidateDiscoveryObservationsDataFirst = (
-  validatedSnapshot: ValidatedPaperCandidateSnapshot,
+  validatedSnapshot: ValidatedExecutionCandidateSnapshot,
   input: {
     readonly account: ReadResult<Account>
     readonly accountConfiguration: ReadResult<AccountConfigurationObservation>
     readonly assets: ReadonlyArray<ReadResult<AssetObservation>>
     readonly capturedAtMs: number
   },
-): Result.Result<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError> =>
+): Result.Result<ValidatedExecutionCandidateObservations, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.Do,
     Result.bind('account', () => validateAccountObservation(validatedSnapshot.identity, input.account)),

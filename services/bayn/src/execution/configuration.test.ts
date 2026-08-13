@@ -212,7 +212,7 @@ describe('execution policy configuration', () => {
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
         schemaVersion: 'bayn.paper-authority-generation.v3',
-        maximum: Authority.Paper,
+        maximum: Authority.Execution,
         previousGenerationHash: sourceGenerationHash,
         grant: { _tag: 'Research', planHash },
         activationSourceRevision: 'a'.repeat(40),

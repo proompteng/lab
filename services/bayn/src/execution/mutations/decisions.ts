@@ -226,15 +226,15 @@ const decideMutationAuthorityDataFirst = (
       storeError({ operation: storeOperation, failure: 'authority', message: 'paper authority is not initialized' }),
     )
   }
-  if (authority.maximum !== Authority.Paper) {
+  if (authority.maximum !== Authority.Execution) {
     return Result.fail(
       storeError({ operation: storeOperation, failure: 'authority', message: 'GitOps maximum authority is not PAPER' }),
     )
   }
-  const ordinarySubmit = authority.effective === Authority.Paper && authority.killState === KillState.Clear
+  const ordinarySubmit = authority.effective === Authority.Execution && authority.killState === KillState.Clear
   const boundedCloseSubmit =
     closeOnly &&
-    (authority.effective === Authority.Paper || authority.effective === Authority.Observe) &&
+    (authority.effective === Authority.Execution || authority.effective === Authority.Observe) &&
     (authority.killState === KillState.Clear || authority.killState === KillState.Active)
   if (operation === MutationOperation.Submit && !ordinarySubmit && !boundedCloseSubmit) {
     return Result.fail(
@@ -248,7 +248,7 @@ const decideMutationAuthorityDataFirst = (
   if (
     operation === MutationOperation.Cancel &&
     authority.killState === KillState.Clear &&
-    authority.effective !== Authority.Paper
+    authority.effective !== Authority.Execution
   ) {
     return Result.fail(
       storeError({
@@ -258,7 +258,7 @@ const decideMutationAuthorityDataFirst = (
       }),
     )
   }
-  if (authority.generationMaximum !== Authority.Paper || authority.generationAccountId === null) {
+  if (authority.generationMaximum !== Authority.Execution || authority.generationAccountId === null) {
     return Result.fail(
       storeError({
         operation: storeOperation,
@@ -307,7 +307,7 @@ export const decideFinalSubmitAuthorization = (
   }
   if (
     intent.state !== IntentState.IoStarted ||
-    intent.generationMaximum !== Authority.Paper ||
+    intent.generationMaximum !== Authority.Execution ||
     intent.generationAccountId === null ||
     intent.generationAccountId !== intent.accountId ||
     intent.generationRiskPolicyHash !== intent.policyHash ||
@@ -351,7 +351,7 @@ const decideMutationStartDataFirst = (
     )
   }
   if (
-    intent.generationMaximum !== Authority.Paper ||
+    intent.generationMaximum !== Authority.Execution ||
     intent.generationAccountId === null ||
     intent.generationAccountId !== intent.accountId ||
     intent.generationRiskPolicyHash !== intent.policyHash ||
