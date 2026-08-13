@@ -22,27 +22,29 @@ import type { Policy } from '../risk'
 import {
   BrokerAccess,
   BrokerEnvironment,
-  CapitalAuthorityKind,
   makeExecutionAuthority,
   type ExecutionCapitalLimits,
   type ExecutionAuthority,
   type ExecutionAuthorityConstructionFailure,
-  type LiveCapitalAuthority,
+  type GrantedCapitalAuthority,
+  type PersistedCapitalGrant,
   type MutationExecutionAuthority,
 } from './authority'
 import { Pipeable } from '../pipeable'
 
-export type LiveMutationExecutionAuthority = Extract<
-  ExecutionAuthority,
-  { readonly brokerIdentity: { readonly environment: BrokerEnvironment.Live } }
->
+export type LiveMutationExecutionAuthority = MutationExecutionAuthority & {
+  readonly brokerIdentity: MutationExecutionAuthority['brokerIdentity'] & {
+    readonly environment: BrokerEnvironment.Live
+  }
+  readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
+}
 
 export const isLiveMutationExecutionAuthority = (
   authority: MutationExecutionAuthority | ExecutionAuthority,
 ): authority is LiveMutationExecutionAuthority =>
   authority.brokerAccess === BrokerAccess.Mutation &&
   authority.brokerIdentity.environment === BrokerEnvironment.Live &&
-  authority.capitalAuthority._tag === CapitalAuthorityKind.LiveGrant
+  authority.capitalAuthority.persistedGrant !== undefined
 
 export type IntentAuthorityBindingFailure =
   | {
@@ -260,9 +262,7 @@ const validateStablePositionSnapshotDataFirst = (
 export const validateStablePositionSnapshot = Pipeable.dual(2, validateStablePositionSnapshotDataFirst)
 
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
-  authority.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
-    ? authority.capitalAuthority.authorityGenerationHash
-    : authority.capitalAuthority.grant.authorityGenerationHash
+  authority.capitalAuthority.authorityGenerationHash
 
 const validateIntentAuthorityBindingDataFirst = (
   authority: MutationExecutionAuthority,
@@ -765,17 +765,20 @@ export type LiveGrantRefreshFailure =
 
 const validateLiveGrantForSubmitDataFirst = (
   captured: MutationExecutionAuthority,
-  persisted: LiveCapitalAuthority,
+  persisted: GrantedCapitalAuthority,
   observedAt: string,
 ): Result.Result<LiveMutationExecutionAuthority, LiveGrantRefreshFailure> => {
   if (!isLiveMutationExecutionAuthority(captured)) {
     return Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
   }
-  if (persisted.grant.grantHash !== captured.capitalAuthority.grant.grantHash) {
+  if (persisted.persistedGrant === undefined) {
+    return Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
+  }
+  if (persisted.persistedGrant.grant.grantHash !== captured.capitalAuthority.persistedGrant.grant.grantHash) {
     return Result.fail({
       _tag: 'LiveGrantHashMismatch' as const,
-      expected: captured.capitalAuthority.grant.grantHash,
-      observed: persisted.grant.grantHash,
+      expected: captured.capitalAuthority.persistedGrant.grant.grantHash,
+      observed: persisted.persistedGrant.grant.grantHash,
     })
   }
   const constructed = makeExecutionAuthority({

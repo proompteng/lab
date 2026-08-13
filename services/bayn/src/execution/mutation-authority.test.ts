@@ -25,12 +25,11 @@ import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/mo
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
 import {
   BrokerAccess,
-  liveCapitalAuthority,
+  grantedCapitalAuthority,
   makeExecutionAuthority,
   makeLiveCapitalGrant,
-  sandboxCapitalAuthority,
   type ExecutionStrategyIdentity,
-  type LiveCapitalAuthority,
+  type GrantedCapitalAuthority,
   type LiveCapitalLimits,
   type MutationExecutionAuthority,
 } from './authority'
@@ -180,7 +179,7 @@ const liveGrant = (limits: LiveCapitalLimits = defaultLimits) =>
 
 const mutationAuthority = (
   environment: BrokerEnvironment,
-  capitalAuthority: LiveCapitalAuthority | ReturnType<typeof sandboxCapitalAuthority>,
+  capitalAuthority: GrantedCapitalAuthority,
 ): MutationExecutionAuthority => {
   const constructed = makeExecutionAuthority({
     brokerIdentity: identity(environment),
@@ -218,14 +217,14 @@ const cancelReceipt: CancelReceipt = {
 
 interface ScenarioInput {
   readonly grant?: ReturnType<typeof liveGrant>
-  readonly persisted?: LiveCapitalAuthority | undefined
+  readonly persisted?: GrantedCapitalAuthority | undefined
   readonly observedAt?: string
   readonly brokerAccount?: Account
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
   readonly proposedIntent?: Intent
-  readonly persistedAtRead?: (positionReads: number) => LiveCapitalAuthority | undefined
+  readonly persistedAtRead?: (positionReads: number) => GrantedCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
 }
 
@@ -271,7 +270,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       }),
     cancel: () => Effect.succeed(cancelReceipt),
   }
-  const authority = mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant))
+  const authority = mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(grant))
   if (!isLiveMutationExecutionAuthority(authority)) throw new Error('live submit fixture requires live authority')
   const liveCapitalGrants = {
     read: () =>
@@ -279,7 +278,9 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         trace.push('grant')
         grantReads += 1
         if (input.persistedAtRead !== undefined) return input.persistedAtRead(positionReads)
-        return input.persisted === undefined && !('persisted' in input) ? liveCapitalAuthority(grant) : input.persisted
+        return input.persisted === undefined && !('persisted' in input)
+          ? grantedCapitalAuthority(grant)
+          : input.persisted
       }),
   }
   const currentUtcInstant = Effect.sync(() => {
@@ -300,7 +301,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         if (Result.isFailure(freshAuthority)) return yield* Effect.fail(freshAuthority.failure)
         const validation = validateExecutionBrokerSubmitSnapshot(
           freshAuthority.success,
-          freshAuthority.success.capitalAuthority.grant.limits,
+          freshAuthority.success.capitalAuthority.persistedGrant.grant.limits,
           proposedIntent,
           snapshot,
           observedAt,
@@ -374,7 +375,7 @@ describe('final broker mutation authority', () => {
     const grant = liveGrant()
     const observed = await runLiveSubmit({
       grant,
-      persisted: liveCapitalAuthority(grant, {
+      persisted: grantedCapitalAuthority(grant, {
         schemaVersion: 'bayn.live-capital-grant-revocation.v1',
         revokedAt: '2026-07-28T08:00:00.000Z',
         revokedBy: 'operator:test',
@@ -388,8 +389,8 @@ describe('final broker mutation authority', () => {
 
   test('observes a revocation that lands while broker state is collected', async () => {
     const grant = liveGrant()
-    const active = liveCapitalAuthority(grant)
-    const revoked = liveCapitalAuthority(grant, {
+    const active = grantedCapitalAuthority(grant)
+    const revoked = grantedCapitalAuthority(grant, {
       schemaVersion: 'bayn.live-capital-grant-revocation.v1',
       revokedAt: activeAt,
       revokedBy: 'operator:test',
@@ -714,7 +715,7 @@ describe('final broker mutation authority', () => {
       cancel: () => Effect.succeed(cancelReceipt),
     }
     const guarded = makeAuthorityGuardedBrokerMutation(
-      mutationAuthority(BrokerEnvironment.Sandbox, sandboxCapitalAuthority(authorityGenerationHash)),
+      mutationAuthority(BrokerEnvironment.Sandbox, grantedCapitalAuthority(authorityGenerationHash)),
       {
         brokerMutation: mutation,
         finalSubmitAuthorization: (_intent, transmit) => transmit,
@@ -743,7 +744,7 @@ describe('final broker mutation authority', () => {
         }),
     }
     const guarded = makeAuthorityGuardedBrokerMutation(
-      mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant)),
+      mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(grant)),
       {
         brokerMutation: mutation,
         finalSubmitAuthorization: () => Effect.die(new Error('cancellation must not authorize submit')),

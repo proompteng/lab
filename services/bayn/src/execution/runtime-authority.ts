@@ -3,7 +3,7 @@ import { Effect, Result } from 'effect'
 import { BrokerEnvironment, type BrokerIdentity } from '../broker/identity'
 import {
   BrokerAccess,
-  CapitalAuthorityKind,
+  grantedCapitalAuthority,
   makeExecutionAuthority,
   type ExecutionAuthority,
   type ExecutionAuthorityConstructionFailure,
@@ -24,10 +24,7 @@ export const resolvePreparedSandboxAuthority = (input: {
   const authority = makeExecutionAuthority({
     brokerIdentity: input.brokerIdentity,
     brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: {
-      _tag: CapitalAuthorityKind.Sandbox,
-      authorityGenerationHash: input.generationHash,
-    },
+    capitalAuthority: grantedCapitalAuthority(input.generationHash),
     strategy: input.strategy,
     observedAt: input.observedAt,
   })

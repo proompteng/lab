@@ -56,11 +56,10 @@ import { cancel, submit } from '../execution/coordinator'
 import {
   BrokerAccess,
   BrokerEnvironment,
-  liveCapitalAuthority,
+  grantedCapitalAuthority,
   makeExecutionAuthority,
   makeLiveCapitalGrant,
   noCapitalAuthority,
-  sandboxCapitalAuthority,
   type LiveCapitalGrantRevocation,
 } from '../execution/authority'
 import { validateLiveGrantForSubmit } from '../execution/mutation-authority'
@@ -825,7 +824,7 @@ const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeC
         }),
       ),
       brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+      capitalAuthority: grantedCapitalAuthority(activation.generationHash),
     },
     qualificationRunId: activation.qualificationRunId,
     build: {
@@ -1398,7 +1397,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       broker_environment: null,
     })
     expect(result.decodedHistorical).toEqual(Result.succeed(undefined))
-    expect(result.recorded.grant.brokerIdentity).toMatchObject({
+    expect(result.recorded.persistedGrant?.grant.brokerIdentity).toMatchObject({
       schemaVersion: 'bayn.broker-identity.v2',
       provider: BrokerProvider.Alpaca,
       environment: BrokerEnvironment.Live,
@@ -1409,7 +1408,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.observeGenerationRecord)).toBe(true)
     expect(Exit.isFailure(result.mismatchedStrategyRecord)).toBe(true)
     expect(result.grantCount).toBe(1)
-    expect(result.revoked.revocation).toMatchObject({
+    expect(result.revoked.persistedGrant?.revocation).toMatchObject({
       schemaVersion: 'bayn.live-capital-grant-revocation.v1',
       reason: 'integration containment proof',
     })
@@ -1463,7 +1462,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       makeExecutionAuthority({
         brokerIdentity: identity,
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: liveCapitalAuthority(grant),
+        capitalAuthority: grantedCapitalAuthority(grant),
         strategy: grant.strategy,
         observedAt: '2026-07-28T08:00:00.000Z',
       }),
@@ -1478,7 +1477,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return yield* store.read(grant.grantHash)
       }),
     )
-    expect(preflight?.revocation).toBeUndefined()
+    expect(preflight?.persistedGrant?.revocation).toBeUndefined()
 
     const revocationLockHeld = await Effect.runPromise(Deferred.make<void>())
     const releaseRevocation = await Effect.runPromise(Deferred.make<void>())
@@ -1537,7 +1536,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const [revoked, authorization] = await Promise.all([revocationPromise, authorizationPromise])
     await authorizationRuntime.dispose()
 
-    expect(revoked.revocation).toEqual(revocation)
+    expect(revoked.persistedGrant?.revocation).toEqual(revocation)
     expect(Exit.isFailure(authorization)).toBe(true)
     expect(brokerPosts).toBe(0)
   })

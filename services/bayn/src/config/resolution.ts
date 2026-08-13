@@ -157,7 +157,7 @@ const legacyAuthorityMatches = (legacy: LegacyAuthorityToken, policy: ExecutionP
       return policy.brokerAccess === BrokerAccess.ReadOnly && policy.capitalAuthority._tag === CapitalAuthorityKind.None
     case 'PAPER':
       return (
-        policy.brokerAccess === BrokerAccess.Mutation && policy.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
+        policy.brokerAccess === BrokerAccess.Mutation && policy.capitalAuthority._tag === CapitalAuthorityKind.Granted
       )
   }
 }

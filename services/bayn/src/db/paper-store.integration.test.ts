@@ -24,7 +24,7 @@ import { paperObserveSuccessorGenerationHash, recoverTerminalGenerationToObserve
 import { orderRequestBody } from '../broker/alpaca-mutations'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
-import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, sandboxCapitalAuthority } from '../execution/authority'
+import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, grantedCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
@@ -805,7 +805,7 @@ const paperRuntimeConfig = (
   execution: {
     brokerIdentity: sandboxBrokerIdentity(activation.accountId),
     brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+    capitalAuthority: grantedCapitalAuthority(activation.generationHash),
   },
   qualificationRunId: activation.qualificationRunId,
   build: {

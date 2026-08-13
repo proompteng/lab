@@ -43,7 +43,7 @@ import {
 import { WriterFence } from './execution/writer-fence'
 import { MutationOperation } from './broker/alpaca-mutations'
 import { recover as recoverMutation } from './execution/coordinator'
-import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import { BrokerAccess } from './execution/authority'
 import { IntentStore, type BlockedCycleIntentStoreShape } from './execution/intents'
 import { MutationStore } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
@@ -1272,13 +1272,7 @@ type RecoveryFirstDecisionBuilder = (
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
 const configuredMutationGeneration = (input: MutationAutonomousCycleInput): string | undefined => {
-  const capital = input.executionProgram.authority.capitalAuthority
-  switch (capital._tag) {
-    case CapitalAuthorityKind.Sandbox:
-      return capital.authorityGenerationHash
-    case CapitalAuthorityKind.LiveGrant:
-      return capital.grant.authorityGenerationHash
-  }
+  return input.executionProgram.authority.capitalAuthority.authorityGenerationHash
 }
 
 const validateMutationExecutionProgram = (

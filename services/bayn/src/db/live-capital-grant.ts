@@ -11,10 +11,10 @@ import {
 import {
   decodeLiveCapitalGrant,
   decodeLiveCapitalGrantRevocation,
-  type LiveCapitalAuthority,
+  type GrantedCapitalAuthority,
   type LiveCapitalGrant,
   type LiveCapitalGrantRevocation,
-  liveCapitalAuthority,
+  grantedCapitalAuthority,
 } from '../execution/authority'
 import { Authority } from '../execution/contracts'
 import { NonNegativeIntegerSchema, Sha256Schema, StrictNonEmptyStringSchema, strictParseOptions } from '../schemas'
@@ -28,15 +28,15 @@ export class LiveCapitalGrantStoreError extends Data.TaggedError('LiveCapitalGra
 }> {}
 
 export interface LiveCapitalGrantStoreShape {
-  readonly read: (grantHash: string) => Effect.Effect<LiveCapitalAuthority | undefined, LiveCapitalGrantStoreError>
+  readonly read: (grantHash: string) => Effect.Effect<GrantedCapitalAuthority | undefined, LiveCapitalGrantStoreError>
   readonly lockForSubmit: (
     grantHash: string,
-  ) => Effect.Effect<LiveCapitalAuthority | undefined, LiveCapitalGrantStoreError>
-  readonly record: (grant: LiveCapitalGrant) => Effect.Effect<LiveCapitalAuthority, LiveCapitalGrantStoreError>
+  ) => Effect.Effect<GrantedCapitalAuthority | undefined, LiveCapitalGrantStoreError>
+  readonly record: (grant: LiveCapitalGrant) => Effect.Effect<GrantedCapitalAuthority, LiveCapitalGrantStoreError>
   readonly revoke: (
     grantHash: string,
     revocation: LiveCapitalGrantRevocation,
-  ) => Effect.Effect<LiveCapitalAuthority, LiveCapitalGrantStoreError>
+  ) => Effect.Effect<GrantedCapitalAuthority, LiveCapitalGrantStoreError>
 }
 
 export class LiveCapitalGrantStore extends Context.Service<LiveCapitalGrantStore, LiveCapitalGrantStoreShape>()(
@@ -162,7 +162,7 @@ const sameRevocation = (left: LiveCapitalGrantRevocation | undefined, right: Liv
   left.revokedBy === right.revokedBy &&
   left.reason === right.reason
 
-const authorityFromRow = (row: Row): Result.Result<LiveCapitalAuthority, LiveCapitalGrantStoreError> => {
+const authorityFromRow = (row: Row): Result.Result<GrantedCapitalAuthority, LiveCapitalGrantStoreError> => {
   const identity = makeBrokerIdentity({
     schemaVersion: row.broker_identity_schema_version,
     provider: row.broker_provider,
@@ -252,7 +252,7 @@ const authorityFromRow = (row: Row): Result.Result<LiveCapitalAuthority, LiveCap
   const revokedBy = row.revoked_by
   const revocationReason = row.revocation_reason
   if (revocationSchemaVersion === null && revokedAt === null && revokedBy === null && revocationReason === null) {
-    return Result.succeed(liveCapitalAuthority(grant.success))
+    return Result.succeed(grantedCapitalAuthority(grant.success))
   }
   if (revocationSchemaVersion === null || revokedAt === null || revokedBy === null || revocationReason === null) {
     return Result.fail(storeError('read', 'invariant', 'persisted live capital grant revocation is incomplete'))
@@ -267,7 +267,7 @@ const authorityFromRow = (row: Row): Result.Result<LiveCapitalAuthority, LiveCap
     ? Result.fail(
         storeError('read', 'decode', 'persisted live capital grant revocation is invalid', revocation.failure),
       )
-    : Result.succeed(liveCapitalAuthority(grant.success, revocation.success))
+    : Result.succeed(grantedCapitalAuthority(grant.success, revocation.success))
 }
 
 const makeStore = Effect.gen(function* () {
@@ -342,7 +342,7 @@ const makeStore = Effect.gen(function* () {
     WHERE grants.grant_hash = ${grantHash}
   `
 
-  const read = (input: string): Effect.Effect<LiveCapitalAuthority | undefined, LiveCapitalGrantStoreError> =>
+  const read = (input: string): Effect.Effect<GrantedCapitalAuthority | undefined, LiveCapitalGrantStoreError> =>
     decodeHash(input).pipe(
       Effect.mapError((cause) => storeError('read', 'decode', 'invalid live capital grant hash', cause)),
       Effect.flatMap((grantHash) =>
@@ -370,7 +370,9 @@ const makeStore = Effect.gen(function* () {
       }),
     )
 
-  const lockForSubmit = (input: string): Effect.Effect<LiveCapitalAuthority | undefined, LiveCapitalGrantStoreError> =>
+  const lockForSubmit = (
+    input: string,
+  ): Effect.Effect<GrantedCapitalAuthority | undefined, LiveCapitalGrantStoreError> =>
     decodeHash(input).pipe(
       Effect.mapError((cause) => storeError('lock-submit', 'decode', 'invalid live capital grant hash', cause)),
       Effect.flatMap((grantHash) =>
@@ -380,7 +382,7 @@ const makeStore = Effect.gen(function* () {
       ),
     )
 
-  const record = (grant: LiveCapitalGrant): Effect.Effect<LiveCapitalAuthority, LiveCapitalGrantStoreError> =>
+  const record = (grant: LiveCapitalGrant): Effect.Effect<GrantedCapitalAuthority, LiveCapitalGrantStoreError> =>
     sql`
       INSERT INTO live_capital_grants (
         grant_hash, schema_version,
@@ -427,7 +429,7 @@ const makeStore = Effect.gen(function* () {
   const revoke = (
     input: string,
     revocation: LiveCapitalGrantRevocation,
-  ): Effect.Effect<LiveCapitalAuthority, LiveCapitalGrantStoreError> =>
+  ): Effect.Effect<GrantedCapitalAuthority, LiveCapitalGrantStoreError> =>
     decodeHash(input).pipe(
       Effect.mapError((cause) => storeError('revoke', 'decode', 'invalid live capital grant hash', cause)),
       Effect.flatMap((grantHash) =>
@@ -455,7 +457,7 @@ const makeStore = Effect.gen(function* () {
               Effect.flatMap((persisted) =>
                 persisted === undefined
                   ? Effect.fail(storeError('revoke', 'invariant', 'revoked live capital grant does not exist'))
-                  : sameRevocation(persisted.revocation, revocation)
+                  : sameRevocation(persisted.persistedGrant?.revocation, revocation)
                     ? Effect.succeed(persisted)
                     : Effect.fail(
                         storeError(

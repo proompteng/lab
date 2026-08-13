@@ -127,7 +127,7 @@ describe('execution policy configuration', () => {
           liveCapitalGrantHash: undefined,
         }),
       ).capitalAuthority._tag,
-    ).toBe(CapitalAuthorityKind.Sandbox)
+    ).toBe(CapitalAuthorityKind.Granted)
     expect(
       Result.getOrThrow(
         resolveExecutionPolicy({
@@ -139,9 +139,9 @@ describe('execution policy configuration', () => {
         }),
       ).capitalAuthority,
     ).toEqual({
-      _tag: CapitalAuthorityKind.LiveGrant,
-      grantHash: liveCapitalGrantHash,
+      _tag: CapitalAuthorityKind.Granted,
       authorityGenerationHash,
+      persistedGrantHash: liveCapitalGrantHash,
     })
   })
 

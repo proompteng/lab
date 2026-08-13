@@ -70,7 +70,7 @@ const runtime = (mutation: boolean): PaperProofRuntimeBinding => ({
   accountId,
   authorityGenerationHash: sourcePlan.authorityGenerationHash,
   brokerAccess: mutation ? BrokerAccess.Mutation : BrokerAccess.ReadOnly,
-  capitalAuthority: mutation ? CapitalAuthorityKind.Sandbox : CapitalAuthorityKind.None,
+  capitalAuthority: mutation ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None,
   strategy,
 })
 
