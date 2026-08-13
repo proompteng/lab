@@ -17,7 +17,12 @@ const command = {
 
 const driver = (
   observation: AutonomousCyclePassObservation,
-  result?: { readonly outcome: 'RECOVERED'; readonly action: 'BLOCKED' | 'WAITING' },
+  result?:
+    | { readonly outcome: 'RECOVERED'; readonly action: 'BLOCKED' | 'WAITING' }
+    | {
+        readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED'
+        readonly readiness: { readonly outcome: 'ALREADY_BOUND' | 'BLOCKED' | 'BOUND' }
+      },
 ) => ({
   advance: Effect.succeed({ observation, ...(result === undefined ? {} : { result }) }),
   nextDelayMs: 30_000,
@@ -105,6 +110,37 @@ describe('advanceExecutionOnce', () => {
     )
     expect(waiting).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } })
     expect(blocked).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
+  })
+
+  test('retains blocked publication readiness for every acquisition result', async () => {
+    const outcomes = await Promise.all(
+      (['ACQUIRED', 'REACQUIRED', 'RESUMED'] as const).map((outcome) =>
+        Effect.runPromise(
+          advanceExecutionOnce(
+            command,
+            driver(
+              { result: 'SUCCESS', outcome, observedAt: '2026-08-13T17:00:01.000Z' },
+              { outcome, readiness: { outcome: 'BLOCKED' } },
+            ),
+          ),
+        ),
+      ),
+    )
+    const bound = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver(
+          { result: 'SUCCESS', outcome: 'ACQUIRED', observedAt: '2026-08-13T17:00:01.000Z' },
+          { outcome: 'ACQUIRED', readiness: { outcome: 'BOUND' } },
+        ),
+      ),
+    )
+
+    for (const outcome of outcomes) {
+      expect(outcome).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
+    }
+    expect(bound).toMatchObject({ _tag: 'Completed' })
+    expect(outcomes[0]?.receiptHash).not.toBe(bound.receiptHash)
   })
 
   test('keeps interpreter failures typed for Restate retry policy', async () => {

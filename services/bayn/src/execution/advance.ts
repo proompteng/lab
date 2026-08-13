@@ -8,7 +8,18 @@ import { withObservedSpan } from '../telemetry'
 
 type AdvanceCycleResult =
   | Pick<Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>, 'outcome' | 'action'>
-  | { readonly outcome: Exclude<CycleRunResult['outcome'], 'RECOVERED'> }
+  | {
+      readonly outcome: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }>['outcome']
+      readonly readiness: {
+        readonly outcome: Extract<
+          CycleRunResult,
+          { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }
+        >['readiness']['outcome']
+      }
+    }
+  | {
+      readonly outcome: Exclude<CycleRunResult['outcome'], 'ACQUIRED' | 'REACQUIRED' | 'RECOVERED' | 'RESUMED'>
+    }
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
@@ -88,6 +99,9 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
   if (result?.outcome === 'RECOVERED' && result.action === 'BLOCKED') {
     return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
   }
+  if (result !== undefined && 'readiness' in result && result.readiness.outcome === 'BLOCKED') {
+    return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
+  }
   return { _tag: 'Completed' }
 }
 
@@ -127,6 +141,7 @@ const hashOutcome = (
         : {
             outcome: result.outcome,
             ...(result.outcome === 'RECOVERED' ? { action: result.action } : {}),
+            ...('readiness' in result ? { readinessOutcome: result.readiness.outcome } : {}),
           },
     nextDelayMs,
   }
