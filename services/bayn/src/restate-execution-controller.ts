@@ -184,7 +184,7 @@ export const makeBaynExecutionController = (
           )
           const state = await readState(ctx)
           const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
-          const decision = decideExecutionControllerTick(state, tick, ctx.key, issuedAt)
+          const decision = decisionOrTerminal(decideExecutionControllerTick(state, tick, ctx.key, issuedAt))
           if (decision._tag === 'Ignored') return
 
           let stepResult: ExecutionAdvanceStepResult

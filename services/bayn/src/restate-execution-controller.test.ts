@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { ObjectContext } from '@restatedev/restate-sdk'
 
 import type { ExecutionControllerState } from './execution/controller'
+import { ExecutionControllerOutcome } from './execution/controller-status'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
@@ -76,7 +77,7 @@ describe('native Restate execution controller', () => {
         return {
           completedAt: '2026-08-13T18:00:01.000Z',
           outcome: {
-            _tag: 'Blocked' as const,
+            _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: 'd'.repeat(64),
             nextDelayMs: 30_000,
           },
@@ -192,6 +193,53 @@ describe('native Restate execution controller', () => {
     expect((activationFailure as Error).message).toBe(
       'execution controller activation conflicts with durable controller state',
     )
+    expect(deliveries).toHaveLength(0)
+  })
+
+  test('rejects sequence exhaustion before the durable advance step', async () => {
+    const state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 3,
+      planHash,
+      sourceRevision,
+      initialSequence: Number.MAX_SAFE_INTEGER,
+      nextSequence: Number.MAX_SAFE_INTEGER,
+    }
+    let advances = 0
+    const deliveries: Delivery[] = []
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: () => undefined,
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      request: () => ({ id: 'invocation-exhausted', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        advance: () => {
+          advances += 1
+          return Promise.reject(new Error('must not advance'))
+        },
+        log: () => Promise.resolve(),
+      }),
+    )
+
+    let failure: unknown
+    try {
+      await object.tick(context, {
+        schemaVersion: 'bayn.execution-controller-tick.v1',
+        epoch: state.epoch,
+        sequence: Number.MAX_SAFE_INTEGER,
+      })
+    } catch (cause) {
+      failure = cause
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toBe('execution controller sequence is exhausted before advance')
+    expect(advances).toBe(0)
     expect(deliveries).toHaveLength(0)
   })
 

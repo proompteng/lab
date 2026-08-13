@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import type { AdvanceExecutionCommand } from './advance'
+import { ExecutionControllerOutcome } from './controller-status'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -38,7 +39,7 @@ export type ExecutionControllerDeactivation = typeof ExecutionControllerDeactiva
 
 const CompletionSchema = Schema.Struct({
   sequence: CounterSchema,
-  outcome: Schema.Literals(['Completed', 'Blocked']),
+  outcome: Schema.Enum(ExecutionControllerOutcome),
   receiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
 })
@@ -59,7 +60,7 @@ export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Typ
 export const ExecutionAdvanceStepResultSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
   outcome: Schema.Struct({
-    _tag: Schema.Literals(['Completed', 'Blocked']),
+    _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
     nextDelayMs: DelaySchema,
   }),
@@ -67,7 +68,7 @@ export const ExecutionAdvanceStepResultSchema = Schema.Struct({
 export type ExecutionAdvanceStepResult = typeof ExecutionAdvanceStepResultSchema.Type
 
 export class ExecutionControllerDecisionError extends Data.TaggedError('ExecutionControllerDecisionError')<{
-  readonly operation: 'activate' | 'complete' | 'deactivate'
+  readonly operation: 'activate' | 'complete' | 'deactivate' | 'tick'
   readonly reason: 'conflict' | 'counter-exhausted' | 'invalid-time'
   readonly message: string
 }> {}
@@ -139,11 +140,20 @@ export const decideExecutionControllerTick = (
   tick: ExecutionControllerTick,
   controllerKey: string,
   issuedAt: string,
-): ExecutionControllerTickDecision => {
-  if (state === null || !state.active) return { _tag: 'Ignored', reason: 'Inactive' }
-  if (tick.epoch !== state.epoch) return { _tag: 'Ignored', reason: 'StaleEpoch' }
-  if (tick.sequence !== state.nextSequence) return { _tag: 'Ignored', reason: 'StaleSequence' }
-  return {
+): Result.Result<ExecutionControllerTickDecision, ExecutionControllerDecisionError> => {
+  if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
+  if (tick.epoch !== state.epoch) return Result.succeed({ _tag: 'Ignored', reason: 'StaleEpoch' })
+  if (tick.sequence !== state.nextSequence) return Result.succeed({ _tag: 'Ignored', reason: 'StaleSequence' })
+  if (state.nextSequence === Number.MAX_SAFE_INTEGER) {
+    return Result.fail(
+      new ExecutionControllerDecisionError({
+        operation: 'tick',
+        reason: 'counter-exhausted',
+        message: 'execution controller sequence is exhausted before advance',
+      }),
+    )
+  }
+  return Result.succeed({
     _tag: 'Advance',
     command: {
       controllerKey,
@@ -152,7 +162,7 @@ export const decideExecutionControllerTick = (
       issuedAt,
       sourceRevision: state.sourceRevision,
     },
-  }
+  })
 }
 
 export const completeExecutionControllerTick = (

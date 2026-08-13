@@ -11,6 +11,7 @@ import {
   type ExecutionControllerActivation,
   type ExecutionControllerState,
 } from './controller'
+import { ExecutionControllerOutcome } from './controller-status'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -34,7 +35,7 @@ const activated = (): ExecutionControllerState =>
 const completedResult: ExecutionAdvanceStepResult = {
   completedAt: '2026-08-13T18:00:00.000Z',
   outcome: {
-    _tag: 'Completed',
+    _tag: ExecutionControllerOutcome.Completed,
     receiptHash: 'f'.repeat(64),
     nextDelayMs: 30_000,
   },
@@ -69,11 +70,13 @@ describe('execution controller decisions', () => {
 
   test('accepts only the active epoch and exact next sequence', () => {
     const state = activated()
-    const command = decideExecutionControllerTick(
-      state,
-      { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
-      controllerKey,
-      '2026-08-13T17:59:00.000Z',
+    const command = Result.getOrThrow(
+      decideExecutionControllerTick(
+        state,
+        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+        controllerKey,
+        '2026-08-13T17:59:00.000Z',
+      ),
     )
     expect(command).toEqual({
       _tag: 'Advance',
@@ -86,29 +89,53 @@ describe('execution controller decisions', () => {
       },
     })
     expect(
-      decideExecutionControllerTick(
-        state,
-        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
-        controllerKey,
-        '2026-08-13T17:59:00.000Z',
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          state,
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
+          controllerKey,
+          '2026-08-13T17:59:00.000Z',
+        ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleEpoch' })
     expect(
-      decideExecutionControllerTick(
-        state,
-        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
-        controllerKey,
-        '2026-08-13T17:59:00.000Z',
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          state,
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
+          controllerKey,
+          '2026-08-13T17:59:00.000Z',
+        ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleSequence' })
     expect(
-      decideExecutionControllerTick(
-        { ...state, active: false },
-        { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
-        controllerKey,
-        '2026-08-13T17:59:00.000Z',
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          { ...state, active: false },
+          { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
+          controllerKey,
+          '2026-08-13T17:59:00.000Z',
+        ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'Inactive' })
+  })
+
+  test('rejects an exhausted exact sequence before issuing an advance command', () => {
+    const state = activated()
+    const decision = decideExecutionControllerTick(
+      { ...state, initialSequence: Number.MAX_SAFE_INTEGER, nextSequence: Number.MAX_SAFE_INTEGER },
+      {
+        schemaVersion: 'bayn.execution-controller-tick.v1',
+        epoch: state.epoch,
+        sequence: Number.MAX_SAFE_INTEGER,
+      },
+      controllerKey,
+      '2026-08-13T17:59:00.000Z',
+    )
+
+    expect(Result.isFailure(decision)).toBe(true)
+    if (Result.isSuccess(decision)) return
+    expect(decision.failure).toMatchObject({ operation: 'tick', reason: 'counter-exhausted' })
   })
 
   test('completes one tick, advances monotonically, and records the next due time', () => {
@@ -151,7 +178,7 @@ describe('execution controller decisions', () => {
         {
           completedAt: '2026-08-13T18:00:00.000Z',
           outcome: {
-            _tag: 'Blocked',
+            _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: '1'.repeat(64),
             nextDelayMs: 5_000,
           },
@@ -159,7 +186,7 @@ describe('execution controller decisions', () => {
       ),
     )
 
-    expect(state.lastCompletion?.outcome).toBe('Blocked')
+    expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
     expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
   })
 
