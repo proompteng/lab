@@ -27,6 +27,7 @@ import {
   BrokerMode,
   EvaluationSchema,
   Gate,
+  isAuthorityNotGrantedReason,
   orderedRiskGateDefinitions,
   PolicySchema,
   Reason,
@@ -445,6 +446,43 @@ describe('bounded execution risk', () => {
         }),
       }),
     ).toThrow()
+  })
+
+  test('emits an account-neutral authority reason and decodes legacy hash-bound evidence unchanged', () => {
+    const current = evaluateSuccess(
+      makeReferenceIntent(),
+      makeState({
+        authority: {
+          ...baseState().authority,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+        },
+      }),
+      makePolicy(),
+    )
+    expect(current.decision.reasonCodes).toContain(Reason.AuthorityNotGranted)
+    expect(current.decision.reasonCodes).not.toContain(Reason.LegacyAuthorityNotGranted)
+    expect(String(Reason.AuthorityNotGranted)).toBe('AUTHORITY_NOT_GRANTED')
+
+    const { decisionId: _decisionId, ...currentDecisionMaterial } = current.decision
+    const legacyDecisionMaterial = {
+      ...currentDecisionMaterial,
+      reasonCodes: currentDecisionMaterial.reasonCodes.map((reason) =>
+        isAuthorityNotGrantedReason(reason) ? Reason.LegacyAuthorityNotGranted : reason,
+      ),
+    }
+    const legacyEvaluation = {
+      ...current,
+      decision: {
+        ...legacyDecisionMaterial,
+        decisionId: canonicalHashV1(legacyDecisionMaterial),
+      },
+      gates: current.gates.map((gate) =>
+        gate.name === Gate.Authority ? { ...gate, reason: Reason.LegacyAuthorityNotGranted } : gate,
+      ),
+    }
+
+    expect(decodeEvaluationResult(legacyEvaluation)).toMatchObject({ _tag: 'Success' })
   })
 
   test('approves the exact limit boundary and binds a deterministic decision', () => {

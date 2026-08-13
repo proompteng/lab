@@ -416,7 +416,7 @@ describe('OBSERVE shadow decision', () => {
     const replay = await build(makeInput())
 
     expect(replay).toEqual(first)
-    expect(first.contentHash).toBe('84dfb635059af0c829d550d52c340faa29ade2d9d0f79bd4cd4500fb87803134')
+    expect(first.contentHash).toBe('d99a0aa986d7165cd9cb12b1a8f76e20f8f2c0530466d7cf14835ddc0a3f636d')
     expect(first).toMatchObject({
       schemaVersion: 'bayn.observe-shadow-decision.v1',
       mode: 'OBSERVE',

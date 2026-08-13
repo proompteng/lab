@@ -4,7 +4,7 @@ import { makeStrategyProtocolHash } from '../contracts'
 import { CycleState } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, RiskOutcome } from '../execution/contracts'
-import { Gate, Reason } from '../risk'
+import { Gate, isAuthorityNotGrantedReason } from '../risk'
 import { strictParseOptions } from '../schemas'
 import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
@@ -262,10 +262,10 @@ const validateRisk = (document: ObserveShadowDecisionDocument): Result.Result<vo
       return requireCondition(
         risk.evaluation.decision.outcome === RiskOutcome.Blocked &&
           risk.evaluation.decision.reasonCodes.length === 1 &&
-          risk.evaluation.decision.reasonCodes[0] === Reason.AuthorityNotGranted &&
+          isAuthorityNotGrantedReason(risk.evaluation.decision.reasonCodes[0] ?? '') &&
           failed.length === 1 &&
           failed[0]?.name === Gate.Authority &&
-          failed[0]?.reason === Reason.AuthorityNotGranted,
+          isAuthorityNotGrantedReason(failed[0]?.reason ?? ''),
         {
           _tag: 'RiskAuthorityMismatch',
           failure: 'risk-mismatch',
