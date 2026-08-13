@@ -44,6 +44,8 @@ const listen = (
     server.once('listening', onListening)
     server.listen(port)
     return Effect.sync(() => {
+      server.off('error', onError)
+      server.off('listening', onListening)
       server.off('session', onSession)
       for (const session of sessions) session.destroy()
       server.close()
@@ -65,4 +67,4 @@ export const acquireRestateHttp2Server = (
   server: Http2Server,
   port: number,
 ): Effect.Effect<void, RestateHttp2ServerError, Scope.Scope> =>
-  Effect.acquireRelease(listen(server, port), close).pipe(Effect.asVoid)
+  Effect.acquireRelease(listen(server, port), close, { interruptible: true }).pipe(Effect.asVoid)

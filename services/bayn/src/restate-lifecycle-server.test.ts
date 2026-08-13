@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
 import { createServer as createHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Effect, Result } from 'effect'
+import { Effect, Fiber, Result } from 'effect'
 
 import { decodeRestateLifecycleConfig } from './restate-lifecycle'
 import {
@@ -54,7 +55,67 @@ const readDiscovery = (session: ClientHttp2Session): Promise<unknown> =>
     request.end()
   })
 
+class PendingHttp2Server extends EventEmitter {
+  listening = false
+  listenCount = 0
+  closeCount = 0
+  closed = false
+
+  listen(): this {
+    this.listenCount += 1
+    return this
+  }
+
+  close(callback?: () => void): this {
+    this.closeCount += 1
+    this.closed = true
+    this.listening = false
+    callback?.()
+    return this
+  }
+
+  completeListen(): boolean {
+    if (this.closed) return false
+    this.listening = true
+    this.emit('listening')
+    return true
+  }
+
+  acceptSession(): boolean {
+    return this.listening && !this.closed && this.emit('session', new EventEmitter())
+  }
+}
+
 describe('Bayn Restate lifecycle HTTP/2 server', () => {
+  test('cancels a pending listen without retaining callbacks or accepting a later session', async () => {
+    const server = new PendingHttp2Server()
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const acquisition = yield* acquireRestateHttp2Server(
+            server as unknown as Parameters<typeof acquireRestateHttp2Server>[0],
+            9080,
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+
+          expect(server.listenCount).toBe(1)
+          expect(server.listenerCount('error')).toBe(1)
+          expect(server.listenerCount('listening')).toBe(1)
+          expect(server.listenerCount('session')).toBe(1)
+
+          yield* Fiber.interrupt(acquisition)
+
+          expect(server.closeCount).toBe(1)
+          expect(server.listenerCount('error')).toBe(0)
+          expect(server.listenerCount('listening')).toBe(0)
+          expect(server.listenerCount('session')).toBe(0)
+          expect(server.completeListen()).toBe(false)
+          expect(server.acceptSession()).toBe(false)
+        }),
+      ),
+    )
+  })
+
   test('destroys active client sessions before waiting for server shutdown', async () => {
     const port = await reservePort()
     let client: ClientHttp2Session | undefined
