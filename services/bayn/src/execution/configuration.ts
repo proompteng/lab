@@ -19,8 +19,7 @@ import { ResearchCapitalGrantSchema } from './episode'
 
 export enum CapitalAuthoritySelection {
   None = 'none',
-  Sandbox = 'sandbox-capital',
-  LiveGrant = 'live-capital-grant',
+  Granted = 'granted-capital',
 }
 
 export interface NoCapitalRequest {
@@ -373,7 +372,8 @@ export interface ExecutionPolicyInput {
   readonly brokerAccess: BrokerAccess
   readonly capitalAuthority: CapitalAuthoritySelection
   readonly authorityGenerationHash: string | undefined
-  readonly liveCapitalGrantHash: string | undefined
+  /** Additional durable authorization required by capital environments that mandate it. */
+  readonly persistedCapitalGrantHash: string | undefined
 }
 
 export type ExecutionPolicyResolutionFailure =
@@ -383,32 +383,24 @@ export type ExecutionPolicyResolutionFailure =
     }
   | {
       readonly _tag: 'CapitalAuthorityRequiresConnection'
-      readonly capitalAuthority: CapitalAuthoritySelection.Sandbox | CapitalAuthoritySelection.LiveGrant
+      readonly capitalAuthority: CapitalAuthoritySelection.Granted
     }
   | {
       readonly _tag: 'ReadOnlyBrokerRequiresNoCapital'
-      readonly capitalAuthority: CapitalAuthoritySelection.Sandbox | CapitalAuthoritySelection.LiveGrant
+      readonly capitalAuthority: CapitalAuthoritySelection.Granted
     }
   | {
       readonly _tag: 'MutationBrokerRequiresCapitalAuthority'
       readonly environment: BrokerEnvironment
     }
   | {
-      readonly _tag: 'SandboxBrokerRequiresSandboxCapital'
-      readonly capitalAuthority: CapitalAuthoritySelection.LiveGrant
+      readonly _tag: 'GrantedCapitalRequiresAuthorityGeneration'
     }
   | {
-      readonly _tag: 'LiveBrokerRequiresLiveCapitalGrant'
-      readonly capitalAuthority: CapitalAuthoritySelection.Sandbox
+      readonly _tag: 'PersistedCapitalGrantRequired'
     }
   | {
-      readonly _tag: 'SandboxCapitalRequiresAuthorityGeneration'
-    }
-  | {
-      readonly _tag: 'LiveCapitalRequiresGrantHash'
-    }
-  | {
-      readonly _tag: 'LiveCapitalRequiresAuthorityGeneration'
+      readonly _tag: 'SandboxBrokerForbidsPersistedGrant'
     }
   | {
       readonly _tag: 'UnexpectedAuthorityGenerationHash'
@@ -416,7 +408,7 @@ export type ExecutionPolicyResolutionFailure =
       readonly capitalAuthority: CapitalAuthoritySelection
     }
   | {
-      readonly _tag: 'UnexpectedLiveCapitalGrantHash'
+      readonly _tag: 'UnexpectedPersistedCapitalGrantHash'
       readonly brokerEnvironment: BrokerEnvironment | undefined
       readonly capitalAuthority: CapitalAuthoritySelection
     }
@@ -433,9 +425,9 @@ const rejectUnexpectedBindings = (
       capitalAuthority: input.capitalAuthority,
     })
   }
-  if (input.capitalAuthority !== CapitalAuthoritySelection.LiveGrant && input.liveCapitalGrantHash !== undefined) {
+  if (input.capitalAuthority === CapitalAuthoritySelection.None && input.persistedCapitalGrantHash !== undefined) {
     return Result.fail({
-      _tag: 'UnexpectedLiveCapitalGrantHash',
+      _tag: 'UnexpectedPersistedCapitalGrantHash',
       brokerEnvironment: input.brokerIdentity?.environment,
       capitalAuthority: input.capitalAuthority,
     })
@@ -486,34 +478,14 @@ export const resolveExecutionPolicy = (
     })
   }
 
-  if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox) {
-    if (input.capitalAuthority !== CapitalAuthoritySelection.Sandbox) {
-      return Result.fail({
-        _tag: 'SandboxBrokerRequiresSandboxCapital',
-        capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-      })
-    }
-    if (input.authorityGenerationHash === undefined) {
-      return Result.fail({ _tag: 'SandboxCapitalRequiresAuthorityGeneration' })
-    }
-    return Result.succeed({
-      brokerIdentity: input.brokerIdentity,
-      brokerAccess: BrokerAccess.Mutation,
-      capitalAuthority: { _tag: CapitalAuthorityKind.Granted, authorityGenerationHash: input.authorityGenerationHash },
-    })
-  }
-
-  if (input.capitalAuthority !== CapitalAuthoritySelection.LiveGrant) {
-    return Result.fail({
-      _tag: 'LiveBrokerRequiresLiveCapitalGrant',
-      capitalAuthority: CapitalAuthoritySelection.Sandbox,
-    })
-  }
-  if (input.liveCapitalGrantHash === undefined) {
-    return Result.fail({ _tag: 'LiveCapitalRequiresGrantHash' })
-  }
   if (input.authorityGenerationHash === undefined) {
-    return Result.fail({ _tag: 'LiveCapitalRequiresAuthorityGeneration' })
+    return Result.fail({ _tag: 'GrantedCapitalRequiresAuthorityGeneration' })
+  }
+  if (input.brokerIdentity.environment === BrokerEnvironment.Sandbox && input.persistedCapitalGrantHash !== undefined) {
+    return Result.fail({ _tag: 'SandboxBrokerForbidsPersistedGrant' })
+  }
+  if (input.brokerIdentity.environment === BrokerEnvironment.Live && input.persistedCapitalGrantHash === undefined) {
+    return Result.fail({ _tag: 'PersistedCapitalGrantRequired' })
   }
   return Result.succeed({
     brokerIdentity: input.brokerIdentity,
@@ -521,7 +493,7 @@ export const resolveExecutionPolicy = (
     capitalAuthority: {
       _tag: CapitalAuthorityKind.Granted,
       authorityGenerationHash: input.authorityGenerationHash,
-      persistedGrantHash: input.liveCapitalGrantHash,
+      ...(input.persistedCapitalGrantHash === undefined ? {} : { persistedGrantHash: input.persistedCapitalGrantHash }),
     },
   })
 }
@@ -536,19 +508,15 @@ export const renderExecutionPolicyFailure = (failure: ExecutionPolicyResolutionF
       return `read-only broker access forbids ${failure.capitalAuthority}`
     case 'MutationBrokerRequiresCapitalAuthority':
       return `${failure.environment} mutation broker access requires explicit capital authority`
-    case 'SandboxBrokerRequiresSandboxCapital':
-      return 'sandbox broker mutation requires sandbox-capital authority'
-    case 'LiveBrokerRequiresLiveCapitalGrant':
-      return 'live broker mutation requires a persisted live-capital-grant'
-    case 'SandboxCapitalRequiresAuthorityGeneration':
-      return 'sandbox-capital authority requires an authority generation hash'
-    case 'LiveCapitalRequiresGrantHash':
-      return 'live-capital-grant authority requires a persisted grant hash'
-    case 'LiveCapitalRequiresAuthorityGeneration':
-      return 'live-capital-grant authority requires the configured authority generation hash'
+    case 'GrantedCapitalRequiresAuthorityGeneration':
+      return 'granted capital requires an authority generation hash'
+    case 'PersistedCapitalGrantRequired':
+      return 'this broker environment requires a persisted capital grant hash'
+    case 'SandboxBrokerForbidsPersistedGrant':
+      return 'sandbox broker execution forbids a live-capital authorization grant'
     case 'UnexpectedAuthorityGenerationHash':
       return `authority generation hash is not valid for ${failure.capitalAuthority}`
-    case 'UnexpectedLiveCapitalGrantHash':
-      return `live capital grant hash is not valid for ${failure.capitalAuthority}`
+    case 'UnexpectedPersistedCapitalGrantHash':
+      return `persisted capital grant hash is not valid for ${failure.capitalAuthority}`
   }
 }

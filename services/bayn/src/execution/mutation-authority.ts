@@ -32,16 +32,16 @@ import {
 } from './authority'
 import { Pipeable } from '../pipeable'
 
-export type LiveMutationExecutionAuthority = MutationExecutionAuthority & {
+export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly brokerIdentity: MutationExecutionAuthority['brokerIdentity'] & {
     readonly environment: BrokerEnvironment.Live
   }
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
 }
 
-export const isLiveMutationExecutionAuthority = (
+export const isPersistedGrantExecutionAuthority = (
   authority: MutationExecutionAuthority | ExecutionAuthority,
-): authority is LiveMutationExecutionAuthority =>
+): authority is PersistedGrantExecutionAuthority =>
   authority.brokerAccess === BrokerAccess.Mutation &&
   authority.brokerIdentity.environment === BrokerEnvironment.Live &&
   authority.capitalAuthority.persistedGrant !== undefined
@@ -752,10 +752,10 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
 
 export const refreshExecutionBrokerSubmitSnapshot = Pipeable.dual(3, refreshExecutionBrokerSubmitSnapshotDataFirst)
 
-export type LiveGrantRefreshFailure =
+export type PersistedCapitalGrantRefreshFailure =
   | ExecutionAuthorityConstructionFailure
   | {
-      readonly _tag: 'LiveGrantHashMismatch'
+      readonly _tag: 'PersistedCapitalGrantHashMismatch'
       readonly expected: string
       readonly observed: string
     }
@@ -763,12 +763,12 @@ export type LiveGrantRefreshFailure =
       readonly _tag: 'FreshAuthorityCapabilityMismatch'
     }
 
-const validateLiveGrantForSubmitDataFirst = (
+const validatePersistedCapitalGrantForSubmitDataFirst = (
   captured: MutationExecutionAuthority,
   persisted: GrantedCapitalAuthority,
   observedAt: string,
-): Result.Result<LiveMutationExecutionAuthority, LiveGrantRefreshFailure> => {
-  if (!isLiveMutationExecutionAuthority(captured)) {
+): Result.Result<PersistedGrantExecutionAuthority, PersistedCapitalGrantRefreshFailure> => {
+  if (!isPersistedGrantExecutionAuthority(captured)) {
     return Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
   }
   if (persisted.persistedGrant === undefined) {
@@ -776,7 +776,7 @@ const validateLiveGrantForSubmitDataFirst = (
   }
   if (persisted.persistedGrant.grant.grantHash !== captured.capitalAuthority.persistedGrant.grant.grantHash) {
     return Result.fail({
-      _tag: 'LiveGrantHashMismatch' as const,
+      _tag: 'PersistedCapitalGrantHashMismatch' as const,
       expected: captured.capitalAuthority.persistedGrant.grant.grantHash,
       observed: persisted.persistedGrant.grant.grantHash,
     })
@@ -789,12 +789,12 @@ const validateLiveGrantForSubmitDataFirst = (
     observedAt,
   })
   if (Result.isFailure(constructed)) return Result.fail(constructed.failure)
-  return isLiveMutationExecutionAuthority(constructed.success)
+  return isPersistedGrantExecutionAuthority(constructed.success)
     ? Result.succeed(constructed.success)
     : Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
 }
 
-export const validateLiveGrantForSubmit = Pipeable.dual(3, validateLiveGrantForSubmitDataFirst)
+export const validatePersistedCapitalGrantForSubmit = Pipeable.dual(3, validatePersistedCapitalGrantForSubmitDataFirst)
 
 export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure
 

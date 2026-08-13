@@ -92,7 +92,7 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   mutationStore: {} as ExecutionProgramDependencies['mutationStore'],
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
   riskPolicy,
-  liveCapitalGrants: {
+  persistedCapitalGrants: {
     lockForSubmit: () => Effect.die(new Error(`${label} live grant lock must not run during composition proof`)),
     read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
   },
@@ -338,7 +338,7 @@ describe('same-code execution program composition', () => {
           authorizeSubmit: () => Effect.void,
         } as unknown as ExecutionProgramDependencies['mutationStore'],
         writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-        liveCapitalGrants: {
+        persistedCapitalGrants: {
           read: () => Effect.die(new Error('final authorization must use the locked grant read')),
           lockForSubmit:
             authority.brokerIdentity.environment === BrokerEnvironment.Live
@@ -377,7 +377,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      liveCapitalGrants: {
+      persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
       },
@@ -398,7 +398,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
 
-    expect(finalAuthorizationFailureTag(exit)).toBe('LiveGrantExpired')
+    expect(finalAuthorizationFailureTag(exit)).toBe('PersistedGrantExpired')
     expect(instantReads).toBe(2)
     expect(posts).toBe(0)
   })
@@ -720,7 +720,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      liveCapitalGrants: {
+      persistedCapitalGrants: {
         read: () => Effect.die(new Error('final authorization must use the locked grant read')),
         lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(grant)),
       },
@@ -834,7 +834,7 @@ describe('same-code execution program composition', () => {
         check: Effect.void,
         transaction: (effect) => effect,
       },
-      liveCapitalGrants: {
+      persistedCapitalGrants: {
         read: () => Effect.die(new Error('final risk proof must use the locked grant read')),
         lockForSubmit: () =>
           Effect.sync(() => {
@@ -901,7 +901,7 @@ describe('same-code execution program composition', () => {
       },
       mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      liveCapitalGrants: {
+      persistedCapitalGrants: {
         read: () => Effect.die(new Error('post-lock position proof must use the locked grant read')),
         lockForSubmit: () =>
           Effect.sync(() => {
@@ -964,7 +964,7 @@ describe('same-code execution program composition', () => {
       },
       mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
-      liveCapitalGrants: {
+      persistedCapitalGrants: {
         read: () => Effect.die(new Error('post-lock quote proof must use the locked grant read')),
         lockForSubmit: () =>
           Effect.sync(() => {

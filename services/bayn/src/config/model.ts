@@ -1,14 +1,14 @@
-import type { Redacted, Schema } from 'effect'
+import { Schema, type Redacted } from 'effect'
 
 import type { BrokerConnection, BrokerConnectionDecodeFailure, BrokerProvider } from '../broker/connection'
 import type { BrokerEnvironment } from '../broker/identity'
 import type { EmbeddedBuildMetadata } from '../build'
 import type { EvaluationBounds } from '../contracts'
 import type { BrokerAccess } from '../execution/authority'
-import type {
+import {
   CapitalAuthoritySelection,
-  ExecutionPolicy,
-  ExecutionPolicyResolutionFailure,
+  type ExecutionPolicy,
+  type ExecutionPolicyResolutionFailure,
 } from '../execution/configuration'
 import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
@@ -123,6 +123,16 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
   )
 
 export type LegacyAuthorityToken = 'OBSERVE' | 'PAPER'
+export enum LegacyCapitalAuthoritySelection {
+  Sandbox = 'sandbox-capital',
+  Live = 'live-capital-grant',
+}
+export const LegacyCapitalAuthoritySelectionSchema = Schema.Enum(LegacyCapitalAuthoritySelection)
+export const CapitalAuthoritySelectionTokenSchema = Schema.Union([
+  Schema.Enum(CapitalAuthoritySelection),
+  LegacyCapitalAuthoritySelectionSchema,
+])
+export type CapitalAuthoritySelectionToken = typeof CapitalAuthoritySelectionTokenSchema.Type
 
 export interface ParsedRuntimeConfig {
   readonly host: string
@@ -133,8 +143,8 @@ export interface ParsedRuntimeConfig {
   readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly legacyMaximumAuthority: LegacyAuthorityToken | undefined
   readonly brokerAccess: BrokerAccess
-  readonly capitalAuthority: CapitalAuthoritySelection
-  readonly liveCapitalGrantHash: string | undefined
+  readonly capitalAuthority: CapitalAuthoritySelectionToken
+  readonly persistedCapitalGrantHash: string | undefined
   readonly configuredBuild: EmbeddedBuildMetadata & {
     readonly imageDigest: string
   }
@@ -196,7 +206,7 @@ export type RuntimeConfigResolutionFailure =
       readonly _tag: 'RestateLifecycleRequiresAutonomousService'
     }
   | {
-      readonly _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold'
+      readonly _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold'
       readonly reconciliationIntervalMs: number
       readonly priorReconciliationTailTimeoutMs: number
       readonly reconciliationPassTimeoutMs: number
@@ -216,6 +226,11 @@ export type RuntimeConfigResolutionFailure =
   | {
       readonly _tag: 'InvalidExecutionPolicy'
       readonly cause: ExecutionPolicyResolutionFailure
+    }
+  | {
+      readonly _tag: 'LegacyCapitalAuthorityEnvironmentMismatch'
+      readonly capitalAuthority: LegacyCapitalAuthoritySelection
+      readonly brokerEnvironment: BrokerEnvironment | undefined
     }
   | {
       readonly _tag: 'LegacyAuthorityMismatch'

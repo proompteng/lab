@@ -143,7 +143,7 @@ describe('execution authority construction', () => {
         strategy,
         observedAt,
       }),
-    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveBrokerRequiresPersistedGrant' } })
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'CapitalEnvironmentRequiresPersistedGrant' } })
   })
 
   test('fails closed for revoked, expired, not-yet-valid, and mismatched live grants', () => {
@@ -214,18 +214,18 @@ describe('execution authority construction', () => {
     expect(generationMismatch).toMatchObject({
       _tag: 'Failure',
       failure: {
-        _tag: 'LiveGrantAuthorityGenerationMismatch',
+        _tag: 'PersistedGrantAuthorityGenerationMismatch',
         authorityGenerationHash: '9'.repeat(64),
         grantAuthorityGenerationHash: authorityGenerationHash,
       },
     })
-    expect(revoked).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantRevoked' } })
-    expect(expired).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantExpired' } })
-    expect(notYetValid).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantNotYetValid' } })
-    expect(mismatchedStrategy).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveGrantStrategyMismatch' } })
+    expect(revoked).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedGrantRevoked' } })
+    expect(expired).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedGrantExpired' } })
+    expect(notYetValid).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedGrantNotYetValid' } })
+    expect(mismatchedStrategy).toMatchObject({ _tag: 'Failure', failure: { _tag: 'PersistedGrantStrategyMismatch' } })
     expect(mismatchedAccount).toMatchObject({
       _tag: 'Failure',
-      failure: { _tag: 'LiveGrantBrokerIdentityMismatch' },
+      failure: { _tag: 'PersistedGrantBrokerIdentityMismatch' },
     })
   })
 })

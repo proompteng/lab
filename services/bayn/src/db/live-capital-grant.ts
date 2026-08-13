@@ -96,7 +96,7 @@ const storeError = (
   cause?: unknown,
 ) => new LiveCapitalGrantStoreError({ operation, failure, message, cause })
 
-export interface LiveGrantGenerationBindingFacts {
+export interface PersistedGrantGenerationBindingFacts {
   readonly maximum: Authority | null
   readonly strategyName: string | null
   readonly strategyBehaviorHash: string | null
@@ -104,7 +104,7 @@ export interface LiveGrantGenerationBindingFacts {
   readonly strategyParameterSchemaVersion: string | null
 }
 
-export interface LiveGrantGenerationBindingFailure {
+export interface PersistedGrantGenerationBindingFailure {
   readonly _tag: 'LiveGrantGenerationBindingMismatch'
   readonly field:
     | 'maximum'
@@ -116,12 +116,12 @@ export interface LiveGrantGenerationBindingFailure {
   readonly observed: string | null
 }
 
-const validateLiveGrantGenerationBindingDataFirst = (
+const validatePersistedGrantGenerationBindingDataFirst = (
   grant: Pick<LiveCapitalGrant, 'strategy'>,
-  generation: LiveGrantGenerationBindingFacts,
-): Result.Result<void, LiveGrantGenerationBindingFailure> => {
+  generation: PersistedGrantGenerationBindingFacts,
+): Result.Result<void, PersistedGrantGenerationBindingFailure> => {
   const checks: readonly {
-    readonly field: LiveGrantGenerationBindingFailure['field']
+    readonly field: PersistedGrantGenerationBindingFailure['field']
     readonly expected: string
     readonly observed: string | null
   }[] = [
@@ -154,7 +154,10 @@ const validateLiveGrantGenerationBindingDataFirst = (
       })
 }
 
-export const validateLiveGrantGenerationBinding = Pipeable.dual(2, validateLiveGrantGenerationBindingDataFirst)
+export const validatePersistedGrantGenerationBinding = Pipeable.dual(
+  2,
+  validatePersistedGrantGenerationBindingDataFirst,
+)
 
 const sameRevocation = (left: LiveCapitalGrantRevocation | undefined, right: LiveCapitalGrantRevocation): boolean =>
   left?.schemaVersion === right.schemaVersion &&
@@ -192,7 +195,7 @@ const authorityFromRow = (row: Row): Result.Result<GrantedCapitalAuthority, Live
     )
   }
 
-  const generationBinding = validateLiveGrantGenerationBinding(
+  const generationBinding = validatePersistedGrantGenerationBinding(
     {
       strategy: {
         name: row.strategy_name,

@@ -184,35 +184,35 @@ export type ExecutionAuthorityConstructionFailure =
       readonly _tag: 'SandboxBrokerForbidsPersistedGrant'
     }
   | {
-      readonly _tag: 'LiveBrokerRequiresPersistedGrant'
+      readonly _tag: 'CapitalEnvironmentRequiresPersistedGrant'
     }
   | {
-      readonly _tag: 'LiveGrantAuthorityGenerationMismatch'
+      readonly _tag: 'PersistedGrantAuthorityGenerationMismatch'
       readonly authorityGenerationHash: string
       readonly grantAuthorityGenerationHash: string
     }
   | {
-      readonly _tag: 'LiveGrantBrokerIdentityMismatch'
+      readonly _tag: 'PersistedGrantBrokerIdentityMismatch'
       readonly authorityIdentityHash: string
       readonly grantIdentityHash: string
     }
   | {
-      readonly _tag: 'LiveGrantStrategyMismatch'
+      readonly _tag: 'PersistedGrantStrategyMismatch'
       readonly expected: ExecutionStrategyIdentity
       readonly observed: ExecutionStrategyIdentity
     }
   | {
-      readonly _tag: 'LiveGrantNotYetValid'
+      readonly _tag: 'PersistedGrantNotYetValid'
       readonly validFrom: string
       readonly observedAt: string
     }
   | {
-      readonly _tag: 'LiveGrantExpired'
+      readonly _tag: 'PersistedGrantExpired'
       readonly validUntil: string
       readonly observedAt: string
     }
   | {
-      readonly _tag: 'LiveGrantRevoked'
+      readonly _tag: 'PersistedGrantRevoked'
       readonly revokedAt: string
       readonly reason: string
     }
@@ -269,46 +269,46 @@ export const makeExecutionAuthority = (
 
   const persistedGrant = input.capitalAuthority.persistedGrant
   if (persistedGrant === undefined) {
-    return Result.fail({ _tag: 'LiveBrokerRequiresPersistedGrant' })
+    return Result.fail({ _tag: 'CapitalEnvironmentRequiresPersistedGrant' })
   }
   if (input.capitalAuthority.authorityGenerationHash !== persistedGrant.grant.authorityGenerationHash) {
     return Result.fail({
-      _tag: 'LiveGrantAuthorityGenerationMismatch',
+      _tag: 'PersistedGrantAuthorityGenerationMismatch',
       authorityGenerationHash: input.capitalAuthority.authorityGenerationHash,
       grantAuthorityGenerationHash: persistedGrant.grant.authorityGenerationHash,
     })
   }
   if (persistedGrant.grant.brokerIdentity.identityHash !== input.brokerIdentity.identityHash) {
     return Result.fail({
-      _tag: 'LiveGrantBrokerIdentityMismatch',
+      _tag: 'PersistedGrantBrokerIdentityMismatch',
       authorityIdentityHash: input.brokerIdentity.identityHash,
       grantIdentityHash: persistedGrant.grant.brokerIdentity.identityHash,
     })
   }
   if (!sameStrategy(persistedGrant.grant.strategy, input.strategy)) {
     return Result.fail({
-      _tag: 'LiveGrantStrategyMismatch',
+      _tag: 'PersistedGrantStrategyMismatch',
       expected: input.strategy,
       observed: persistedGrant.grant.strategy,
     })
   }
   if (persistedGrant.revocation !== undefined) {
     return Result.fail({
-      _tag: 'LiveGrantRevoked',
+      _tag: 'PersistedGrantRevoked',
       revokedAt: persistedGrant.revocation.revokedAt,
       reason: persistedGrant.revocation.reason,
     })
   }
   if (input.observedAt < persistedGrant.grant.validFrom) {
     return Result.fail({
-      _tag: 'LiveGrantNotYetValid',
+      _tag: 'PersistedGrantNotYetValid',
       validFrom: persistedGrant.grant.validFrom,
       observedAt: input.observedAt,
     })
   }
   if (input.observedAt >= persistedGrant.grant.validUntil) {
     return Result.fail({
-      _tag: 'LiveGrantExpired',
+      _tag: 'PersistedGrantExpired',
       validUntil: persistedGrant.grant.validUntil,
       observedAt: input.observedAt,
     })

@@ -62,7 +62,7 @@ import {
   noCapitalAuthority,
   type LiveCapitalGrantRevocation,
 } from '../execution/authority'
-import { validateLiveGrantForSubmit } from '../execution/mutation-authority'
+import { validatePersistedCapitalGrantForSubmit } from '../execution/mutation-authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -1516,8 +1516,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return yield* fence.transaction(
           Effect.gen(function* () {
             const persisted = yield* store.lockForSubmit(grant.grantHash)
-            if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
-            const validated = validateLiveGrantForSubmit(captured, persisted, '2026-07-28T08:06:00.000Z')
+            if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
+            const validated = validatePersistedCapitalGrantForSubmit(captured, persisted, '2026-07-28T08:06:00.000Z')
             if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
             brokerPosts += 1
           }),

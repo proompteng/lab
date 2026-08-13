@@ -42,10 +42,10 @@ export type PreparedExecutionPolicyFailure =
 export type PreparedExecutionAuthorityFailure =
   | RuntimeAuthorityFailure
   | {
-      readonly _tag: 'LiveGrantHashMissing'
+      readonly _tag: 'PersistedCapitalGrantHashMissing'
     }
   | {
-      readonly _tag: 'LiveGrantMissing'
+      readonly _tag: 'PersistedCapitalGrantMissing'
       readonly grantHash: string
     }
 
@@ -84,9 +84,9 @@ export const resolvePreparedExecutionPolicy = (input: {
   const policy = resolveExecutionPolicy({
     brokerIdentity: input.brokerIdentity,
     brokerAccess: BrokerAccess.Mutation,
-    capitalAuthority: CapitalAuthoritySelection.Sandbox,
+    capitalAuthority: CapitalAuthoritySelection.Granted,
     authorityGenerationHash: input.preparedGenerationHash,
-    liveCapitalGrantHash: undefined,
+    persistedCapitalGrantHash: undefined,
   })
   return Result.isFailure(policy)
     ? Result.fail({ _tag: 'LegacySandboxPolicyInvalid', cause: policy.failure })
@@ -98,7 +98,7 @@ export const resolvePreparedExecutionAuthority = <E>(input: {
   readonly brokerIdentity: BrokerIdentity
   readonly strategy: ExecutionStrategyIdentity
   readonly observedAt: string
-  readonly readLiveGrant: (grantHash: string) => Effect.Effect<GrantedCapitalAuthority | undefined, E>
+  readonly readPersistedCapitalGrant: (grantHash: string) => Effect.Effect<GrantedCapitalAuthority | undefined, E>
 }): Effect.Effect<ExecutionAuthority, PreparedExecutionAuthorityFailure | E> => {
   const capitalAuthority = input.executionPolicy.capitalAuthority
   const resolveAuthority = (
@@ -121,17 +121,17 @@ export const resolvePreparedExecutionAuthority = <E>(input: {
   }
 
   const grantHash = capitalAuthority.persistedGrantHash
-  if (grantHash === undefined) return Effect.fail({ _tag: 'LiveGrantHashMissing' })
-  return input.readLiveGrant(grantHash).pipe(
+  if (grantHash === undefined) return Effect.fail({ _tag: 'PersistedCapitalGrantHashMissing' })
+  return input.readPersistedCapitalGrant(grantHash).pipe(
     Effect.flatMap(
       (
         persisted,
       ): Effect.Effect<
         ExecutionAuthority,
-        RuntimeAuthorityFailure | { readonly _tag: 'LiveGrantMissing'; readonly grantHash: string }
+        RuntimeAuthorityFailure | { readonly _tag: 'PersistedCapitalGrantMissing'; readonly grantHash: string }
       > =>
         persisted === undefined
-          ? Effect.fail({ _tag: 'LiveGrantMissing' as const, grantHash })
+          ? Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const, grantHash })
           : resolveAuthority({
               ...persisted,
               authorityGenerationHash: capitalAuthority.authorityGenerationHash,

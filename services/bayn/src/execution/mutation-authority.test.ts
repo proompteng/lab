@@ -34,11 +34,11 @@ import {
   type MutationExecutionAuthority,
 } from './authority'
 import {
-  isLiveMutationExecutionAuthority,
+  isPersistedGrantExecutionAuthority,
   makeAuthorityGuardedBrokerMutation,
   refreshExecutionBrokerSubmitSnapshot,
   validateExecutionBrokerSubmitSnapshot,
-  validateLiveGrantForSubmit,
+  validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorization,
 } from './mutation-authority'
 
@@ -271,8 +271,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     cancel: () => Effect.succeed(cancelReceipt),
   }
   const authority = mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(grant))
-  if (!isLiveMutationExecutionAuthority(authority)) throw new Error('live submit fixture requires live authority')
-  const liveCapitalGrants = {
+  if (!isPersistedGrantExecutionAuthority(authority)) throw new Error('live submit fixture requires live authority')
+  const persistedCapitalGrants = {
     read: () =>
       Effect.sync(() => {
         trace.push('grant')
@@ -294,10 +294,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(grant.limits, proposedIntent, {
           brokerRead,
         })
-        const persisted = yield* liveCapitalGrants.read()
-        if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
+        const persisted = yield* persistedCapitalGrants.read()
+        if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
         const observedAt = yield* currentUtcInstant
-        const freshAuthority = validateLiveGrantForSubmit(authority, persisted, observedAt)
+        const freshAuthority = validatePersistedCapitalGrantForSubmit(authority, persisted, observedAt)
         if (Result.isFailure(freshAuthority)) return yield* Effect.fail(freshAuthority.failure)
         const validation = validateExecutionBrokerSubmitSnapshot(
           freshAuthority.success,
@@ -355,13 +355,13 @@ describe('final broker mutation authority', () => {
   })
 
   test.each([
-    ['expired', { observedAt: '2026-07-28T09:00:00.000Z' }, 'LiveGrantExpired'],
+    ['expired', { observedAt: '2026-07-28T09:00:00.000Z' }, 'PersistedGrantExpired'],
     [
       'missing',
       {
         persisted: undefined,
       },
-      'LiveCapitalGrantMissing',
+      'PersistedCapitalGrantMissing',
     ],
   ] as const)('blocks a %s grant after startup with no broker submit', async (_name, overrides, tag) => {
     const observed = await runLiveSubmit(overrides)
@@ -383,7 +383,7 @@ describe('final broker mutation authority', () => {
       }),
     })
 
-    expect(failureTag(observed.exit)).toBe('LiveGrantRevoked')
+    expect(failureTag(observed.exit)).toBe('PersistedGrantRevoked')
     expect(observed.submits).toBe(0)
   })
 
@@ -402,7 +402,7 @@ describe('final broker mutation authority', () => {
     })
 
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
-    expect(failureTag(observed.exit)).toBe('LiveGrantRevoked')
+    expect(failureTag(observed.exit)).toBe('PersistedGrantRevoked')
     expect(observed.submits).toBe(0)
   })
 
