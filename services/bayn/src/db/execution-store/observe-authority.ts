@@ -27,8 +27,8 @@ import {
 } from '../capital-grant-algebra'
 import {
   authorityStateFromRow,
-  paperGenerationFromRow,
-  researchPaperGenerationFromRow,
+  capitalGrantGenerationFromRow,
+  researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
 import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
@@ -495,7 +495,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ) {
             return Effect.as(Effect.void, undefined)
           }
-          return paperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
+          return capitalGrantGenerationFromRow(row).pipe(Effect.map((generation) => generation))
         }),
       ),
     )
@@ -513,7 +513,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ) {
             return Effect.as(Effect.void, undefined)
           }
-          return researchPaperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
+          return researchCapitalGrantGenerationFromRow(row).pipe(Effect.map((generation) => generation))
         }),
       ),
     )

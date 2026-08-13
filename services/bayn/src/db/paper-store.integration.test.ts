@@ -837,7 +837,7 @@ const prepareRuntimeConfig = (activation: CapitalGrantGeneration): RuntimeConfig
   const runtimeConfig = paperRuntimeConfig(activation)
   const alpaca = runtimeConfig.alpaca
   if (alpaca === undefined) {
-    throw new Error('PAPER PREPARE fixture requires an Alpaca binding')
+    throw new Error('capital grant PREPARE fixture requires an Alpaca binding')
   }
   return {
     ...runtimeConfig,
@@ -3244,7 +3244,7 @@ describePostgres('paper accounting persistence', () => {
     const validConfig = prepareRuntimeConfig(expected)
     const validAlpaca = validConfig.alpaca
     if (validAlpaca === undefined) {
-      throw new Error('PAPER PREPARE fixture requires an Alpaca binding')
+      throw new Error('capital grant PREPARE fixture requires an Alpaca binding')
     }
     const runtime = makeStoreRuntime(
       { fail: false, planHashes: [] },
@@ -3269,7 +3269,7 @@ describePostgres('paper accounting persistence', () => {
       expect(result.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER PREPARE current authority differs from the configured OBSERVE generation',
+        message: 'capital grant PREPARE current authority differs from the configured OBSERVE generation',
       })
       expect(result.after).toEqual(result.before)
     } finally {
@@ -3395,7 +3395,7 @@ describePostgres('paper accounting persistence', () => {
       expect(result.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER PREPARE current authority differs from the configured OBSERVE generation',
+        message: 'capital grant PREPARE current authority differs from the configured OBSERVE generation',
       })
       expect(result.after).toEqual(result.before)
     } finally {
@@ -3557,12 +3557,12 @@ describePostgres('paper accounting persistence', () => {
     expect(wrongBuildFailure).toMatchObject({
       operation: 'authority',
       failure: 'invariant',
-      message: 'derived PAPER generation differs from the configured generation',
+      message: 'derived capital grant generation differs from the configured generation',
     })
     expect(wrongStrategyFailure).toMatchObject({
       operation: 'authority',
       failure: 'invariant',
-      message: 'PAPER generation differs from terminal qualification evidence or current strategy build',
+      message: 'capital grant generation differs from terminal qualification evidence or current strategy build',
     })
     expect(afterRejected).toEqual(before)
   }, 15_000)
@@ -3775,7 +3775,7 @@ describePostgres('paper accounting persistence', () => {
 
     const client = makeClientRuntime()
     const before = await client.runPromise(readAuthorityTupleEvidence)
-    const derivationCause = new Error('injected PAPER generation derivation failure')
+    const derivationCause = new Error('injected capital grant generation derivation failure')
     const validRuntimeConfig = paperRuntimeConfig(activation)
     const closedFailureRuntime = makeStoreRuntime(
       { fail: false, planHashes: [] },
@@ -3814,7 +3814,7 @@ describePostgres('paper accounting persistence', () => {
       expect(closedError.success).toMatchObject({
         operation: 'authority',
         failure: 'decode',
-        message: 'derived PAPER generation is invalid: injected PAPER generation derivation failure',
+        message: 'derived capital grant generation is invalid: injected capital grant generation derivation failure',
       })
       expect(closedError.success.cause).toBe(derivationCause)
       expect(Cause.hasDies(closedExit.cause)).toBe(false)
@@ -3958,12 +3958,12 @@ describePostgres('paper accounting persistence', () => {
       expect(staleResult.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER generation requires the latest fresh exact account reconciliation',
+        message: 'capital grant generation requires the latest fresh exact account reconciliation',
       })
       expect(futureResult.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER generation requires the latest fresh exact account reconciliation',
+        message: 'capital grant generation requires the latest fresh exact account reconciliation',
       })
       expect(staleResult.after).toEqual(staleResult.before)
       expect(futureResult.after).toEqual(staleResult.before)
@@ -4057,7 +4057,7 @@ describePostgres('paper accounting persistence', () => {
       expect(Exit.isFailure(result.activationExit)).toBe(true)
       if (Exit.isFailure(result.activationExit)) {
         expect(Cause.pretty(result.activationExit.cause)).toContain(
-          'PAPER generation requires the latest fresh exact account reconciliation',
+          'capital grant generation requires the latest fresh exact account reconciliation',
         )
       }
       expect(result.after).toEqual(result.before)
@@ -4222,7 +4222,7 @@ describePostgres('paper accounting persistence', () => {
         expect(activationFailure.success).toMatchObject({
           operation: 'authority',
           failure: 'invariant',
-          message: 'derived PAPER generation differs from the configured generation',
+          message: 'derived capital grant generation differs from the configured generation',
         })
       }
 

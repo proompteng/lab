@@ -29,18 +29,18 @@ export interface AuthorityGenerationHistoryFacts {
   readonly activatedAt: Date
 }
 
-export interface PaperGenerationRuntimeBinding {
+export interface CapitalGrantRuntimeBinding {
   readonly accountId: string
   readonly configuredGenerationHash: string
   readonly qualificationRunId: string
 }
 
-export interface PreparedPaperActivationBinding {
+export interface PreparedCapitalGrantActivationBinding {
   readonly generationHash: string
   readonly sourceGenerationHash: string
 }
 
-export interface PaperGenerationRuntimeFacts {
+export interface CapitalGrantRuntimeFacts {
   readonly maximumAuthority: Authority
   readonly alpaca:
     | {
@@ -51,7 +51,7 @@ export interface PaperGenerationRuntimeFacts {
   readonly qualificationRunId: string | undefined
 }
 
-export interface PaperGenerationEvidenceFacts {
+export interface CapitalGrantEvidenceFacts {
   readonly lock: QualificationLock
   readonly result: QualificationResult
   readonly runStatus: 'WRITING' | 'COMPLETE'
@@ -86,13 +86,13 @@ export interface MutationBaselineFacts {
   readonly latestMutationAt: Date | null
 }
 
-export interface DerivedPaperGeneration {
+export interface DerivedCapitalGrantGeneration {
   readonly current: AuthorityState
   readonly generation: CapitalGrantGeneration
   readonly reconciliation: ExactReconciliationFacts
 }
 
-export interface DerivedResearchPaperGeneration {
+export interface DerivedResearchCapitalGrantGeneration {
   readonly current: AuthorityState
   readonly generation: ResearchCapitalGrantGeneration
   readonly reconciliation: ExactReconciliationFacts
@@ -100,7 +100,7 @@ export interface DerivedResearchPaperGeneration {
 
 interface QualificationEvidenceVerificationFacts {
   readonly verdict: QualificationResult['verdict']
-  readonly runStatus: PaperGenerationEvidenceFacts['runStatus']
+  readonly runStatus: CapitalGrantEvidenceFacts['runStatus']
   readonly expectedArtifactCount: number
   readonly expectedEventCount: number
   readonly expectedGateCount: number
@@ -117,8 +117,8 @@ interface QualificationEvidenceVerificationFacts {
   readonly resultLockId: string
   readonly lockId: string
   readonly candidateRunId: string
-  readonly protocolSchemaVersion: PaperGenerationEvidenceFacts['protocolSchemaVersion']
-  readonly strategyName: PaperGenerationEvidenceFacts['strategyName']
+  readonly protocolSchemaVersion: CapitalGrantEvidenceFacts['protocolSchemaVersion']
+  readonly strategyName: CapitalGrantEvidenceFacts['strategyName']
   readonly behaviorHash: string
   readonly parameterHash: string
   readonly parameters: unknown
@@ -165,13 +165,13 @@ export type ObserveGenerationDecision =
       readonly authorityVersion: number
     }
 
-export type PaperActivationDecision =
+export type CapitalGrantActivationDecision =
   | {
-      readonly _tag: 'ActivatePaperGeneration'
+      readonly _tag: 'ActivateCapitalGrantGeneration'
       readonly current: AuthorityState
       readonly authorityVersion: number
     }
-  | { readonly _tag: 'ReplayPaperGeneration'; readonly current: AuthorityState }
+  | { readonly _tag: 'ReplayCapitalGrantGeneration'; readonly current: AuthorityState }
 
 export type CapitalGrantAlgebraFailure =
   | { readonly _tag: 'ObserveMaximumRequired'; readonly maximum: Authority }
@@ -217,7 +217,7 @@ export type CapitalGrantAlgebraFailure =
       readonly durableMaximum: Authority
     }
   | {
-      readonly _tag: 'PaperRuntimeBindingUnavailable'
+      readonly _tag: 'CapitalGrantRuntimeBindingUnavailable'
       readonly operation: 'PREPARE' | 'activation'
       readonly expectedMaximum: Authority
       readonly configuredMaximum: Authority
@@ -225,13 +225,13 @@ export type CapitalGrantAlgebraFailure =
       readonly hasQualificationBinding: boolean
     }
   | {
-      readonly _tag: 'PaperSourceAuthorityNotObserve'
+      readonly _tag: 'CapitalGrantSourceAuthorityNotObserve'
       readonly generationHash: string
       readonly maximum: Authority
       readonly effective: Authority
     }
   | {
-      readonly _tag: 'PaperPrepareGenerationMismatch'
+      readonly _tag: 'CapitalGrantPrepareGenerationMismatch'
       readonly currentGenerationHash: string
       readonly configuredGenerationHash: string
     }
@@ -268,8 +268,8 @@ export type CapitalGrantAlgebraFailure =
       readonly latestMutationAt: Date | null
       readonly reconciledAt: Date
     }
-  | { readonly _tag: 'PaperGenerationDerivationFailed'; readonly cause: unknown }
-  | { readonly _tag: 'ResearchPaperGenerationDerivationFailed'; readonly cause: unknown }
+  | { readonly _tag: 'CapitalGrantGenerationDerivationFailed'; readonly cause: unknown }
+  | { readonly _tag: 'ResearchCapitalGrantGenerationDerivationFailed'; readonly cause: unknown }
   | {
       readonly _tag: 'ReconciliationNotFresh'
       readonly reconciledAt: Date
@@ -277,28 +277,28 @@ export type CapitalGrantAlgebraFailure =
       readonly staleThresholdMs: number
     }
   | {
-      readonly _tag: 'DurablePaperGenerationMismatch'
+      readonly _tag: 'DurableCapitalGrantGenerationMismatch'
       readonly durableGenerationHash: string
       readonly configuredGenerationHash: string
     }
   | {
-      readonly _tag: 'PaperGenerationReplayMismatch'
+      readonly _tag: 'CapitalGrantGenerationReplayMismatch'
       readonly generationHash: string
       readonly accountId: string
       readonly qualificationRunId: string
     }
   | {
-      readonly _tag: 'DerivedPaperGenerationMismatch'
+      readonly _tag: 'DerivedCapitalGrantGenerationMismatch'
       readonly derivedGenerationHash: string
       readonly configuredGenerationHash: string
     }
   | {
-      readonly _tag: 'ResearchPaperGenerationReplayMismatch'
+      readonly _tag: 'ResearchCapitalGrantGenerationReplayMismatch'
       readonly generationHash: string
       readonly expectedPreviousGenerationHash: string
     }
   | {
-      readonly _tag: 'ResearchPaperGenerationRuntimeMismatch'
+      readonly _tag: 'ResearchCapitalGrantGenerationRuntimeMismatch'
       readonly field:
         | 'accountId'
         | 'activationBuild'
@@ -454,18 +454,18 @@ const requireUnusedAuthorityGenerationDataFirst = (
 
 export const requireUnusedAuthorityGeneration = Pipeable.dual(2, requireUnusedAuthorityGenerationDataFirst)
 
-const bindPaperGenerationRuntimeDataFirst = (
-  facts: PaperGenerationRuntimeFacts,
+const bindCapitalGrantRuntimeDataFirst = (
+  facts: CapitalGrantRuntimeFacts,
   expectedMaximum: Authority,
   operation: 'PREPARE' | 'activation',
-): Result.Result<PaperGenerationRuntimeBinding, CapitalGrantAlgebraFailure> => {
+): Result.Result<CapitalGrantRuntimeBinding, CapitalGrantAlgebraFailure> => {
   if (
     facts.maximumAuthority !== expectedMaximum ||
     facts.alpaca === undefined ||
     facts.qualificationRunId === undefined
   ) {
     return fail({
-      _tag: 'PaperRuntimeBindingUnavailable',
+      _tag: 'CapitalGrantRuntimeBindingUnavailable',
       operation,
       expectedMaximum,
       configuredMaximum: facts.maximumAuthority,
@@ -480,58 +480,58 @@ const bindPaperGenerationRuntimeDataFirst = (
   })
 }
 
-export const bindPaperGenerationRuntime = Pipeable.dual(3, bindPaperGenerationRuntimeDataFirst)
+export const bindCapitalGrantRuntime = Pipeable.dual(3, bindCapitalGrantRuntimeDataFirst)
 
-export const validatePaperSourceAuthority = (
+export const validateCapitalGrantSourceAuthority = (
   current: AuthorityState,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
   current.maximum === Authority.Observe && current.effective === Authority.Observe
     ? Result.succeed(undefined)
     : fail({
-        _tag: 'PaperSourceAuthorityNotObserve',
+        _tag: 'CapitalGrantSourceAuthorityNotObserve',
         generationHash: current.generationHash,
         maximum: current.maximum,
         effective: current.effective,
       })
 
-const validatePaperPrepareGenerationDataFirst = (
+const validateCapitalGrantPrepareGenerationDataFirst = (
   current: AuthorityState,
-  binding: PaperGenerationRuntimeBinding,
+  binding: CapitalGrantRuntimeBinding,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
   current.generationHash === binding.configuredGenerationHash
     ? Result.succeed(undefined)
     : fail({
-        _tag: 'PaperPrepareGenerationMismatch',
+        _tag: 'CapitalGrantPrepareGenerationMismatch',
         currentGenerationHash: current.generationHash,
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 
-export const validatePaperPrepareGeneration = Pipeable.dual(2, validatePaperPrepareGenerationDataFirst)
+export const validateCapitalGrantPrepareGeneration = Pipeable.dual(2, validateCapitalGrantPrepareGenerationDataFirst)
 
-const validatePreparedPaperActivationDataFirst = (
+const validatePreparedCapitalGrantActivationDataFirst = (
   current: AuthorityState,
-  runtime: PaperGenerationRuntimeBinding,
-  prepared: PreparedPaperActivationBinding,
+  runtime: CapitalGrantRuntimeBinding,
+  prepared: PreparedCapitalGrantActivationBinding,
 ): Result.Result<void, CapitalGrantAlgebraFailure> => {
   if (prepared.generationHash !== runtime.configuredGenerationHash) {
     return fail({
-      _tag: 'DerivedPaperGenerationMismatch',
+      _tag: 'DerivedCapitalGrantGenerationMismatch',
       derivedGenerationHash: prepared.generationHash,
       configuredGenerationHash: runtime.configuredGenerationHash,
     })
   }
   if (current.maximum === Authority.Execution) return Result.succeed(undefined)
-  return validatePaperPrepareGenerationDataFirst(current, {
+  return validateCapitalGrantPrepareGenerationDataFirst(current, {
     ...runtime,
     configuredGenerationHash: prepared.sourceGenerationHash,
   })
 }
 
-export const validatePreparedPaperActivation = Pipeable.dual(3, validatePreparedPaperActivationDataFirst)
+export const validatePreparedCapitalGrantActivation = Pipeable.dual(3, validatePreparedCapitalGrantActivationDataFirst)
 
 const readQualificationEvidenceVerificationFacts = (
-  evidence: PaperGenerationEvidenceFacts,
-  binding: PaperGenerationRuntimeBinding,
+  evidence: CapitalGrantEvidenceFacts,
+  binding: CapitalGrantRuntimeBinding,
   build: AuthorityBuildFacts,
 ): Result.Result<QualificationEvidenceVerificationFacts, CapitalGrantAlgebraFailure> =>
   Result.try({
@@ -573,7 +573,7 @@ const readQualificationEvidenceVerificationFacts = (
 const qualificationEvidenceHash = (
   operation: Exclude<QualificationEvidenceVerificationOperation, 'strategy-protocol'>,
   value: unknown,
-  binding: PaperGenerationRuntimeBinding,
+  binding: CapitalGrantRuntimeBinding,
 ): Result.Result<string, CapitalGrantAlgebraFailure> =>
   Result.mapError(
     canonicalHashV1Result(value),
@@ -585,11 +585,11 @@ const qualificationEvidenceHash = (
     }),
   )
 
-const validatePaperGenerationEvidenceDataFirst = (
-  evidence: PaperGenerationEvidenceFacts | undefined,
-  binding: PaperGenerationRuntimeBinding,
+const validateCapitalGrantEvidenceDataFirst = (
+  evidence: CapitalGrantEvidenceFacts | undefined,
+  binding: CapitalGrantRuntimeBinding,
   build: AuthorityBuildFacts,
-): Result.Result<PaperGenerationEvidenceFacts, CapitalGrantAlgebraFailure> => {
+): Result.Result<CapitalGrantEvidenceFacts, CapitalGrantAlgebraFailure> => {
   if (evidence === undefined) {
     return fail({ _tag: 'QualificationEvidenceUnavailable', qualificationRunId: binding.qualificationRunId })
   }
@@ -646,7 +646,7 @@ const validatePaperGenerationEvidenceDataFirst = (
       strategyProtocolHash === facts.lockProtocolHash
 
     if (verified) return evidence
-    return yield* fail<PaperGenerationEvidenceFacts>({
+    return yield* fail<CapitalGrantEvidenceFacts>({
       _tag: 'QualificationEvidenceMismatch',
       qualificationRunId: binding.qualificationRunId,
       evidenceRunId: facts.resultRunId,
@@ -657,7 +657,7 @@ const validatePaperGenerationEvidenceDataFirst = (
   })
 }
 
-export const validatePaperGenerationEvidence = Pipeable.dual(3, validatePaperGenerationEvidenceDataFirst)
+export const validateCapitalGrantEvidence = Pipeable.dual(3, validateCapitalGrantEvidenceDataFirst)
 
 const validateLatestExactReconciliationDataFirst = (
   reconciliation: ExactReconciliationFacts | undefined,
@@ -700,8 +700,8 @@ export const validateMutationCoverage = Pipeable.dual(2, validateMutationCoverag
 const readCapitalGrantGenerationMaterial = (input: {
   readonly current: AuthorityState
   readonly proof: CapitalGrantProofBinding
-  readonly binding: PaperGenerationRuntimeBinding
-  readonly evidence: PaperGenerationEvidenceFacts
+  readonly binding: CapitalGrantRuntimeBinding
+  readonly evidence: CapitalGrantEvidenceFacts
   readonly reconciliation: ExactReconciliationFacts
   readonly build: AuthorityBuildFacts
 }): Result.Result<CapitalGrantGenerationMaterial, CapitalGrantAlgebraFailure> =>
@@ -731,17 +731,17 @@ const readCapitalGrantGenerationMaterial = (input: {
       reconciliationId: input.reconciliation.reconciliationId,
       reconciliationContentHash: input.reconciliation.contentHash,
     }),
-    catch: (cause): CapitalGrantAlgebraFailure => ({ _tag: 'PaperGenerationDerivationFailed', cause }),
+    catch: (cause): CapitalGrantAlgebraFailure => ({ _tag: 'CapitalGrantGenerationDerivationFailed', cause }),
   })
 
 export const deriveCapitalGrantGeneration = (input: {
   readonly current: AuthorityState
   readonly proof: CapitalGrantProofBinding
-  readonly binding: PaperGenerationRuntimeBinding
-  readonly evidence: PaperGenerationEvidenceFacts
+  readonly binding: CapitalGrantRuntimeBinding
+  readonly evidence: CapitalGrantEvidenceFacts
   readonly reconciliation: ExactReconciliationFacts
   readonly build: AuthorityBuildFacts
-}): Result.Result<DerivedPaperGeneration, CapitalGrantAlgebraFailure> =>
+}): Result.Result<DerivedCapitalGrantGeneration, CapitalGrantAlgebraFailure> =>
   pipe(
     readCapitalGrantGenerationMaterial(input),
     Result.flatMap((material) =>
@@ -749,7 +749,7 @@ export const deriveCapitalGrantGeneration = (input: {
         makeCapitalGrantGenerationResult(material),
         Result.mapError(
           (cause: CapitalGrantGenerationConstructionFailure): CapitalGrantAlgebraFailure => ({
-            _tag: 'PaperGenerationDerivationFailed',
+            _tag: 'CapitalGrantGenerationDerivationFailed',
             cause,
           }),
         ),
@@ -759,9 +759,12 @@ export const deriveCapitalGrantGeneration = (input: {
   )
 
 const researchRuntimeMismatch = (
-  field: Extract<CapitalGrantAlgebraFailure, { readonly _tag: 'ResearchPaperGenerationRuntimeMismatch' }>['field'],
+  field: Extract<
+    CapitalGrantAlgebraFailure,
+    { readonly _tag: 'ResearchCapitalGrantGenerationRuntimeMismatch' }
+  >['field'],
 ): Result.Result<never, CapitalGrantAlgebraFailure> =>
-  Result.fail({ _tag: 'ResearchPaperGenerationRuntimeMismatch', field })
+  Result.fail({ _tag: 'ResearchCapitalGrantGenerationRuntimeMismatch', field })
 
 export const validateResearchCapitalGrantProof = (input: {
   readonly proof: ResearchCapitalGrantProofBinding
@@ -821,19 +824,19 @@ export const deriveResearchCapitalGrantGeneration = (input: {
   readonly current: AuthorityState
   readonly proof: ResearchCapitalGrantProofBinding
   readonly reconciliation: ExactReconciliationFacts
-}): Result.Result<DerivedResearchPaperGeneration, CapitalGrantAlgebraFailure> =>
+}): Result.Result<DerivedResearchCapitalGrantGeneration, CapitalGrantAlgebraFailure> =>
   pipe(
     makeResearchCapitalGrantGenerationResult(researchCapitalGrantGenerationMaterial(input)),
     Result.mapError(
       (cause: ResearchCapitalGrantGenerationConstructionFailure): CapitalGrantAlgebraFailure => ({
-        _tag: 'ResearchPaperGenerationDerivationFailed',
+        _tag: 'ResearchCapitalGrantGenerationDerivationFailed',
         cause,
       }),
     ),
     Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
   )
 
-const validateResearchPaperGenerationReplayDataFirst = (
+const validateResearchCapitalGrantGenerationReplayDataFirst = (
   stored: ResearchCapitalGrantGeneration,
   proof: ResearchCapitalGrantProofBinding,
   expectedPreviousGenerationHash: string,
@@ -854,14 +857,17 @@ const validateResearchPaperGenerationReplayDataFirst = (
   stored.proofPlanHash === proof.proofPlanHash
     ? Result.succeed(undefined)
     : fail({
-        _tag: 'ResearchPaperGenerationReplayMismatch',
+        _tag: 'ResearchCapitalGrantGenerationReplayMismatch',
         generationHash: stored.generationHash,
         expectedPreviousGenerationHash,
       })
 
-export const validateResearchPaperGenerationReplay = Pipeable.dual(3, validateResearchPaperGenerationReplayDataFirst)
+export const validateResearchCapitalGrantGenerationReplay = Pipeable.dual(
+  3,
+  validateResearchCapitalGrantGenerationReplayDataFirst,
+)
 
-const validatePaperGenerationFreshnessDataFirst = (
+const validateCapitalGrantGenerationFreshnessDataFirst = (
   reconciliation: ExactReconciliationFacts,
   observedAt: Date,
   staleThresholdMs: number,
@@ -876,36 +882,39 @@ const validatePaperGenerationFreshnessDataFirst = (
         staleThresholdMs,
       })
 
-export const validatePaperGenerationFreshness = Pipeable.dual(3, validatePaperGenerationFreshnessDataFirst)
+export const validateCapitalGrantGenerationFreshness = Pipeable.dual(
+  3,
+  validateCapitalGrantGenerationFreshnessDataFirst,
+)
 
-const decidePaperActivationDataFirst = (
+const decideCapitalGrantActivationDataFirst = (
   current: AuthorityState,
-  binding: Pick<PaperGenerationRuntimeBinding, 'configuredGenerationHash'>,
-): Result.Result<PaperActivationDecision, CapitalGrantAlgebraFailure> => {
+  binding: Pick<CapitalGrantRuntimeBinding, 'configuredGenerationHash'>,
+): Result.Result<CapitalGrantActivationDecision, CapitalGrantAlgebraFailure> => {
   if (current.maximum !== Authority.Execution) {
     return Result.map(
       nextAuthorityVersion(current),
-      (authorityVersion): PaperActivationDecision => ({
-        _tag: 'ActivatePaperGeneration',
+      (authorityVersion): CapitalGrantActivationDecision => ({
+        _tag: 'ActivateCapitalGrantGeneration',
         current,
         authorityVersion,
       }),
     )
   }
   return current.generationHash === binding.configuredGenerationHash
-    ? Result.succeed({ _tag: 'ReplayPaperGeneration', current })
+    ? Result.succeed({ _tag: 'ReplayCapitalGrantGeneration', current })
     : fail({
-        _tag: 'DurablePaperGenerationMismatch',
+        _tag: 'DurableCapitalGrantGenerationMismatch',
         durableGenerationHash: current.generationHash,
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 }
 
-export const decidePaperActivation = Pipeable.dual(2, decidePaperActivationDataFirst)
+export const decideCapitalGrantActivation = Pipeable.dual(2, decideCapitalGrantActivationDataFirst)
 
-const validatePaperGenerationReplayDataFirst = (
+const validateCapitalGrantGenerationReplayDataFirst = (
   stored: CapitalGrantGeneration,
-  binding: PaperGenerationRuntimeBinding,
+  binding: CapitalGrantRuntimeBinding,
   proof: CapitalGrantProofBinding,
   build: AuthorityBuildFacts,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
@@ -920,29 +929,29 @@ const validatePaperGenerationReplayDataFirst = (
   stored.proofPlanHash === proof.proofPlanHash
     ? Result.succeed(undefined)
     : fail({
-        _tag: 'PaperGenerationReplayMismatch',
+        _tag: 'CapitalGrantGenerationReplayMismatch',
         generationHash: stored.generationHash,
         accountId: binding.accountId,
         qualificationRunId: binding.qualificationRunId,
       })
 
-export const validatePaperGenerationReplay = Pipeable.dual(4, validatePaperGenerationReplayDataFirst)
+export const validateCapitalGrantGenerationReplay = Pipeable.dual(4, validateCapitalGrantGenerationReplayDataFirst)
 
-const validateDerivedPaperGenerationDataFirst = (
+const validateDerivedCapitalGrantGenerationDataFirst = (
   generation: CapitalGrantGeneration,
-  binding: PaperGenerationRuntimeBinding,
+  binding: CapitalGrantRuntimeBinding,
 ): Result.Result<void, CapitalGrantAlgebraFailure> =>
   generation.generationHash === binding.configuredGenerationHash
     ? Result.succeed(undefined)
     : fail({
-        _tag: 'DerivedPaperGenerationMismatch',
+        _tag: 'DerivedCapitalGrantGenerationMismatch',
         derivedGenerationHash: generation.generationHash,
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 
-export const validateDerivedPaperGeneration = Pipeable.dual(2, validateDerivedPaperGenerationDataFirst)
+export const validateDerivedCapitalGrantGeneration = Pipeable.dual(2, validateDerivedCapitalGrantGenerationDataFirst)
 
-export const paperActivationEffectiveAuthority = (kill: KillState): Authority =>
+export const capitalGrantEffectiveAuthority = (kill: KillState): Authority =>
   kill === KillState.Active ? Authority.Observe : Authority.Execution
 
 export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure): CapitalGrantFailureDetails => {
@@ -978,72 +987,78 @@ export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure):
       return { failure: 'conflict', message: 'authority generation hash was already used' }
     case 'AuthorityMaximumConflict':
       return { failure: 'conflict', message: 'authority generation maximum conflicts with durable state' }
-    case 'PaperRuntimeBindingUnavailable':
+    case 'CapitalGrantRuntimeBindingUnavailable':
       return {
         failure: 'invariant',
-        message: `PAPER ${failure.operation} requires the exact configured authority, account, generation, and qualification binding`,
+        message: `capital grant ${failure.operation} requires the exact configured authority, account, generation, and qualification binding`,
       }
-    case 'PaperSourceAuthorityNotObserve':
-      return { failure: 'invariant', message: 'PAPER generation requires current OBSERVE authority' }
-    case 'PaperPrepareGenerationMismatch':
+    case 'CapitalGrantSourceAuthorityNotObserve':
+      return { failure: 'invariant', message: 'capital grant generation requires current OBSERVE authority' }
+    case 'CapitalGrantPrepareGenerationMismatch':
       return {
         failure: 'invariant',
-        message: 'PAPER PREPARE current authority differs from the configured OBSERVE generation',
+        message: 'capital grant PREPARE current authority differs from the configured OBSERVE generation',
       }
     case 'QualificationEvidenceUnavailable':
       return { failure: 'invariant', message: 'exact terminal qualification evidence is unavailable' }
     case 'QualificationEvidenceAccessFailed':
       return {
         failure: 'invariant',
-        message: 'PAPER qualification evidence could not be read safely',
+        message: 'capital grant qualification evidence could not be read safely',
         cause: failure.cause,
       }
     case 'QualificationEvidenceVerificationFailed':
       return {
         failure: 'invariant',
-        message: `PAPER qualification evidence ${failure.operation} verification failed`,
+        message: `capital grant qualification evidence ${failure.operation} verification failed`,
         cause: failure.cause,
       }
     case 'QualificationEvidenceMismatch':
       return {
         failure: 'invariant',
-        message: 'PAPER generation differs from terminal qualification evidence or current strategy build',
+        message: 'capital grant generation differs from terminal qualification evidence or current strategy build',
       }
     case 'ExactReconciliationUnavailable':
     case 'ReconciliationNotFresh':
       return {
         failure: 'invariant',
-        message: 'PAPER generation requires the latest fresh exact account reconciliation',
+        message: 'capital grant generation requires the latest fresh exact account reconciliation',
       }
     case 'MutationCoverageIncomplete':
       return {
         failure: 'invariant',
-        message: 'PAPER generation requires zero unresolved mutations covered by reconciliation',
+        message: 'capital grant generation requires zero unresolved mutations covered by reconciliation',
       }
-    case 'PaperGenerationDerivationFailed':
+    case 'CapitalGrantGenerationDerivationFailed':
       return {
         failure: 'decode',
-        message: 'derived PAPER generation is invalid',
+        message: 'derived capital grant generation is invalid',
         cause: failure.cause,
       }
-    case 'ResearchPaperGenerationDerivationFailed':
+    case 'ResearchCapitalGrantGenerationDerivationFailed':
       return {
         failure: 'decode',
-        message: 'derived research PAPER generation is invalid',
+        message: 'derived research capital grant generation is invalid',
         cause: failure.cause,
       }
-    case 'DurablePaperGenerationMismatch':
-      return { failure: 'conflict', message: 'durable PAPER generation differs from the configured generation' }
-    case 'PaperGenerationReplayMismatch':
-      return { failure: 'conflict', message: 'PAPER generation history differs from deterministic replay' }
-    case 'DerivedPaperGenerationMismatch':
-      return { failure: 'invariant', message: 'derived PAPER generation differs from the configured generation' }
-    case 'ResearchPaperGenerationReplayMismatch':
-      return { failure: 'conflict', message: 'research PAPER generation history differs from deterministic replay' }
-    case 'ResearchPaperGenerationRuntimeMismatch':
+    case 'DurableCapitalGrantGenerationMismatch':
+      return { failure: 'conflict', message: 'durable capital grant generation differs from the configured generation' }
+    case 'CapitalGrantGenerationReplayMismatch':
+      return { failure: 'conflict', message: 'capital grant generation history differs from deterministic replay' }
+    case 'DerivedCapitalGrantGenerationMismatch':
       return {
         failure: 'invariant',
-        message: `research PAPER generation ${failure.field} binding differs from the current runtime`,
+        message: 'derived capital grant generation differs from the configured generation',
+      }
+    case 'ResearchCapitalGrantGenerationReplayMismatch':
+      return {
+        failure: 'conflict',
+        message: 'research capital grant generation history differs from deterministic replay',
+      }
+    case 'ResearchCapitalGrantGenerationRuntimeMismatch':
+      return {
+        failure: 'invariant',
+        message: `research capital grant generation ${failure.field} binding differs from the current runtime`,
       }
   }
 }

@@ -9,7 +9,7 @@ import {
   ExecutionStoreError,
   type CapitalGrantLifecycleStoreShape,
 } from '../db/execution-store'
-import { validateDerivedPaperGeneration } from '../db/capital-grant-algebra'
+import { validateDerivedCapitalGrantGeneration } from '../db/capital-grant-algebra'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority, makeCapitalGrantGenerationResult, type CapitalGrantGeneration } from '../execution/contracts'
 import { canonicalHashV1OrThrow, sha256 } from '../hash'
@@ -759,7 +759,7 @@ describe('EXECUTION_PREPARE program boundary', () => {
 
     expect(output.generation.generationHash).toBe(preparedGeneration.generationHash)
     expect(
-      validateDerivedPaperGeneration(output.generation, {
+      validateDerivedCapitalGrantGeneration(output.generation, {
         accountId,
         configuredGenerationHash: preparedGeneration.generationHash,
         qualificationRunId,

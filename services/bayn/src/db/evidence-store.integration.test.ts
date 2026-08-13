@@ -3180,7 +3180,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
   })
 
-  test('serializes PAPER activation behind a writer-fenced mutation outcome and rechecks the baseline', async () => {
+  test('serializes capital grant activation behind a writer-fenced mutation outcome and rechecks the baseline', async () => {
     await activateAuditedCapitalGrant()
 
     const observeGenerationHash = fixtureHash('writer-fenced-return-observe-generation')
@@ -3325,7 +3325,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(observed.activationFailure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER generation requires zero unresolved mutations covered by reconciliation',
+        message: 'capital grant generation requires zero unresolved mutations covered by reconciliation',
       })
       expect(observed.after).toEqual(observed.before)
     } finally {
