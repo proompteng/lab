@@ -83,7 +83,7 @@ describe('native Restate execution controller', () => {
           },
         }
       },
-      log: () => Promise.resolve(),
+      log: () => Promise.reject(new Error('telemetry unavailable')),
     }
     const context = {
       key: controllerKey,
@@ -277,7 +277,7 @@ describe('native Restate execution controller', () => {
         },
         log: (level) => {
           loggedLevels.push(level)
-          return Promise.resolve()
+          return Promise.reject(new Error('telemetry unavailable'))
         },
       }),
     )

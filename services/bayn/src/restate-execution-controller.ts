@@ -68,6 +68,16 @@ export interface NativeExecutionRuntime {
   ) => Promise<void>
 }
 
+const writeRuntimeLog = (
+  runtime: NativeExecutionRuntime,
+  level: 'info' | 'warning' | 'error',
+  message: string,
+  annotations: Readonly<Record<string, string | number | boolean>>,
+): Promise<void> =>
+  Promise.resolve()
+    .then(() => runtime.log(level, message, annotations))
+    .catch(() => undefined)
+
 type ControllerObjectState = { readonly controller: ExecutionControllerState }
 
 const terminal = (message: string): restate.TerminalError =>
@@ -163,7 +173,7 @@ export const makeBaynExecutionController = (
           if (decision._tag === 'Activated') {
             ctx.set(stateKey, decision.state)
             scheduleTick(ctx, decision.state, 0)
-            await runtime.log('info', 'Bayn execution controller activated', {
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller activated', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
               invocationId: ctx.request().id,
@@ -200,7 +210,7 @@ export const makeBaynExecutionController = (
               const nextAttempt = attempt + 1
               const retryDelayMs = Math.min(1_000 * 2 ** attempt, 30_000)
               scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt)
-              await runtime.log('warning', 'Bayn execution controller advance will retry', {
+              await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
                 epoch: state.epoch,
                 invocationId: ctx.request().id,
@@ -210,7 +220,7 @@ export const makeBaynExecutionController = (
               })
               return
             }
-            await runtime.log('error', 'Bayn execution controller advance exhausted retries', {
+            await writeRuntimeLog(runtime, 'error', 'Bayn execution controller advance exhausted retries', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
               invocationId: ctx.request().id,
@@ -227,7 +237,7 @@ export const makeBaynExecutionController = (
           const completed = decisionOrTerminal(completeExecutionControllerTick(state, tick, result))
           ctx.set(stateKey, completed)
           scheduleTick(ctx, completed, result.outcome.nextDelayMs)
-          await runtime.log('info', 'Bayn execution controller tick completed', {
+          await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,
             invocationId: ctx.request().id,
@@ -254,7 +264,7 @@ export const makeBaynExecutionController = (
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           if (decision._tag === 'Deactivated') {
             ctx.set(stateKey, decision.state)
-            await runtime.log('info', 'Bayn execution controller deactivated', {
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller deactivated', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
               invocationId: ctx.request().id,
