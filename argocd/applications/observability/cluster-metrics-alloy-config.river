@@ -141,6 +141,70 @@ prometheus.scrape "bayn" {
   forward_to      = [prometheus.relabel.bayn_metrics.receiver]
 }
 
+discovery.kubernetes "bayn_log_pods" {
+  role = "pod"
+
+  namespaces {
+    names = ["bayn"]
+  }
+
+  selectors {
+    role  = "pod"
+    label = "app.kubernetes.io/part-of=bayn"
+  }
+}
+
+discovery.relabel "bayn_pod_logs" {
+  targets = discovery.kubernetes.bayn_log_pods.targets
+
+  rule {
+    action        = "keep"
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    regex         = "bayn|lifecycle|register"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    target_label  = "service"
+  }
+}
+
+loki.source.kubernetes "bayn_pod_logs" {
+  targets    = discovery.relabel.bayn_pod_logs.output
+  forward_to = [loki.process.bayn_pod_logs.receiver]
+}
+
+loki.process "bayn_pod_logs" {
+  stage.static_labels {
+    values = {
+      job = "bayn",
+    }
+  }
+
+  forward_to = [loki.write.bayn.receiver]
+}
+
+loki.write "bayn" {
+  endpoint {
+    url = "http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push"
+  }
+}
+
 prometheus.relabel "arc_resource_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
