@@ -151,10 +151,11 @@ describe('Bayn lifecycle command execution', () => {
           return input.observation
         }),
     }
-    const advance = Effect.sync(() => {
-      calls.push({ operation: 'advance', input: null })
-      return { observation }
-    })
+    const advance = (input: unknown) =>
+      Effect.sync(() => {
+        calls.push({ operation: 'advance', input })
+        return { observation }
+      })
 
     await Effect.runPromise(
       Effect.scoped(
@@ -246,6 +247,7 @@ describe('Bayn lifecycle command execution', () => {
             sequence: 1,
             issuedAt: command.issuedAt,
           })
+          expect(calls[1]?.input).toEqual(calls[0]?.input)
         }),
       ),
     )
@@ -290,10 +292,11 @@ describe('Bayn lifecycle command execution', () => {
             store,
             makeFence([]),
             authenticateLifecycle,
-            Effect.callback<LifecycleCommandAdvance>((resume) => {
-              advanceCount += 1
-              releaseAdvance = () => resume(Effect.succeed({ observation }))
-            }),
+            () =>
+              Effect.callback<LifecycleCommandAdvance>((resume) => {
+                advanceCount += 1
+                releaseAdvance = () => resume(Effect.succeed({ observation }))
+              }),
           ).pipe(Effect.forkScoped({ startImmediately: true }))
           const origin = `http://127.0.0.1:${port}`
           yield* Effect.promise(() => waitForServer(origin))
@@ -373,7 +376,7 @@ describe('Bayn lifecycle command execution', () => {
             store,
             makeFence([]),
             authenticateLifecycle,
-            advance,
+            () => advance,
           ).pipe(Effect.forkScoped({ startImmediately: true }))
           const origin = `http://127.0.0.1:${port}`
           yield* Effect.promise(() => waitForServer(origin))

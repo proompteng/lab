@@ -27,6 +27,7 @@ import type {
   ObserveAutonomousCycleInput,
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
+  LifecycleAdvanceDisposition,
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleDriverInterpreter,
   RecoveryFirstRuntime,
@@ -90,6 +91,21 @@ const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleR
 
 const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
+
+export const runExternalLifecycleAdvanceWithinTimeout = <A, E, R>(
+  beforeLifecycleAdvance: Effect.Effect<LifecycleAdvanceDisposition, E, R> | undefined,
+  runCycleAdvance: Effect.Effect<A, E, R>,
+  completeLifecycleAdvance: Effect.Effect<A, E, R>,
+  timeoutMs: number,
+): Effect.Effect<A, E | CycleRunnerError, R> =>
+  runMutationPassWithinTimeout(
+    beforeLifecycleAdvance === undefined
+      ? runCycleAdvance
+      : beforeLifecycleAdvance.pipe(
+          Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+        ),
+    timeoutMs,
+  )
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -361,24 +377,32 @@ const makeRecoveryFirstCycleDriver = (
               onSuccess: () => advanceCycle,
             }),
           )
-    const advance = operationPermit.withPermit(
+    const completeLifecycleAdvance = currentUtcInstant.pipe(
+      Effect.flatMap((observedAt) => {
+        const observation: AutonomousCyclePassObservation = {
+          result: 'SUCCESS',
+          observedAt,
+          outcome: 'RECOVERED',
+        }
+        return startup.recordPass(observation).pipe(Effect.as({ observation }))
+      }),
+    )
+    // The external driver owns one bounded command. Include lifecycle maintenance and the reconciliation preflight in
+    // the same aggregate budget as the cycle pass so a stalled prerequisite cannot outlive Restate's command window.
+    const lifecycleAdvance =
       input.beforeLifecycleAdvance === undefined
         ? runCycleAdvance
         : input.beforeLifecycleAdvance.pipe(
-            Effect.flatMap((disposition) =>
-              disposition === 'CONTINUE'
-                ? runCycleAdvance
-                : currentUtcInstant.pipe(
-                    Effect.flatMap((observedAt) => {
-                      const observation: AutonomousCyclePassObservation = {
-                        result: 'SUCCESS',
-                        observedAt,
-                        outcome: 'RECOVERED',
-                      }
-                      return startup.recordPass(observation).pipe(Effect.as({ observation }))
-                    }),
-                  ),
-            ),
+            Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? runCycleAdvance : completeLifecycleAdvance)),
+          )
+    const advance = operationPermit.withPermit(
+      input.interpretCycleDriver === undefined
+        ? lifecycleAdvance
+        : runExternalLifecycleAdvanceWithinTimeout(
+            input.beforeLifecycleAdvance,
+            runCycleAdvance,
+            completeLifecycleAdvance,
+            cyclePassTimeoutMs,
           ),
     )
     const maintainReconciliation = operationPermit.withPermit(

@@ -6,6 +6,7 @@ import { BrokerMutationError } from '../broker/alpaca-mutations'
 import { CycleRunnerError } from '../cycle/runner'
 import type { LifecycleCommandStoreShape } from '../db/lifecycle-command'
 import { CapitalAuthorityKind } from '../execution/authority'
+import { advanceExecutionOnce } from '../execution/advance'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { isResearchCapitalActivationRequest, type CapitalActivationRequest } from '../execution/configuration'
 import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
@@ -79,7 +80,18 @@ const lifecycleDriverInterpreter = (
               store,
               writerFence,
               authenticate,
-              driver.advance,
+              (command) =>
+                advanceExecutionOnce(
+                  {
+                    controllerKey: command.controllerKey,
+                    // Epoch zero is reserved for the compatibility HTTP bridge and disappears at native cutover.
+                    epoch: 0,
+                    sequence: command.sequence,
+                    issuedAt: command.issuedAt,
+                    sourceRevision: plan.config.build.sourceRevision,
+                  },
+                  driver,
+                ).pipe(Effect.map((outcome) => ({ observation: outcome.observation }))),
             ),
           )
         }).pipe(Effect.scoped, Effect.orDie)) satisfies RecoveryFirstCycleDriverInterpreter)
