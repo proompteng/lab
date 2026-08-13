@@ -586,8 +586,51 @@ describe('Bayn PAPER receipt retry boundary', () => {
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(operations).toEqual(['fence', 'restrict', 'reconcile', 'finalize'])
+    expect(operations).toEqual(['fence', 'restrict', 'reconcile', 'fence', 'restrict', 'finalize'])
     expect(disposition).toBe('COMPLETED')
+  })
+
+  test('restricts authority when reconciliation crosses the close expiry boundary', async () => {
+    const operations: string[] = []
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          operations.push('restrict')
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.sync(() => {
+          operations.push('fence')
+        }).pipe(Effect.andThen(effect)),
+    }
+
+    const disposition = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-03T20:14:59.999Z'))
+        return yield* runLifecycleMaintenanceAdvance(
+          Effect.sync(() => {
+            operations.push('reconcile')
+          }).pipe(Effect.andThen(TestClock.adjust(1))),
+          runExecutionLifecycleMaintenance(
+            researchRequest,
+            authorityRestrictionStore,
+            writerFence,
+            (_cycleId, observedAt) =>
+              Effect.sync(() => {
+                expect(observedAt).toBe('2026-09-03T20:15:00.000Z')
+                operations.push('finalize')
+                return false
+              }),
+          ),
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(operations).toEqual(['reconcile', 'fence', 'restrict', 'finalize'])
+    expect(disposition).toBe('CONTINUE')
   })
 
   test('leaves a bounded post-close finalization window for late settlement', () => {

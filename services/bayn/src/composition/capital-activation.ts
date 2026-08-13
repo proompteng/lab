@@ -1109,6 +1109,15 @@ export const runExecutionLifecycleMaintenance = (
   writerFence: WriterFenceService,
   finalizeReceipt: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean, CycleRunnerError>,
 ): LifecycleAdvanceMaintenance => {
+  const restrictExpiredAuthority = (
+    decision: ExecutionLifecycleMaintenanceDecision,
+  ): Effect.Effect<void, CycleRunnerError> =>
+    decision.restrictExpiredAuthority
+      ? restrictMutationAuthority(executionActivationRestrictionSubject, 'immutable activation request expired').pipe(
+          Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+          Effect.provideService(WriterFence, writerFence),
+        )
+      : Effect.void
   const currentDecision = currentUtcInstant.pipe(
     Effect.map((observedAt) => ({
       observedAt,
@@ -1121,26 +1130,18 @@ export const runExecutionLifecycleMaintenance = (
     })),
   )
   return {
-    beforeReconciliation: currentDecision.pipe(
-      Effect.flatMap(({ decision }) =>
-        decision.restrictExpiredAuthority
-          ? restrictMutationAuthority(
-              executionActivationRestrictionSubject,
-              'immutable activation request expired',
-            ).pipe(
-              Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
-              Effect.provideService(WriterFence, writerFence),
-            )
-          : Effect.void,
-      ),
-    ),
+    beforeReconciliation: currentDecision.pipe(Effect.flatMap(({ decision }) => restrictExpiredAuthority(decision))),
     afterReconciliation: currentDecision.pipe(
       Effect.flatMap(({ decision, observedAt }) =>
-        decision.attemptReceiptFinalization
-          ? finalizeReceipt(undefined, observedAt).pipe(
-              Effect.map((completed): LifecycleAdvanceDisposition => (completed ? 'COMPLETED' : 'CONTINUE')),
-            )
-          : Effect.succeed('CONTINUE' as const),
+        restrictExpiredAuthority(decision).pipe(
+          Effect.andThen(
+            decision.attemptReceiptFinalization
+              ? finalizeReceipt(undefined, observedAt).pipe(
+                  Effect.map((completed): LifecycleAdvanceDisposition => (completed ? 'COMPLETED' : 'CONTINUE')),
+                )
+              : Effect.succeed('CONTINUE' as const),
+          ),
+        ),
       ),
     ),
   }
