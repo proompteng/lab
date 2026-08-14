@@ -64,14 +64,6 @@ spec:
               value: "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b"
             - name: BAYN_LIFECYCLE_OWNER
               value: RESTATE
-            # Activation must prove and deactivate this exact legacy owner before
-            # the native controller can schedule its first tick.
-            - name: BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY
-              value: primary
-            - name: BAYN_LEGACY_LIFECYCLE_PLAN_HASH
-              value: "74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d"
-            - name: BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION
-              value: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
