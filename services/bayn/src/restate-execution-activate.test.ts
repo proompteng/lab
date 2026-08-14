@@ -16,6 +16,7 @@ const config: RestateExecutionActivationConfig = {
   controllerKey: 'a'.repeat(64),
   ingressOrigin: 'http://restate.example.test:8080',
   operationTimeoutMs: 30_000,
+  planHash: 'b'.repeat(64),
   sourceRevision: 'c'.repeat(40),
 }
 const token = Buffer.alloc(32, 9).toString('base64url')
@@ -24,7 +25,7 @@ const activeState = {
   schemaVersion: 1 as const,
   active: true,
   epoch: 1,
-  planHash: 'b'.repeat(64),
+  planHash: config.planHash,
   sourceRevision: config.sourceRevision,
   initialSequence: 0,
   nextSequence: 0,
@@ -113,6 +114,7 @@ describe('native Restate execution activation', () => {
     expect(Result.getOrThrow(verifyRestateExecutionActivation(config, activeState))).toEqual(activeState)
     for (const invalid of [
       { ...activeState, active: false },
+      { ...activeState, planHash: 'd'.repeat(64) },
       { ...activeState, sourceRevision: 'e'.repeat(40) },
       { active: true },
     ]) {

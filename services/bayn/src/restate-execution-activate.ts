@@ -1,7 +1,9 @@
 import { NodeRuntime } from '@effect/platform-node'
 import { Config, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
 
+import { loadApplicationPlan } from './application-plan'
 import { embeddedBuildMetadata } from './build'
+import { executionControllerConfig } from './composition/native-execution-runtime'
 import { decodeExecutionControllerState, type ExecutionControllerState } from './execution/controller'
 import { sha256 } from './hash'
 import {
@@ -17,8 +19,7 @@ import {
   sendRestateInvocation,
   type RestateHttpRequest,
 } from './restate-invocation-client'
-import { OperationalThresholdSchema } from './restate-lifecycle'
-import { GitSourceRevisionSchema, Sha256Schema } from './schemas'
+import { Sha256Schema } from './schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
@@ -53,20 +54,16 @@ export interface RestateExecutionActivationConfig {
   readonly controllerKey: string
   readonly ingressOrigin: string
   readonly operationTimeoutMs: number
+  readonly planHash: string
   readonly sourceRevision: string
 }
 
-export const restateExecutionActivationConfig = Config.all({
+const restateExecutionActivationTransportConfig = Config.all({
   activationGeneration: Config.schema(Sha256Schema, 'BAYN_EXECUTION_ACTIVATION_GENERATION'),
   bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
-  controllerKey: Config.schema(Sha256Schema, 'BAYN_EXECUTION_CONTROLLER_KEY'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
   ),
-  operationTimeoutMs: Config.schema(OperationalThresholdSchema, 'BAYN_OPERATION_TIMEOUT_MS').pipe(
-    Config.withDefault(30_000),
-  ),
-  sourceRevision: Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION'),
 })
 
 export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs: number): number =>
@@ -116,7 +113,7 @@ export const verifyRestateExecutionActivation = (
     )
   }
   const state = decoded.success
-  return state.active && state.sourceRevision === config.sourceRevision
+  return state.active && state.planHash === config.planHash && state.sourceRevision === config.sourceRevision
     ? Result.succeed(state)
     : Result.fail(
         new RestateExecutionActivationError({
@@ -184,7 +181,27 @@ export const activateRestateExecutionController = (
   }).pipe(withObservedSpan('bayn.execution.activate'))
 
 export const restateExecutionActivationProgram = Effect.gen(function* () {
-  const { bootstrapToken, ...configured } = yield* restateExecutionActivationConfig
+  const [{ activationGeneration, bootstrapToken, ingressOrigin }, plan] = yield* Effect.all([
+    restateExecutionActivationTransportConfig,
+    loadApplicationPlan,
+  ])
+  if (plan._tag !== 'AutonomousService') {
+    return yield* new RestateExecutionActivationError({
+      operation: 'configuration',
+      message: 'native Restate activation requires the autonomous service runtime mode',
+    })
+  }
+  const controller = yield* Effect.fromResult(executionControllerConfig(plan)).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RestateExecutionActivationError({
+          operation: 'configuration',
+          message: 'native Restate activation could not derive the immutable controller binding',
+          cause,
+        }),
+    ),
+  )
+  const configured: RestateExecutionActivationConfig = { ...controller, activationGeneration, ingressOrigin }
   const embeddedSourceRevision = embeddedBuildMetadata?.sourceRevision
   if (embeddedSourceRevision !== undefined && embeddedSourceRevision !== configured.sourceRevision) {
     return yield* new RestateExecutionActivationError({
