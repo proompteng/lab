@@ -1,19 +1,20 @@
 # Bayn GitOps rollout notes
 
-## Inactive native Restate worker
+## Native Restate execution cutover
 
-The `bayn-execution-controller` `RestateDeployment` registers the native worker without activating an execution
-controller. The worker starts with read-only broker access and no capital authority. There is no bootstrap Job in this
-layer, so reconciliation must not create controller state, schedule ticks, or submit broker mutations.
+The `bayn-execution-controller` `RestateDeployment` is the single execution scheduler. It starts with read-only broker
+access and no capital authority. A source-versioned Argo sync hook authenticates to the Restate ingress, verifies the
+exact source/image/strategy/account plan, deactivates the legacy lifecycle owner, and only then activates the native
+controller. The public Bayn deployment rolls out after that verified handoff.
 
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
 `argocd/applications/restate/README.md`. The bootstrap `SealedSecret` uses sync wave `-2` and the repository's
-current-generation health gate; the `RestateDeployment` follows in wave `-1`. A missing or undecryptable Secret must
-block the worker instead of allowing a partially configured pod.
+current-generation health gate; the `RestateDeployment` follows in wave `-1`, activation runs in wave `0`, and the
+read-only status deployment follows in wave `1`. A missing Secret, unregistered worker, legacy-binding mismatch, or
+activation-verification failure blocks the sync before the public status rollout.
 
-After the normal Argo sync, verify the inactive deployment without printing credentials or invoking the bootstrap
-handler:
+After the normal Argo sync, verify the handoff without printing credentials or invoking the bootstrap handler by hand:
 
 ```sh
 kubectl get application -n argocd bayn restate-operator-crds restate-operator restate -o wide
@@ -24,22 +25,31 @@ kubectl get restatedeployment -n bayn bayn-execution-controller -o wide
 kubectl get deployment,pod -n bayn -l app.kubernetes.io/name=bayn-execution-controller -o wide
 kubectl get pod -n bayn -l app.kubernetes.io/name=bayn-execution-controller -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
 kubectl logs -n bayn -l app.kubernetes.io/name=bayn-execution-controller --since=10m
+kubectl get job,pod -n bayn -l app.kubernetes.io/name=bayn-execution-activate -o wide
+kubectl logs -n bayn -l app.kubernetes.io/name=bayn-execution-activate --since=10m
+kubectl get pod -n bayn -l app.kubernetes.io/name=bayn -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].imageID}{"\n"}{end}'
 ```
 
 Expected:
 
 - all four Argo applications are `Synced` and `Healthy`;
 - the SealedSecret is current and the generated Secret exists before the worker pod starts;
-- the operator reports one available worker revision at the committed image digest;
-- logs show registration and readiness, with no activation, tick, writer-fence acquisition, or broker mutation;
-- the existing Bayn status service remains the only active lifecycle owner until the cutover layer lands.
+- the operator reports one available worker revision at the committed image digest and drains the previous revision;
+- the activation hook completes once for the exact committed plan and source;
+- the legacy lifecycle state is inactive before native controller state becomes active;
+- delayed native ticks project fresh controller status while authority remains read-only with no capital grant;
+- the public status pod runs the same immutable image and reports exact reconciliation with zero unresolved mutations.
 
-The expected impact is one inactive worker pod plus narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry,
-DNS, and broker-proxy network paths. The worker has no service-account token and accepts Restate requests only from the
-`restate` namespace. Its bootstrap endpoint is token-authenticated but must not be called during this layer.
+The expected impact is one active worker pod plus narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS,
+and broker-proxy network paths. The worker has no service-account token and accepts Restate requests only from the
+`restate` namespace. The activation Job has no broker egress and its token-authenticated bootstrap call is made only by
+the labeled GitOps hook.
 
-If the Secret, worker, registration, or dependency paths do not converge, revert this layer through a normal PR and
-let Argo prune the `RestateDeployment`, its generated Deployment/Service, NetworkPolicy, and bootstrap Secret. Do not
-delete Restate registrations, CRDs, PVCs, or the existing Bayn lifecycle owner by hand. Confirm the generated worker
-pod and Service are gone, the legacy owner still holds the writer fence, reconciliation remains exact, and the broker
-mutation ledger did not advance before resuming the stack.
+Until atomic controller rotation is implemented, the release updater must return
+`native-execution-controller-refresh-required` without changing GitOps whenever a candidate would alter the controller
+plan. Never promote only the public status image while execution remains pinned to an older plan.
+
+Rollback is another serialized ownership transfer, not pruning an active worker. Through a reviewed GitOps change,
+deactivate the native controller and prove its writer fence is clear before activating a compatible legacy or replacement
+controller. Do not delete Restate registrations, CRDs, PVCs, durable state, or controller pods by hand. Confirm exact
+reconciliation, zero unresolved mutations, and no broker-ledger advance before and after the handoff.

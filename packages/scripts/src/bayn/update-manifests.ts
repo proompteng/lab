@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
 import {
@@ -47,6 +47,8 @@ export interface UpdateBaynManifestOptions {
   readonly applicationSetPath?: string
   readonly lifecycleCurrentPath?: string
   readonly lifecyclePreviousPath?: string
+  readonly executionControllerPath?: string
+  readonly executionActivationPath?: string
 }
 
 export interface BaynManifestUpdate {
@@ -55,6 +57,7 @@ export interface BaynManifestUpdate {
     | 'eligible'
     | 'strategy-identity-change-requires-fresh-snapshot'
     | 'research-capital-activation-refresh-required'
+    | 'native-execution-controller-refresh-required'
   readonly qualificationMode: 'preserve' | 'replace' | 'install' | 'research'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -114,6 +117,54 @@ const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_TIGERBEETLE_ADDRESSES: environmentValue(deployment, 'BAYN_TIGERBEETLE_ADDRESSES'),
   BAYN_TIGERBEETLE_LEDGER: environmentValue(deployment, 'BAYN_TIGERBEETLE_LEDGER'),
 })
+
+interface NativeExecutionPins {
+  readonly sourceSha: string
+  readonly digest: string
+}
+
+const nativeExecutionPins = (
+  options: UpdateBaynManifestOptions,
+  deploymentSourceSha: string,
+  deploymentDigest: string,
+): NativeExecutionPins | undefined => {
+  const usesDefaultManifests =
+    options.kustomizationPath === undefined &&
+    options.deploymentPath === undefined &&
+    options.applicationSetPath === undefined &&
+    options.lifecycleCurrentPath === undefined &&
+    options.lifecyclePreviousPath === undefined
+  const controllerPath =
+    options.executionControllerPath ??
+    (usesDefaultManifests ? 'argocd/applications/bayn/execution-controller.yaml' : undefined)
+  const activationPath =
+    options.executionActivationPath ??
+    (usesDefaultManifests ? 'argocd/applications/bayn/execution-activation.yaml' : undefined)
+  if (controllerPath === undefined && activationPath === undefined) return undefined
+  if (controllerPath === undefined || activationPath === undefined) {
+    throw new Error('native execution controller and activation manifest paths must be provided together')
+  }
+  const controllerExists = existsSync(controllerPath)
+  const activationExists = existsSync(activationPath)
+  if (!controllerExists && !activationExists) return undefined
+  if (!controllerExists || !activationExists) {
+    throw new Error('native execution controller and activation manifests must exist together')
+  }
+  const controller = readFileSync(controllerPath, 'utf8')
+  const activation = readFileSync(activationPath, 'utf8')
+  const sourceSha = environmentValue(controller, 'BAYN_CODE_REVISION')
+  const digest = environmentValue(controller, 'BAYN_IMAGE_DIGEST')
+  if (
+    environmentValue(activation, 'BAYN_CODE_REVISION') !== sourceSha ||
+    environmentValue(activation, 'BAYN_IMAGE_DIGEST') !== digest
+  ) {
+    throw new Error('native execution controller and activation manifests have different immutable image bindings')
+  }
+  if (sourceSha !== deploymentSourceSha || digest !== deploymentDigest) {
+    throw new Error('native execution controller is not bound to the deployed Bayn source and image')
+  }
+  return { sourceSha, digest }
+}
 
 const validateIsoDate = (name: string, value: string): void => {
   const parsed = new Date(`${value}T00:00:00.000Z`)
@@ -257,6 +308,13 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
+  const nativeExecution = nativeExecutionPins(options, deployedSourceSha, deployedImageDigest)
+  const nativeExecutionRefreshRequired =
+    nativeExecution !== undefined &&
+    (!activationBuildMatches ||
+      !strategyIdentityMatches ||
+      !candidateRuntimeMatchesDeployment ||
+      (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned))
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned && options.candidateRuntime === undefined) {
     throw new Error('installing an accepted qualification run requires an explicit candidate runtime')
   }
@@ -285,6 +343,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     !hadQualificationPin && !hasCapitalActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
+    !nativeExecutionRefreshRequired &&
     (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
   ) {
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
@@ -321,6 +380,13 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     candidateBehaviorHash: options.strategyBehaviorHash,
     candidateParameterHash: options.strategyParameterHash,
   } as const
+  if (nativeExecutionRefreshRequired) {
+    return {
+      promotionAction: 'hold',
+      promotionReason: 'native-execution-controller-refresh-required',
+      ...updateDetails,
+    }
+  }
   if (hadQualificationPin && !strategyIdentityMatches && qualificationBindingsMatch && !snapshotChanged) {
     return {
       promotionAction: 'hold',
