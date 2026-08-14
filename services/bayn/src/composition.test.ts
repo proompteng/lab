@@ -19,7 +19,17 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { config, fixtureRuntime, readyState } from './app-test-support'
+import {
+  config,
+  fixtureRuntime,
+  marketDataService,
+  pinnedEvaluation,
+  pinnedRuntime,
+  pinnedRuntimeConfig,
+  pinnedStore,
+  readyState,
+  successfulJournal,
+} from './app-test-support'
 import {
   advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
@@ -50,6 +60,7 @@ import { makeApplicationPlan, type ApplicationPlanFor } from './app'
 import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import { makeStrategyProtocolHash } from './contracts'
+import { DatabaseError } from './db/evidence-store'
 import {
   CapitalGrantLifecycleStore,
   type AuthorityGenerationStoreShape,
@@ -76,7 +87,11 @@ import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
-import { refreshReadOnlyCapitalActivation } from './composition/read-only-status'
+import {
+  readOnlyCycleObservationId,
+  refreshReadOnlyCapitalActivation,
+  refreshReadOnlyQualification,
+} from './composition/read-only-status'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
@@ -256,6 +271,22 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
     strategyProtocolHash: continuationStrategyProtocolHash,
   })
   if (plan._tag !== 'AutonomousService') throw new Error('continuation fixture must produce AutonomousService')
+  return plan
+})()
+const pinnedStatusApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (() => {
+  const plan = makeApplicationPlan({
+    config: {
+      ...continuationApplicationPlan.config,
+      qualificationRunId: pinnedEvaluation.runId,
+      build: pinnedRuntimeConfig.build,
+      clickhouse: pinnedRuntimeConfig.clickhouse,
+    },
+    protocol: fixtureProtocol,
+    parameterHash: pinnedRuntime.provenance.strategy.parameterHash,
+    strategy: pinnedRuntime,
+    strategyProtocolHash: makeStrategyProtocolHash(pinnedRuntime.provenance.strategy),
+  })
+  if (plan._tag !== 'AutonomousService') throw new Error('pinned status fixture must produce AutonomousService')
   return plan
 })()
 const continuationAuthority: AuthorityState = {
@@ -646,6 +677,78 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn capital startup recovery boundary', () => {
+  test('recovers a configured pinned qualification without requiring a capital activation request', async () => {
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: false,
+            executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+          },
+        }),
+      ),
+    )
+
+    await Effect.runPromise(
+      refreshReadOnlyQualification(pinnedStatusApplicationPlan, Result.succeed(null), state, {
+        marketData: marketDataService(Effect.die(new Error('pinned recovery must not load market data'))),
+        journal: successfulJournal,
+        evidenceStore: pinnedStore(),
+      }),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      evidence: { evaluation: { runId: pinnedEvaluation.runId } },
+    })
+  })
+
+  test('retries transient pinned qualification recovery and stops reading after success', async () => {
+    const state = await Effect.runPromise(Ref.make(initialState({})))
+    const store = pinnedStore()
+    let readAttempts = 0
+    const evidenceStore = {
+      ...store,
+      read: (runId: string) =>
+        Effect.suspend(() => {
+          readAttempts += 1
+          return readAttempts === 1
+            ? Effect.fail(
+                new DatabaseError({
+                  failure: 'unavailable',
+                  operation: 'read-pinned-qualification',
+                  message: 'transient test outage',
+                  cause: { _tag: 'TransientTestOutage' },
+                }),
+              )
+            : store.read(runId)
+        }),
+    }
+    const refresh = refreshReadOnlyQualification(pinnedStatusApplicationPlan, Result.succeed(null), state, {
+      marketData: marketDataService(Effect.die(new Error('pinned recovery must not load market data'))),
+      journal: successfulJournal,
+      evidenceStore,
+    })
+
+    await Effect.runPromise(refresh)
+    expect((await Effect.runPromise(Ref.get(state))).evidence).toBeNull()
+    await Effect.runPromise(refresh)
+    await Effect.runPromise(refresh)
+
+    expect((await Effect.runPromise(Ref.get(state))).evidence?.evaluation.runId).toBe(pinnedEvaluation.runId)
+    expect(readAttempts).toBe(2)
+  })
+
+  test('keeps cycle observations keyed by the immutable grant after execution completes', () => {
+    const configured = Result.succeed({
+      request: continuationRequest,
+      buildContinuation: researchBuildContinuation,
+    })
+
+    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId)).toBe(continuationRequest.grant.planHash)
+    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
+  })
+
   test('projects an exact active generation without calling any authority mutation', async () => {
     const state = await Effect.runPromise(
       Ref.make(

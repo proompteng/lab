@@ -149,7 +149,7 @@ export const refreshReadOnlyCapitalActivation = (
     Effect.withLogSpan('read-only-capital-projection'),
   )
 
-const recoverPinnedQualification = (
+export const refreshReadOnlyQualification = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   state: Ref.Ref<RuntimeState>,
@@ -159,37 +159,45 @@ const recoverPinnedQualification = (
     readonly evidenceStore: import('../db/evidence-store').EvidenceStoreService
   },
 ): Effect.Effect<void> => {
-  if (
-    Result.isFailure(configured) ||
-    configured.success === null ||
-    isResearchCapitalActivationRequest(configured.success.request)
-  ) {
-    return Effect.void
+  const request =
+    Result.isSuccess(configured) &&
+    configured.success !== null &&
+    !isResearchCapitalActivationRequest(configured.success.request)
+      ? configured.success.request
+      : null
+  const runId = plan.config.qualificationRunId
+  if (runId === undefined) {
+    return request === null
+      ? Effect.void
+      : pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+          Effect.andThen(logActivationUnavailable('QUALIFICATION_BINDING_MISMATCH')),
+        )
   }
-  const runId = configured.success.request.qualification.runId
-  const request = configured.success.request
-  if (plan.config.qualificationRunId !== runId) {
+  if (request !== null && request.qualification.runId !== runId) {
     return pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
       Effect.andThen(logActivationUnavailable('QUALIFICATION_BINDING_MISMATCH')),
     )
   }
-  return runStartup(plan.config, state, plan.strategy, dependencies).pipe(
-    Effect.catch(() =>
-      pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
-        Effect.andThen(logActivationUnavailable('QUALIFICATION_EVIDENCE_UNAVAILABLE')),
-      ),
-    ),
+  return Ref.get(state).pipe(
+    Effect.flatMap((current) => {
+      if (current.evidence?.evaluation.runId === runId || current.status === 'FAILED') return Effect.void
+      return runStartup(plan.config, state, plan.strategy, dependencies).pipe(
+        Effect.catch(() =>
+          pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+            Effect.andThen(logActivationUnavailable('QUALIFICATION_EVIDENCE_UNAVAILABLE')),
+          ),
+        ),
+      )
+    }),
   )
 }
 
-const cycleObservationId = (
+export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
-  state: RuntimeState,
   qualificationRunId: string | undefined,
 ): string | undefined => {
   if (Result.isFailure(configured) || configured.success === null) return qualificationRunId
   const request = configured.success.request
-  if (state.capitalActivation?._tag === 'Completed') return state.capitalActivation.generationHash
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
 }
 
@@ -223,7 +231,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       }),
     )
     const dependencies = { marketData, journal, evidenceStore, cycleObservability }
-    yield* recoverPinnedQualification(observePlan, configured, state, dependencies)
+    yield* refreshReadOnlyQualification(observePlan, configured, state, dependencies)
     yield* refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)
     yield* serveHttp(
       observePlan.config,
@@ -233,7 +241,8 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       evidenceStore.read,
     )
 
-    const healthPass = refreshReadOnlyCapitalActivation(plan, configured, state, activationStore).pipe(
+    const healthPass = refreshReadOnlyQualification(observePlan, configured, state, dependencies).pipe(
+      Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
       Effect.andThen(Ref.get(state)),
       Effect.flatMap((current) =>
         checkHealth(
@@ -242,7 +251,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
           dependencies,
           runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
           undefined,
-          cycleObservationId(configured, current, observePlan.config.qualificationRunId),
+          readOnlyCycleObservationId(configured, observePlan.config.qualificationRunId),
           !researchActivation,
           { controllerKey, read: controllerStatus.read },
         ),
