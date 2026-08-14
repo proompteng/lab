@@ -22,6 +22,8 @@ import {
   type ExecutionControllerTick,
 } from './execution/controller'
 import { sha256 } from './hash'
+import { decodeRestateLifecycleState } from './restate-lifecycle'
+
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   type: 'object',
@@ -35,6 +37,23 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   required: ['schemaVersion', 'epoch', 'sequence'],
   additionalProperties: false,
 })
+const legacyLifecycleDeactivationSerde = restate.serde.json.schema<{
+  readonly schemaVersion: 'bayn.restate-lifecycle-deactivation.v1'
+  readonly controllerKey: string
+  readonly planHash: string
+  readonly sourceRevision: string
+}>({
+  type: 'object',
+  properties: {
+    schemaVersion: { const: 'bayn.restate-lifecycle-deactivation.v1' },
+    controllerKey: { type: 'string' },
+    planHash: { type: 'string' },
+    sourceRevision: { type: 'string' },
+  },
+  required: ['schemaVersion', 'controllerKey', 'planHash', 'sourceRevision'],
+  additionalProperties: false,
+})
+const legacyLifecycleStateSerde = restate.serde.json.schema<unknown>({ type: 'object' })
 
 export const executionControllerFinalizationHeadroomMs = 30_000
 export const executionControllerActivationRetentionMs = 10 * 60_000
@@ -53,10 +72,17 @@ export const executionControllerCommandRetryPolicy = {
   maxInterval: 10_000,
   exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
+export const executionControllerInitialTickDelayMs = 5 * 60_000
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string
   readonly operationTimeoutMs: number
+  readonly planHash: string
+  readonly sourceRevision: string
+}
+
+export interface LegacyLifecycleCutoverBinding {
+  readonly controllerKey: string
   readonly planHash: string
   readonly sourceRevision: string
 }
@@ -155,6 +181,39 @@ const authorizeBootstrap = (expectedHash: string, authorization: string | undefi
   }
 }
 
+const legacyLifecycleDeactivationIdempotencyKey = (
+  config: ExecutionControllerConfig,
+  binding: LegacyLifecycleCutoverBinding,
+): string => `bayn-native-cutover-${config.sourceRevision}-${binding.controllerKey}`
+
+const deactivateLegacyLifecycle = async (
+  ctx: restate.Context,
+  config: ExecutionControllerConfig,
+  binding: LegacyLifecycleCutoverBinding,
+): Promise<void> => {
+  const candidate: unknown = await ctx.genericCall({
+    service: 'BaynLifecycle',
+    method: 'deactivate',
+    key: binding.controllerKey,
+    parameter: {
+      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+      controllerKey: binding.controllerKey,
+      planHash: binding.planHash,
+      sourceRevision: binding.sourceRevision,
+    },
+    inputSerde: legacyLifecycleDeactivationSerde,
+    outputSerde: legacyLifecycleStateSerde,
+    idempotencyKey: legacyLifecycleDeactivationIdempotencyKey(config, binding),
+  })
+  const state = decodeOrTerminal(
+    decodeRestateLifecycleState(candidate),
+    'legacy lifecycle deactivation returned invalid state',
+  )
+  if (state.active || state.planHash !== binding.planHash || state.sourceRevision !== binding.sourceRevision) {
+    throw terminal('legacy lifecycle deactivation did not prove the expected inactive owner')
+  }
+}
+
 export const bindBootstrapActivation = (
   state: ExecutionControllerState | null,
   request: ExecutionControllerBootstrap,
@@ -229,7 +288,7 @@ export const makeBaynExecutionController = (
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
           if (decision._tag === 'Activated') {
             ctx.set(stateKey, decision.state)
-            scheduleTick(ctx, decision.state, 0)
+            scheduleTick(ctx, decision.state, executionControllerInitialTickDelayMs)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller activated', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
@@ -347,6 +406,7 @@ export const makeBaynExecutionBootstrap = (
   controller: ReturnType<typeof makeBaynExecutionController>,
   authorizationHash: string,
   hooks: readonly restate.HooksProvider[] = [],
+  legacyCutover?: LegacyLifecycleCutoverBinding,
 ) =>
   restate.service({
     name: 'BaynExecutionBootstrap',
@@ -365,6 +425,16 @@ export const makeBaynExecutionBootstrap = (
           authorizeBootstrap(authorizationHash, ctx.request().headers.get('authorization'))
           const client = ctx.objectClient(controller, config.controllerKey)
           const state = await client.status(undefined)
+          if (
+            state !== null &&
+            state.active &&
+            (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision)
+          ) {
+            throw terminal('execution controller bootstrap conflicts with active durable state')
+          }
+          if (legacyCutover !== undefined && (state === null || !state.active)) {
+            await deactivateLegacyLifecycle(ctx, config, legacyCutover)
+          }
           return client.activate(bindBootstrapActivation(state, request))
         },
       ),

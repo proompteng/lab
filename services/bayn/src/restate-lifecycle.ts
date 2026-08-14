@@ -102,6 +102,13 @@ export const RestateLifecycleActivationSchema = Schema.Struct({
   controllerKey: LifecycleControllerKeySchema,
 })
 
+export const RestateLifecycleDeactivationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.restate-lifecycle-deactivation.v1'),
+  controllerKey: LifecycleControllerKeySchema,
+  planHash: Sha256Schema,
+  sourceRevision: GitSourceRevisionSchema,
+})
+
 export const RestateLifecycleTickSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.restate-lifecycle-tick.v1'),
   epoch: EpochSchema,
@@ -182,6 +189,10 @@ const RestateLifecycleStateSchema = Schema.Struct({
 
 export const decodeRestateLifecycleActivation = Schema.decodeUnknownResult(
   RestateLifecycleActivationSchema,
+  strictParseOptions,
+)
+export const decodeRestateLifecycleDeactivation = Schema.decodeUnknownResult(
+  RestateLifecycleDeactivationSchema,
   strictParseOptions,
 )
 export const decodeRestateLifecycleTick = Schema.decodeUnknownResult(RestateLifecycleTickSchema, strictParseOptions)

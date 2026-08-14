@@ -9,6 +9,7 @@ import {
   decodeLifecycleCommandCursorResponse,
   decodeLifecycleCommandResponse,
   decodeRestateLifecycleActivation,
+  decodeRestateLifecycleDeactivation,
   decodeRestateLifecycleState,
   decodeRestateLifecycleTick,
   initialRestateLifecycleState,
@@ -358,14 +359,18 @@ export const makeBaynLifecycle = (
 
       deactivate: async (ctx: restate.ObjectContext<LifecycleObjectState>, candidate: unknown) => {
         const request = decodeOrTerminal(
-          decodeRestateLifecycleActivation(candidate),
+          decodeRestateLifecycleDeactivation(candidate),
           'Restate lifecycle deactivation request failed validation',
         )
         if (ctx.key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
           throw terminal('Restate lifecycle deactivation controller key does not match this deployment')
         }
         const current = await readState(ctx)
-        if (current === null || !current.active) return current
+        if (current === null) return null
+        if (current.planHash !== request.planHash || current.sourceRevision !== request.sourceRevision) {
+          throw terminal('Restate lifecycle deactivation provenance does not match durable state')
+        }
+        if (!current.active) return current
         const state = { ...current, active: false, epoch: current.epoch + 1 }
         ctx.set(stateKey, state)
         await lifecycleLog('Bayn Restate lifecycle deactivated', {

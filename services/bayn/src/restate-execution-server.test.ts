@@ -3,7 +3,7 @@ import { createServer as createHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { ConfigProvider, Effect, Exit } from 'effect'
 
 import type { ApplicationPlan } from './app'
 import { acquireRestateHttp2Server } from './restate-http2-server'
@@ -11,6 +11,7 @@ import {
   decodeRestateRequestIdentityKeys,
   makeRestateExecutionEndpointHandler,
   requireAutonomousApplicationPlan,
+  restateExecutionServerConfig,
 } from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
@@ -113,6 +114,35 @@ describe('native Restate execution server', () => {
       _tag: 'Failure',
     })
     expect(decodeRestateRequestIdentityKeys('not-a-restate-key')).toMatchObject({ _tag: 'Failure' })
+  })
+
+  test('requires exact legacy owner provenance before the worker can start', async () => {
+    const common = {
+      BAYN_EXECUTION_BOOTSTRAP_TOKEN: 'test-bootstrap-token',
+      RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
+    }
+    const provide = (environment: Readonly<Record<string, string>>) =>
+      restateExecutionServerConfig.pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+      )
+
+    for (const environment of [
+      common,
+      { ...common, BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash },
+      { ...common, BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision },
+    ]) {
+      expect(Exit.isFailure(await Effect.runPromiseExit(provide(environment)))).toBe(true)
+    }
+
+    expect(
+      await Effect.runPromise(
+        provide({
+          ...common,
+          BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash,
+          BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision,
+        }),
+      ),
+    ).toMatchObject({ legacyControllerKey: 'primary', legacyPlanHash: planHash, legacySourceRevision: sourceRevision })
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {

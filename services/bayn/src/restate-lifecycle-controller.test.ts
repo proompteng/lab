@@ -102,6 +102,51 @@ describe('Restate lifecycle command client', () => {
     expect(lifecycleTickIdempotencyKey(6, 2307, 0)).toBe('bayn-lifecycle-6-2307-0')
   })
 
+  test('rejects stale cutover provenance before changing durable lifecycle state', async () => {
+    const initial = initialRestateLifecycleState(config, { _tag: 'Next', sequence: 7 }, 4)
+    let state = initial
+    let writes = 0
+    const lifecycle = makeBaynLifecycle(config, {
+      readCursor: () => Promise.reject(new Error('must not read a cursor during deactivation')),
+      advance: () => Promise.reject(new Error('must not advance during deactivation')),
+    })
+    const context = {
+      key: config.controllerKey,
+      get: async () => state,
+      set: (_key: string, next: typeof state) => {
+        writes += 1
+        state = next
+      },
+    } as unknown as ObjectContext<{ readonly controller: typeof state }>
+    const deactivate = (
+      lifecycle as unknown as {
+        readonly object: {
+          readonly deactivate: (handlerContext: typeof context, candidate: unknown) => Promise<typeof state>
+        }
+      }
+    ).object.deactivate
+
+    expect(
+      deactivate(context, {
+        schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+        controllerKey: config.controllerKey,
+        planHash: 'f'.repeat(64),
+        sourceRevision: config.sourceRevision,
+      }),
+    ).rejects.toThrow('Restate lifecycle deactivation provenance does not match durable state')
+    expect(writes).toBe(0)
+    expect(state).toEqual(initial)
+
+    const deactivated = await deactivate(context, {
+      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+      controllerKey: config.controllerKey,
+      planHash: config.planHash,
+      sourceRevision: config.sourceRevision,
+    })
+    expect(writes).toBe(1)
+    expect(deactivated).toMatchObject({ active: false, epoch: initial.epoch + 1 })
+  })
+
   test('recovers a killed advance through the queued delivery with one persisted command identity', async () => {
     const initial = initialRestateLifecycleState(config, { _tag: 'Next', sequence: 7 }, 4)
     let state = initial
