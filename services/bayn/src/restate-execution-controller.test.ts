@@ -356,8 +356,9 @@ describe('native Restate execution controller', () => {
     } as unknown as Context
 
     await start(context, {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v1',
+      schemaVersion: 'bayn.execution-controller-bootstrap.v2',
       controllerKey,
+      planHash,
       sourceRevision,
     })
 
@@ -438,8 +439,9 @@ describe('native Restate execution controller', () => {
     } as unknown as Context
 
     await start(context, {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v1',
+      schemaVersion: 'bayn.execution-controller-bootstrap.v2',
       controllerKey,
+      planHash,
       sourceRevision,
     })
 
@@ -490,8 +492,9 @@ describe('native Restate execution controller', () => {
 
     expect(
       start(context, {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v1',
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
         controllerKey,
+        planHash,
         sourceRevision,
       }),
     ).rejects.toThrow('legacy lifecycle deactivation did not prove the expected inactive owner')
@@ -523,8 +526,9 @@ describe('native Restate execution controller', () => {
       },
     } as unknown as Context
     const bootstrap = {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v1',
+      schemaVersion: 'bayn.execution-controller-bootstrap.v2',
       controllerKey,
+      planHash,
       sourceRevision,
     }
 
@@ -533,6 +537,49 @@ describe('native Restate execution controller', () => {
       'execution controller bootstrap failed validation',
     )
     expect(objectCalls).toBe(0)
+  })
+
+  test('rejects a plan-drifted bootstrap before touching either lifecycle owner', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    let ownerCalls = 0
+    const controller = makeBaynExecutionController(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    const start = bootstrapHandlers(
+      makeBaynExecutionBootstrap(config, controller, authorizationHash, [], {
+        controllerKey: 'primary',
+        planHash: 'd'.repeat(64),
+        sourceRevision: 'e'.repeat(40),
+      }),
+    ).start
+    const context = {
+      request: () => ({
+        id: 'bootstrap-plan-drift',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      genericCall: () => {
+        ownerCalls += 1
+        return Promise.reject(new Error('must not deactivate'))
+      },
+      objectClient: () => {
+        ownerCalls += 1
+        return { status: () => Promise.reject(new Error('must not read')) }
+      },
+    } as unknown as Context
+
+    expect(
+      start(context, {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        controllerKey,
+        planHash: 'f'.repeat(64),
+        sourceRevision,
+      }),
+    ).rejects.toThrow('execution controller bootstrap does not match this immutable deployment')
+    expect(ownerCalls).toBe(0)
   })
 
   test('retries the same command identity durably and pauses after the bounded budget', async () => {

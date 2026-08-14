@@ -144,7 +144,11 @@ const verifyActivationBinding = (
 }
 
 const verifyBootstrapBinding = (config: ExecutionControllerConfig, request: ExecutionControllerBootstrap): void => {
-  if (request.controllerKey !== config.controllerKey || request.sourceRevision !== config.sourceRevision) {
+  if (
+    request.controllerKey !== config.controllerKey ||
+    request.planHash !== config.planHash ||
+    request.sourceRevision !== config.sourceRevision
+  ) {
     throw terminal('execution controller bootstrap does not match this immutable deployment')
   }
 }

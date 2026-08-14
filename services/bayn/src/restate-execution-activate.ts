@@ -82,8 +82,9 @@ export const restateExecutionActivationIdempotencyKey = (
 export const restateExecutionActivationRequest = (config: RestateExecutionActivationConfig, token: string) => ({
   path: '/restate/send/BaynExecutionBootstrap/start',
   body: {
-    schemaVersion: 'bayn.execution-controller-bootstrap.v1' as const,
+    schemaVersion: 'bayn.execution-controller-bootstrap.v2' as const,
     controllerKey: config.controllerKey,
+    planHash: config.planHash,
     sourceRevision: config.sourceRevision,
   },
   headers: {
