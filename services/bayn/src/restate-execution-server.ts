@@ -10,6 +10,7 @@ import { acquireNativeExecutionRuntime } from './composition/native-execution-ru
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   executionBootstrapAuthorizationHash,
+  legacyLifecycleDeactivationSchemaVersions,
   makeBaynExecutionBootstrap,
   makeBaynExecutionController,
   type ExecutionControllerConfig,
@@ -30,6 +31,10 @@ export const restateExecutionServerConfig = Config.all({
   legacyControllerKey: Config.nonEmptyString('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY').pipe(
     Config.withDefault('primary'),
   ),
+  legacyDeactivationSchemaVersion: Config.schema(
+    Schema.Literals([...legacyLifecycleDeactivationSchemaVersions]),
+    'BAYN_LEGACY_LIFECYCLE_DEACTIVATION_SCHEMA_VERSION',
+  ).pipe(Config.withDefault('bayn.restate-lifecycle-activation.v1')),
   legacyPlanHash: Config.schema(
     Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
     'BAYN_LEGACY_LIFECYCLE_PLAN_HASH',
@@ -78,7 +83,15 @@ export const makeRestateExecutionEndpointHandler = (
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
   const [
-    { bootstrapToken, legacyControllerKey, legacyPlanHash, legacySourceRevision, port, requestIdentityKeys },
+    {
+      bootstrapToken,
+      legacyControllerKey,
+      legacyDeactivationSchemaVersion,
+      legacyPlanHash,
+      legacySourceRevision,
+      port,
+      requestIdentityKeys,
+    },
     plan,
   ] = yield* Effect.all([
     restateExecutionServerConfig,
@@ -106,6 +119,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
   )
   const legacyCutover: LegacyLifecycleCutoverBinding = {
     controllerKey: legacyControllerKey,
+    deactivationSchemaVersion: legacyDeactivationSchemaVersion,
     planHash: legacyPlanHash,
     sourceRevision: legacySourceRevision,
   }

@@ -384,6 +384,7 @@ describe('native Restate execution controller', () => {
     })
     const legacy = {
       controllerKey: 'primary',
+      deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1' as const,
       planHash: 'd'.repeat(64),
       sourceRevision: 'e'.repeat(40),
     }
@@ -401,10 +402,8 @@ describe('native Restate execution controller', () => {
           method: 'deactivate',
           key: 'primary',
           parameter: {
-            schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+            schemaVersion: 'bayn.restate-lifecycle-activation.v1',
             controllerKey: 'primary',
-            planHash: legacy.planHash,
-            sourceRevision: legacy.sourceRevision,
           },
         })
         return {
@@ -449,6 +448,70 @@ describe('native Restate execution controller', () => {
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
   })
 
+  test('uses the provenance-rich legacy deactivation wire when explicitly configured', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    const legacy = {
+      controllerKey: 'primary',
+      deactivationSchemaVersion: 'bayn.restate-lifecycle-deactivation.v1' as const,
+      planHash: 'd'.repeat(64),
+      sourceRevision: 'e'.repeat(40),
+    }
+    let parameter: unknown
+    const controller = makeBaynExecutionController(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash, [], legacy)).start
+    const context = {
+      request: () => ({
+        id: 'bootstrap-cutover-v1',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      genericCall: (call: { readonly parameter: unknown }) => {
+        parameter = call.parameter
+        return Promise.resolve({
+          schemaVersion: 'bayn.restate-lifecycle-state.v1',
+          active: false,
+          epoch: 11,
+          planHash: legacy.planHash,
+          sourceRevision: legacy.sourceRevision,
+          cursor: { _tag: 'Next', sequence: 5511 },
+          lastCompletion: null,
+        })
+      },
+      objectClient: () => ({
+        status: () => Promise.resolve(null),
+        activate: () =>
+          Promise.resolve({
+            schemaVersion: 1,
+            active: true,
+            epoch: 1,
+            planHash,
+            sourceRevision,
+            initialSequence: 0,
+            nextSequence: 0,
+          }),
+      }),
+    } as unknown as Context
+
+    await start(context, {
+      schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+      controllerKey,
+      planHash,
+      sourceRevision,
+    })
+
+    expect(parameter).toEqual({
+      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+      controllerKey: legacy.controllerKey,
+      planHash: legacy.planHash,
+      sourceRevision: legacy.sourceRevision,
+    })
+  })
+
   test('does not activate when the legacy owner cannot be verified inactive', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
@@ -461,6 +524,7 @@ describe('native Restate execution controller', () => {
     const start = bootstrapHandlers(
       makeBaynExecutionBootstrap(config, controller, authorizationHash, [], {
         controllerKey: 'primary',
+        deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1',
         planHash: 'd'.repeat(64),
         sourceRevision: 'e'.repeat(40),
       }),
@@ -551,6 +615,7 @@ describe('native Restate execution controller', () => {
     const start = bootstrapHandlers(
       makeBaynExecutionBootstrap(config, controller, authorizationHash, [], {
         controllerKey: 'primary',
+        deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1',
         planHash: 'd'.repeat(64),
         sourceRevision: 'e'.repeat(40),
       }),

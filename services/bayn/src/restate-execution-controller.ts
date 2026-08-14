@@ -38,7 +38,19 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   required: ['schemaVersion', 'epoch', 'sequence'],
   additionalProperties: false,
 })
-const legacyLifecycleDeactivationSerde = restate.serde.json.schema<{
+const legacyLifecycleActivationSerde = restate.serde.json.schema<{
+  readonly schemaVersion: 'bayn.restate-lifecycle-activation.v1'
+  readonly controllerKey: string
+}>({
+  type: 'object',
+  properties: {
+    schemaVersion: { const: 'bayn.restate-lifecycle-activation.v1' },
+    controllerKey: { type: 'string' },
+  },
+  required: ['schemaVersion', 'controllerKey'],
+  additionalProperties: false,
+})
+const verifiedLegacyLifecycleDeactivationSerde = restate.serde.json.schema<{
   readonly schemaVersion: 'bayn.restate-lifecycle-deactivation.v1'
   readonly controllerKey: string
   readonly planHash: string
@@ -82,8 +94,16 @@ export interface ExecutionControllerConfig {
   readonly sourceRevision: string
 }
 
+export const legacyLifecycleDeactivationSchemaVersions = [
+  'bayn.restate-lifecycle-activation.v1',
+  'bayn.restate-lifecycle-deactivation.v1',
+] as const
+
+export type LegacyLifecycleDeactivationSchemaVersion = (typeof legacyLifecycleDeactivationSchemaVersions)[number]
+
 export interface LegacyLifecycleCutoverBinding {
   readonly controllerKey: string
+  readonly deactivationSchemaVersion: LegacyLifecycleDeactivationSchemaVersion
   readonly planHash: string
   readonly sourceRevision: string
 }
@@ -196,27 +216,52 @@ const authorizeBootstrap = (expectedHash: string, authorization: string | undefi
 const legacyLifecycleDeactivationIdempotencyKey = (
   config: ExecutionControllerConfig,
   binding: LegacyLifecycleCutoverBinding,
-): string => `bayn-native-cutover-${config.sourceRevision}-${binding.controllerKey}`
+): string =>
+  `bayn-native-cutover-${sha256(
+    ['bayn.native-cutover.v2', config.sourceRevision, binding.controllerKey, binding.deactivationSchemaVersion].join(
+      '\u0000',
+    ),
+  )}`
+
+const callLegacyLifecycleDeactivate = (
+  ctx: restate.Context,
+  config: ExecutionControllerConfig,
+  binding: LegacyLifecycleCutoverBinding,
+): Promise<unknown> => {
+  const common = {
+    service: 'BaynLifecycle',
+    method: 'deactivate',
+    key: binding.controllerKey,
+    outputSerde: legacyLifecycleStateSerde,
+    idempotencyKey: legacyLifecycleDeactivationIdempotencyKey(config, binding),
+  } as const
+  return binding.deactivationSchemaVersion === 'bayn.restate-lifecycle-activation.v1'
+    ? ctx.genericCall({
+        ...common,
+        parameter: {
+          schemaVersion: 'bayn.restate-lifecycle-activation.v1',
+          controllerKey: binding.controllerKey,
+        },
+        inputSerde: legacyLifecycleActivationSerde,
+      })
+    : ctx.genericCall({
+        ...common,
+        parameter: {
+          schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+          controllerKey: binding.controllerKey,
+          planHash: binding.planHash,
+          sourceRevision: binding.sourceRevision,
+        },
+        inputSerde: verifiedLegacyLifecycleDeactivationSerde,
+      })
+}
 
 const deactivateLegacyLifecycle = async (
   ctx: restate.Context,
   config: ExecutionControllerConfig,
   binding: LegacyLifecycleCutoverBinding,
 ): Promise<void> => {
-  const candidate: unknown = await ctx.genericCall({
-    service: 'BaynLifecycle',
-    method: 'deactivate',
-    key: binding.controllerKey,
-    parameter: {
-      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
-      controllerKey: binding.controllerKey,
-      planHash: binding.planHash,
-      sourceRevision: binding.sourceRevision,
-    },
-    inputSerde: legacyLifecycleDeactivationSerde,
-    outputSerde: legacyLifecycleStateSerde,
-    idempotencyKey: legacyLifecycleDeactivationIdempotencyKey(config, binding),
-  })
+  const candidate = await callLegacyLifecycleDeactivate(ctx, config, binding)
   const state = decodeOrTerminal(
     decodeRestateLifecycleState(candidate),
     'legacy lifecycle deactivation returned invalid state',
