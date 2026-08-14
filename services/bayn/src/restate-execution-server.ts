@@ -2,7 +2,7 @@ import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Redacted, Schema } from 'effect'
 
 import { loadApplicationPlan } from './application-plan'
 import type { ApplicationPlan, ApplicationPlanFor } from './app'
@@ -25,16 +25,18 @@ export class RestateExecutionServerError extends Data.TaggedError('RestateExecut
   readonly cause?: unknown
 }> {}
 
-const executionServerConfig = Config.all({
+export const restateExecutionServerConfig = Config.all({
   bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   legacyControllerKey: Config.nonEmptyString('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY').pipe(
     Config.withDefault('primary'),
   ),
-  legacyPlanHash: Config.option(
-    Config.schema(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)), 'BAYN_LEGACY_LIFECYCLE_PLAN_HASH'),
+  legacyPlanHash: Config.schema(
+    Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+    'BAYN_LEGACY_LIFECYCLE_PLAN_HASH',
   ),
-  legacySourceRevision: Config.option(
-    Config.schema(Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)), 'BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION'),
+  legacySourceRevision: Config.schema(
+    Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+    'BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION',
   ),
   port: Config.port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
@@ -74,32 +76,12 @@ export const makeRestateExecutionEndpointHandler = (
   return restate.createEndpointHandler({ services: [controller, bootstrap], identityKeys: [...identityKeys] })
 }
 
-export const resolveLegacyCutoverBinding = (
-  controllerKey: string,
-  planHash: Option.Option<string>,
-  sourceRevision: Option.Option<string>,
-): Result.Result<LegacyLifecycleCutoverBinding | undefined, RestateExecutionServerError> => {
-  const decodedPlanHash = Option.getOrUndefined(planHash)
-  const decodedSourceRevision = Option.getOrUndefined(sourceRevision)
-  if (decodedPlanHash === undefined && decodedSourceRevision === undefined) {
-    return Result.succeed(undefined)
-  }
-  if (decodedPlanHash === undefined || decodedSourceRevision === undefined) {
-    return Result.fail(
-      new RestateExecutionServerError({
-        message: 'legacy Restate lifecycle cutover requires both plan hash and source revision',
-      }),
-    )
-  }
-  return Result.succeed({ controllerKey, planHash: decodedPlanHash, sourceRevision: decodedSourceRevision })
-}
-
 export const restateExecutionServerProgram = Effect.gen(function* () {
   const [
     { bootstrapToken, legacyControllerKey, legacyPlanHash, legacySourceRevision, port, requestIdentityKeys },
     plan,
   ] = yield* Effect.all([
-    executionServerConfig,
+    restateExecutionServerConfig,
     loadApplicationPlan.pipe(Effect.flatMap(requireAutonomousApplicationPlan)),
   ])
   const bootstrapAuthorizationHash = yield* Effect.fromResult(
@@ -122,9 +104,11 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const legacyCutover = yield* Effect.fromResult(
-    resolveLegacyCutoverBinding(legacyControllerKey, legacyPlanHash, legacySourceRevision),
-  )
+  const legacyCutover: LegacyLifecycleCutoverBinding = {
+    controllerKey: legacyControllerKey,
+    planHash: legacyPlanHash,
+    sourceRevision: legacySourceRevision,
+  }
   const { config, runtime } = yield* acquireNativeExecutionRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
