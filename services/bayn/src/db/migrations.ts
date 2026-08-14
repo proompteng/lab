@@ -41,6 +41,7 @@ import accountNeutralCapitalGrants from '../../migrations/0038_account_neutral_c
 import accountNeutralAuthorityTerminalization from '../../migrations/0039_account_neutral_authority_terminalization'
 import executionControllerStatus from '../../migrations/0040_execution_controller_status'
 import executionControllerActiveStatus from '../../migrations/0041_execution_controller_active_status'
+import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -84,4 +85,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '39_account_neutral_authority_terminalization': accountNeutralAuthorityTerminalization,
   '40_execution_controller_status': executionControllerStatus,
   '41_execution_controller_active_status': executionControllerActiveStatus,
+  '42_execution_controller_plan_status': executionControllerPlanStatus,
 })

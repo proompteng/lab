@@ -133,6 +133,9 @@ export const runtimeConfigSource = Config.all({
   lifecyclePreviousSourceRevision: Config.option(
     Config.schema(SourceRevision, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'),
   ),
+  expectedExecutionControllerPlanHash: Config.option(
+    Config.schema(Sha256Schema, 'BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH'),
+  ),
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
@@ -199,6 +202,7 @@ export const runtimeConfigSource = Config.all({
       lifecycleCommandPort: config.lifecycleCommandPort,
       lifecycleControllerKey: config.lifecycleControllerKey,
       lifecyclePreviousSourceRevision: Option.getOrUndefined(config.lifecyclePreviousSourceRevision),
+      expectedExecutionControllerPlanHash: Option.getOrUndefined(config.expectedExecutionControllerPlanHash),
       cycleStallThresholdMs: config.cycleStallThresholdMs,
       reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
       unknownMutationThresholdMs: config.unknownMutationThresholdMs,

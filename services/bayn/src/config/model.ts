@@ -33,6 +33,7 @@ export interface RuntimeConfig {
   readonly lifecycleCommandPort?: number
   readonly lifecycleControllerKey?: string
   readonly lifecyclePreviousSourceRevision?: string | undefined
+  readonly expectedExecutionControllerPlanHash?: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
@@ -155,6 +156,7 @@ export interface ParsedRuntimeConfig {
   readonly lifecycleCommandPort: number
   readonly lifecycleControllerKey: string
   readonly lifecyclePreviousSourceRevision: string | undefined
+  readonly expectedExecutionControllerPlanHash?: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number

@@ -88,10 +88,12 @@ import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
+  readOnlyExecutionControllerBinding,
   readOnlyCycleObservationId,
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
 } from './composition/read-only-status'
+import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
@@ -749,6 +751,25 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
   })
 
+  test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
+    const expectedWorkerPlanHash = hash('7')
+    const statusPlan = {
+      ...continuationApplicationPlan,
+      config: {
+        ...continuationApplicationPlan.config,
+        expectedExecutionControllerPlanHash: expectedWorkerPlanHash,
+      },
+    }
+    const localPlan = Result.getOrThrow(executionControllerConfig(statusPlan))
+
+    expect(localPlan.planHash).not.toBe(expectedWorkerPlanHash)
+    expect(readOnlyExecutionControllerBinding(statusPlan)).toEqual({
+      controllerKey: continuationBrokerIdentity.identityHash,
+      planHash: expectedWorkerPlanHash,
+    })
+    expect(readOnlyExecutionControllerBinding(continuationApplicationPlan)).toBeUndefined()
+  })
+
   test('projects an exact active generation without calling any authority mutation', async () => {
     const state = await Effect.runPromise(
       Ref.make(
@@ -823,6 +844,58 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       capitalActivation: { _tag: 'Pending', requestHash: null, reason: 'REQUEST_INVALID' },
+      broker: {
+        executionEligible: false,
+        executionDisabledReason: 'CAPITAL_ACTIVATION_NOT_PREPARED',
+      },
+    })
+  })
+
+  test('times out a stalled durable capital projection before the next health pass', async () => {
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: true,
+            executionDisabledReason: null,
+          },
+        }),
+      ),
+    )
+    const started = await Effect.runPromise(Deferred.make<void>())
+    const timedPlan = {
+      ...continuationApplicationPlan,
+      config: { ...continuationApplicationPlan.config, operationTimeoutMs: 10 },
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const refresh = refreshReadOnlyCapitalActivation(
+          timedPlan,
+          Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+          state,
+          {
+            authority: {
+              ensureAuthorityGeneration: () => Effect.die(new Error('read-only status must not mutate authority')),
+              readAuthorityState: Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            },
+            readReceiptHash: () => Effect.die(new Error('stalled authority read must not inspect a receipt')),
+          },
+        )
+        const fiber = yield* refresh.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(10)
+        yield* Fiber.join(fiber)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      capitalActivation: {
+        _tag: 'Pending',
+        requestHash: continuationRequest.requestHash,
+        reason: 'PREPARATION_FAILED',
+      },
       broker: {
         executionEligible: false,
         executionDisabledReason: 'CAPITAL_ACTIVATION_NOT_PREPARED',

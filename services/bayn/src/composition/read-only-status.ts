@@ -21,7 +21,6 @@ import { initialState, type RuntimeState } from '../runtime-state'
 import { runStartup } from '../startup'
 import { currentUtcInstant } from '../time'
 import { runtimeBroker } from './lifecycle'
-import { executionControllerConfig } from './native-execution-runtime'
 import {
   capitalActivationOperationalError,
   capitalActivationRequestIsCurrent,
@@ -90,8 +89,15 @@ export const refreshReadOnlyCapitalActivation = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   state: Ref.Ref<RuntimeState>,
   store: ReadOnlyCapitalActivationStore,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
+): Effect.Effect<void> => {
+  const publishUnavailable = (reason: string): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
+      yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
+      yield* logActivationUnavailable(reason)
+    })
+
+  return Effect.gen(function* () {
     if (Result.isFailure(configured)) {
       yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
       return yield* logActivationUnavailable('REQUEST_INVALID')
@@ -140,15 +146,14 @@ export const refreshReadOnlyCapitalActivation = (
       isResearchCapitalActivationRequest(request) ? 'Research' : 'Qualified',
     )
   }).pipe(
-    Effect.catch(() =>
-      Effect.gen(function* () {
-        const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
-        yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
-        yield* logActivationUnavailable('DURABLE_PROJECTION_UNAVAILABLE')
-      }),
-    ),
+    Effect.timeoutOrElse({
+      duration: plan.config.operationTimeoutMs,
+      orElse: () => publishUnavailable('DURABLE_PROJECTION_TIMEOUT'),
+    }),
+    Effect.catch(() => publishUnavailable('DURABLE_PROJECTION_UNAVAILABLE')),
     Effect.withLogSpan('read-only-capital-projection'),
   )
+}
 
 export const refreshReadOnlyQualification = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -202,6 +207,18 @@ export const readOnlyCycleObservationId = (
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
 }
 
+export const readOnlyExecutionControllerBinding = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+): { readonly controllerKey: string; readonly planHash: string } | undefined => {
+  const planHash = plan.config.expectedExecutionControllerPlanHash
+  return planHash === undefined
+    ? undefined
+    : {
+        controllerKey: plan.config.alpaca.identity.identityHash,
+        planHash,
+      }
+}
+
 export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -218,8 +235,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       Result.isSuccess(configured) &&
       configured.success !== null &&
       isResearchCapitalActivationRequest(configured.success.request)
-    const controller = yield* Effect.fromResult(executionControllerConfig(plan))
-    const controllerKey = controller.controllerKey
+    const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
         broker: {
@@ -229,10 +245,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
         },
         autonomousCycleLoopConfigured: true,
         autonomousCycleLoopOwner: 'Restate',
-        executionController: {
-          controllerKey,
-          planHash: controller.planHash,
-        },
+        ...(controller === undefined ? {} : { executionController: controller }),
       }),
     )
     const dependencies = { marketData, journal, evidenceStore, cycleObservability }
@@ -258,7 +271,9 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
           undefined,
           readOnlyCycleObservationId(configured, observePlan.config.qualificationRunId),
           !researchActivation,
-          { controllerKey, read: controllerStatus.read },
+          controller === undefined
+            ? undefined
+            : { controllerKey: controller.controllerKey, read: controllerStatus.read },
         ),
       ),
     )

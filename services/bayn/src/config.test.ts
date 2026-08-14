@@ -22,6 +22,7 @@ const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 const imageDigest = `sha256:${'b'.repeat(64)}`
 const authorityGenerationHash = '1'.repeat(64)
 const persistedCapitalGrantHash = '2'.repeat(64)
+const expectedExecutionControllerPlanHash = '6'.repeat(64)
 const buildMetadata: EmbeddedBuildMetadata = {
   sourceRevision,
   imageRepository,
@@ -90,6 +91,7 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   lifecycleCommandPort: 8081,
   lifecycleControllerKey: 'primary',
   lifecyclePreviousSourceRevision: undefined,
+  expectedExecutionControllerPlanHash,
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
@@ -647,6 +649,7 @@ const runtimeEnvironment = new Map([
   ['BAYN_ALPACA_SECRET_KEY', 'sandbox-secret'],
   ['BAYN_QUALIFICATION_RUN_ID', qualificationRunId],
   ['BAYN_OPERATION', 'PAPER_CANDIDATE_DISCOVERY'],
+  ['BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', expectedExecutionControllerPlanHash],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
@@ -673,6 +676,7 @@ describe('runtime configuration loading', () => {
 
     expect(config).toMatchObject({
       runtimeMode: 'ExecutionCandidateDiscovery',
+      expectedExecutionControllerPlanHash,
       execution: {
         brokerAccess: BrokerAccess.ReadOnly,
         capitalAuthority: { _tag: CapitalAuthorityKind.None },

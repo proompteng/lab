@@ -311,6 +311,7 @@ const baseConfig = (
   lifecycleCommandPort: parsed.lifecycleCommandPort,
   lifecycleControllerKey: parsed.lifecycleControllerKey,
   lifecyclePreviousSourceRevision: parsed.lifecyclePreviousSourceRevision,
+  expectedExecutionControllerPlanHash: parsed.expectedExecutionControllerPlanHash,
   cycleStallThresholdMs: parsed.cycleStallThresholdMs,
   reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
   unknownMutationThresholdMs: parsed.unknownMutationThresholdMs,
