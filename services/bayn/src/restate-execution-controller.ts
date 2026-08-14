@@ -98,6 +98,7 @@ export interface NativeExecutionRuntime {
     message: string,
     annotations: Readonly<Record<string, string | number | boolean>>,
   ) => Promise<void>
+  readonly projectState: (controllerKey: string, state: ExecutionControllerState, signal: AbortSignal) => Promise<void>
 }
 
 const writeRuntimeLog = (
@@ -139,6 +140,12 @@ const verifyActivationBinding = (
     request.sourceRevision !== config.sourceRevision
   ) {
     throw terminal('execution controller request does not match this immutable deployment')
+  }
+}
+
+const verifyBootstrapBinding = (config: ExecutionControllerConfig, request: ExecutionControllerBootstrap): void => {
+  if (request.controllerKey !== config.controllerKey || request.sourceRevision !== config.sourceRevision) {
+    throw terminal('execution controller bootstrap does not match this immutable deployment')
   }
 }
 
@@ -218,12 +225,13 @@ const deactivateLegacyLifecycle = async (
 export const bindBootstrapActivation = (
   state: ExecutionControllerState | null,
   request: ExecutionControllerBootstrap,
+  config: ExecutionControllerConfig,
 ): ExecutionControllerActivation => ({
   schemaVersion: 'bayn.execution-controller-activation.v1',
   controllerKey: request.controllerKey,
   epoch: state?.epoch ?? 1,
   firstSequence: state === null ? 0 : state.active ? state.initialSequence : state.nextSequence,
-  planHash: request.planHash,
+  planHash: config.planHash,
   sourceRevision: request.sourceRevision,
 })
 
@@ -391,6 +399,11 @@ export const makeBaynExecutionController = (
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           if (decision._tag === 'Deactivated') {
+            await ctx.run(
+              'project Bayn execution controller deactivation',
+              () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
+              executionControllerAdvanceRunOptions,
+            )
             ctx.set(stateKey, decision.state)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller deactivated', {
               controllerKey: ctx.key,
@@ -436,7 +449,7 @@ export const makeBaynExecutionBootstrap = (
             decodeExecutionControllerBootstrap(candidate),
             'execution controller bootstrap failed validation',
           )
-          verifyActivationBinding(config, request.controllerKey, request)
+          verifyBootstrapBinding(config, request)
           authorizeBootstrap(authorizationHash, ctx.request().headers.get('authorization'))
           const client = ctx.objectClient(controller, config.controllerKey)
           const state = await client.status(undefined)
@@ -450,7 +463,7 @@ export const makeBaynExecutionBootstrap = (
           if (legacyCutover !== undefined && (state === null || !state.active)) {
             await deactivateLegacyLifecycle(ctx, config, legacyCutover)
           }
-          return client.activate(bindBootstrapActivation(state, request))
+          return client.activate(bindBootstrapActivation(state, request, config))
         },
       ),
     },

@@ -16,6 +16,7 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const StatusRow = Schema.Struct({
   controller_key: LifecycleControllerKeySchema,
+  active: Schema.Boolean,
   epoch: Schema.BigIntFromString,
   last_sequence: Schema.BigIntFromString,
   last_outcome: Schema.Enum(ExecutionControllerOutcome),
@@ -58,6 +59,7 @@ const statusFromRow = (
   )({
     schemaVersion: 1,
     controllerKey: row.controller_key,
+    active: row.active,
     epoch,
     lastSequence,
     lastOutcome: row.last_outcome,
@@ -71,6 +73,7 @@ const selectStatus = (sql: PgClient.PgClient, controllerKey: string) =>
   sql<Record<string, unknown>>`
     SELECT
       controller_key,
+      active,
       epoch,
       last_sequence,
       last_outcome,
@@ -102,6 +105,7 @@ const read = (
 
 const sameStatus = (left: ExecutionControllerStatus, right: ExecutionControllerStatus): boolean =>
   left.controllerKey === right.controllerKey &&
+  left.active === right.active &&
   left.epoch === right.epoch &&
   left.lastSequence === right.lastSequence &&
   left.lastOutcome === right.lastOutcome &&
@@ -121,6 +125,7 @@ const project = (
       sql<Record<string, unknown>>`
         INSERT INTO execution_controller_status (
           controller_key,
+          active,
           epoch,
           last_sequence,
           last_outcome,
@@ -129,6 +134,7 @@ const project = (
           next_due_at
         ) VALUES (
           ${status.controllerKey},
+          ${status.active},
           ${status.epoch},
           ${status.lastSequence},
           ${status.lastOutcome},
@@ -137,6 +143,7 @@ const project = (
           ${status.nextDueAt ?? null}
         )
         ON CONFLICT (controller_key) DO UPDATE SET
+          active = EXCLUDED.active,
           epoch = EXCLUDED.epoch,
           last_sequence = EXCLUDED.last_sequence,
           last_outcome = EXCLUDED.last_outcome,

@@ -40,6 +40,7 @@ import accountNeutralRuntimeCompatibility from '../../migrations/0037_account_ne
 import accountNeutralCapitalGrants from '../../migrations/0038_account_neutral_capital_grants'
 import accountNeutralAuthorityTerminalization from '../../migrations/0039_account_neutral_authority_terminalization'
 import executionControllerStatus from '../../migrations/0040_execution_controller_status'
+import executionControllerActiveStatus from '../../migrations/0041_execution_controller_active_status'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -82,4 +83,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '38_account_neutral_capital_grants': accountNeutralCapitalGrants,
   '39_account_neutral_authority_terminalization': accountNeutralAuthorityTerminalization,
   '40_execution_controller_status': executionControllerStatus,
+  '41_execution_controller_active_status': executionControllerActiveStatus,
 })

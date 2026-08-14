@@ -76,6 +76,7 @@ import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { loadObserveRiskPolicy, executionEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
+import { refreshReadOnlyCapitalActivation } from './composition/read-only-status'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { fixtureProtocol } from './test-fixtures'
@@ -645,6 +646,81 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn capital startup recovery boundary', () => {
+  test('projects an exact active generation without calling any authority mutation', async () => {
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: false,
+            executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+          },
+          autonomousCycleLoopConfigured: true,
+          autonomousCycleLoopOwner: 'Restate',
+          executionControllerKey: continuationBrokerIdentity.identityHash,
+        }),
+      ),
+    )
+
+    await Effect.runPromise(
+      refreshReadOnlyCapitalActivation(
+        continuationApplicationPlan,
+        Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+        state,
+        {
+          authority: continuationAuthorityStore(),
+          readReceiptHash: () => Effect.die(new Error('active generation must not read a completed receipt')),
+        },
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      capitalActivation: {
+        _tag: 'Realized',
+        requestHash: continuationRequest.requestHash,
+        generationHash: continuationGeneration.generationHash,
+        grant: 'Research',
+      },
+      broker: { executionEligible: true, executionDisabledReason: null },
+    })
+  })
+
+  test('fails closed on invalid activation configuration before durable reads', async () => {
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: false,
+            executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+          },
+          autonomousCycleLoopConfigured: true,
+          autonomousCycleLoopOwner: 'Restate',
+          executionControllerKey: continuationBrokerIdentity.identityHash,
+        }),
+      ),
+    )
+    const unreachable = Effect.die(new Error('invalid activation must not access durable authority'))
+
+    await Effect.runPromise(
+      refreshReadOnlyCapitalActivation(continuationApplicationPlan, Result.fail('invalid'), state, {
+        authority: {
+          ensureAuthorityGeneration: () => unreachable,
+          readAuthorityState: unreachable,
+        },
+        readReceiptHash: () => unreachable,
+      }),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      capitalActivation: { _tag: 'Pending', requestHash: null, reason: 'REQUEST_INVALID' },
+      broker: {
+        executionEligible: false,
+        executionDisabledReason: 'CAPITAL_ACTIVATION_NOT_PREPARED',
+      },
+    })
+  })
+
   test('starts OBSERVE cycles from the persisted successor and never from stale PAPER authority', () => {
     const successorGenerationHash = Result.getOrThrow(
       executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: hash('12') }),

@@ -8,7 +8,11 @@ import {
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
-import { decodeExecutionAdvanceStepResult, type ExecutionAdvanceStepResult } from '../execution/controller'
+import {
+  decodeExecutionAdvanceStepResult,
+  type ExecutionAdvanceStepResult,
+  type ExecutionControllerState,
+} from '../execution/controller'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   type RecoveryFirstCycleAdvance,
@@ -177,6 +181,39 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
 const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
   outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
 
+const persistControllerStatus = (
+  statusStore: ExecutionControllerStatusStoreShape,
+  status: ExecutionControllerStatus,
+): Effect.Effect<void, TransientExecutionFailure> =>
+  statusStore.project(status).pipe(
+    Effect.flatMap((projection) =>
+      projection._tag === 'Stale'
+        ? Effect.fail(projectionFailure('controller status rejected a stale execution projection'))
+        : Effect.void,
+    ),
+    Effect.mapError(projectionFailure),
+  )
+
+export const projectExecutionControllerState = (
+  controllerKey: string,
+  state: ExecutionControllerState,
+  statusStore: ExecutionControllerStatusStoreShape,
+): Effect.Effect<void, TransientExecutionFailure> => {
+  const completion = state.lastCompletion
+  if (completion === undefined) return Effect.void
+  return persistControllerStatus(statusStore, {
+    schemaVersion: 1,
+    controllerKey,
+    active: state.active,
+    epoch: state.epoch,
+    lastSequence: completion.sequence,
+    lastOutcome: completion.outcome,
+    lastReceiptHash: completion.receiptHash,
+    completedAt: completion.completedAt,
+    ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+  })
+}
+
 const replayProjectedAdvance = (
   command: AdvanceExecutionCommand,
   status: ExecutionControllerStatus | null,
@@ -235,6 +272,7 @@ const advanceAndProject = (
         .project({
           schemaVersion: 1,
           controllerKey: command.controllerKey,
+          active: true,
           epoch: command.epoch,
           lastSequence: command.sequence,
           lastOutcome: controllerOutcome(outcome._tag),
@@ -293,6 +331,8 @@ export const makeNativeExecutionRuntimeAdapter = (
       { signal },
     ),
   log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
+  projectState: (controllerKey, state, signal) =>
+    runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
 })
 
 const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, slot: RecoveryFirstCycleDriverSlot) =>
@@ -374,12 +414,27 @@ const runManagedNativeExecutionAdvance = <R, E>(
     { signal },
   )
 
+const runManagedControllerStateProjection = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  controllerKey: string,
+  state: ExecutionControllerState,
+  signal: AbortSignal,
+): Promise<void> =>
+  executionRunner.runPromise(
+    ExecutionControllerStatusStore.pipe(
+      Effect.flatMap((statusStore) => projectExecutionControllerState(controllerKey, state, statusStore)),
+    ),
+    { signal },
+  )
+
 export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
   executionRunner: NativeExecutionManagedRuntime<R, E>,
   logRunner: ExecutionEffectRunner,
 ): NativeExecutionRuntime => ({
   advance: (command, signal) => runManagedNativeExecutionAdvance(executionRunner, command, signal),
   log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
+  projectState: (controllerKey, state, signal) =>
+    runManagedControllerStateProjection(executionRunner, controllerKey, state, signal),
 })
 
 const ownManagedRuntime = <R, E>(
@@ -418,6 +473,8 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E>(
         )
     },
     log: (level, message, annotations) => hostRunner.runPromise(logEffect(level, message, annotations)),
+    projectState: (controllerKey, state, signal) =>
+      runManagedControllerStateProjection(ScopedRef.getUnsafe(executionRuntimes), controllerKey, state, signal),
   }
 }
 

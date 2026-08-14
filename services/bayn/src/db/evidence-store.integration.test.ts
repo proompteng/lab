@@ -1230,6 +1230,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 38, name: 'account_neutral_capital_grants' },
       { migration_id: 39, name: 'account_neutral_authority_terminalization' },
       { migration_id: 40, name: 'execution_controller_status' },
+      { migration_id: 41, name: 'execution_controller_active_status' },
     ])
   })
 

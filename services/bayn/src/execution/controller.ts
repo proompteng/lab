@@ -23,7 +23,6 @@ export type ExecutionControllerActivation = typeof ExecutionControllerActivation
 export const ExecutionControllerBootstrapSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v1'),
   controllerKey: Sha256Schema,
-  planHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
 })
 export type ExecutionControllerBootstrap = typeof ExecutionControllerBootstrapSchema.Type

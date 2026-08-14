@@ -1,0 +1,256 @@
+import { PgClient } from '@effect/sql-pg'
+import { Effect, Option, Ref, Result, Schedule } from 'effect'
+
+import { makeApplicationPlan, type ApplicationPlanFor } from '../app'
+import { BrokerSession } from '../broker/alpaca'
+import type { LoadedRuntimeConfig } from '../config'
+import { CycleObservability } from '../cycle/store'
+import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
+import { EvidenceStore } from '../db/evidence-store'
+import type { AuthorityGenerationStoreShape } from '../db/execution-store'
+import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
+import { ExecutionControllerStatusStore } from '../execution/controller-status'
+import { BrokerAccess } from '../execution/authority'
+import { isResearchCapitalActivationRequest } from '../execution/configuration'
+import { checkHealth } from '../health'
+import { serveHttp } from '../http'
+import { Journal } from '../ledger'
+import { MarketData } from '../market-data'
+import { initialState, type RuntimeState } from '../runtime-state'
+import { runStartup } from '../startup'
+import { currentUtcInstant } from '../time'
+import { runtimeBroker } from './lifecycle'
+import {
+  capitalActivationOperationalError,
+  capitalActivationRequestIsCurrent,
+  completedCapitalActivation,
+  decodeConfiguredCapitalActivation,
+  pendingCapitalActivation,
+  readBoundCapitalActivationGeneration,
+  readCompletedExecutionLifecycle,
+  readOnlyExecutionPolicy,
+  realizedCapitalActivation,
+  type ConfiguredCapitalActivation,
+} from './capital-activation'
+
+const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): ApplicationPlanFor<'AutonomousService'> => {
+  const config = {
+    ...plan.config,
+    execution: readOnlyExecutionPolicy(plan),
+  } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+  return makeApplicationPlan({
+    config,
+    protocol: plan.protocol,
+    parameterHash: plan.parameterHash,
+    strategy: plan.strategy,
+    strategyProtocolHash: plan.strategyProtocolHash,
+  }) as ApplicationPlanFor<'AutonomousService'>
+}
+
+const configuredCapitalActivation = (
+  serialized: string | undefined,
+): Result.Result<ConfiguredCapitalActivation | null, string> =>
+  serialized === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serialized)
+
+const readReceiptHash = (sql: PgClient.PgClient, authorityGenerationHash: string) =>
+  readForwardPerformanceReceiptByGeneration(sql, authorityGenerationHash).pipe(
+    Effect.map(Option.map((receipt) => receipt.receiptHash)),
+    Effect.mapError((cause) =>
+      capitalActivationOperationalError('completed execution lifecycle receipt read failed', cause),
+    ),
+  )
+
+export interface ReadOnlyCapitalActivationStore {
+  readonly authority: AuthorityGenerationStoreShape
+  readonly readReceiptHash: (authorityGenerationHash: string) => ReturnType<typeof readReceiptHash>
+}
+
+const makeReadOnlyCapitalActivationStore = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  sql: PgClient.PgClient,
+): ReadOnlyCapitalActivationStore => ({
+  authority: makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), plan.config.alpaca.identity),
+  readReceiptHash: (generationHash) => readReceiptHash(sql, generationHash),
+})
+
+const logActivationUnavailable = (reason: string): Effect.Effect<void> =>
+  Effect.logWarning('Bayn read-only capital projection remains unavailable').pipe(
+    Effect.annotateLogs({
+      service: 'bayn',
+      component: 'capital-activation',
+      mode: 'read-only-status',
+      reason,
+    }),
+  )
+
+export const refreshReadOnlyCapitalActivation = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  state: Ref.Ref<RuntimeState>,
+  store: ReadOnlyCapitalActivationStore,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (Result.isFailure(configured)) {
+      yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
+      return yield* logActivationUnavailable('REQUEST_INVALID')
+    }
+    if (configured.success === null) {
+      if (plan.config.execution.brokerAccess === BrokerAccess.Mutation) {
+        yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
+        yield* logActivationUnavailable('REQUEST_MISSING')
+      }
+      return
+    }
+
+    const observePlan = readOnlyPlan(plan)
+    const { request, buildContinuation } = configured.success
+    const current = yield* Ref.get(state)
+    const observedAt = yield* currentUtcInstant
+    const currentRequest = capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
+      allowCloseRecovery: true,
+      buildContinuation,
+    })
+    if (Result.isFailure(currentRequest)) {
+      yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
+      return yield* logActivationUnavailable('REQUEST_NOT_CURRENT')
+    }
+
+    const completed = yield* readCompletedExecutionLifecycle(
+      observePlan,
+      request,
+      buildContinuation,
+      store.authority,
+      store.readReceiptHash,
+    )
+    if (completed !== undefined) {
+      return yield* completedCapitalActivation(state, request, completed.authorityGenerationHash, completed.receiptHash)
+    }
+    const generation = yield* readBoundCapitalActivationGeneration(
+      observePlan,
+      request,
+      buildContinuation,
+      store.authority,
+    )
+    yield* realizedCapitalActivation(
+      state,
+      request,
+      generation.generationHash,
+      isResearchCapitalActivationRequest(request) ? 'Research' : 'Qualified',
+    )
+  }).pipe(
+    Effect.catch(() =>
+      Effect.gen(function* () {
+        const request = Result.isSuccess(configured) ? (configured.success?.request ?? null) : null
+        yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
+        yield* logActivationUnavailable('DURABLE_PROJECTION_UNAVAILABLE')
+      }),
+    ),
+    Effect.withLogSpan('read-only-capital-projection'),
+  )
+
+const recoverPinnedQualification = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  state: Ref.Ref<RuntimeState>,
+  dependencies: {
+    readonly marketData: import('../market-data').MarketDataService
+    readonly journal: import('../ledger').JournalService
+    readonly evidenceStore: import('../db/evidence-store').EvidenceStoreService
+  },
+): Effect.Effect<void> => {
+  if (
+    Result.isFailure(configured) ||
+    configured.success === null ||
+    isResearchCapitalActivationRequest(configured.success.request)
+  ) {
+    return Effect.void
+  }
+  const runId = configured.success.request.qualification.runId
+  const request = configured.success.request
+  if (plan.config.qualificationRunId !== runId) {
+    return pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+      Effect.andThen(logActivationUnavailable('QUALIFICATION_BINDING_MISMATCH')),
+    )
+  }
+  return runStartup(plan.config, state, plan.strategy, dependencies).pipe(
+    Effect.catch(() =>
+      pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+        Effect.andThen(logActivationUnavailable('QUALIFICATION_EVIDENCE_UNAVAILABLE')),
+      ),
+    ),
+  )
+}
+
+const cycleObservationId = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  state: RuntimeState,
+  qualificationRunId: string | undefined,
+): string | undefined => {
+  if (Result.isFailure(configured) || configured.success === null) return qualificationRunId
+  const request = configured.success.request
+  if (state.capitalActivation?._tag === 'Completed') return state.capitalActivation.generationHash
+  return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
+}
+
+export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const marketData = yield* MarketData
+    const journal = yield* Journal
+    const evidenceStore = yield* EvidenceStore
+    const cycleObservability = yield* CycleObservability
+    const controllerStatus = yield* ExecutionControllerStatusStore
+    const brokerSession = yield* BrokerSession
+    const observePlan = readOnlyPlan(plan)
+    const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
+    const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
+    const researchActivation =
+      Result.isSuccess(configured) &&
+      configured.success !== null &&
+      isResearchCapitalActivationRequest(configured.success.request)
+    const controllerKey = plan.config.alpaca.identity.identityHash
+    const state = yield* Ref.make(
+      initialState({
+        broker: {
+          expectedAccountId: plan.config.alpaca.expectedAccountId,
+          executionEligible: false,
+          executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+        },
+        autonomousCycleLoopConfigured: true,
+        autonomousCycleLoopOwner: 'Restate',
+        executionControllerKey: controllerKey,
+      }),
+    )
+    const dependencies = { marketData, journal, evidenceStore, cycleObservability }
+    yield* recoverPinnedQualification(observePlan, configured, state, dependencies)
+    yield* refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)
+    yield* serveHttp(
+      observePlan.config,
+      state,
+      observePlan.strategy.provenance,
+      observePlan.config.build.verification,
+      evidenceStore.read,
+    )
+
+    const healthPass = refreshReadOnlyCapitalActivation(plan, configured, state, activationStore).pipe(
+      Effect.andThen(Ref.get(state)),
+      Effect.flatMap((current) =>
+        checkHealth(
+          observePlan.config,
+          state,
+          dependencies,
+          runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+          undefined,
+          cycleObservationId(configured, current, observePlan.config.qualificationRunId),
+          !researchActivation,
+          { controllerKey, read: controllerStatus.read },
+        ),
+      ),
+    )
+    yield* healthPass.pipe(
+      Effect.repeat(Schedule.spaced(observePlan.config.healthIntervalMs)),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    return yield* Effect.never
+  }).pipe(Effect.scoped)

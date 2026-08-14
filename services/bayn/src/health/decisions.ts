@@ -21,6 +21,7 @@ import type {
   BrokerConfiguration,
   BrokerStatus,
   DependencyHealth,
+  ExecutionControllerRuntimeStatus,
   RuntimeEvidence,
   RuntimeHealth,
   RuntimeState,
@@ -263,6 +264,8 @@ const publicCycleObservation = (
 const cycleLoopHealth = (
   previous: DependencyHealth,
   loop: AutonomousCycleLoopStatus,
+  controller: ExecutionControllerRuntimeStatus | undefined,
+  controllerResult: HealthProbeResults['executionController'],
   fiber: AutonomousCycleFiberObservation,
   clock: HealthProbeClock,
   stallThresholdMs: number,
@@ -274,12 +277,37 @@ const cycleLoopHealth = (
   if (!loop.configured) {
     return required ? unavailable('broker-configured Bayn runtime has no autonomous cycle loop') : available()
   }
+  if (loop.owner === 'Restate') {
+    if (controller === undefined || controllerResult === null || controllerResult === undefined) {
+      return unavailable('Restate lifecycle has no configured execution-controller projection')
+    }
+    if (controllerResult._tag === 'Unavailable') {
+      return unavailable(controllerResult.error)
+    }
+    const status = controllerResult.value
+    if (status === null) return unavailable('Restate lifecycle has not completed its first durable pass')
+    if (status.controllerKey !== controller.controllerKey) {
+      return unavailable('Restate execution-controller projection identity differs from the configured controller')
+    }
+    if (!status.active) return unavailable('Restate execution controller is durably inactive')
+    const completedAtMs = Date.parse(status.completedAt)
+    const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
+    if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
+      return unavailable('Restate execution-controller projection has an invalid completion schedule')
+    }
+    if (clock._tag === 'Unavailable') return previous
+    if (completedAtMs > clock.checkedAtMs) {
+      return unavailable('Restate execution-controller completion time is in the future')
+    }
+    const overdueMs = clock.checkedAtMs - nextDueAtMs
+    if (overdueMs >= stallThresholdMs) {
+      return unavailable(`Restate execution controller is overdue by ${overdueMs}ms`)
+    }
+    return available()
+  }
   if (fiber._tag === 'NotProvided') return unavailable('configured autonomous cycle loop has no scoped fiber')
   if (fiber._tag === 'ExitedSuccessfully') return unavailable('autonomous cycle loop exited unexpectedly')
   if (fiber._tag === 'ExitedWithFailure') return unavailable(`autonomous cycle loop failed: ${fiber.error}`)
-  if (loop.owner === 'Restate' && loop.lastPass === null) {
-    return unavailable('Restate lifecycle has not completed its first durable pass')
-  }
   if (loop.lastPass?.result === 'FAILURE') {
     return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
   }
@@ -294,6 +322,38 @@ const cycleLoopHealth = (
     return unavailable(`autonomous cycle loop has not completed a successful pass for ${ageMs}ms`)
   }
   return available()
+}
+
+const deriveExecutionControllerStatus = (
+  current: ExecutionControllerRuntimeStatus | undefined,
+  result: HealthProbeResults['executionController'],
+  checkedAt: string | null,
+): ExecutionControllerRuntimeStatus | undefined => {
+  if (current === undefined) return undefined
+  if (result === null || result === undefined) {
+    return {
+      ...current,
+      status: null,
+      readAvailable: false,
+      checkedAt,
+      error: 'execution controller status probe did not run',
+    }
+  }
+  return result._tag === 'Available'
+    ? {
+        ...current,
+        status: result.value,
+        readAvailable: true,
+        checkedAt,
+        error: null,
+      }
+    : {
+        ...current,
+        status: null,
+        readAvailable: false,
+        checkedAt,
+        error: result.error,
+      }
 }
 
 const deriveBrokerStatus = (
@@ -430,13 +490,22 @@ const deriveNextRuntimeState = (
   health: RuntimeHealth,
   cycle: CycleOperationsStatus,
   broker: BrokerStatus | null,
+  executionController: ExecutionControllerRuntimeStatus | undefined,
   failures: HealthFailureSummary,
 ): RuntimeState => {
-  if (!evidenceAvailable) return { ...current, health, cycle, broker }
+  const projected =
+    executionController === undefined
+      ? { ...current, health, cycle, broker }
+      : { ...current, health, cycle, broker, executionController }
+  if (!evidenceAvailable) return projected
   if (failures.messages.length === 0) {
-    return { ...current, status: 'READY', health, cycle, broker, error: null }
+    return { ...projected, status: 'READY', error: null }
   }
-  return { ...current, status: 'DEGRADED', health, cycle, broker, error: failures.messages.join('; ') }
+  return {
+    ...projected,
+    status: 'DEGRADED',
+    error: failures.messages.join('; '),
+  }
 }
 
 const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
@@ -453,6 +522,8 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
   const cycleRunner = cycleLoopHealth(
     current.health.dependencies.cycleRunner,
     current.autonomousCycleLoop,
+    current.executionController,
+    input.results.executionController,
     input.cycleFiber,
     input.clock,
     input.config.cycleStallThresholdMs,
@@ -461,9 +532,22 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
   const cycleObservation = publicCycleObservation(input.results.cycle)
   const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
+  const executionController = deriveExecutionControllerStatus(
+    current.executionController,
+    input.results.executionController,
+    checkedAt,
+  )
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
-  const next = deriveNextRuntimeState(current, input.evidenceAvailable, health, cycle, broker, failures)
+  const next = deriveNextRuntimeState(
+    current,
+    input.evidenceAvailable,
+    health,
+    cycle,
+    broker,
+    executionController,
+    failures,
+  )
   return {
     current,
     next,

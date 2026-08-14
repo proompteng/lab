@@ -31,6 +31,7 @@ import {
   makeRecoveringManagedNativeExecutionRuntimeAdapter,
   NativeExecutionRuntimeError,
   nativeExecutionRuntimeInitializationTimeoutMs,
+  projectExecutionControllerState,
   PublishedExecutionCycleDriver,
   readRecoveryFirstCycleDriverSlot,
   type BoundRecoveryFirstCycleDriver,
@@ -108,6 +109,7 @@ const driver = {
 const status = (overrides: Partial<ExecutionControllerStatus> = {}): ExecutionControllerStatus => ({
   schemaVersion: 1,
   controllerKey: command.controllerKey,
+  active: true,
   epoch: command.epoch,
   lastSequence: command.sequence,
   lastOutcome: ExecutionControllerOutcome.Blocked,
@@ -442,6 +444,45 @@ describe('native execution runtime', () => {
     expect(projected?.nextDueAt).toBe(
       new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
     )
+  })
+
+  test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
+    let projected: ExecutionControllerStatus | undefined
+    await Effect.runPromise(
+      projectExecutionControllerState(
+        command.controllerKey,
+        {
+          schemaVersion: 1,
+          active: false,
+          epoch: command.epoch + 1,
+          planHash: hash('3'),
+          sourceRevision,
+          initialSequence: command.sequence,
+          nextSequence: command.sequence + 1,
+          lastCompletion: {
+            sequence: command.sequence,
+            outcome: ExecutionControllerOutcome.Blocked,
+            receiptHash: hash('2'),
+            completedAt,
+          },
+        },
+        statusStore((candidate) => {
+          projected = candidate
+          return { _tag: 'Applied', status: candidate }
+        }),
+      ),
+    )
+
+    expect(projected).toEqual({
+      schemaVersion: 1,
+      controllerKey: command.controllerKey,
+      active: false,
+      epoch: command.epoch + 1,
+      lastSequence: command.sequence,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: hash('2'),
+      completedAt,
+    })
   })
 
   test('fails the Restate step when PostgreSQL has already advanced beyond this completion', async () => {

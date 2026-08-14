@@ -3,6 +3,7 @@ import type { RuntimeConfig } from '../config'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import type { CycleObservabilityShape } from '../cycle/store'
 import type { EvidenceStoreService, QualificationRecord } from '../db/evidence-store'
+import type { ExecutionControllerStatus, ExecutionControllerStatusStoreShape } from '../execution/controller-status'
 import type { CanonicalHashFailure } from '../hash'
 import type { JournalService } from '../ledger'
 import type { MarketDataService } from '../market-data'
@@ -25,6 +26,12 @@ export interface HealthProbeResults {
   readonly durableEvidence: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
   readonly broker: ProbeResult<BrokerHealthObservation> | null
+  readonly executionController?: ProbeResult<ExecutionControllerStatus | null> | null
+}
+
+export interface ExecutionControllerProbe {
+  readonly controllerKey: string
+  readonly read: ExecutionControllerStatusStoreShape['read']
 }
 
 export interface HealthDependencies {

@@ -21,6 +21,7 @@ import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import type { ExecutionPolicy } from './execution/configuration'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import { ExecutionControllerOutcome } from './execution/controller-status'
 import {
   CycleOperationsCondition,
   CycleOperationsReason,
@@ -382,6 +383,56 @@ describe('Bayn HTTP pure decisions', () => {
     )
     expect(restrictedMetrics).toContain('bayn_capital_activation_recovery_only 1')
     expect(restrictedMetrics).toContain('bayn_authority_effective{authority="observe"} 1')
+  })
+
+  test('publishes only bounded Restate controller identity, freshness, outcome, and timing', () => {
+    const controllerKey = 'f'.repeat(64)
+    const state: RuntimeState = {
+      ...readyState(),
+      executionController: {
+        configured: true,
+        controllerKey,
+        readAvailable: true,
+        checkedAt: '2026-08-13T19:00:00.000Z',
+        error: null,
+        status: {
+          schemaVersion: 1,
+          controllerKey,
+          active: true,
+          epoch: 3,
+          lastSequence: 17,
+          lastOutcome: ExecutionControllerOutcome.Blocked,
+          lastReceiptHash: 'e'.repeat(64),
+          completedAt: '2026-08-13T18:59:00.000Z',
+          nextDueAt: '2026-08-13T19:04:00.000Z',
+        },
+      },
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    expect(facts.executionController).toEqual({
+      configured: true,
+      controllerKeyHash: controllerKey,
+      readAvailable: true,
+      checkedAt: '2026-08-13T19:00:00.000Z',
+      status: {
+        active: true,
+        epoch: 3,
+        lastSequence: 17,
+        lastOutcome: ExecutionControllerOutcome.Blocked,
+        lastReceiptHash: 'e'.repeat(64),
+        completedAt: '2026-08-13T18:59:00.000Z',
+        nextDueAt: '2026-08-13T19:04:00.000Z',
+      },
+      reasonCode: null,
+    })
+    const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+    expect(metrics).toContain('bayn_execution_controller_configured 1')
+    expect(metrics).toContain('bayn_execution_controller_read_available 1')
+    expect(metrics).toContain('bayn_execution_controller_last_outcome{outcome="blocked"} 1')
+    expect(metrics).toContain('bayn_execution_controller_epoch 3')
+    expect(metrics).toContain('bayn_execution_controller_last_sequence 17')
+    expect(metrics).not.toContain(controllerKey)
   })
 
   test('covers every readiness decision branch without mutating runtime facts', () => {

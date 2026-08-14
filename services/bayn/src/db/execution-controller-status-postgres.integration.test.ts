@@ -62,6 +62,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
     const initial = {
       schemaVersion: 1 as const,
       controllerKey: 'primary',
+      active: true,
       epoch: 3,
       lastSequence: 8,
       lastOutcome: ExecutionControllerOutcome.Blocked,

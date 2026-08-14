@@ -20,7 +20,7 @@ const storeError = (
 ): ForwardPerformanceReceiptStoreError =>
   new ForwardPerformanceReceiptStoreError({ operation, failure, message, cause })
 
-const readByGeneration = (
+export const readForwardPerformanceReceiptByGeneration = (
   sql: PgClient.PgClient,
   authorityGenerationHash: string,
 ): Effect.Effect<Option.Option<ForwardPerformanceReceiptEnvelope>, ForwardPerformanceReceiptStoreError> =>
@@ -59,7 +59,7 @@ const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const fence = yield* WriterFence
   const store: ForwardPerformanceReceiptStoreShape = {
-    read: (authorityGenerationHash) => readByGeneration(sql, authorityGenerationHash),
+    read: (authorityGenerationHash) => readForwardPerformanceReceiptByGeneration(sql, authorityGenerationHash),
     bind: (envelope) =>
       fence
         .transaction(
@@ -78,7 +78,7 @@ const makeStore = Effect.gen(function* () {
             )
             ON CONFLICT (authority_generation_hash) DO NOTHING
           `
-            const stored = yield* readByGeneration(sql, envelope.authorityGenerationHash)
+            const stored = yield* readForwardPerformanceReceiptByGeneration(sql, envelope.authorityGenerationHash)
             if (Option.isNone(stored)) {
               return yield* storeError(
                 'bind',

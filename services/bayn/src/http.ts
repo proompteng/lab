@@ -144,7 +144,8 @@ const publicDependencies = (state: RuntimeState) => ({
 const autonomousCycleCadenceFreshness = (state: RuntimeState): AutonomousCycleCadenceFreshness => {
   const dependency = state.health.dependencies.cycleRunner
   if (dependency.status === 'AVAILABLE') return 'AVAILABLE'
-  return dependency.error?.startsWith('autonomous cycle loop has not completed a successful pass for ') === true
+  return dependency.error?.startsWith('autonomous cycle loop has not completed a successful pass for ') === true ||
+    dependency.error?.startsWith('Restate execution controller is overdue by ') === true
     ? 'STALE'
     : 'UNAVAILABLE'
 }
@@ -185,6 +186,45 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               failure: lastPass.failure,
               reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
             },
+  } as const
+}
+
+const publicExecutionController = (state: RuntimeState) => {
+  const controller = state.executionController
+  if (controller === undefined) {
+    return {
+      configured: false,
+      controllerKeyHash: null,
+      readAvailable: false,
+      checkedAt: null,
+      status: null,
+      reasonCode: 'EXECUTION_CONTROLLER_NOT_CONFIGURED',
+    } as const
+  }
+  const reasonCode =
+    controller.readAvailable === false
+      ? 'EXECUTION_CONTROLLER_STATUS_UNAVAILABLE'
+      : controller.status === null
+        ? 'EXECUTION_CONTROLLER_STATUS_NOT_PROJECTED'
+        : null
+  return {
+    configured: true,
+    controllerKeyHash: controller.controllerKey,
+    readAvailable: controller.readAvailable,
+    checkedAt: controller.checkedAt,
+    status:
+      controller.status === null
+        ? null
+        : {
+            active: controller.status.active,
+            epoch: controller.status.epoch,
+            lastSequence: controller.status.lastSequence,
+            lastOutcome: controller.status.lastOutcome,
+            lastReceiptHash: controller.status.lastReceiptHash,
+            completedAt: controller.status.completedAt,
+            nextDueAt: controller.status.nextDueAt ?? null,
+          },
+    reasonCode,
   } as const
 }
 
@@ -348,6 +388,7 @@ const statusFactsDataFirst = (
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
+    executionController: publicExecutionController(state),
     capitalActivation: state.capitalActivation ?? { _tag: 'NotConfigured' },
     broker,
     authority: {
@@ -551,6 +592,9 @@ const renderPrometheusMetricsDataFirst = (
     state.autonomousCycleLoop.lastPass === null || state.health.checkedAt === null
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
+  const executionController = state.executionController
+  const executionControllerOutcomes = ['unknown', 'completed', 'blocked'] as const
+  const executionControllerOutcome = executionController?.status?.lastOutcome.toLowerCase() ?? 'unknown'
   const effectiveAuthority =
     state.cycle.authority === null ? 'unknown' : publicAuthority(state.cycle.authority.effective)
   const capitalActivationRecoveryOnly =
@@ -618,6 +662,34 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_autonomous_cycle_loop_health_available Whether the configured scoped loop is live and has not failed or stalled.',
     '# TYPE bayn_autonomous_cycle_loop_health_available gauge',
     `bayn_autonomous_cycle_loop_health_available ${loopHealthy ? 1 : 0}`,
+    '# HELP bayn_execution_controller_configured Whether a durable Restate execution-controller projection is configured.',
+    '# TYPE bayn_execution_controller_configured gauge',
+    `bayn_execution_controller_configured ${executionController === undefined ? 0 : 1}`,
+    '# HELP bayn_execution_controller_read_available Whether the controller projection was read successfully.',
+    '# TYPE bayn_execution_controller_read_available gauge',
+    `bayn_execution_controller_read_available ${booleanMetric(executionController?.readAvailable ?? null)}`,
+    '# HELP bayn_execution_controller_last_outcome Latest durable controller outcome.',
+    '# TYPE bayn_execution_controller_last_outcome gauge',
+    ...executionControllerOutcomes.map(
+      (outcome) =>
+        `bayn_execution_controller_last_outcome{outcome="${outcome}"} ${executionControllerOutcome === outcome ? 1 : 0}`,
+    ),
+    ...(executionController?.status === null || executionController?.status === undefined
+      ? []
+      : [
+          '# HELP bayn_execution_controller_epoch Active durable controller epoch.',
+          '# TYPE bayn_execution_controller_epoch gauge',
+          `bayn_execution_controller_epoch ${executionController.status.epoch}`,
+          '# HELP bayn_execution_controller_last_sequence Latest completed controller sequence.',
+          '# TYPE bayn_execution_controller_last_sequence gauge',
+          `bayn_execution_controller_last_sequence ${executionController.status.lastSequence}`,
+          '# HELP bayn_execution_controller_last_completion_timestamp_seconds Latest durable controller completion time.',
+          '# TYPE bayn_execution_controller_last_completion_timestamp_seconds gauge',
+          `bayn_execution_controller_last_completion_timestamp_seconds ${prometheusNumber(epochSeconds(executionController.status.completedAt))}`,
+          '# HELP bayn_execution_controller_next_due_timestamp_seconds Next durable controller due time.',
+          '# TYPE bayn_execution_controller_next_due_timestamp_seconds gauge',
+          `bayn_execution_controller_next_due_timestamp_seconds ${prometheusNumber(epochSeconds(executionController.status.nextDueAt))}`,
+        ]),
     '# HELP bayn_autonomous_cycle_loop_last_pass Latest bounded autonomous cycle pass result.',
     '# TYPE bayn_autonomous_cycle_loop_last_pass gauge',
     ...loopResults.map(

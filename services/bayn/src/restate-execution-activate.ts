@@ -53,7 +53,6 @@ export interface RestateExecutionActivationConfig {
   readonly controllerKey: string
   readonly ingressOrigin: string
   readonly operationTimeoutMs: number
-  readonly planHash: string
   readonly sourceRevision: string
 }
 
@@ -67,7 +66,6 @@ export const restateExecutionActivationConfig = Config.all({
   operationTimeoutMs: Config.schema(OperationalThresholdSchema, 'BAYN_OPERATION_TIMEOUT_MS').pipe(
     Config.withDefault(30_000),
   ),
-  planHash: Config.schema(Sha256Schema, 'BAYN_EXECUTION_PLAN_HASH'),
   sourceRevision: Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION'),
 })
 
@@ -89,7 +87,6 @@ export const restateExecutionActivationRequest = (config: RestateExecutionActiva
   body: {
     schemaVersion: 'bayn.execution-controller-bootstrap.v1' as const,
     controllerKey: config.controllerKey,
-    planHash: config.planHash,
     sourceRevision: config.sourceRevision,
   },
   headers: {
@@ -119,7 +116,7 @@ export const verifyRestateExecutionActivation = (
     )
   }
   const state = decoded.success
-  return state.active && state.planHash === config.planHash && state.sourceRevision === config.sourceRevision
+  return state.active && state.sourceRevision === config.sourceRevision
     ? Result.succeed(state)
     : Result.fail(
         new RestateExecutionActivationError({

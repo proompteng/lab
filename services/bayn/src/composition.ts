@@ -1,10 +1,10 @@
-import { Effect, Match, pipe } from 'effect'
+import { Effect, Layer, Match, pipe } from 'effect'
 
 import { runApplication, type ApplicationPlan, type ApplicationPlanFor } from './app'
-import { runAutonomousService } from './composition/autonomous-runtime'
 import { runExecutionCandidateDiscovery, runExecutionPreparePlan } from './composition/execution-prepare'
+import { runReadOnlyAutonomousStatusService } from './composition/read-only-status'
 import {
-  AutonomousApplicationResourcesLive,
+  AutonomousStatusApplicationResourcesLive,
   BrokerlessApplicationResourcesLive,
   ExecutionCandidateDiscoveryResourcesLive,
   applicationDependencies,
@@ -36,6 +36,7 @@ export { observeCycleGenerationHash, runRestateLifecycleWithReconciliationGuardi
 export {
   ApplicationPlatformLive,
   AutonomousApplicationResourcesLive,
+  AutonomousStatusApplicationResourcesLive,
   AutonomousRuntimeResourcesLive,
   BrokerlessApplicationResourcesLive,
   BrokerSessionResourceLive,
@@ -62,19 +63,25 @@ const runBrokerlessService = (plan: ApplicationPlanFor<'BrokerlessService'>) =>
     ),
   )
 
+const provideApplicationResources = <A, E, R, E2, RIn>(
+  effect: Effect.Effect<A, E, R>,
+  resources: Layer.Layer<R, E2, RIn>,
+): Effect.Effect<A, E | E2, RIn> =>
+  Effect.scoped(Layer.build(resources).pipe(Effect.flatMap((context) => Effect.provide(effect, context))))
+
 export const runApplicationPlan = pipe(
   Match.type<ApplicationPlan>(),
   Match.tag('BrokerlessService', (plan) =>
-    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
-    runBrokerlessService(plan).pipe(Effect.provide(BrokerlessApplicationResourcesLive(plan))),
+    provideApplicationResources(runBrokerlessService(plan), BrokerlessApplicationResourcesLive(plan)),
   ),
   Match.tag('AutonomousService', (plan) =>
-    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
-    runAutonomousService(plan).pipe(Effect.provide(AutonomousApplicationResourcesLive(plan))),
+    provideApplicationResources(
+      runReadOnlyAutonomousStatusService(plan),
+      AutonomousStatusApplicationResourcesLive(plan),
+    ),
   ),
   Match.tag('ExecutionCandidateDiscovery', (plan) =>
-    // @effect-diagnostics-next-line strictEffectProvide:off -- application plan dispatch is the resource entry point
-    runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
+    provideApplicationResources(runExecutionCandidateDiscovery(plan), ExecutionCandidateDiscoveryResourcesLive(plan)),
   ),
   Match.tag('ExecutionPrepare', runExecutionPreparePlan),
   Match.exhaustive,
