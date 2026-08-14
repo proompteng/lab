@@ -97,8 +97,9 @@ describe('native Restate execution activation', () => {
     expect(restateExecutionActivationRequest(config, token)).toEqual({
       path: '/restate/send/BaynExecutionBootstrap/start',
       body: {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v1',
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
         controllerKey: config.controllerKey,
+        planHash: config.planHash,
         sourceRevision: config.sourceRevision,
       },
       headers: {
