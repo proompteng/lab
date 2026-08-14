@@ -20,12 +20,41 @@ export const ExecutionControllerActivationSchema = Schema.Struct({
 })
 export type ExecutionControllerActivation = typeof ExecutionControllerActivationSchema.Type
 
-export const ExecutionControllerBootstrapSchema = Schema.Struct({
+export const ExecutionControllerBindingSchema = Schema.Struct({
+  planHash: Sha256Schema,
+  sourceRevision: GitSourceRevisionSchema,
+})
+export type ExecutionControllerBinding = typeof ExecutionControllerBindingSchema.Type
+
+export const resolveOptionalExecutionControllerBinding = (
+  planHash: string | undefined,
+  sourceRevision: string | undefined,
+): Result.Result<ExecutionControllerBinding | undefined, string> => {
+  if (planHash === undefined && sourceRevision === undefined) return Result.succeed(undefined)
+  return planHash !== undefined && sourceRevision !== undefined
+    ? Result.succeed({ planHash, sourceRevision })
+    : Result.fail('native Restate controller rotation requires both previous binding fields')
+}
+
+const ExecutionControllerBootstrapV2Schema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v2'),
   controllerKey: Sha256Schema,
   planHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
 })
+
+const ExecutionControllerBootstrapV3Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v3'),
+  controllerKey: Sha256Schema,
+  planHash: Sha256Schema,
+  sourceRevision: GitSourceRevisionSchema,
+  previousBinding: ExecutionControllerBindingSchema,
+})
+
+export const ExecutionControllerBootstrapSchema = Schema.Union([
+  ExecutionControllerBootstrapV2Schema,
+  ExecutionControllerBootstrapV3Schema,
+])
 export type ExecutionControllerBootstrap = typeof ExecutionControllerBootstrapSchema.Type
 
 export const ExecutionControllerTickSchema = Schema.Struct({
@@ -90,6 +119,16 @@ export type ExecutionControllerTickDecision =
   | { readonly _tag: 'Advance'; readonly command: AdvanceExecutionCommand }
   | { readonly _tag: 'Ignored'; readonly reason: 'Inactive' | 'StaleEpoch' | 'StaleSequence' }
 
+export type ExecutionControllerBootstrapDecision =
+  | {
+      readonly _tag: 'Activate'
+      readonly state: ExecutionControllerState | null
+    }
+  | {
+      readonly _tag: 'Rotate'
+      readonly deactivation: ExecutionControllerDeactivation
+    }
+
 const sameBinding = (
   state: ExecutionControllerState,
   request: Pick<ExecutionControllerActivation, 'planHash' | 'sourceRevision'>,
@@ -151,6 +190,36 @@ export const decideExecutionControllerActivation = (
     })
   }
   return conflict('activate', 'execution controller activation conflicts with durable controller state')
+}
+
+export const decideExecutionControllerBootstrap = (
+  state: ExecutionControllerState | null,
+  request: ExecutionControllerBootstrap,
+): Result.Result<ExecutionControllerBootstrapDecision, ExecutionControllerDecisionError> => {
+  if (state === null) {
+    return request.schemaVersion === 'bayn.execution-controller-bootstrap.v2'
+      ? Result.succeed({ _tag: 'Activate', state })
+      : conflict('activate', 'execution controller rotation expected durable controller state')
+  }
+  if (sameBinding(state, request)) return Result.succeed({ _tag: 'Activate', state })
+  if (request.schemaVersion === 'bayn.execution-controller-bootstrap.v2') {
+    return conflict('activate', 'execution controller bootstrap conflicts with durable controller state')
+  }
+  if (!sameBinding(state, request.previousBinding)) {
+    return conflict('activate', 'execution controller rotation does not match the expected previous binding')
+  }
+  return state.active
+    ? Result.succeed({
+        _tag: 'Rotate',
+        deactivation: {
+          schemaVersion: 'bayn.execution-controller-deactivation.v1',
+          controllerKey: request.controllerKey,
+          epoch: state.epoch,
+          planHash: state.planHash,
+          sourceRevision: state.sourceRevision,
+        },
+      })
+    : Result.succeed({ _tag: 'Activate', state })
 }
 
 export const decideExecutionControllerTick = (

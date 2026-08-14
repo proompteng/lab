@@ -13,11 +13,14 @@ import {
   decodeExecutionControllerState,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
+  decideExecutionControllerBootstrap,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
+  type ExecutionControllerBinding,
   type ExecutionControllerBootstrap,
+  type ExecutionControllerDeactivation,
   type ExecutionControllerState,
   type ExecutionControllerTick,
 } from './execution/controller'
@@ -91,6 +94,7 @@ export interface ExecutionControllerConfig {
   readonly controllerKey: string
   readonly operationTimeoutMs: number
   readonly planHash: string
+  readonly previousBinding?: ExecutionControllerBinding
   readonly sourceRevision: string
 }
 
@@ -164,12 +168,38 @@ const verifyActivationBinding = (
 }
 
 const verifyBootstrapBinding = (config: ExecutionControllerConfig, request: ExecutionControllerBootstrap): void => {
+  const requestPrevious =
+    request.schemaVersion === 'bayn.execution-controller-bootstrap.v3' ? request.previousBinding : undefined
+  const previousMatches =
+    requestPrevious === undefined && config.previousBinding === undefined
+      ? true
+      : requestPrevious !== undefined &&
+        config.previousBinding !== undefined &&
+        requestPrevious.planHash === config.previousBinding.planHash &&
+        requestPrevious.sourceRevision === config.previousBinding.sourceRevision
   if (
     request.controllerKey !== config.controllerKey ||
     request.planHash !== config.planHash ||
-    request.sourceRevision !== config.sourceRevision
+    request.sourceRevision !== config.sourceRevision ||
+    !previousMatches
   ) {
     throw terminal('execution controller bootstrap does not match this immutable deployment')
+  }
+}
+
+const verifyDeactivationBinding = (
+  config: ExecutionControllerConfig,
+  key: string,
+  request: ExecutionControllerDeactivation,
+): void => {
+  const matches = (binding: ExecutionControllerBinding): boolean =>
+    request.planHash === binding.planHash && request.sourceRevision === binding.sourceRevision
+  if (
+    key !== config.controllerKey ||
+    request.controllerKey !== config.controllerKey ||
+    (!matches(config) && (config.previousBinding === undefined || !matches(config.previousBinding)))
+  ) {
+    throw terminal('execution controller deactivation does not match this immutable deployment')
   }
 }
 
@@ -178,13 +208,26 @@ const verifyTickBinding = (
   key: string,
   state: ExecutionControllerState | null,
 ): void => {
+  const matchesPrevious =
+    state !== null &&
+    config.previousBinding !== undefined &&
+    state.planHash === config.previousBinding.planHash &&
+    state.sourceRevision === config.previousBinding.sourceRevision
   if (
     key !== config.controllerKey ||
-    (state !== null && (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision))
+    (state !== null &&
+      !matchesPrevious &&
+      (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision))
   ) {
     throw terminal('execution controller durable state does not match this immutable deployment')
   }
 }
+
+const isPreviousBinding = (config: ExecutionControllerConfig, state: ExecutionControllerState | null): boolean =>
+  state !== null &&
+  config.previousBinding !== undefined &&
+  state.planHash === config.previousBinding.planHash &&
+  state.sourceRevision === config.previousBinding.sourceRevision
 
 const bootstrapTokenPattern = /^[A-Za-z0-9_-]{43,128}$/
 const authorizationPrefix = 'Bearer '
@@ -382,6 +425,16 @@ export const makeBaynExecutionController = (
           )
           const state = await readState(ctx)
           verifyTickBinding(config, ctx.key, state)
+          if (isPreviousBinding(config, state)) {
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
+              controllerKey: ctx.key,
+              epoch: tick.epoch,
+              invocationId: ctx.request().id,
+              sequence: tick.sequence,
+              sourceRevision: config.sourceRevision,
+            })
+            return
+          }
           const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
           const decision = decisionOrTerminal(decideExecutionControllerTick(state, tick, ctx.key, issuedAt))
           if (decision._tag === 'Ignored') return
@@ -445,7 +498,7 @@ export const makeBaynExecutionController = (
             decodeExecutionControllerDeactivation(candidate),
             'execution controller deactivation failed validation',
           )
-          verifyActivationBinding(config, ctx.key, request)
+          verifyDeactivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
           if (decision._tag === 'Deactivated') {
             await ctx.run(
@@ -502,22 +555,32 @@ export const makeBaynExecutionBootstrap = (
           authorizeBootstrap(authorizationHash, ctx.request().headers.get('authorization'))
           const client = ctx.objectClient(controller, config.controllerKey)
           const state = await client.status(undefined)
-          if (
-            state !== null &&
-            state.active &&
-            (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision)
-          ) {
-            throw terminal('execution controller bootstrap conflicts with active durable state')
+          const decision = decisionOrTerminal(decideExecutionControllerBootstrap(state, request))
+          let activationState = decision._tag === 'Activate' ? decision.state : undefined
+          if (decision._tag === 'Rotate') {
+            const deactivated = await client.deactivate(decision.deactivation)
+            if (
+              deactivated.active ||
+              deactivated.epoch !== decision.deactivation.epoch + 1 ||
+              deactivated.planHash !== decision.deactivation.planHash ||
+              deactivated.sourceRevision !== decision.deactivation.sourceRevision
+            ) {
+              throw terminal('execution controller rotation did not prove the expected inactive previous binding')
+            }
+            activationState = deactivated
           }
           if (legacyCutover !== undefined && (state === null || !state.active)) {
             await deactivateLegacyLifecycle(ctx, config, legacyCutover)
           }
-          return client.activate(bindBootstrapActivation(state, request, config))
+          return client.activate(bindBootstrapActivation(activationState ?? null, request, config))
         },
       ),
     },
     options: {
       hooks: [...hooks],
-      ...executionControllerBootstrapHandlerTimeouts(config.operationTimeoutMs, legacyCutover !== undefined),
+      ...executionControllerBootstrapHandlerTimeouts(
+        config.operationTimeoutMs,
+        legacyCutover !== undefined || config.previousBinding !== undefined,
+      ),
     },
   })

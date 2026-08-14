@@ -4,9 +4,12 @@ import { Result } from 'effect'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionControllerBootstrap,
   decideExecutionControllerActivation,
+  decideExecutionControllerBootstrap,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
+  resolveOptionalExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
   type ExecutionControllerState,
@@ -66,6 +69,75 @@ describe('execution controller decisions', () => {
     ]) {
       expect(Result.isFailure(decideExecutionControllerActivation(state, conflicting))).toBe(true)
     }
+  })
+
+  test('requires an exact previous binding before rotating durable controller state', () => {
+    const state = { ...activated(), nextSequence: 9 }
+    const request = {
+      schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
+      controllerKey,
+      planHash: nextPlanHash,
+      sourceRevision: nextSourceRevision,
+      previousBinding: { planHash, sourceRevision },
+    }
+
+    expect(Result.getOrThrow(decideExecutionControllerBootstrap(state, request))).toEqual({
+      _tag: 'Rotate',
+      deactivation: {
+        schemaVersion: 'bayn.execution-controller-deactivation.v1',
+        controllerKey,
+        epoch: 1,
+        planHash,
+        sourceRevision,
+      },
+    })
+    expect(
+      Result.getOrThrow(decideExecutionControllerBootstrap({ ...state, active: false, epoch: 2 }, request)),
+    ).toEqual({ _tag: 'Activate', state: { ...state, active: false, epoch: 2 } })
+    expect(
+      Result.getOrThrow(
+        decideExecutionControllerBootstrap(
+          { ...state, planHash: nextPlanHash, sourceRevision: nextSourceRevision },
+          request,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'Activate' })
+
+    for (const conflicting of [
+      decideExecutionControllerBootstrap(state, {
+        ...request,
+        previousBinding: { ...request.previousBinding, planHash: 'f'.repeat(64) },
+      }),
+      decideExecutionControllerBootstrap(state, {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        controllerKey,
+        planHash: nextPlanHash,
+        sourceRevision: nextSourceRevision,
+      }),
+      decideExecutionControllerBootstrap(null, request),
+    ]) {
+      expect(Result.isFailure(conflicting)).toBe(true)
+    }
+  })
+
+  test('requires both previous-binding fields and rejects ambiguous bootstrap documents', () => {
+    expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(undefined, undefined))).toBeUndefined()
+    expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(planHash, sourceRevision))).toEqual({
+      planHash,
+      sourceRevision,
+    })
+    expect(Result.isFailure(resolveOptionalExecutionControllerBinding(planHash, undefined))).toBe(true)
+    expect(Result.isFailure(resolveOptionalExecutionControllerBinding(undefined, sourceRevision))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeExecutionControllerBootstrap({
+          schemaVersion: 'bayn.execution-controller-bootstrap.v3',
+          controllerKey,
+          planHash: nextPlanHash,
+          sourceRevision: nextSourceRevision,
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('accepts only the active epoch and exact next sequence', () => {

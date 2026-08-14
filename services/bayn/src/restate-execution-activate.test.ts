@@ -111,6 +111,46 @@ describe('native Restate execution activation', () => {
     expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(651_000)
   })
 
+  test('binds a rotation request and its idempotency identity to the exact previous controller', () => {
+    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
+    const rotating = { ...config, previousBinding }
+    const request = restateExecutionActivationRequest(rotating, token)
+
+    expect(request.body).toEqual({
+      schemaVersion: 'bayn.execution-controller-bootstrap.v3',
+      controllerKey: config.controllerKey,
+      planHash: config.planHash,
+      sourceRevision: config.sourceRevision,
+      previousBinding,
+    })
+    expect(request.headers['idempotency-key']).toBe(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        config.controllerKey,
+        config.planHash,
+        previousBinding,
+      ),
+    )
+    expect(request.headers['idempotency-key']).not.toBe(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        config.controllerKey,
+        config.planHash,
+      ),
+    )
+    expect(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        config.controllerKey,
+        config.planHash,
+        { ...previousBinding, planHash: 'f'.repeat(64) },
+      ),
+    ).not.toBe(request.headers['idempotency-key'])
+  })
+
   test('verifies only the exact active controller binding', () => {
     expect(Result.getOrThrow(verifyRestateExecutionActivation(config, activeState))).toEqual(activeState)
     for (const invalid of [
