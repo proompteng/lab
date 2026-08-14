@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Redacted, Result } from 'effect'
+import { Effect, Layer, Redacted, Result } from 'effect'
 
 import {
   activateRestateExecutionController,
   restateExecutionActivationCompletionWindowMs,
   restateExecutionActivationIdempotencyKey,
   restateExecutionActivationRequest,
+  runFiniteLayer,
   verifyRestateExecutionActivation,
   type RestateExecutionActivationConfig,
 } from './restate-execution-activate'
@@ -30,6 +31,21 @@ const activeState = {
 }
 
 describe('native Restate execution activation', () => {
+  test('runs the one-shot process to completion and releases its runtime layer', async () => {
+    let released = false
+    const layer = Layer.effectDiscard(
+      Effect.acquireRelease(Effect.void, () =>
+        Effect.sync(() => {
+          released = true
+        }),
+      ),
+    )
+
+    await Effect.runPromise(runFiniteLayer(layer))
+
+    expect(released).toBe(true)
+  })
+
   test('binds one authenticated idempotent bootstrap request to the immutable deployment', () => {
     expect(restateExecutionActivationIdempotencyKey(config.sourceRevision, config.controllerKey, config.planHash)).toBe(
       `bayn-execution-${config.sourceRevision}-${config.controllerKey}-${config.planHash}`,

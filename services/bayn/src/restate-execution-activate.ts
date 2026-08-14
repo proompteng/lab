@@ -199,10 +199,15 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
   )
 })
 
+export const runFiniteLayer = <A, E, R>(layer: Layer.Layer<A, E, R>): Effect.Effect<void, E, R> =>
+  Effect.scoped(Layer.build(layer)).pipe(Effect.asVoid)
+
 if (import.meta.main) {
   NodeRuntime.runMain(
-    Layer.effectDiscard(
-      restateExecutionActivationProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-activate' })),
-    ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-activate')), Layer.launch),
+    runFiniteLayer(
+      Layer.effectDiscard(
+        restateExecutionActivationProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-activate' })),
+      ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-activate'))),
+    ),
   )
 }
