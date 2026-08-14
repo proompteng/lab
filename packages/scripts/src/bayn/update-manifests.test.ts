@@ -141,7 +141,70 @@ const promote = (
   })
 }
 
+const installNativeExecutionManifests = (): {
+  readonly executionControllerPath: string
+  readonly executionActivationPath: string
+} => {
+  if (directory === undefined) throw new Error('fixture directory is unavailable')
+  const executionControllerPath = join(directory, 'execution-controller.yaml')
+  const executionActivationPath = join(directory, 'execution-activation.yaml')
+  const immutableEnvironment =
+    environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)) +
+    environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`)
+  const manifest = `spec:\n  template:\n    spec:\n      containers:\n        - env:\n${immutableEnvironment}`
+  writeFileSync(executionControllerPath, manifest)
+  writeFileSync(executionActivationPath, manifest)
+  return { executionControllerPath, executionActivationPath }
+}
+
 describe('Bayn manifest promotion', () => {
+  test('holds a release that would leave the native execution controller pinned to an older plan', () => {
+    const paths = makeFixture({ qualificationRunId: null })
+    const nativePaths = installNativeExecutionManifests()
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    const result = updateBaynManifests({
+      sourceSha: 'a'.repeat(40),
+      tag: `sha-${'a'.repeat(40)}`,
+      digest: `sha256:${'b'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      candidateRuntime: currentBindings,
+      ...paths,
+      ...nativePaths,
+    })
+
+    expect(result).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'native-execution-controller-refresh-required',
+    })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('rejects mismatched native controller and activation image bindings', () => {
+    const paths = makeFixture()
+    const nativePaths = installNativeExecutionManifests()
+    writeFileSync(
+      nativePaths.executionActivationPath,
+      readFileSync(nativePaths.executionActivationPath, 'utf8').replace('0'.repeat(40), 'f'.repeat(40)),
+    )
+
+    expect(() =>
+      updateBaynManifests({
+        sourceSha: 'a'.repeat(40),
+        tag: `sha-${'a'.repeat(40)}`,
+        digest: `sha256:${'b'.repeat(64)}`,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        candidateRuntime: currentBindings,
+        ...paths,
+        ...nativePaths,
+      }),
+    ).toThrow('native execution controller and activation manifests have different immutable image bindings')
+  })
+
   test('preserves a qualification pin only for identical strategy and runtime bindings', () => {
     const paths = makeFixture()
     const result = promote(paths)
