@@ -1,10 +1,15 @@
 import { NodeRuntime } from '@effect/platform-node'
-import { Config, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
 import { loadApplicationPlan } from './application-plan'
 import { embeddedBuildMetadata } from './build'
 import { executionControllerConfig } from './composition/native-execution-runtime'
-import { decodeExecutionControllerState, type ExecutionControllerState } from './execution/controller'
+import {
+  decodeExecutionControllerState,
+  resolveOptionalExecutionControllerBinding,
+  type ExecutionControllerBinding,
+  type ExecutionControllerState,
+} from './execution/controller'
 import { sha256 } from './hash'
 import {
   executionBootstrapAuthorizationHash,
@@ -19,7 +24,7 @@ import {
   sendRestateInvocation,
   type RestateHttpRequest,
 } from './restate-invocation-client'
-import { Sha256Schema } from './schemas'
+import { GitSourceRevisionSchema, Sha256Schema } from './schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
@@ -55,6 +60,7 @@ export interface RestateExecutionActivationConfig {
   readonly ingressOrigin: string
   readonly operationTimeoutMs: number
   readonly planHash: string
+  readonly previousBinding?: ExecutionControllerBinding
   readonly sourceRevision: string
 }
 
@@ -63,6 +69,10 @@ const restateExecutionActivationTransportConfig = Config.all({
   bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
+  ),
+  previousPlanHash: Config.option(Config.schema(Sha256Schema, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')),
+  previousSourceRevision: Config.option(
+    Config.schema(GitSourceRevisionSchema, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
   ),
 })
 
@@ -74,30 +84,50 @@ export const restateExecutionActivationIdempotencyKey = (
   sourceRevision: string,
   controllerKey: string,
   planHash: string,
+  previousBinding?: ExecutionControllerBinding,
 ): string =>
   `bayn-execution-${sha256(
-    `bayn.execution-controller-bootstrap.v2\u0000${activationGeneration}\u0000${sourceRevision}\u0000${controllerKey}\u0000${planHash}`,
+    [
+      previousBinding === undefined
+        ? 'bayn.execution-controller-bootstrap.v2'
+        : 'bayn.execution-controller-bootstrap.v3',
+      activationGeneration,
+      sourceRevision,
+      controllerKey,
+      planHash,
+      ...(previousBinding === undefined ? [] : [previousBinding.sourceRevision, previousBinding.planHash]),
+    ].join('\u0000'),
   )}`
 
-export const restateExecutionActivationRequest = (config: RestateExecutionActivationConfig, token: string) => ({
-  path: '/restate/send/BaynExecutionBootstrap/start',
-  body: {
-    schemaVersion: 'bayn.execution-controller-bootstrap.v2' as const,
+export const restateExecutionActivationRequest = (config: RestateExecutionActivationConfig, token: string) => {
+  const binding = {
     controllerKey: config.controllerKey,
     planHash: config.planHash,
     sourceRevision: config.sourceRevision,
-  },
-  headers: {
-    authorization: `Bearer ${token}`,
-    'idempotency-key': restateExecutionActivationIdempotencyKey(
-      config.activationGeneration,
-      config.sourceRevision,
-      config.controllerKey,
-      config.planHash,
-    ),
-  },
-  timeoutMs: restateInvocationAcceptTimeoutMs,
-})
+  }
+  return {
+    path: '/restate/send/BaynExecutionBootstrap/start',
+    body:
+      config.previousBinding === undefined
+        ? { schemaVersion: 'bayn.execution-controller-bootstrap.v2' as const, ...binding }
+        : {
+            schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
+            ...binding,
+            previousBinding: config.previousBinding,
+          },
+    headers: {
+      authorization: `Bearer ${token}`,
+      'idempotency-key': restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        config.controllerKey,
+        config.planHash,
+        config.previousBinding,
+      ),
+    },
+    timeoutMs: restateInvocationAcceptTimeoutMs,
+  }
+}
 
 export const verifyRestateExecutionActivation = (
   config: RestateExecutionActivationConfig,
@@ -182,10 +212,8 @@ export const activateRestateExecutionController = (
   }).pipe(withObservedSpan('bayn.execution.activate'))
 
 export const restateExecutionActivationProgram = Effect.gen(function* () {
-  const [{ activationGeneration, bootstrapToken, ingressOrigin }, plan] = yield* Effect.all([
-    restateExecutionActivationTransportConfig,
-    loadApplicationPlan,
-  ])
+  const [{ activationGeneration, bootstrapToken, ingressOrigin, previousPlanHash, previousSourceRevision }, plan] =
+    yield* Effect.all([restateExecutionActivationTransportConfig, loadApplicationPlan])
   if (plan._tag !== 'AutonomousService') {
     return yield* new RestateExecutionActivationError({
       operation: 'configuration',
@@ -202,7 +230,26 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const configured: RestateExecutionActivationConfig = { ...controller, activationGeneration, ingressOrigin }
+  const previousBinding = yield* Effect.fromResult(
+    resolveOptionalExecutionControllerBinding(
+      Option.getOrUndefined(previousPlanHash),
+      Option.getOrUndefined(previousSourceRevision),
+    ),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RestateExecutionActivationError({
+          operation: 'configuration',
+          message: cause,
+        }),
+    ),
+  )
+  const configured: RestateExecutionActivationConfig = {
+    ...controller,
+    activationGeneration,
+    ingressOrigin,
+    ...(previousBinding === undefined ? {} : { previousBinding }),
+  }
   const embeddedSourceRevision = embeddedBuildMetadata?.sourceRevision
   if (embeddedSourceRevision !== undefined && embeddedSourceRevision !== configured.sourceRevision) {
     return yield* new RestateExecutionActivationError({

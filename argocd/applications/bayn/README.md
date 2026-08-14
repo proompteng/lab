@@ -45,9 +45,12 @@ and broker-proxy network paths. The worker has no service-account token and acce
 `restate` namespace. The activation Job has no broker egress and its token-authenticated bootstrap call is made only by
 the labeled GitOps hook.
 
-Until atomic controller rotation is implemented, the release updater must return
-`native-execution-controller-refresh-required` without changing GitOps whenever a candidate would alter the controller
-plan. Never promote only the public status image while execution remains pinned to an older plan.
+Native controller rotation is available only when the replacement worker and activation hook are both bound to the
+exact previous plan hash and source revision. The replacement quiesces previous-binding ticks, verifies and deactivates
+that binding through the account-keyed Virtual Object, advances its epoch, and activates the replacement idempotently.
+Until the release updater emits that complete reviewed binding, it must continue returning
+`native-execution-controller-refresh-required` without changing GitOps. Never promote only the public status image
+while execution remains pinned to an older plan.
 
 Rollback is another serialized ownership transfer, not pruning an active worker. Through a reviewed GitOps change,
 deactivate the native controller and prove its writer fence is clear before activating a compatible legacy or replacement

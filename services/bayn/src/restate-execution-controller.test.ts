@@ -226,6 +226,61 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toHaveLength(0)
   })
 
+  test('deactivates only the current or explicitly configured previous immutable binding', async () => {
+    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 6,
+      ...previousBinding,
+      initialSequence: 3,
+      nextSequence: 9,
+    }
+    let projections = 0
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      request: () => ({ id: 'deactivate-previous', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(
+        { ...config, previousBinding },
+        {
+          advance: () => Promise.reject(new Error('must not advance')),
+          log: () => Promise.resolve(),
+          projectState: () => {
+            projections += 1
+            return Promise.resolve()
+          },
+        },
+      ),
+    )
+
+    await object.deactivate(context, {
+      schemaVersion: 'bayn.execution-controller-deactivation.v1',
+      controllerKey,
+      epoch: 6,
+      ...previousBinding,
+    })
+    expect(state).toMatchObject({ active: false, epoch: 7, ...previousBinding })
+    expect(projections).toBe(1)
+
+    expect(
+      object.deactivate(context, {
+        schemaVersion: 'bayn.execution-controller-deactivation.v1',
+        controllerKey,
+        epoch: 7,
+        planHash: 'f'.repeat(64),
+        sourceRevision: previousBinding.sourceRevision,
+      }),
+    ).rejects.toThrow('execution controller deactivation does not match this immutable deployment')
+    expect(projections).toBe(1)
+  })
+
   test('rejects sequence exhaustion before the durable advance step', async () => {
     const state: ExecutionControllerState = {
       schemaVersion: 1,
@@ -321,6 +376,49 @@ describe('native Restate execution controller', () => {
     expect(advances).toBe(0)
   })
 
+  test('quiesces the exact configured previous binding while the replacement waits to rotate it', async () => {
+    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
+    const state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 3,
+      ...previousBinding,
+      initialSequence: 8,
+      nextSequence: 8,
+    }
+    let advances = 0
+    const deliveries: Delivery[] = []
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: () => undefined,
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      request: () => ({ id: 'previous-binding', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(
+        { ...config, previousBinding },
+        {
+          advance: () => {
+            advances += 1
+            return Promise.reject(new Error('must not advance'))
+          },
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+      ),
+    )
+
+    await object.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: state.epoch,
+      sequence: state.nextSequence,
+    })
+
+    expect(advances).toBe(0)
+    expect(deliveries).toHaveLength(0)
+  })
+
   test('authenticates bootstrap and derives activation counters from durable state', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
@@ -328,8 +426,8 @@ describe('native Restate execution controller', () => {
       schemaVersion: 1,
       active: false,
       epoch: 7,
-      planHash: 'd'.repeat(64),
-      sourceRevision: 'e'.repeat(40),
+      planHash,
+      sourceRevision,
       initialSequence: 11,
       nextSequence: 17,
     }
@@ -370,6 +468,127 @@ describe('native Restate execution controller', () => {
       planHash,
       sourceRevision,
     })
+  })
+
+  test('rotates only the exact previous native binding and replays without a second deactivation', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
+    const rotationConfig = { ...config, previousBinding }
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 4,
+      ...previousBinding,
+      initialSequence: 7,
+      nextSequence: 12,
+    }
+    const events: string[] = []
+    const controller = makeBaynExecutionController(rotationConfig, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(rotationConfig, controller, authorizationHash)).start
+    const context = {
+      request: () => ({
+        id: 'bootstrap-native-rotation',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      objectClient: () => ({
+        status: async () => state,
+        deactivate: async (request: unknown) => {
+          events.push('deactivate')
+          expect(request).toEqual({
+            schemaVersion: 'bayn.execution-controller-deactivation.v1',
+            controllerKey,
+            epoch: 4,
+            ...previousBinding,
+          })
+          state = { ...state, active: false, epoch: 5 }
+          return state
+        },
+        activate: async (request: unknown) => {
+          events.push('activate')
+          expect(request).toEqual({
+            schemaVersion: 'bayn.execution-controller-activation.v1',
+            controllerKey,
+            epoch: 5,
+            firstSequence: 12,
+            planHash,
+            sourceRevision,
+          })
+          state = {
+            ...state,
+            active: true,
+            planHash,
+            sourceRevision,
+            initialSequence: 12,
+          }
+          return state
+        },
+      }),
+    } as unknown as Context
+    const request = {
+      schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
+      controllerKey,
+      planHash,
+      sourceRevision,
+      previousBinding,
+    }
+
+    expect(await start(context, request)).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision })
+    expect(events).toEqual(['deactivate', 'activate'])
+
+    await start(context, request)
+    expect(events).toEqual(['deactivate', 'activate', 'activate'])
+  })
+
+  test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
+    const rotationConfig = { ...config, previousBinding }
+    let objectCalls = 0
+    const controller = makeBaynExecutionController(rotationConfig, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(rotationConfig, controller, authorizationHash)).start
+    const context = {
+      request: () => ({
+        id: 'bootstrap-native-rotation-rejected',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      objectClient: () => {
+        objectCalls += 1
+        return { status: () => Promise.reject(new Error('must not read')) }
+      },
+    } as unknown as Context
+
+    for (const candidate of [
+      {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        controllerKey,
+        planHash,
+        sourceRevision,
+      },
+      {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v3',
+        controllerKey,
+        planHash,
+        sourceRevision,
+        previousBinding: { ...previousBinding, planHash: 'f'.repeat(64) },
+      },
+    ]) {
+      expect(start(context, candidate)).rejects.toThrow(
+        'execution controller bootstrap does not match this immutable deployment',
+      )
+    }
+    expect(objectCalls).toBe(0)
   })
 
   test('deactivates and verifies the exact legacy owner before first native activation', async () => {

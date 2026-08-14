@@ -2,11 +2,12 @@ import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Layer, Redacted, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Option, Redacted, Schema } from 'effect'
 
 import { loadApplicationPlan } from './application-plan'
 import type { ApplicationPlan, ApplicationPlanFor } from './app'
 import { acquireNativeExecutionRuntime } from './composition/native-execution-runtime'
+import { resolveOptionalExecutionControllerBinding } from './execution/controller'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   executionBootstrapAuthorizationHash,
@@ -18,7 +19,7 @@ import {
   type NativeExecutionRuntime,
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
-import { strictParseOptions } from './schemas'
+import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from './schemas'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from './telemetry'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
@@ -42,6 +43,10 @@ export const restateExecutionServerConfig = Config.all({
   legacySourceRevision: Config.schema(
     Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
     'BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION',
+  ),
+  previousPlanHash: Config.option(Config.schema(Sha256Schema, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')),
+  previousSourceRevision: Config.option(
+    Config.schema(GitSourceRevisionSchema, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
   ),
   port: Config.port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
@@ -90,6 +95,8 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
       legacyPlanHash,
       legacySourceRevision,
       port,
+      previousPlanHash,
+      previousSourceRevision,
       requestIdentityKeys,
     },
     plan,
@@ -123,7 +130,23 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     planHash: legacyPlanHash,
     sourceRevision: legacySourceRevision,
   }
-  const { config, runtime } = yield* acquireNativeExecutionRuntime(plan)
+  const previousBinding = yield* Effect.fromResult(
+    resolveOptionalExecutionControllerBinding(
+      Option.getOrUndefined(previousPlanHash),
+      Option.getOrUndefined(previousSourceRevision),
+    ),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RestateExecutionServerError({
+          message: cause,
+        }),
+    ),
+  )
+  const acquired = yield* acquireNativeExecutionRuntime(plan)
+  const config: ExecutionControllerConfig =
+    previousBinding === undefined ? acquired.config : { ...acquired.config, previousBinding }
+  const { runtime } = acquired
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
