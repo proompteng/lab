@@ -31,6 +31,7 @@ import type {
   AutonomousCycleFiberObservation,
   BrokerHealthObservation,
   BrokerProbe,
+  ExecutionControllerProbe,
   HealthDependencies,
   HealthLogDecision,
   HealthProbeResults,
@@ -217,6 +218,7 @@ const collectHealthProbeResults = (
   broker: BrokerProbe | undefined,
   cycleObservationId: string | undefined,
   qualificationEvidenceRequired: boolean,
+  executionController: ExecutionControllerProbe | undefined,
 ): Effect.Effect<HealthProbeResults, never> => {
   const cycleBindingId = cycleObservationId ?? evidence?.evaluation.runId
   return Effect.map(
@@ -296,16 +298,37 @@ const collectHealthProbeResults = (
               ),
         ),
         broker === undefined ? Effect.succeed(null) : observeBroker(broker.read, config.operationTimeoutMs),
+        executionController === undefined
+          ? Effect.succeed(null)
+          : observe(
+              withinDeadline(
+                executionController.read(executionController.controllerKey).pipe(
+                  Effect.mapError((cause) =>
+                    operationalError({
+                      component: 'database',
+                      operation: 'execution-controller-status',
+                      message: 'execution controller status read failed',
+                      cause,
+                    }),
+                  ),
+                ),
+                config.operationTimeoutMs,
+                'database',
+                'execution-controller-status',
+              ),
+              'execution controller status unavailable',
+            ),
       ],
       { concurrency: 'unbounded' },
     ),
-    ([postgresql, signal, tigerBeetle, durableEvidence, cycle, brokerResult]) => ({
+    ([postgresql, signal, tigerBeetle, durableEvidence, cycle, brokerResult, executionControllerResult]) => ({
       postgresql,
       signal,
       tigerBeetle,
       durableEvidence,
       cycle,
       broker: brokerResult,
+      executionController: executionControllerResult,
     }),
   )
 }
@@ -318,6 +341,7 @@ const checkHealthDataFirst = (
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservationId?: string,
   qualificationEvidenceRequired = true,
+  executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const initial = yield* Ref.get(state)
@@ -331,6 +355,7 @@ const checkHealthDataFirst = (
       broker,
       cycleObservationId,
       qualificationEvidenceRequired,
+      executionController,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
     const checkedAtResult = utcInstantFromEpochMillisResult(checkedAtMs)
@@ -361,6 +386,7 @@ export const checkHealth = Pipeable.by<
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
     cycleObservationId?: string,
     qualificationEvidenceRequired?: boolean,
+    executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
   typeof checkHealthDataFirst
 >(
@@ -376,6 +402,7 @@ const runHealthMonitorDataFirst = (
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservationId?: string,
   qualificationEvidenceRequired = true,
+  executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
   checkHealth(
     config,
@@ -385,6 +412,7 @@ const runHealthMonitorDataFirst = (
     autonomousCycleFiber,
     cycleObservationId,
     qualificationEvidenceRequired,
+    executionController,
   ).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)
 
 export const runHealthMonitor = Pipeable.by<
@@ -395,6 +423,7 @@ export const runHealthMonitor = Pipeable.by<
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
     cycleObservationId?: string,
     qualificationEvidenceRequired?: boolean,
+    executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
   typeof runHealthMonitorDataFirst
 >(

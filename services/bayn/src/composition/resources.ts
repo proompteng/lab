@@ -5,11 +5,13 @@ import { Effect, Layer, Redacted } from 'effect'
 
 import type { ApplicationDependencies, ApplicationIdentity, ApplicationPlanFor } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
+import { live as BrokerReadOnlyResourcesLive } from '../broker/alpaca/session'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability, CycleObservabilityLive, CycleStoreLive } from '../cycle/store'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '../db/evidence-store'
+import { makeEvidenceStore } from '../db/evidence-store/postgres'
 import { ForwardPerformanceReceiptStoreLive } from '../db/forward-performance-receipt-postgres'
 import { ExecutionStoreLive } from '../db/execution-store'
 import { LifecycleCommandStoreLive } from '../db/lifecycle-command-postgres'
@@ -88,6 +90,25 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+}
+
+/** Read-only resources for the public status service. Mutation stores and the process-wide writer fence are absent. */
+export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  const evidence = Layer.effect(EvidenceStore, Effect.map(PgClient.PgClient, makeEvidenceStore)).pipe(
+    Layer.provide(postgres),
+  )
+  const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
+  const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
+  return Layer.mergeAll(
+    postgres,
+    evidence,
+    controllerStatus,
+    cycleObservability,
+    SignalMarketDataLive(plan),
+    JournalResourceLive(plan.config),
+    BrokerReadOnlyResourcesLive(plan.config.alpaca),
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 

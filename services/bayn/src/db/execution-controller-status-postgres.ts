@@ -16,6 +16,8 @@ import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const StatusRow = Schema.Struct({
   controller_key: LifecycleControllerKeySchema,
+  plan_hash: Sha256Schema,
+  active: Schema.Boolean,
   epoch: Schema.BigIntFromString,
   last_sequence: Schema.BigIntFromString,
   last_outcome: Schema.Enum(ExecutionControllerOutcome),
@@ -58,6 +60,8 @@ const statusFromRow = (
   )({
     schemaVersion: 1,
     controllerKey: row.controller_key,
+    planHash: row.plan_hash,
+    active: row.active,
     epoch,
     lastSequence,
     lastOutcome: row.last_outcome,
@@ -71,6 +75,8 @@ const selectStatus = (sql: PgClient.PgClient, controllerKey: string) =>
   sql<Record<string, unknown>>`
     SELECT
       controller_key,
+      plan_hash,
+      active,
       epoch,
       last_sequence,
       last_outcome,
@@ -102,6 +108,8 @@ const read = (
 
 const sameStatus = (left: ExecutionControllerStatus, right: ExecutionControllerStatus): boolean =>
   left.controllerKey === right.controllerKey &&
+  left.planHash === right.planHash &&
+  left.active === right.active &&
   left.epoch === right.epoch &&
   left.lastSequence === right.lastSequence &&
   left.lastOutcome === right.lastOutcome &&
@@ -121,6 +129,8 @@ const project = (
       sql<Record<string, unknown>>`
         INSERT INTO execution_controller_status (
           controller_key,
+          plan_hash,
+          active,
           epoch,
           last_sequence,
           last_outcome,
@@ -129,6 +139,8 @@ const project = (
           next_due_at
         ) VALUES (
           ${status.controllerKey},
+          ${status.planHash},
+          ${status.active},
           ${status.epoch},
           ${status.lastSequence},
           ${status.lastOutcome},
@@ -137,6 +149,8 @@ const project = (
           ${status.nextDueAt ?? null}
         )
         ON CONFLICT (controller_key) DO UPDATE SET
+          active = EXCLUDED.active,
+          plan_hash = EXCLUDED.plan_hash,
           epoch = EXCLUDED.epoch,
           last_sequence = EXCLUDED.last_sequence,
           last_outcome = EXCLUDED.last_outcome,

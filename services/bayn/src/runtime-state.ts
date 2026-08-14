@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
+import type { ExecutionControllerStatus } from './execution/controller-status'
 import {
   CycleOperationsCondition,
   MonthEndCadenceCondition,
@@ -155,6 +156,16 @@ export interface AutonomousCycleLoopStatus {
   readonly lastPass: AutonomousCyclePassObservation | null
 }
 
+export interface ExecutionControllerRuntimeStatus {
+  readonly configured: true
+  readonly controllerKey: string
+  readonly planHash: string
+  readonly status: ExecutionControllerStatus | null
+  readonly readAvailable: boolean | null
+  readonly checkedAt: string | null
+  readonly error: string | null
+}
+
 export type CapitalActivationRuntimeState =
   | { readonly _tag: 'NotConfigured' }
   | {
@@ -185,6 +196,7 @@ export interface RuntimeState {
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
   readonly autonomousCycleLoop: AutonomousCycleLoopStatus
+  readonly executionController?: ExecutionControllerRuntimeStatus
   readonly capitalActivation?: CapitalActivationRuntimeState
   readonly broker: BrokerStatus | null
   readonly error: string | null
@@ -196,6 +208,10 @@ export interface InitialRuntimeStateInput {
   readonly broker?: BrokerConfiguration | undefined
   readonly autonomousCycleLoopConfigured?: boolean
   readonly autonomousCycleLoopOwner?: 'Process' | 'Restate'
+  readonly executionController?: {
+    readonly controllerKey: string
+    readonly planHash: string
+  }
 }
 
 export const initialState = (input: InitialRuntimeStateInput): RuntimeState => ({
@@ -220,6 +236,19 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
     startedAt: null,
     lastPass: null,
   },
+  ...(input.executionController === undefined
+    ? {}
+    : {
+        executionController: {
+          configured: true as const,
+          controllerKey: input.executionController.controllerKey,
+          planHash: input.executionController.planHash,
+          status: null,
+          readAvailable: null,
+          checkedAt: null,
+          error: null,
+        },
+      }),
   capitalActivation: { _tag: 'NotConfigured' },
   broker:
     input.broker === undefined

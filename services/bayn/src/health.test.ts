@@ -32,6 +32,7 @@ import { currentUtcInstant } from './time'
 import { CycleObservability, type CycleObservabilityShape } from './cycle/store'
 import { DatabaseError, EvidenceStore } from './db/evidence-store'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import { ExecutionControllerOutcome } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import {
   deriveHealthLogDecisions,
@@ -93,6 +94,7 @@ const monitor = (
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const brokerObservedAt = '2026-07-20T00:00:00.000Z'
+const controllerPlanHash = 'd'.repeat(64)
 const availableClock = (checkedAt: string) =>
   ({ _tag: 'Available', checkedAt, checkedAtMs: Date.parse(checkedAt) }) as const
 const unsafeClock = (observedAtMs: number) =>
@@ -1151,15 +1153,24 @@ describe('Bayn continuous health', () => {
     })
   })
 
-  test('keeps Restate-owned lifecycle unavailable until its first durable pass reaches Bayn', () => {
-    const startedAt = '2026-07-20T00:00:00.000Z'
+  test('keeps Restate-owned lifecycle unavailable until its first durable controller projection', () => {
+    const controllerKey = 'f'.repeat(64)
     const current: RuntimeState = {
       ...readyState(),
       autonomousCycleLoop: {
         configured: true,
         owner: 'Restate',
-        startedAt,
+        startedAt: null,
         lastPass: null,
+      },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
       },
     }
     const transition = deriveHealthTransition(current, {
@@ -1172,9 +1183,10 @@ describe('Bayn continuous health', () => {
         durableEvidence: { _tag: 'Available', value: undefined },
         cycle: { _tag: 'Available', value: emptyCycleProjection() },
         broker: null,
+        executionController: { _tag: 'Available', value: null },
       },
       broker: undefined,
-      cycleFiber: { _tag: 'Running' },
+      cycleFiber: { _tag: 'NotProvided' },
       clock: availableClock('2026-07-20T00:00:01.000Z'),
     })
 
@@ -1189,6 +1201,169 @@ describe('Bayn continuous health', () => {
         },
       },
       error: 'cycleRunner: Restate lifecycle has not completed its first durable pass',
+    })
+  })
+
+  test('accepts a fresh Restate controller projection without a local lifecycle fiber', () => {
+    const controllerKey = 'f'.repeat(64)
+    const completedAt = '2026-07-20T00:00:00.000Z'
+    const nextDueAt = '2026-07-20T00:01:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: { configured: true, owner: 'Restate', startedAt: null, lastPass: null },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
+      },
+    }
+    const status = {
+      schemaVersion: 1 as const,
+      controllerKey,
+      planHash: controllerPlanHash,
+      active: true,
+      epoch: 4,
+      lastSequence: 12,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'e'.repeat(64),
+      completedAt,
+      nextDueAt,
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: status },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:05:59.999Z'),
+    })
+
+    expect(transition.next).toMatchObject({
+      status: 'READY',
+      health: { dependencies: { cycleRunner: { status: 'AVAILABLE', error: null } } },
+      executionController: { readAvailable: true, status },
+    })
+
+    const inactive = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: { ...status, active: false } },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:05:59.999Z'),
+    })
+    expect(inactive.next).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycleRunner: { status: 'UNAVAILABLE', error: 'Restate execution controller is durably inactive' },
+        },
+      },
+    })
+
+    const stalePlan = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: { ...status, planHash: 'c'.repeat(64) } },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:05:59.999Z'),
+    })
+    expect(stalePlan.next).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'Restate execution-controller projection plan differs from the configured controller',
+          },
+        },
+      },
+    })
+  })
+
+  test('fails closed when the Restate controller projection exceeds its due-time grace', () => {
+    const controllerKey = 'f'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: { configured: true, owner: 'Restate', startedAt: null, lastPass: null },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: {
+          _tag: 'Available',
+          value: {
+            schemaVersion: 1,
+            controllerKey,
+            planHash: controllerPlanHash,
+            active: true,
+            epoch: 4,
+            lastSequence: 12,
+            lastOutcome: ExecutionControllerOutcome.Blocked,
+            lastReceiptHash: 'e'.repeat(64),
+            completedAt: '2026-07-20T00:00:00.000Z',
+            nextDueAt: '2026-07-20T00:01:00.000Z',
+          },
+        },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:06:00.000Z'),
+    })
+
+    expect(transition.next).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycleRunner: { status: 'UNAVAILABLE', error: 'Restate execution controller is overdue by 300000ms' },
+        },
+      },
+      error: 'cycleRunner: Restate execution controller is overdue by 300000ms',
     })
   })
 

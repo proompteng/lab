@@ -99,7 +99,6 @@ describe('native Restate execution activation', () => {
       body: {
         schemaVersion: 'bayn.execution-controller-bootstrap.v1',
         controllerKey: config.controllerKey,
-        planHash: config.planHash,
         sourceRevision: config.sourceRevision,
       },
       headers: {
