@@ -375,7 +375,17 @@ describe('native Restate execution controller', () => {
       }),
       genericCall: async (call: { readonly service: string; readonly method: string; readonly key?: string }) => {
         events.push('legacy-deactivate')
-        expect(call).toMatchObject({ service: 'BaynLifecycle', method: 'deactivate', key: 'primary' })
+        expect(call).toMatchObject({
+          service: 'BaynLifecycle',
+          method: 'deactivate',
+          key: 'primary',
+          parameter: {
+            schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
+            controllerKey: 'primary',
+            planHash: legacy.planHash,
+            sourceRevision: legacy.sourceRevision,
+          },
+        })
         return {
           schemaVersion: 'bayn.restate-lifecycle-state.v1',
           active: false,

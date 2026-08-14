@@ -38,15 +38,19 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   additionalProperties: false,
 })
 const legacyLifecycleDeactivationSerde = restate.serde.json.schema<{
-  readonly schemaVersion: 'bayn.restate-lifecycle-activation.v1'
+  readonly schemaVersion: 'bayn.restate-lifecycle-deactivation.v1'
   readonly controllerKey: string
+  readonly planHash: string
+  readonly sourceRevision: string
 }>({
   type: 'object',
   properties: {
-    schemaVersion: { const: 'bayn.restate-lifecycle-activation.v1' },
+    schemaVersion: { const: 'bayn.restate-lifecycle-deactivation.v1' },
     controllerKey: { type: 'string' },
+    planHash: { type: 'string' },
+    sourceRevision: { type: 'string' },
   },
-  required: ['schemaVersion', 'controllerKey'],
+  required: ['schemaVersion', 'controllerKey', 'planHash', 'sourceRevision'],
   additionalProperties: false,
 })
 const legacyLifecycleStateSerde = restate.serde.json.schema<unknown>({ type: 'object' })
@@ -192,8 +196,10 @@ const deactivateLegacyLifecycle = async (
     method: 'deactivate',
     key: binding.controllerKey,
     parameter: {
-      schemaVersion: 'bayn.restate-lifecycle-activation.v1',
+      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
       controllerKey: binding.controllerKey,
+      planHash: binding.planHash,
+      sourceRevision: binding.sourceRevision,
     },
     inputSerde: legacyLifecycleDeactivationSerde,
     outputSerde: legacyLifecycleStateSerde,
