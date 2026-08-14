@@ -16,10 +16,30 @@ resources:
   - execution-bootstrap-sealedsecret.yaml
   - execution-controller.yaml
   - execution-controller-networkpolicy.yaml
+  - execution-activation.yaml
   - lifecycle-current.yaml
   - lifecycle-previous.yaml
   - service.yaml
   - networkpolicy.yaml
+patches:
+  - target:
+      kind: Job
+      labelSelector: app.kubernetes.io/name=bayn-lifecycle-register
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: ignored
+  - target:
+      kind: NetworkPolicy
+      labelSelector: app.kubernetes.io/name=bayn-lifecycle-register
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: ignored
 configMapGenerator:
   - name: bayn-egress-proxy
     files:
@@ -27,5 +47,5 @@ configMapGenerator:
 images:
   - name: bayn-main
     newName: registry.ide-newton.ts.net/lab/bayn
-    newTag: "sha-2e6a1cbf1dce6737f6c96e25c097d214366af48d"
-    digest: sha256:ebe9ffea6582ae356b2ea870da1873ef74f46d064d60ca58b3fd8e27f535d3a3
+    newTag: "sha-957415127f44b23e047fd0371bb4ffec7a000e97"
+    digest: sha256:a24b4a6b733b402f62bcaadeb7eb21e956166e005f663344b498bf811067cfd6

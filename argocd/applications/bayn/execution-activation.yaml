@@ -1,57 +1,98 @@
-apiVersion: restate.dev/v1beta1
-kind: RestateDeployment
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: bayn-execution-controller
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+  name: bayn-execution-activate
   labels:
-    app.kubernetes.io/name: bayn-execution-controller
+    app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
 spec:
-  replicas: 1
-  revisionHistoryLimit: 2
-  minReadySeconds: 5
-  restate:
-    register:
-      service:
-        name: restate
-        namespace: restate
-        port: 9070
-    drainDelaySeconds: 300
-  selector:
+  podSelector:
     matchLabels:
-      app.kubernetes.io/name: bayn-execution-controller
+      app.kubernetes.io/name: bayn-execution-activate
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-execution-activate-957415127f44
+  labels:
+    app.kubernetes.io/name: bayn-execution-activate
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 957415127f44
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: bayn-execution-controller
+        app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/version: 957415127f44
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
       enableServiceLinks: false
-      terminationGracePeriodSeconds: 60
+      restartPolicy: OnFailure
       nodeSelector:
         kubernetes.io/arch: arm64
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
-        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: execution-controller
+        - name: activate
           image: registry.ide-newton.ts.net/lab/bayn:sha-957415127f44b23e047fd0371bb4ffec7a000e97@sha256:a24b4a6b733b402f62bcaadeb7eb21e956166e005f663344b498bf811067cfd6
           imagePullPolicy: IfNotPresent
           command:
             - node
-            - dist/restate-execution-server.js
-          ports:
-            - name: restate
-              containerPort: 9080
-              protocol: TCP
+            - dist/restate-execution-activate.js
           env:
+            - name: BAYN_EXECUTION_ACTIVATION_GENERATION
+              # canonicalHashV1(bayn.execution-controller-activation.v1,
+              # controller key, plan, source, and image)
+              value: "2af55da5b63218223511d93dac041f4b95e27bcea99e826fef5288d56f1c2eac"
             - name: BAYN_CODE_REVISION
               value: 957415127f44b23e047fd0371bb4ffec7a000e97
             - name: BAYN_IMAGE_REPOSITORY
@@ -68,15 +109,6 @@ spec:
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
-            - name: BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY
-              value: primary
-            - name: BAYN_LEGACY_LIFECYCLE_PLAN_HASH
-              value: "74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d"
-            - name: BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION
-              value: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
-            # Bind the inactive controller plan to the same immutable execution
-            # generation as the current owner. This does not grant capital or
-            # schedule a tick; activation remains an authenticated Restate call.
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
             - name: BAYN_BROKER_PROVIDER
@@ -143,8 +175,6 @@ spec:
                   key: fqdn-uri
             - name: BAYN_POSTGRES_TLS
               value: "true"
-            - name: BAYN_POSTGRES_CA_PATH
-              value: /var/run/secrets/bayn/postgres/ca.crt
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -156,62 +186,22 @@ spec:
                 secretKeyRef:
                   name: bayn-execution-bootstrap
                   key: token
-            - name: RESTATE_REQUEST_IDENTITY_KEYS
-              value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
-            - name: PORT
-              value: "9080"
             - name: NODE_ENV
               value: production
-          startupProbe:
-            tcpSocket:
-              port: restate
-            periodSeconds: 2
-            failureThreshold: 30
-          readinessProbe:
-            tcpSocket:
-              port: restate
-            periodSeconds: 5
-            timeoutSeconds: 2
-            failureThreshold: 2
-          livenessProbe:
-            tcpSocket:
-              port: restate
-            periodSeconds: 10
-            timeoutSeconds: 2
-            failureThreshold: 3
           resources:
             requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
               cpu: 250m
               memory: 256Mi
-            limits:
-              cpu: "2"
-              memory: 1Gi
           securityContext:
-            # TigerBeetle's native client requires io_uring, which containerd's
-            # RuntimeDefault seccomp profile blocks. Keep every other control.
-            seccompProfile:
-              type: Unconfined
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-            - name: postgres-ca
-              mountPath: /var/run/secrets/bayn/postgres
-              readOnly: true
-      volumes:
-        - name: tmp
-          emptyDir:
-            sizeLimit: 256Mi
-        - name: postgres-ca
-          secret:
-            secretName: bayn-db-ca
-            defaultMode: 0444
-            items:
-              - key: ca.crt
-                path: ca.crt

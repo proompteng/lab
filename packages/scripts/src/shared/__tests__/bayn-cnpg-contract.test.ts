@@ -224,20 +224,119 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
 
-test('the inactive Restate worker is bound to the current execution generation without capital authority', () => {
+test('the native Restate cutover binds one read-only controller before the status rollout', () => {
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
+  const activationDocuments = YAML.parseAllDocuments(
+    readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
+  ).map((document) => document.toJSON())
+  const activation = activationDocuments.find((manifest) => manifest.kind === 'Job')
+  const activationPolicy = activationDocuments.find((manifest) => manifest.kind === 'NetworkPolicy')
+  const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
   const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
     new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
+  const activationEnvironment = environment(activation)
+  const sourceRevision = '957415127f44b23e047fd0371bb4ffec7a000e97'
+  const imageDigest = 'sha256:a24b4a6b733b402f62bcaadeb7eb21e956166e005f663344b498bf811067cfd6'
+  const imageTag = `sha-${sourceRevision}`
+  const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
+  const sharedPlanEnvironment = [
+    'BAYN_CODE_REVISION',
+    'BAYN_IMAGE_REPOSITORY',
+    'BAYN_IMAGE_DIGEST',
+    'BAYN_STRATEGY_BEHAVIOR_HASH',
+    'BAYN_STRATEGY_PARAMETER_HASH',
+    'BAYN_BROKER_ACCESS',
+    'BAYN_CAPITAL_AUTHORITY',
+    'BAYN_AUTHORITY_GENERATION_HASH',
+    'BAYN_BROKER_PROVIDER',
+    'BAYN_BROKER_ENVIRONMENT',
+    'BAYN_ALPACA_BASE_URL',
+    'BAYN_CYCLE_POLL_INTERVAL_MS',
+    'BAYN_RECONCILIATION_INTERVAL_MS',
+    'BAYN_OPERATION_TIMEOUT_MS',
+    'BAYN_SIGNAL_SNAPSHOT_ID',
+    'BAYN_SIGNAL_PUBLICATION_ASOF',
+    'BAYN_SIGNAL_CALENDAR_VERSION',
+    'BAYN_SIGNAL_DATA_START',
+    'BAYN_SIGNAL_DATA_END',
+    'BAYN_SIGNAL_LOOKBACK_START',
+    'BAYN_SIGNAL_EVALUATION_START',
+    'BAYN_SIGNAL_EVALUATION_END',
+    'BAYN_TIGERBEETLE_CLUSTER_ID',
+    'BAYN_TIGERBEETLE_ADDRESSES',
+    'BAYN_TIGERBEETLE_LEDGER',
+  ]
 
   expect(controller.kind).toBe('RestateDeployment')
-  expect(controllerEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value).toMatch(/^[a-f0-9]{64}$/)
-  expect(controllerEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value).toBe(
-    deploymentEnvironment.get('BAYN_AUTHORITY_GENERATION_HASH')?.value,
-  )
+  expect(controller.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('-1')
+  expect(activation.metadata.annotations).toMatchObject({
+    'argocd.argoproj.io/hook': 'Sync',
+    'argocd.argoproj.io/sync-wave': '0',
+  })
+  expect(deployment.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('1')
+  expect(controller.spec.template.spec.containers[0].image).toBe(immutableImage)
+  expect(activation.spec.template.spec.containers[0].image).toBe(immutableImage)
+  expect(kustomization.images).toEqual([
+    {
+      name: 'bayn-main',
+      newName: 'registry.ide-newton.ts.net/lab/bayn',
+      newTag: imageTag,
+      digest: imageDigest,
+    },
+  ])
+
+  for (const name of sharedPlanEnvironment) {
+    expect(controllerEnvironment.get(name)).toEqual(activationEnvironment.get(name))
+  }
+  expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
+  expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
-  expect(controllerEnvironment.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(false)
+  expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
+  expect(deploymentEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+  expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
+    'ce6f75683644f052f6f6c2507b0c509a0f6069d349a58f1c8f8e72626693806a',
+  )
+  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')?.value).toBe('primary')
+  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')?.value).toBe(
+    '74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d',
+  )
+  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')?.value).toBe(
+    '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
+  )
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
+    '2af55da5b63218223511d93dac041f4b95e27bcea99e826fef5288d56f1c2eac',
+  )
+  expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 53, protocol: 'UDP' },
+    { port: 53, protocol: 'TCP' },
+    { port: 8080, protocol: 'TCP' },
+    { port: 4318, protocol: 'TCP' },
+  ])
+
+  for (const candidate of [controllerEnvironment, activationEnvironment, deploymentEnvironment]) {
+    expect(candidate.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(false)
+    expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
+  }
+  expect(kustomization.resources).toContain('execution-activation.yaml')
+  expect(kustomization.patches).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        target: expect.objectContaining({
+          kind: 'Job',
+          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
+        }),
+      }),
+      expect.objectContaining({
+        target: expect.objectContaining({
+          kind: 'NetworkPolicy',
+          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
+        }),
+      }),
+    ]),
+  )
 })
