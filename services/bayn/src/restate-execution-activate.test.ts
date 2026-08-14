@@ -12,6 +12,7 @@ import {
 } from './restate-execution-activate'
 
 const config: RestateExecutionActivationConfig = {
+  activationGeneration: '1'.repeat(64),
   controllerKey: 'a'.repeat(64),
   ingressOrigin: 'http://restate.example.test:8080',
   operationTimeoutMs: 30_000,
@@ -46,10 +47,53 @@ describe('native Restate execution activation', () => {
     expect(released).toBe(true)
   })
 
-  test('binds one authenticated idempotent bootstrap request to the immutable deployment', () => {
-    expect(restateExecutionActivationIdempotencyKey(config.sourceRevision, config.controllerKey, config.planHash)).toBe(
-      `bayn-execution-${config.sourceRevision}-${config.controllerKey}-${config.planHash}`,
+  test('binds retries to one activation generation and reactivation to a new generation', () => {
+    const idempotencyKey = restateExecutionActivationIdempotencyKey(
+      config.activationGeneration,
+      config.sourceRevision,
+      config.controllerKey,
+      config.planHash,
     )
+    expect(idempotencyKey).toMatch(/^bayn-execution-[0-9a-f]{64}$/)
+    expect(idempotencyKey.length).toBeLessThanOrEqual(128)
+    expect(restateExecutionActivationRequest(config, token).headers['idempotency-key']).toBe(idempotencyKey)
+    expect(
+      restateExecutionActivationIdempotencyKey(
+        '2'.repeat(64),
+        config.sourceRevision,
+        config.controllerKey,
+        config.planHash,
+      ),
+    ).not.toBe(idempotencyKey)
+    expect(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        'd'.repeat(40),
+        config.controllerKey,
+        config.planHash,
+      ),
+    ).not.toBe(idempotencyKey)
+    expect(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        'e'.repeat(64),
+        config.planHash,
+      ),
+    ).not.toBe(idempotencyKey)
+    expect(
+      restateExecutionActivationIdempotencyKey(
+        config.activationGeneration,
+        config.sourceRevision,
+        config.controllerKey,
+        'f'.repeat(64),
+      ),
+    ).not.toBe(idempotencyKey)
+    expect(
+      restateExecutionActivationRequest({ ...config, activationGeneration: '2'.repeat(64) }, token).headers[
+        'idempotency-key'
+      ],
+    ).not.toBe(idempotencyKey)
     expect(restateExecutionActivationRequest(config, token)).toEqual({
       path: '/restate/send/BaynExecutionBootstrap/start',
       body: {
@@ -60,7 +104,7 @@ describe('native Restate execution activation', () => {
       },
       headers: {
         authorization: `Bearer ${token}`,
-        'idempotency-key': `bayn-execution-${config.sourceRevision}-${config.controllerKey}-${config.planHash}`,
+        'idempotency-key': idempotencyKey,
       },
       timeoutMs: 30_000,
     })

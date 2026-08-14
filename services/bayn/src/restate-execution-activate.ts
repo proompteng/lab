@@ -3,6 +3,7 @@ import { Config, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { decodeExecutionControllerState, type ExecutionControllerState } from './execution/controller'
+import { sha256 } from './hash'
 import {
   executionBootstrapAuthorizationHash,
   executionControllerCutoverAwaitTimeoutMs,
@@ -48,6 +49,7 @@ export class RestateExecutionActivationError extends Data.TaggedError('RestateEx
 }> {}
 
 export interface RestateExecutionActivationConfig {
+  readonly activationGeneration: string
   readonly controllerKey: string
   readonly ingressOrigin: string
   readonly operationTimeoutMs: number
@@ -56,6 +58,7 @@ export interface RestateExecutionActivationConfig {
 }
 
 export const restateExecutionActivationConfig = Config.all({
+  activationGeneration: Config.schema(Sha256Schema, 'BAYN_EXECUTION_ACTIVATION_GENERATION'),
   bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   controllerKey: Config.schema(Sha256Schema, 'BAYN_EXECUTION_CONTROLLER_KEY'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
@@ -72,10 +75,14 @@ export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs:
   executionControllerCutoverAwaitTimeoutMs(operationTimeoutMs)
 
 export const restateExecutionActivationIdempotencyKey = (
+  activationGeneration: string,
   sourceRevision: string,
   controllerKey: string,
   planHash: string,
-): string => `bayn-execution-${sourceRevision}-${controllerKey}-${planHash}`
+): string =>
+  `bayn-execution-${sha256(
+    `bayn.execution-controller-bootstrap.v2\u0000${activationGeneration}\u0000${sourceRevision}\u0000${controllerKey}\u0000${planHash}`,
+  )}`
 
 export const restateExecutionActivationRequest = (config: RestateExecutionActivationConfig, token: string) => ({
   path: '/restate/send/BaynExecutionBootstrap/start',
@@ -88,6 +95,7 @@ export const restateExecutionActivationRequest = (config: RestateExecutionActiva
   headers: {
     authorization: `Bearer ${token}`,
     'idempotency-key': restateExecutionActivationIdempotencyKey(
+      config.activationGeneration,
       config.sourceRevision,
       config.controllerKey,
       config.planHash,
