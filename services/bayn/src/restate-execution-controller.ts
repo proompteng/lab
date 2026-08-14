@@ -23,6 +23,7 @@ import {
 } from './execution/controller'
 import { sha256 } from './hash'
 import { decodeRestateLifecycleState } from './restate-lifecycle'
+import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -269,6 +270,20 @@ export const executionControllerHandlerTimeouts = (
   abortTimeout: executionControllerFinalizationHeadroomMs,
 })
 
+export const executionControllerCutoverAwaitTimeoutMs = (operationTimeoutMs: number): number =>
+  lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) + executionControllerFinalizationHeadroomMs
+
+export const executionControllerBootstrapHandlerTimeouts = (
+  operationTimeoutMs: number,
+  cutsOverLegacyOwner: boolean,
+): { readonly inactivityTimeout: number; readonly abortTimeout: number } =>
+  cutsOverLegacyOwner
+    ? {
+        inactivityTimeout: executionControllerCutoverAwaitTimeoutMs(operationTimeoutMs),
+        abortTimeout: executionControllerFinalizationHeadroomMs,
+      }
+    : executionControllerHandlerTimeouts(operationTimeoutMs)
+
 export const makeBaynExecutionController = (
   config: ExecutionControllerConfig,
   runtime: NativeExecutionRuntime,
@@ -441,6 +456,6 @@ export const makeBaynExecutionBootstrap = (
     },
     options: {
       hooks: [...hooks],
-      ...executionControllerHandlerTimeouts(config.operationTimeoutMs),
+      ...executionControllerBootstrapHandlerTimeouts(config.operationTimeoutMs, legacyCutover !== undefined),
     },
   })

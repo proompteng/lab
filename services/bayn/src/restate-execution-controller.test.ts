@@ -8,7 +8,9 @@ import { ExecutionControllerOutcome } from './execution/controller-status'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
+  executionControllerBootstrapHandlerTimeouts,
   executionControllerCommandRetryPolicy,
+  executionControllerCutoverAwaitTimeoutMs,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
   executionControllerTickIdempotencyKey,
@@ -74,6 +76,14 @@ describe('native Restate execution controller', () => {
       inactivityTimeout: 450_000,
       abortTimeout: 30_000,
     })
+    expect(executionControllerCutoverAwaitTimeoutMs(30_000)).toBe(651_000)
+    expect(executionControllerBootstrapHandlerTimeouts(30_000, true)).toEqual({
+      inactivityTimeout: 651_000,
+      abortTimeout: 30_000,
+    })
+    expect(executionControllerBootstrapHandlerTimeouts(30_000, false)).toEqual(
+      executionControllerHandlerTimeouts(30_000),
+    )
   })
 
   test('serializes activation, one durable advance, scheduling, stale delivery, and deactivation', async () => {

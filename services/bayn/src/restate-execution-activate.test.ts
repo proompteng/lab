@@ -31,8 +31,8 @@ const activeState = {
 
 describe('native Restate execution activation', () => {
   test('binds one authenticated idempotent bootstrap request to the immutable deployment', () => {
-    expect(restateExecutionActivationIdempotencyKey(config.sourceRevision, config.controllerKey)).toBe(
-      `bayn-execution-${config.sourceRevision}-${config.controllerKey}`,
+    expect(restateExecutionActivationIdempotencyKey(config.sourceRevision, config.controllerKey, config.planHash)).toBe(
+      `bayn-execution-${config.sourceRevision}-${config.controllerKey}-${config.planHash}`,
     )
     expect(restateExecutionActivationRequest(config, token)).toEqual({
       path: '/restate/send/BaynExecutionBootstrap/start',
@@ -44,11 +44,11 @@ describe('native Restate execution activation', () => {
       },
       headers: {
         authorization: `Bearer ${token}`,
-        'idempotency-key': `bayn-execution-${config.sourceRevision}-${config.controllerKey}`,
+        'idempotency-key': `bayn-execution-${config.sourceRevision}-${config.controllerKey}-${config.planHash}`,
       },
       timeoutMs: 30_000,
     })
-    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(240_000)
+    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(651_000)
   })
 
   test('verifies only the exact active controller binding', () => {

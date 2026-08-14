@@ -3,7 +3,10 @@ import { Config, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
 import { decodeExecutionControllerState, type ExecutionControllerState } from './execution/controller'
-import { executionBootstrapAuthorizationHash } from './restate-execution-controller'
+import {
+  executionBootstrapAuthorizationHash,
+  executionControllerCutoverAwaitTimeoutMs,
+} from './restate-execution-controller'
 import {
   awaitRestateInvocation,
   restateInvocationAcceptTimeoutMs,
@@ -66,10 +69,13 @@ export const restateExecutionActivationConfig = Config.all({
 })
 
 export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs: number): number =>
-  Math.min(10 * 60_000, operationTimeoutMs * 3 + 150_000)
+  executionControllerCutoverAwaitTimeoutMs(operationTimeoutMs)
 
-export const restateExecutionActivationIdempotencyKey = (sourceRevision: string, controllerKey: string): string =>
-  `bayn-execution-${sourceRevision}-${controllerKey}`
+export const restateExecutionActivationIdempotencyKey = (
+  sourceRevision: string,
+  controllerKey: string,
+  planHash: string,
+): string => `bayn-execution-${sourceRevision}-${controllerKey}-${planHash}`
 
 export const restateExecutionActivationRequest = (config: RestateExecutionActivationConfig, token: string) => ({
   path: '/restate/send/BaynExecutionBootstrap/start',
@@ -81,7 +87,11 @@ export const restateExecutionActivationRequest = (config: RestateExecutionActiva
   },
   headers: {
     authorization: `Bearer ${token}`,
-    'idempotency-key': restateExecutionActivationIdempotencyKey(config.sourceRevision, config.controllerKey),
+    'idempotency-key': restateExecutionActivationIdempotencyKey(
+      config.sourceRevision,
+      config.controllerKey,
+      config.planHash,
+    ),
   },
   timeoutMs: restateInvocationAcceptTimeoutMs,
 })
