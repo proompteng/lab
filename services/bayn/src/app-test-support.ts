@@ -341,6 +341,7 @@ export const readyState = (): RuntimeState => {
   const evaluation = fixtureEvaluation
   return {
     status: 'READY',
+    qualificationEvidenceRequired: true,
     evidence: {
       startupMode: 'evaluated',
       provenance,

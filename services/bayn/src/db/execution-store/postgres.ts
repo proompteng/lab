@@ -37,6 +37,7 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
       },
       authorityGeneration: {
         ensureAuthorityGeneration: observeAuthority.ensureAuthorityGeneration,
+        readOrInitializeObserveAuthority: observeAuthority.readOrInitializeObserveAuthority,
         readAuthorityState: observeAuthority.readAuthorityState,
         readAuthorityGeneration: observeAuthority.readAuthorityGeneration,
         readResearchAuthorityGeneration: observeAuthority.readResearchAuthorityGeneration,

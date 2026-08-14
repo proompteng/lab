@@ -93,7 +93,7 @@ export type ApplicationRuntime<StartupR, LoopR> =
   | { readonly _tag: 'Brokerless' }
   | {
       readonly _tag: 'AutonomousRead'
-      readonly startupEvidenceMode?: 'Qualification' | 'Research'
+      readonly requiresQualificationEvidence?: boolean
       readonly broker?: BrokerProbe
       readonly brokerConfiguration?: BrokerConfiguration
       /** null explicitly suppresses cycles even when startup recovered historical qualification evidence. */
@@ -105,7 +105,7 @@ export type ApplicationRuntime<StartupR, LoopR> =
     }
   | {
       readonly _tag: 'AutonomousMutation'
-      readonly startupEvidenceMode?: 'Qualification' | 'Research'
+      readonly requiresQualificationEvidence?: boolean
       readonly broker: BrokerProbe
       readonly cycleBindingId?: string | null
       readonly cycleObservationId?: string
@@ -163,7 +163,7 @@ const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, Loop
   runtime._tag === 'Brokerless' ? undefined : runtime.broker
 
 const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): boolean =>
-  runtime._tag === 'Brokerless' || runtime.startupEvidenceMode !== 'Research'
+  runtime._tag === 'Brokerless' || runtime.requiresQualificationEvidence !== false
 
 const initialRuntimeState = <StartupR, LoopR>(
   config: RuntimeConfig,
@@ -172,6 +172,7 @@ const initialRuntimeState = <StartupR, LoopR>(
   runtime._tag === 'Brokerless'
     ? initialState({})
     : initialState({
+        qualificationEvidenceRequired: qualificationEvidenceRequired(runtime),
         broker: runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
         autonomousCycleLoopConfigured: true,
         autonomousCycleLoopOwner: config.lifecycleOwner ?? 'Process',

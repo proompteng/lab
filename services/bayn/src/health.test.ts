@@ -50,7 +50,7 @@ import {
 import { readinessResponseDecision, statusFacts } from './http'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { initialState, isReady, type RuntimeState } from './runtime-state'
+import { initialState, isReady, qualificationEvidenceSatisfied, type RuntimeState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
 const testHealthDependencies = Effect.all({
@@ -416,6 +416,35 @@ const provideHealthyDependencies = (
   )
 
 describe('Bayn continuous health', () => {
+  test('reaches readiness in request-free OBSERVE without qualification evidence', () => {
+    const checkedAt = '2026-08-13T12:00:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      status: 'STARTING',
+      qualificationEvidenceRequired: false,
+      evidence: null,
+      capitalActivation: { _tag: 'NotConfigured' },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: qualificationEvidenceSatisfied(current),
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition.next.status).toBe('READY')
+    expect(isReady(transition.next)).toBe(true)
+  })
+
   test('returns structured signal and durable evidence invariant failures', () => {
     const current = readyState()
     const evidence = current.evidence

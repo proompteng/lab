@@ -85,6 +85,10 @@ export interface AuthorityGenerationStoreShape {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  /** Initializes the configured OBSERVE root only when no authority state exists; otherwise returns the current state. */
+  readonly readOrInitializeObserveAuthority?: (
+    input: EnsureAuthorityGenerationInput,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Read-only recovery view used to resume a durable execution close lease after process restart. */
   readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityGeneration?: (
