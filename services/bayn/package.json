@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/forward-performance-command.ts src/restate-lifecycle-server.ts src/restate-lifecycle-register.ts src/restate-execution-server.ts --target=node --external tigerbeetle-node --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts src/restate-lifecycle-server.ts src/restate-lifecycle-register.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
