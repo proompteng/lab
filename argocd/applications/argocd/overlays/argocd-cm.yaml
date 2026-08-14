@@ -49,6 +49,67 @@ data:
     hs.status = "Progressing"
     hs.message = "Waiting for the sealed-secrets controller to report the current generation."
     return hs
+  resource.customizations.health.restate.dev_RestateDeployment: |
+    hs = {}
+
+    local metadata = obj.metadata or {}
+    local status = obj.status or {}
+    local generation = metadata.generation
+    local observedGeneration = status.observedGeneration
+    if generation == nil or observedGeneration == nil or generation ~= observedGeneration then
+      hs.status = "Progressing"
+      hs.message = "Waiting for the Restate operator to observe the current generation."
+      return hs
+    end
+
+    local conditions = status.conditions or {}
+    for _, condition in ipairs(conditions) do
+      if condition.type == "Ready" then
+        if condition.status == "False" then
+          hs.status = "Progressing"
+          hs.message = condition.message or "Waiting for the Restate deployment to become ready."
+          return hs
+        end
+
+        if condition.status == "Unknown" then
+          local message = condition.message or "Waiting for the Restate operator to determine deployment readiness."
+          local retryableFailedReconcilePrefixes = {
+            "Kube Error:",
+            "The RestateCloudEnvironment ",
+            "The Secret ",
+          }
+          local retryable = condition.reason ~= "FailedReconcile"
+          for _, prefix in ipairs(retryableFailedReconcilePrefixes) do
+            if string.sub(message, 1, string.len(prefix)) == prefix then
+              retryable = true
+            end
+          end
+
+          hs.status = retryable and "Progressing" or "Degraded"
+          hs.message = message
+          return hs
+        end
+
+        if condition.status == "True" then
+          local deploymentId = status.deploymentId or ""
+          local desiredReplicas = status.desiredReplicas
+          local readyReplicas = status.readyReplicas
+          if deploymentId == "" or desiredReplicas == nil or readyReplicas == nil or readyReplicas < desiredReplicas then
+            hs.status = "Progressing"
+            hs.message = "Waiting for the Restate deployment registration and replicas to become ready."
+            return hs
+          end
+
+          hs.status = "Healthy"
+          hs.message = "The Restate operator registered the current deployment generation."
+          return hs
+        end
+      end
+    end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for the Restate operator to report deployment readiness."
+    return hs
   resource.customizations.health.batch_CronJob: |
     hs = {}
     local metadata = obj.metadata or {}
