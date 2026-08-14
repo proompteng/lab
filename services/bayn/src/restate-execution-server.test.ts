@@ -18,6 +18,7 @@ const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
+const legacyDeactivationSchemaVersion = 'bayn.restate-lifecycle-activation.v1'
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -131,6 +132,12 @@ describe('native Restate execution server', () => {
       common,
       { ...common, BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash },
       { ...common, BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision },
+      {
+        ...common,
+        BAYN_LEGACY_LIFECYCLE_DEACTIVATION_SCHEMA_VERSION: 'unsupported',
+        BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash,
+        BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision,
+      },
     ]) {
       expect(Exit.isFailure(await Effect.runPromiseExit(provide(environment)))).toBe(true)
     }
@@ -143,7 +150,12 @@ describe('native Restate execution server', () => {
           BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision,
         }),
       ),
-    ).toMatchObject({ legacyControllerKey: 'primary', legacyPlanHash: planHash, legacySourceRevision: sourceRevision })
+    ).toMatchObject({
+      legacyControllerKey: 'primary',
+      legacyDeactivationSchemaVersion,
+      legacyPlanHash: planHash,
+      legacySourceRevision: sourceRevision,
+    })
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {
