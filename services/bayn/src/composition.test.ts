@@ -93,6 +93,7 @@ import {
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
 } from './composition/read-only-status'
+import { capitalActivationRequiresQualificationEvidence } from './composition/autonomous-runtime'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
@@ -679,6 +680,11 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn capital startup recovery boundary', () => {
+  test('does not require qualification evidence for plain OBSERVE or research execution', () => {
+    expect(capitalActivationRequiresQualificationEvidence(null)).toBe(false)
+    expect(capitalActivationRequiresQualificationEvidence(researchRequest)).toBe(false)
+  })
+
   test('recovers a configured pinned qualification without requiring a capital activation request', async () => {
     const state = await Effect.runPromise(
       Ref.make(

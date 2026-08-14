@@ -192,6 +192,7 @@ export type CapitalActivationRuntimeState =
 
 export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
+  readonly qualificationEvidenceRequired: boolean
   readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
@@ -205,6 +206,7 @@ export interface RuntimeState {
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
 export interface InitialRuntimeStateInput {
+  readonly qualificationEvidenceRequired?: boolean
   readonly broker?: BrokerConfiguration | undefined
   readonly autonomousCycleLoopConfigured?: boolean
   readonly autonomousCycleLoopOwner?: 'Process' | 'Restate'
@@ -216,6 +218,7 @@ export interface InitialRuntimeStateInput {
 
 export const initialState = (input: InitialRuntimeStateInput): RuntimeState => ({
   status: 'STARTING',
+  qualificationEvidenceRequired: input.qualificationEvidenceRequired ?? true,
   evidence: null,
   health: {
     sequence: 0,
@@ -268,6 +271,7 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
 })
 
 export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean =>
+  !state.qualificationEvidenceRequired ||
   state.evidence !== null ||
   ((state.capitalActivation?._tag === 'Realized' || state.capitalActivation?._tag === 'Completed') &&
     state.capitalActivation.grant === 'Research')

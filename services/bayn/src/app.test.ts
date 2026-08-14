@@ -404,8 +404,8 @@ describe('Bayn application composition', () => {
     expect(backgroundInterrupted).toBe(true)
   })
 
-  test('starts a research-bound autonomous cycle without qualification evidence', async () => {
-    const researchPlanHash = 'b'.repeat(64)
+  test('starts an observation-bound autonomous cycle without qualification evidence', async () => {
+    const observationBinding = 'b'.repeat(64)
     let startedBindingId: string | undefined
     let observedBindingId: string | undefined
     let startupMarketDataLoads = 0
@@ -450,10 +450,10 @@ describe('Bayn application composition', () => {
             },
             {
               _tag: 'AutonomousRead',
-              startupEvidenceMode: 'Research',
+              requiresQualificationEvidence: false,
               broker,
-              cycleBindingId: researchPlanHash,
-              cycleObservationId: researchPlanHash,
+              cycleBindingId: observationBinding,
+              cycleObservationId: observationBinding,
               startCycle,
             },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
@@ -464,8 +464,8 @@ describe('Bayn application composition', () => {
       ),
     )
 
-    expect(startedBindingId).toBe(researchPlanHash)
-    expect(observedBindingId).toBe(researchPlanHash)
+    expect(startedBindingId).toBe(observationBinding)
+    expect(observedBindingId).toBe(observationBinding)
     expect(startupMarketDataLoads).toBe(0)
     expect(startupQualificationOpens).toBe(0)
   })

@@ -100,6 +100,9 @@ export interface AutonomousServiceRuntimeOptions {
   readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
 
+export const capitalActivationRequiresQualificationEvidence = (request: CapitalActivationRequest | null): boolean =>
+  request !== null && !isResearchCapitalActivationRequest(request)
+
 export const makeAutonomousServiceRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   options: AutonomousServiceRuntimeOptions = {},
@@ -120,18 +123,16 @@ export const makeAutonomousServiceRuntime = (
     const serializedRequest = plan.config.capitalActivationRequestJson
     const decodedActivation: Result.Result<ConfiguredCapitalActivation | null, string> =
       serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serializedRequest)
-    const startupEvidenceMode =
+    const requiresQualificationEvidence =
       Result.isSuccess(decodedActivation) &&
       decodedActivation.success !== null &&
-      isResearchCapitalActivationRequest(decodedActivation.success.request)
-        ? ('Research' as const)
-        : ('Qualification' as const)
+      capitalActivationRequiresQualificationEvidence(decodedActivation.success.request)
     const noCycle = (
       _startup: AutonomousCycleStartupInput,
     ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
     const pendingRuntime = () => ({
       _tag: 'AutonomousRead' as const,
-      startupEvidenceMode,
+      requiresQualificationEvidence,
       cycleBindingId: null,
       brokerConfiguration: {
         expectedAccountId: observePlan.config.alpaca.expectedAccountId,
@@ -263,16 +264,49 @@ export const makeAutonomousServiceRuntime = (
                           )
                         const readRuntime = () => ({
                           _tag: 'AutonomousRead' as const,
-                          startupEvidenceMode:
-                            request !== null && isResearchCapitalActivationRequest(request)
-                              ? ('Research' as const)
-                              : ('Qualification' as const),
+                          requiresQualificationEvidence: capitalActivationRequiresQualificationEvidence(request),
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
                           ...(request !== null && isResearchCapitalActivationRequest(request)
                             ? { cycleBindingId: null, cycleObservationId: request.grant.planHash }
                             : {}),
                           startCycle: readStartCycle,
                         })
+                        const readCurrentObserveRuntime = (): Effect.Effect<
+                          AutonomousRuntime<never, never>,
+                          OperationalError
+                        > => {
+                          if (runtimeServices.authorityGenerationStore.readOrInitializeObserveAuthority === undefined) {
+                            return Effect.fail(
+                              capitalActivationOperationalError(
+                                'OBSERVE runtime startup requires durable authority initialization',
+                              ),
+                            )
+                          }
+                          return runtimeServices.authorityGenerationStore
+                            .readOrInitializeObserveAuthority({
+                              generationHash: observePlan.config.alpaca.authorityGenerationHash,
+                              maximum: Authority.Observe,
+                            })
+                            .pipe(
+                              Effect.mapError((cause) =>
+                                capitalActivationOperationalError(
+                                  'OBSERVE runtime authority initialization failed',
+                                  cause,
+                                ),
+                              ),
+                              Effect.flatMap((authority) =>
+                                Effect.fromResult(observeCycleGenerationHash(authority)).pipe(
+                                  Effect.mapError((message) => capitalActivationOperationalError(message)),
+                                ),
+                              ),
+                              Effect.map((cycleBindingId) => ({
+                                ...readRuntime(),
+                                requiresQualificationEvidence: false,
+                                cycleBindingId,
+                                cycleObservationId: cycleBindingId,
+                              })),
+                            )
+                        }
                         const recoverBlockedGeneration = recoverTerminalGenerationToObserve({
                           accountId: observePlan.config.alpaca.expectedAccountId,
                           blockedIntents: runtimeServices.blockedCycleIntentStore,
@@ -322,7 +356,9 @@ export const makeAutonomousServiceRuntime = (
                             },
                           ),
                         )
-                        if (request === null) return recoverBlockedGeneration.pipe(Effect.as(readRuntime()))
+                        if (request === null) {
+                          return recoverBlockedGeneration.pipe(Effect.andThen(readCurrentObserveRuntime()))
+                        }
                         const completedLifecycle = readCompletedExecutionLifecycle(
                           observePlan,
                           request,
@@ -684,9 +720,8 @@ export const makeAutonomousServiceRuntime = (
                                         )
                                       const runtime = {
                                         _tag: 'AutonomousMutation' as const,
-                                        startupEvidenceMode: isResearchCapitalActivationRequest(request)
-                                          ? ('Research' as const)
-                                          : ('Qualification' as const),
+                                        requiresQualificationEvidence:
+                                          capitalActivationRequiresQualificationEvidence(request),
                                         broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                         cycleBindingId,
                                         cycleObservationId: cycleBindingId,

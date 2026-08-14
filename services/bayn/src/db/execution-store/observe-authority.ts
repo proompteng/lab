@@ -131,6 +131,9 @@ export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readOrInitializeObserveAuthority: (
+    input: EnsureAuthorityGenerationInput,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
   readonly readAuthorityGeneration: (
     generationHash: string,
@@ -475,6 +478,46 @@ const makeObserveAuthorityInterpreterDataFirst = (
       ),
     )
 
+  const readOrInitializeObserveAuthorityTransaction = (request: ObserveGenerationRequest) =>
+    Effect.gen(function* () {
+      yield* authority.lockAuthorityGenerations
+      const rows = yield* sql<Record<string, unknown>>`
+        SELECT
+          schema_version, generation_hash, maximum, effective, kill_state, reason,
+          version::text AS version, updated_at, clock_timestamp() AS observed_at
+        FROM authority_state
+        WHERE singleton
+        FOR UPDATE
+      `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
+      const currentRow = rows[0]
+      if (currentRow !== undefined) {
+        const current = yield* authorityStateFromRow(currentRow)
+        yield* liftAuthorityDecision(validateAuthorityObservation(current, currentRow.observed_at))
+        return yield* replayObserveGeneration(current)
+      }
+      const decision = yield* liftAuthorityDecision(decideObserveGeneration(request, undefined))
+      if (decision._tag !== 'InitializeObserveGeneration') {
+        return yield* failExecutionStore(
+          'authority',
+          'invariant',
+          'absent authority state did not produce OBSERVE initialization',
+        )
+      }
+      return yield* initializeObserveGeneration(decision)
+    })
+
+  const readOrInitializeObserveAuthority = (candidate: EnsureAuthorityGenerationInput) =>
+    runExecutionOperation(
+      'authority',
+      decodeEnsureAuthorityGenerationInput(candidate).pipe(
+        Effect.flatMap((input) =>
+          liftAuthorityDecision(validateObserveGenerationRequest(input)).pipe(
+            Effect.flatMap((request) => sql.withTransaction(readOrInitializeObserveAuthorityTransaction(request))),
+          ),
+        ),
+      ),
+    )
+
   const readAuthorityState = runExecutionOperation(
     'authority',
     sql<Record<string, unknown>>`
@@ -547,6 +590,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
 
   return {
     ensureAuthorityGeneration,
+    readOrInitializeObserveAuthority,
     readAuthorityState,
     readAuthorityGeneration,
     readResearchAuthorityGeneration,

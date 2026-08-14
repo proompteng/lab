@@ -1057,10 +1057,12 @@ describePostgres('paper accounting persistence', () => {
         Effect.gen(function* () {
           const store = yield* ExecutionStore
           const sql = yield* PgClient.PgClient
+          const readOrInitializeObserveAuthority = store.readOrInitializeObserveAuthority
+          assert(readOrInitializeObserveAuthority !== undefined, 'OBSERVE authority initialization must be implemented')
           const [databaseBefore] = yield* sql<{ observed_at: Date }>`
             SELECT clock_timestamp() AS observed_at
           `
-          const first = yield* store.ensureAuthorityGeneration({
+          const first = yield* readOrInitializeObserveAuthority({
             generationHash: hash('authority-generation-a'),
             maximum: Authority.Observe,
           })
@@ -1083,6 +1085,10 @@ describePostgres('paper accounting persistence', () => {
             generationHash: hash('authority-generation-b'),
             maximum: Authority.Observe,
           })
+          const preserved = yield* readOrInitializeObserveAuthority({
+            generationHash: hash('authority-generation-a'),
+            maximum: Authority.Observe,
+          })
           const [afterRotation] = yield* sql<{ rows: number; tuple_id: string; version: number }>`
             SELECT
               count(*) OVER ()::integer AS rows,
@@ -1099,6 +1105,7 @@ describePostgres('paper accounting persistence', () => {
             first,
             replay,
             rotated,
+            preserved,
             databaseBefore: databaseBefore.observed_at,
             databaseAfter: databaseAfter.observed_at,
             beforeReplay,
@@ -1129,6 +1136,7 @@ describePostgres('paper accounting persistence', () => {
         updatedAt: expect.any(String),
       })
       expect(Date.parse(result.rotated.updatedAt)).toBeGreaterThan(Date.parse(result.first.updatedAt))
+      expect(result.preserved).toEqual(result.rotated)
       expect(result.afterRotation).toMatchObject({ rows: 1, version: 2 })
       expect(result.afterRotation.tuple_id).not.toBe(result.afterReplay.tuple_id)
       expect(result.historyVersions.map(({ authority_version }) => authority_version)).toEqual([1, 2])
@@ -1532,7 +1540,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('rejects OBSERVE replay when the same generation hash is rebound to another v2 broker identity', async () => {
+  test('rejects OBSERVE replay and request-free startup across v2 broker identities', async () => {
     const generationHash = hash('observe-replay-broker-identity')
     const initialRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
     try {
@@ -1557,6 +1565,12 @@ describePostgres('paper accounting persistence', () => {
         const observed = await replayRuntime.runPromise(
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient
+            const store = yield* ExecutionStore
+            const readOrInitializeObserveAuthority = store.readOrInitializeObserveAuthority
+            assert(
+              readOrInitializeObserveAuthority !== undefined,
+              'OBSERVE authority initialization must be implemented',
+            )
             const [before] = yield* sql<{ authority: unknown; history: unknown }>`
               SELECT
                 (SELECT to_jsonb(state) FROM authority_state AS state WHERE singleton) AS authority,
@@ -1566,10 +1580,14 @@ describePostgres('paper accounting persistence', () => {
                   WHERE generation_hash = ${generationHash}
                 ) AS history
             `
-            const failure = yield* Effect.flip(
-              Effect.flatMap(ExecutionStore, (store) =>
-                store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
-              ),
+            const replayFailure = yield* Effect.flip(
+              store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
+            )
+            const startupFailure = yield* Effect.flip(
+              readOrInitializeObserveAuthority({
+                generationHash: hash('changed-identity-configured-observe-root'),
+                maximum: Authority.Observe,
+              }),
             )
             const [after] = yield* sql<{ authority: unknown; history: unknown }>`
               SELECT
@@ -1580,14 +1598,15 @@ describePostgres('paper accounting persistence', () => {
                   WHERE generation_hash = ${generationHash}
                 ) AS history
             `
-            return { after, before, failure }
+            return { after, before, replayFailure, startupFailure }
           }),
         )
-        expect(observed.failure).toMatchObject({
+        expect(observed.replayFailure).toMatchObject({
           operation: 'authority',
           failure: 'conflict',
           message: 'authority generation broker identity does not match configured broker identity',
         })
+        expect(observed.startupFailure).toEqual(observed.replayFailure)
         expect(observed.after).toEqual(observed.before)
       } finally {
         await replayRuntime.dispose()
