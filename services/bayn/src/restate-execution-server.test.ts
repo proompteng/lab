@@ -3,7 +3,7 @@ import { createServer as createHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { Effect, Option, Result } from 'effect'
 
 import type { ApplicationPlan } from './app'
 import { acquireRestateHttp2Server } from './restate-http2-server'
@@ -11,6 +11,7 @@ import {
   decodeRestateRequestIdentityKeys,
   makeRestateExecutionEndpointHandler,
   requireAutonomousApplicationPlan,
+  resolveLegacyCutoverBinding,
 } from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
@@ -113,6 +114,17 @@ describe('native Restate execution server', () => {
       _tag: 'Failure',
     })
     expect(decodeRestateRequestIdentityKeys('not-a-restate-key')).toMatchObject({ _tag: 'Failure' })
+  })
+
+  test('requires complete legacy cutover provenance or no cutover binding', () => {
+    expect(Result.getOrThrow(resolveLegacyCutoverBinding('primary', Option.none(), Option.none()))).toBeUndefined()
+    expect(
+      Result.getOrThrow(resolveLegacyCutoverBinding('primary', Option.some(planHash), Option.some(sourceRevision))),
+    ).toEqual({ controllerKey: 'primary', planHash, sourceRevision })
+    expect(
+      Option.getOrThrow(Result.getFailure(resolveLegacyCutoverBinding('primary', Option.some(planHash), Option.none())))
+        .message,
+    ).toBe('legacy Restate lifecycle cutover requires both plan hash and source revision')
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {

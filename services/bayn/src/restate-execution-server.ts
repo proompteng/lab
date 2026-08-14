@@ -2,7 +2,7 @@ import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Layer, Redacted, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
 import { loadApplicationPlan } from './application-plan'
 import type { ApplicationPlan, ApplicationPlanFor } from './app'
@@ -13,6 +13,7 @@ import {
   makeBaynExecutionBootstrap,
   makeBaynExecutionController,
   type ExecutionControllerConfig,
+  type LegacyLifecycleCutoverBinding,
   type NativeExecutionRuntime,
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
@@ -26,6 +27,15 @@ export class RestateExecutionServerError extends Data.TaggedError('RestateExecut
 
 const executionServerConfig = Config.all({
   bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
+  legacyControllerKey: Config.nonEmptyString('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY').pipe(
+    Config.withDefault('primary'),
+  ),
+  legacyPlanHash: Config.option(
+    Config.schema(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)), 'BAYN_LEGACY_LIFECYCLE_PLAN_HASH'),
+  ),
+  legacySourceRevision: Config.option(
+    Config.schema(Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)), 'BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION'),
+  ),
   port: Config.port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
@@ -57,14 +67,38 @@ export const makeRestateExecutionEndpointHandler = (
   bootstrapAuthorizationHash: string,
   identityKeys: readonly string[],
   hooks: readonly restate.HooksProvider[] = [],
+  legacyCutover?: LegacyLifecycleCutoverBinding,
 ) => {
   const controller = makeBaynExecutionController(config, runtime, hooks)
-  const bootstrap = makeBaynExecutionBootstrap(config, controller, bootstrapAuthorizationHash, hooks)
+  const bootstrap = makeBaynExecutionBootstrap(config, controller, bootstrapAuthorizationHash, hooks, legacyCutover)
   return restate.createEndpointHandler({ services: [controller, bootstrap], identityKeys: [...identityKeys] })
 }
 
+export const resolveLegacyCutoverBinding = (
+  controllerKey: string,
+  planHash: Option.Option<string>,
+  sourceRevision: Option.Option<string>,
+): Result.Result<LegacyLifecycleCutoverBinding | undefined, RestateExecutionServerError> => {
+  const decodedPlanHash = Option.getOrUndefined(planHash)
+  const decodedSourceRevision = Option.getOrUndefined(sourceRevision)
+  if (decodedPlanHash === undefined && decodedSourceRevision === undefined) {
+    return Result.succeed(undefined)
+  }
+  if (decodedPlanHash === undefined || decodedSourceRevision === undefined) {
+    return Result.fail(
+      new RestateExecutionServerError({
+        message: 'legacy Restate lifecycle cutover requires both plan hash and source revision',
+      }),
+    )
+  }
+  return Result.succeed({ controllerKey, planHash: decodedPlanHash, sourceRevision: decodedSourceRevision })
+}
+
 export const restateExecutionServerProgram = Effect.gen(function* () {
-  const [{ bootstrapToken, port, requestIdentityKeys }, plan] = yield* Effect.all([
+  const [
+    { bootstrapToken, legacyControllerKey, legacyPlanHash, legacySourceRevision, port, requestIdentityKeys },
+    plan,
+  ] = yield* Effect.all([
     executionServerConfig,
     loadApplicationPlan.pipe(Effect.flatMap(requireAutonomousApplicationPlan)),
   ])
@@ -88,13 +122,23 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
+  const legacyCutover = yield* Effect.fromResult(
+    resolveLegacyCutoverBinding(legacyControllerKey, legacyPlanHash, legacySourceRevision),
+  )
   const { config, runtime } = yield* acquireNativeExecutionRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
   })
   const server = createServer(
-    makeRestateExecutionEndpointHandler(config, runtime, bootstrapAuthorizationHash, identityKeys, telemetry.hooks),
+    makeRestateExecutionEndpointHandler(
+      config,
+      runtime,
+      bootstrapAuthorizationHash,
+      identityKeys,
+      telemetry.hooks,
+      legacyCutover,
+    ),
   )
   yield* acquireRestateHttp2Server(server, port)
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(
