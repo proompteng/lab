@@ -238,8 +238,8 @@ test('the native Restate cutover binds one read-only controller before the statu
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = '957415127f44b23e047fd0371bb4ffec7a000e97'
-  const imageDigest = 'sha256:a24b4a6b733b402f62bcaadeb7eb21e956166e005f663344b498bf811067cfd6'
+  const sourceRevision = 'f66223cb1c3e95d604c6f5a579d0f364b35fae41'
+  const imageDigest = 'sha256:00b0dc06c6640915f72056e6483dcf548498fc314ef4b1a209a75c5d262fbe74'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -276,6 +276,9 @@ test('the native Restate cutover binds one read-only controller before the statu
     'argocd.argoproj.io/hook': 'Sync',
     'argocd.argoproj.io/sync-wave': '0',
   })
+  expect(activation.metadata.name).toBe(`bayn-execution-activate-${sourceRevision.slice(0, 12)}`)
+  expect(activation.metadata.labels['app.kubernetes.io/version']).toBe(sourceRevision.slice(0, 12))
+  expect(activation.spec.template.metadata.labels['app.kubernetes.io/version']).toBe(sourceRevision.slice(0, 12))
   expect(deployment.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('1')
   expect(controller.spec.template.spec.containers[0].image).toBe(immutableImage)
   expect(activation.spec.template.spec.containers[0].image).toBe(immutableImage)
@@ -298,7 +301,7 @@ test('the native Restate cutover binds one read-only controller before the statu
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(deploymentEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    'ce6f75683644f052f6f6c2507b0c509a0f6069d349a58f1c8f8e72626693806a',
+    'a21bbfccdf03ea77478141d60dff64fd0b918ba9c30ec9d0b1ba9d64c4dea9a7',
   )
   expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')?.value).toBe('primary')
   expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')?.value).toBe(
@@ -308,7 +311,7 @@ test('the native Restate cutover binds one read-only controller before the statu
     '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
   )
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '2af55da5b63218223511d93dac041f4b95e27bcea99e826fef5288d56f1c2eac',
+    'a526fa8ab40b145be32eef7a2350d0c9dd70f003269fc932044788ed4c442df3',
   )
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
