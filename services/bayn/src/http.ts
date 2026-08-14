@@ -217,6 +217,7 @@ const publicExecutionController = (state: RuntimeState) => {
         ? null
         : {
             active: controller.status.active,
+            planHash: controller.status.planHash,
             epoch: controller.status.epoch,
             lastSequence: controller.status.lastSequence,
             lastOutcome: controller.status.lastOutcome,

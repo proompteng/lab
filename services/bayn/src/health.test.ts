@@ -94,6 +94,7 @@ const monitor = (
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const brokerObservedAt = '2026-07-20T00:00:00.000Z'
+const controllerPlanHash = 'd'.repeat(64)
 const availableClock = (checkedAt: string) =>
   ({ _tag: 'Available', checkedAt, checkedAtMs: Date.parse(checkedAt) }) as const
 const unsafeClock = (observedAtMs: number) =>
@@ -1165,6 +1166,7 @@ describe('Bayn continuous health', () => {
       executionController: {
         configured: true,
         controllerKey,
+        planHash: controllerPlanHash,
         status: null,
         readAvailable: null,
         checkedAt: null,
@@ -1212,6 +1214,7 @@ describe('Bayn continuous health', () => {
       executionController: {
         configured: true,
         controllerKey,
+        planHash: controllerPlanHash,
         status: null,
         readAvailable: null,
         checkedAt: null,
@@ -1221,6 +1224,7 @@ describe('Bayn continuous health', () => {
     const status = {
       schemaVersion: 1 as const,
       controllerKey,
+      planHash: controllerPlanHash,
       active: true,
       epoch: 4,
       lastSequence: 12,
@@ -1276,6 +1280,34 @@ describe('Bayn continuous health', () => {
         },
       },
     })
+
+    const stalePlan = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: { ...status, planHash: 'c'.repeat(64) } },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:05:59.999Z'),
+    })
+    expect(stalePlan.next).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'Restate execution-controller projection plan differs from the configured controller',
+          },
+        },
+      },
+    })
   })
 
   test('fails closed when the Restate controller projection exceeds its due-time grace', () => {
@@ -1286,6 +1318,7 @@ describe('Bayn continuous health', () => {
       executionController: {
         configured: true,
         controllerKey,
+        planHash: controllerPlanHash,
         status: null,
         readAvailable: null,
         checkedAt: null,
@@ -1307,6 +1340,7 @@ describe('Bayn continuous health', () => {
           value: {
             schemaVersion: 1,
             controllerKey,
+            planHash: controllerPlanHash,
             active: true,
             epoch: 4,
             lastSequence: 12,

@@ -21,6 +21,7 @@ import { initialState, type RuntimeState } from '../runtime-state'
 import { runStartup } from '../startup'
 import { currentUtcInstant } from '../time'
 import { runtimeBroker } from './lifecycle'
+import { executionControllerConfig } from './native-execution-runtime'
 import {
   capitalActivationOperationalError,
   capitalActivationRequestIsCurrent,
@@ -217,7 +218,8 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       Result.isSuccess(configured) &&
       configured.success !== null &&
       isResearchCapitalActivationRequest(configured.success.request)
-    const controllerKey = plan.config.alpaca.identity.identityHash
+    const controller = yield* Effect.fromResult(executionControllerConfig(plan))
+    const controllerKey = controller.controllerKey
     const state = yield* Ref.make(
       initialState({
         broker: {
@@ -227,7 +229,10 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
         },
         autonomousCycleLoopConfigured: true,
         autonomousCycleLoopOwner: 'Restate',
-        executionControllerKey: controllerKey,
+        executionController: {
+          controllerKey,
+          planHash: controller.planHash,
+        },
       }),
     )
     const dependencies = { marketData, journal, evidenceStore, cycleObservability }

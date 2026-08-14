@@ -42,6 +42,7 @@ import {
 const hash = (character: string): string => character.repeat(64)
 const sourceRevision = 'a'.repeat(40)
 const completedAt = '2026-08-13T18:00:00.000Z'
+const controllerPlanHash = hash('9')
 
 type MarketDataBinding = Pick<
   RuntimeConfig['clickhouse'],
@@ -109,6 +110,7 @@ const driver = {
 const status = (overrides: Partial<ExecutionControllerStatus> = {}): ExecutionControllerStatus => ({
   schemaVersion: 1,
   controllerKey: command.controllerKey,
+  planHash: controllerPlanHash,
   active: true,
   epoch: command.epoch,
   lastSequence: command.sequence,
@@ -270,7 +272,12 @@ describe('native execution runtime', () => {
               (runtime) => runtime.disposeEffect,
             ),
           )
-          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(managed, executionResources, hostRunner)
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+            managed,
+            executionResources,
+            hostRunner,
+            controllerPlanHash,
+          )
 
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
@@ -325,9 +332,13 @@ describe('native execution runtime', () => {
         ),
       ),
     )
-    const runtime = makeManagedNativeExecutionRuntimeAdapter(managed, {
-      runPromise: (effect, options) => Effect.runPromise(effect, options),
-    })
+    const runtime = makeManagedNativeExecutionRuntimeAdapter(
+      managed,
+      {
+        runPromise: (effect, options) => Effect.runPromise(effect, options),
+      },
+      controllerPlanHash,
+    )
 
     await runtime.advance(command, new AbortController().signal)
     await Effect.runPromise(Ref.set(slot.state, { _tag: 'Ready', driver: withCall('observe') }))
@@ -384,7 +395,12 @@ describe('native execution runtime', () => {
               (runtime) => runtime.disposeEffect,
             ),
           )
-          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(managed, executionResources, hostRunner)
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+            managed,
+            executionResources,
+            hostRunner,
+            controllerPlanHash,
+          )
           const first = yield* Effect.tryPromise({
             try: () => runtime.advance(command, new AbortController().signal),
             catch: (cause) => cause,
@@ -430,12 +446,14 @@ describe('native execution runtime', () => {
           projected = candidate
           return { _tag: 'Applied', status: candidate }
         }),
+        controllerPlanHash,
       ),
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
+      planHash: controllerPlanHash,
       epoch: command.epoch,
       lastSequence: command.sequence,
       lastOutcome: 'Blocked',
@@ -476,6 +494,7 @@ describe('native execution runtime', () => {
     expect(projected).toEqual({
       schemaVersion: 1,
       controllerKey: command.controllerKey,
+      planHash: hash('3'),
       active: false,
       epoch: command.epoch + 1,
       lastSequence: command.sequence,
@@ -495,6 +514,7 @@ describe('native execution runtime', () => {
             _tag: 'Stale',
             status: status({ lastSequence: command.sequence + 1 }),
           })),
+          controllerPlanHash,
         ),
       ),
     )
@@ -539,8 +559,12 @@ describe('native execution runtime', () => {
         ),
     }
 
-    const first = await Effect.runPromiseExit(executeNativeExecutionAdvance(command, replayDriver, uncertainStore))
-    const replay = await Effect.runPromise(executeNativeExecutionAdvance(command, replayDriver, uncertainStore))
+    const first = await Effect.runPromiseExit(
+      executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+    )
+    const replay = await Effect.runPromise(
+      executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+    )
 
     expect(first._tag).toBe('Failure')
     expect(advanceCount).toBe(1)
@@ -555,6 +579,34 @@ describe('native execution runtime', () => {
         nextDelayMs: 30_000,
       },
     })
+  })
+
+  test('rejects a same-epoch projection from a different deployment plan without advancing execution', async () => {
+    let advanceCount = 0
+    const mismatched = status({ planHash: hash('8') })
+    const failure = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        {
+          ...driver,
+          advance: Effect.sync(() => {
+            advanceCount += 1
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                observedAt: completedAt,
+                outcome: 'NOT_DUE' as const,
+              },
+            }
+          }),
+        },
+        { read: () => Effect.succeed(mismatched), project: () => Effect.die('must not project') },
+        controllerPlanHash,
+      ).pipe(Effect.flip),
+    )
+
+    expect(failure).toBeInstanceOf(TransientExecutionFailure)
+    expect(advanceCount).toBe(0)
   })
 
   test('forwards Restate cancellation into the Effect runner', async () => {
@@ -572,6 +624,7 @@ describe('native execution runtime', () => {
           return Effect.runPromise(effect, options)
         },
       },
+      controllerPlanHash,
     )
 
     await runtime.advance(command, abort.signal)
@@ -604,6 +657,7 @@ describe('native execution runtime', () => {
       ),
       statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
       { runPromise: (effect, options) => Effect.runPromise(effect, options) },
+      controllerPlanHash,
     )
 
     await runtime.advance(command, new AbortController().signal)
@@ -633,6 +687,7 @@ describe('native execution runtime', () => {
       readRecoveryFirstCycleDriverSlot(slot),
       statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
       { runPromise: (effect, options) => Effect.runPromise(effect, options) },
+      controllerPlanHash,
     )
 
     await runtime.advance(command, new AbortController().signal)

@@ -13,6 +13,7 @@ export enum ExecutionControllerOutcome {
 export const ExecutionControllerStatusSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   controllerKey: LifecycleControllerKeySchema,
+  planHash: Sha256Schema,
   active: Schema.Boolean,
   epoch: ControllerCounterSchema,
   lastSequence: ControllerCounterSchema,

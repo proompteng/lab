@@ -289,6 +289,9 @@ const cycleLoopHealth = (
     if (status.controllerKey !== controller.controllerKey) {
       return unavailable('Restate execution-controller projection identity differs from the configured controller')
     }
+    if (status.planHash !== controller.planHash) {
+      return unavailable('Restate execution-controller projection plan differs from the configured controller')
+    }
     if (!status.active) return unavailable('Restate execution controller is durably inactive')
     const completedAtMs = Date.parse(status.completedAt)
     const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)

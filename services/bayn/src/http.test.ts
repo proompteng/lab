@@ -387,17 +387,20 @@ describe('Bayn HTTP pure decisions', () => {
 
   test('publishes only bounded Restate controller identity, freshness, outcome, and timing', () => {
     const controllerKey = 'f'.repeat(64)
+    const planHash = 'd'.repeat(64)
     const state: RuntimeState = {
       ...readyState(),
       executionController: {
         configured: true,
         controllerKey,
+        planHash,
         readAvailable: true,
         checkedAt: '2026-08-13T19:00:00.000Z',
         error: null,
         status: {
           schemaVersion: 1,
           controllerKey,
+          planHash,
           active: true,
           epoch: 3,
           lastSequence: 17,
@@ -417,6 +420,7 @@ describe('Bayn HTTP pure decisions', () => {
       checkedAt: '2026-08-13T19:00:00.000Z',
       status: {
         active: true,
+        planHash,
         epoch: 3,
         lastSequence: 17,
         lastOutcome: ExecutionControllerOutcome.Blocked,

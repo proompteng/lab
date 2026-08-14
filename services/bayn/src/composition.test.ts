@@ -760,7 +760,10 @@ describe('Bayn capital startup recovery boundary', () => {
           },
           autonomousCycleLoopConfigured: true,
           autonomousCycleLoopOwner: 'Restate',
-          executionControllerKey: continuationBrokerIdentity.identityHash,
+          executionController: {
+            controllerKey: continuationBrokerIdentity.identityHash,
+            planHash: 'f'.repeat(64),
+          },
         }),
       ),
     )
@@ -799,7 +802,10 @@ describe('Bayn capital startup recovery boundary', () => {
           },
           autonomousCycleLoopConfigured: true,
           autonomousCycleLoopOwner: 'Restate',
-          executionControllerKey: continuationBrokerIdentity.identityHash,
+          executionController: {
+            controllerKey: continuationBrokerIdentity.identityHash,
+            planHash: 'f'.repeat(64),
+          },
         }),
       ),
     )

@@ -159,6 +159,7 @@ export interface AutonomousCycleLoopStatus {
 export interface ExecutionControllerRuntimeStatus {
   readonly configured: true
   readonly controllerKey: string
+  readonly planHash: string
   readonly status: ExecutionControllerStatus | null
   readonly readAvailable: boolean | null
   readonly checkedAt: string | null
@@ -207,7 +208,10 @@ export interface InitialRuntimeStateInput {
   readonly broker?: BrokerConfiguration | undefined
   readonly autonomousCycleLoopConfigured?: boolean
   readonly autonomousCycleLoopOwner?: 'Process' | 'Restate'
-  readonly executionControllerKey?: string
+  readonly executionController?: {
+    readonly controllerKey: string
+    readonly planHash: string
+  }
 }
 
 export const initialState = (input: InitialRuntimeStateInput): RuntimeState => ({
@@ -232,12 +236,13 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
     startedAt: null,
     lastPass: null,
   },
-  ...(input.executionControllerKey === undefined
+  ...(input.executionController === undefined
     ? {}
     : {
         executionController: {
           configured: true as const,
-          controllerKey: input.executionControllerKey,
+          controllerKey: input.executionController.controllerKey,
+          planHash: input.executionController.planHash,
           status: null,
           readAvailable: null,
           checkedAt: null,

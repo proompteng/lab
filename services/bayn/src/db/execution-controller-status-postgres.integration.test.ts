@@ -62,6 +62,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
     const initial = {
       schemaVersion: 1 as const,
       controllerKey: 'primary',
+      planHash: 'f'.repeat(64),
       active: true,
       epoch: 3,
       lastSequence: 8,
@@ -82,8 +83,12 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           lastReceiptHash: 'b'.repeat(64),
         })
         const conflict = yield* store.project({ ...initial, lastReceiptHash: 'c'.repeat(64) }).pipe(Effect.flip)
+        const planConflict = yield* store
+          .project({ ...initial, planHash: 'e'.repeat(64), lastSequence: initial.lastSequence + 1 })
+          .pipe(Effect.flip)
         const nextEpoch = yield* store.project({
           ...initial,
+          planHash: 'd'.repeat(64),
           epoch: 4,
           lastSequence: 0,
           lastOutcome: ExecutionControllerOutcome.Completed,
@@ -95,7 +100,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         const sql = yield* PgClient.PgClient
         const truncate = yield* Effect.exit(sql`TRUNCATE execution_controller_status`)
         const retainedAfterTruncate = yield* store.read('primary')
-        return { applied, replayed, stale, conflict, nextEpoch, stored, truncate, retainedAfterTruncate }
+        return { applied, replayed, stale, conflict, planConflict, nextEpoch, stored, truncate, retainedAfterTruncate }
       }),
     )
 
@@ -107,9 +112,20 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       operation: 'project',
       failure: 'conflict',
     })
+    expect(result.planConflict).toMatchObject({
+      _tag: 'ExecutionControllerStatusStoreError',
+      operation: 'project',
+      failure: 'conflict',
+    })
     expect(result.nextEpoch).toMatchObject({
       _tag: 'Applied',
-      status: { epoch: 4, lastSequence: 0, lastOutcome: 'Completed', lastReceiptHash: 'd'.repeat(64) },
+      status: {
+        planHash: 'd'.repeat(64),
+        epoch: 4,
+        lastSequence: 0,
+        lastOutcome: 'Completed',
+        lastReceiptHash: 'd'.repeat(64),
+      },
     })
     expect(result.stored).toEqual(result.nextEpoch.status)
     expect(result.truncate._tag).toBe('Failure')
