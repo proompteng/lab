@@ -1,0 +1,105 @@
+name: bayn-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/bayn/**'
+      - 'argocd/applications/agents-ci/bayn-post-deploy-rbac.yaml'
+      - 'argocd/applications/agents-ci/kustomization.yaml'
+      - '.github/workflows/bayn-post-deploy-verify.yml'
+      - 'packages/scripts/src/bayn/verify-post-deploy.ts'
+  schedule:
+    - cron: '11,41 * * * *'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full main commit SHA that Argo must have reconciled
+        required: false
+        type: string
+
+concurrency:
+  group: bayn-post-deploy-verify-main
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-amd64
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout main revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster Kubernetes identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            kubectl config current-context
+            exit 0
+          fi
+
+          test -n "${KUBERNETES_SERVICE_HOST:-}"
+          test -n "${KUBERNETES_SERVICE_PORT:-}"
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/token
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+          kubeconfig="${RUNNER_TEMP}/bayn-post-deploy-kubeconfig"
+          echo "KUBECONFIG=${kubeconfig}" >> "${GITHUB_ENV}"
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${kubeconfig}"
+          kubectl config set-credentials bayn-post-deploy \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${kubeconfig}"
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=bayn-post-deploy \
+            --namespace=bayn \
+            --kubeconfig="${kubeconfig}"
+          kubectl config use-context in-cluster --kubeconfig="${kubeconfig}"
+
+      - name: Verify immutable Bayn production contract
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          expected_revision="$(git rev-parse HEAD)"
+          if [ "${EVENT_NAME}" = 'schedule' ]; then
+            expected_revision="$(git log -1 --format=%H origin/main -- argocd/applications/bayn)"
+          fi
+          if [ "${EVENT_NAME}" = 'workflow_dispatch' ] && [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            expected_revision="${EXPECTED_REVISION_INPUT}"
+          fi
+          if ! [[ "${expected_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Expected revision must be a full commit SHA' >&2
+            exit 1
+          fi
+
+          bun run packages/scripts/src/bayn/verify-post-deploy.ts \
+            --expected-revision "${expected_revision}" \
+            --deadline-seconds 900 \
+            --interval-seconds 10 \
+            --maximum-evidence-age-seconds 180

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import { Deferred, Effect, Option, Ref, Scope } from 'effect'
+import { Clock, Deferred, Effect, Option, Ref, Scope } from 'effect'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
@@ -356,6 +356,7 @@ const statusFactsDataFirst = (
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
+  runtimeReady = isReady(state),
 ) => {
   const broker = publicBrokerState(state)
   const dependencies = publicDependencies(state)
@@ -366,7 +367,7 @@ const statusFactsDataFirst = (
     service: 'bayn',
     operational: {
       status: state.status,
-      ready: isReady(state),
+      ready: runtimeReady,
       probeSequence: state.health.sequence,
       checkedAt: state.health.checkedAt,
     },
@@ -460,8 +461,42 @@ export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDat
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
 
-export const readinessResponseDecision = (state: RuntimeState): HttpResponseDecision => {
-  const ready = isReady(state)
+export interface RuntimeHealthFreshnessInput {
+  readonly nowMs: number
+  readonly leaseMs: number
+}
+
+export const runtimeHealthFreshnessLeaseMs = (
+  config: Pick<RuntimeConfig, 'healthIntervalMs' | 'operationTimeoutMs'>,
+): number => {
+  const leaseMs = config.healthIntervalMs * 2 + config.operationTimeoutMs
+  return Number.isSafeInteger(leaseMs) && leaseMs > 0 ? leaseMs : 0
+}
+
+export const runtimeHealthIsFresh = (state: RuntimeState, input: RuntimeHealthFreshnessInput): boolean => {
+  if (
+    !Number.isSafeInteger(input.nowMs) ||
+    input.nowMs < 0 ||
+    !Number.isSafeInteger(input.leaseMs) ||
+    input.leaseMs <= 0
+  ) {
+    return false
+  }
+  const checkedAt = state.health.checkedAt
+  if (checkedAt === null) return false
+  const checkedAtMs = Date.parse(checkedAt)
+  if (!Number.isFinite(checkedAtMs) || checkedAtMs > input.nowMs) return false
+  return input.nowMs - checkedAtMs < input.leaseMs
+}
+
+const runtimeReadyWithFreshness = (state: RuntimeState, freshness?: RuntimeHealthFreshnessInput): boolean =>
+  isReady(state) && (freshness === undefined || runtimeHealthIsFresh(state, freshness))
+
+export const readinessResponseDecision = (
+  state: RuntimeState,
+  freshness?: RuntimeHealthFreshnessInput,
+): HttpResponseDecision => {
+  const ready = runtimeReadyWithFreshness(state, freshness)
   const dependencyFailures = Object.entries(state.health.dependencies)
     .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
     .map(([name]) => name)
@@ -482,10 +517,15 @@ export const readinessResponseDecision = (state: RuntimeState): HttpResponseDeci
     'cycleRunner',
     state.autonomousCycleLoop.lastPass?.result === 'FAILURE',
   )
-  const failedDependencies = appendFailure(
+  const capitalActivationFailures = appendFailure(
     cycleRunnerFailures,
     'capitalActivation',
     state.capitalActivation?._tag === 'Pending',
+  )
+  const failedDependencies = appendFailure(
+    capitalActivationFailures,
+    'health',
+    freshness !== undefined && !runtimeHealthIsFresh(state, freshness),
   )
   return jsonDecision(
     {
@@ -567,9 +607,10 @@ const renderPrometheusMetricsDataFirst = (
   >,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
+  runtimeReadyOverride?: boolean,
 ): string => {
   const publicBroker = publicBrokerState(state)
-  const runtimeReady = isReady(state)
+  const runtimeReady = runtimeReadyOverride ?? isReady(state)
   const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
   const cyclePhase =
     cycleObservationAvailable === false
@@ -933,6 +974,7 @@ type HttpConfig = Pick<
   RuntimeConfig,
   | 'cycleStallThresholdMs'
   | 'execution'
+  | 'healthIntervalMs'
   | 'host'
   | 'operationTimeoutMs'
   | 'port'
@@ -950,16 +992,38 @@ const registerHttpRoutes = (
   provenanceVerification: RuntimeBuildMetadata['verification'],
   readEvidence: ReadEvidence,
   router: HttpRouter.HttpRouter,
+  currentTimeMillis: Effect.Effect<number>,
 ): Effect.Effect<void> => {
-  const ready = Ref.get(state).pipe(Effect.map(readinessResponseDecision), Effect.flatMap(interpretResponseDecision))
-  const status = Ref.get(state).pipe(
-    Effect.map((current) => statusResponseDecision(current, config.execution, provenance, provenanceVerification)),
+  const freshnessLeaseMs = runtimeHealthFreshnessLeaseMs(config)
+  const currentStateAndTime = Effect.all({ current: Ref.get(state), nowMs: currentTimeMillis })
+  const ready = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) => readinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
     Effect.flatMap(interpretResponseDecision),
   )
-  const metrics = Ref.get(state).pipe(
-    Effect.map((current) =>
+  const status = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) =>
+      jsonDecision(
+        statusFactsDataFirst(
+          current,
+          config.execution,
+          provenance,
+          provenanceVerification,
+          runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
+        ),
+      ),
+    ),
+    Effect.flatMap(interpretResponseDecision),
+  )
+  const metrics = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) =>
       textDecision(
-        renderPrometheusMetrics(current, config, provenance, provenanceVerification),
+        renderPrometheusMetricsDataFirst(
+          current,
+          config,
+          provenance,
+          provenanceVerification,
+          runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
+        ),
         'text/plain; version=0.0.4; charset=utf-8',
         { 'cache-control': 'no-store' },
       ),
@@ -1002,10 +1066,19 @@ const serveHttpDataFirst = (
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
   readEvidence: ReadEvidence,
+  currentTimeMillis: Effect.Effect<number> = Clock.currentTimeMillis,
 ): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
   Effect.gen(function* () {
     const router = yield* HttpRouter.make
-    yield* registerHttpRoutes(config, state, provenance, provenanceVerification, readEvidence, router)
+    yield* registerHttpRoutes(
+      config,
+      state,
+      provenance,
+      provenanceVerification,
+      readEvidence,
+      router,
+      currentTimeMillis,
+    )
     // The router API erases the closed route error set to unknown; the total fallback makes any residue a defect.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     const handler = router.asHttpEffect().pipe(Effect.orDie)
@@ -1013,3 +1086,13 @@ const serveHttpDataFirst = (
   })
 
 export const serveHttp = Pipeable.dual(5, serveHttpDataFirst)
+
+export const serveHttpWithCurrentTime = (
+  config: HttpConfig,
+  state: Ref.Ref<RuntimeState>,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
+  readEvidence: ReadEvidence,
+  currentTimeMillis: Effect.Effect<number>,
+): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
+  serveHttpDataFirst(config, state, provenance, provenanceVerification, readEvidence, currentTimeMillis)
