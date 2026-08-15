@@ -435,6 +435,9 @@ const validateExecutionController = (value: unknown, expected: ExpectedBaynProdu
     'PRODUCTION_CONTRACT_VIOLATION',
     false,
   )
+  if (controller.status === undefined || controller.status === null) {
+    fail('WORKLOAD_NOT_CONVERGED', 'executionController.status is not projected yet', true)
+  }
   const status = record(controller.status, 'executionController.status')
   equal(
     status.observedGeneration,

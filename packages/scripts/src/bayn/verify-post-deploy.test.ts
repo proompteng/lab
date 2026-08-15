@@ -349,6 +349,18 @@ describe('Bayn production post-deploy contract', () => {
     })
   })
 
+  test('retries while the RestateDeployment status has not been projected yet', () => {
+    const value = snapshot()
+    delete (value.executionController as { status?: unknown }).status
+
+    const result = failure(() => validateBaynPostDeploySnapshot(value, expected, now))
+    expect(result).toMatchObject({
+      code: 'WORKLOAD_NOT_CONVERGED',
+      retryable: true,
+    })
+    expect(result.message).toContain('executionController.status is not projected yet')
+  })
+
   test('rejects live authority-generation drift in both production workloads', () => {
     const deploymentDrift = snapshot()
     ;(deploymentDrift.deployment as any).spec.template.spec.containers[0].env.find(
