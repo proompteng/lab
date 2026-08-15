@@ -1,4 +1,4 @@
-import { Duration, Effect, Result, Schema, Semaphore } from 'effect'
+import { Effect, Result, Schema, Semaphore } from 'effect'
 
 import type { ApplicationPlanFor, AutonomousCycleStartup } from '../app'
 import type { BrokerReadShape } from '../broker/alpaca'
@@ -38,7 +38,7 @@ export const runtimeBroker = (
 export const lifecycleMaintenanceCycle =
   (
     plan: ApplicationPlanFor<'AutonomousService'>,
-    maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
+    reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
     maintainLifecycle: LifecycleAdvanceMaintenance,
     interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
@@ -57,7 +57,7 @@ export const lifecycleMaintenanceCycle =
           }),
         )
         const advance = operationPermit.withPermit(
-          runLifecycleMaintenanceAdvance(maintainReconciliation, maintainLifecycle).pipe(
+          runLifecycleMaintenanceAdvance(reconcileBeforeAdvance, maintainLifecycle).pipe(
             Effect.andThen(observeSuccess),
             Effect.catch((error) =>
               currentUtcInstant.pipe(
@@ -77,22 +77,7 @@ export const lifecycleMaintenanceCycle =
         )
         const driver: RecoveryFirstCycleDriver = {
           advance,
-          maintainReconciliation: operationPermit.withPermit(
-            maintainLifecycle.beforeReconciliation.pipe(
-              Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
-              Effect.catch((error) =>
-                Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
-                  Effect.annotateLogs({
-                    operation: error.operation,
-                    failure: error.failure,
-                    reason: error.message,
-                  }),
-                ),
-              ),
-            ),
-          ),
           nextDelayMs,
-          wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
         }
         return interpretCycleDriver(driver)
       }),
@@ -109,11 +94,11 @@ const lifecycleReconciliationError = (cause: ReconciliationPassError): CycleRunn
 }
 
 export const runLifecycleMaintenanceAdvance = (
-  maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
+  reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
   maintainLifecycle: LifecycleAdvanceMaintenance,
 ): Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError> =>
   maintainLifecycle.beforeReconciliation.pipe(
-    Effect.andThen(maintainReconciliation.pipe(Effect.mapError(lifecycleReconciliationError))),
+    Effect.andThen(reconcileBeforeAdvance.pipe(Effect.mapError(lifecycleReconciliationError))),
     Effect.andThen(maintainLifecycle.afterReconciliation),
   )
 
@@ -135,7 +120,6 @@ export const observeCycle = (
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
       reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
       strategy: plan.strategy,
-      interpretCycleDriver,
     },
     interpretCycleDriver,
   )
@@ -171,7 +155,6 @@ export const mutationCycle = (
       executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
       executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
       ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
-      interpretCycleDriver,
     },
     interpretCycleDriver,
   )

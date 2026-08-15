@@ -117,9 +117,7 @@ const driver = {
       outcome: 'NOT_DUE' as const,
     },
   }),
-  maintainReconciliation: Effect.void,
   nextDelayMs: 30_000,
-  wait: () => Effect.void,
 }
 
 const status = (overrides: Partial<ExecutionControllerStatus> = {}): ExecutionControllerStatus => ({
@@ -779,7 +777,7 @@ describe('native execution runtime', () => {
     expect(failure.message).toBe('execution controller status projection did not complete')
   })
 
-  test('replays an ambiguously committed projection without advancing execution again', async () => {
+  test('replays a duplicate Restate delivery after an ambiguous commit without another aggregate advance', async () => {
     let advanceCount = 0
     let projectCount = 0
     const persistence: { current: ExecutionControllerStatus | null } = { current: null }

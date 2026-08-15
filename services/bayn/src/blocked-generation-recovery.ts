@@ -59,27 +59,6 @@ const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
   error.cause instanceof BlockedCycleIntentStoreError &&
   error.cause.failure === 'invariant'
 
-/**
- * A restricted execution generation may still own a nonterminal mutation when the process restarts. Advance the existing
- * recovery-first driver before every settlement attempt; only the precise nonterminal-intent invariant waits and
- * retries. Query, decode, reconciliation, and authority failures remain fatal.
- */
-export const recoverRestrictedGenerationBeforeRollover = <A, E, R>(input: {
-  readonly advance: Effect.Effect<A, E, R>
-  readonly wait: (advance: A) => Effect.Effect<void, never, R>
-  readonly settle: Effect.Effect<TerminalGenerationRolloverReceipt, OperationalError, R>
-}): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> => {
-  const recover = (): Effect.Effect<TerminalGenerationRolloverReceipt, E | OperationalError, R> =>
-    advanceRestrictedGenerationRecovery(input.advance, input.settle).pipe(
-      Effect.flatMap((step) =>
-        step._tag === 'RolledOver'
-          ? Effect.succeed(step.receipt)
-          : input.wait(step.advance).pipe(Effect.andThen(recover())),
-      ),
-    )
-  return Effect.suspend(recover)
-}
-
 export type RestrictedGenerationRecoveryAdvance<A> =
   | { readonly _tag: 'Waiting'; readonly advance: A }
   | {

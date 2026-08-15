@@ -6,7 +6,6 @@ import {
   CycleRunnerError,
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
-  shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
   type CycleRunContext,
@@ -65,20 +64,6 @@ const observeMutationPass = (
   )
 }
 
-const mutationNanosPerMillisecond = 1_000_000n
-
-const mutationIntervalNanos = (intervalMs: number): bigint => BigInt(intervalMs) * mutationNanosPerMillisecond
-
-const mutationSleepUntil = (deadlineNanos: bigint): Effect.Effect<void> =>
-  Clock.currentTimeNanos.pipe(
-    Effect.flatMap((nowNanos) => {
-      const remainingNanos = deadlineNanos - nowNanos
-      if (remainingNanos <= 0n) return Effect.void
-      const remainingMs = Number((remainingNanos + mutationNanosPerMillisecond - 1n) / mutationNanosPerMillisecond)
-      return Effect.sleep(Duration.millis(remainingMs))
-    }),
-  )
-
 const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
   const converted = notDueReconciliationError(cause)
   return new CycleRunnerError({
@@ -92,7 +77,7 @@ const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleR
 const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
 
-export const runExternalLifecycleAdvanceWithinTimeout = <A, E, R>(
+export const runRestateAdvanceWithinTimeout = <A, E, R>(
   operationPermit: Semaphore.Semaphore,
   lifecycleAdvance: Effect.Effect<A, E, R>,
   timeoutMs: number,
@@ -178,107 +163,6 @@ const observeMutationIdleReconciliation = (
       ),
     ),
   )
-
-const observeMutationCadenceReconciliation = (
-  startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: CycleRunResult | undefined,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
-  Ref.get(cadence).pipe(
-    Effect.flatMap((state) =>
-      attemptMutationIdleReconciliation(cadence, reconcile).pipe(
-        Effect.flatMap(() =>
-          result !== undefined && (result.outcome === 'NOT_DUE' || state.lastFailure !== undefined)
-            ? currentUtcInstant.pipe(
-                Effect.flatMap((observedAt) =>
-                  observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }),
-                ),
-              )
-            : Effect.void,
-        ),
-      ),
-    ),
-    Effect.catch((error) =>
-      currentUtcInstant.pipe(
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-      ),
-    ),
-  )
-
-const waitUntilNextMutationPoll = (
-  input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: CycleRunResult | undefined,
-  nextPollAtNanos: bigint,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
-  Effect.suspend(() =>
-    Effect.gen(function* () {
-      const nowNanos = yield* Clock.currentTimeNanos
-      const state = yield* Ref.get(cadence)
-      const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-      if (decision._tag === 'RECONCILE') {
-        yield* observeMutationCadenceReconciliation(startup, cadence, reconcile, result)
-        return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
-      }
-      const reconciliationAtNanos = nowNanos + decision.remainingNanos
-      const pollStartAtNanos = nowNanos > nextPollAtNanos ? nowNanos : nextPollAtNanos
-      const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
-      if (
-        shouldDeferCyclePollForReconciliation({
-          lastAttemptAtNanos: state.lastAttemptAtNanos,
-          nextPollAtNanos,
-          pollStartAtNanos,
-          reconciliationAtNanos,
-          cyclePassTimeoutNanos: mutationIntervalNanos(cyclePassTimeoutMs),
-        })
-      ) {
-        yield* mutationSleepUntil(reconciliationAtNanos)
-        return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
-      }
-      if (nowNanos >= nextPollAtNanos) return
-      if (nextPollAtNanos < reconciliationAtNanos) return yield* mutationSleepUntil(nextPollAtNanos)
-      yield* mutationSleepUntil(reconciliationAtNanos)
-      return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
-    }),
-  )
-
-const waitAfterMutationPass = (
-  input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: CycleRunResult,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
-  Clock.currentTimeNanos.pipe(
-    Effect.flatMap((completedAtNanos) => {
-      const nextPollAtNanos = completedAtNanos + mutationIntervalNanos(input.pollIntervalMs)
-      return waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
-    }),
-  )
-
-const maintainMutationReconciliation = (
-  input: ObserveAutonomousCycleInput,
-  startup: Parameters<AutonomousCycleStartup>[0],
-  cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, never, ObserveDecisionRuntime> =>
-  Clock.currentTimeNanos.pipe(
-    Effect.flatMap((completedAtNanos) =>
-      waitUntilNextMutationPoll(
-        input,
-        startup,
-        cadence,
-        reconcile,
-        undefined,
-        completedAtNanos + mutationIntervalNanos(input.pollIntervalMs),
-      ),
-    ),
-  )
-
-const waitAfterMutationFailure = maintainMutationReconciliation
 
 const observeMutationCycleResult = (
   input: ObserveAutonomousCycleInput,
@@ -377,63 +261,36 @@ const makeRecoveryFirstCycleDriver = (
         : input.lifecycleMaintenance.afterReconciliation.pipe(
             Effect.flatMap((disposition) => (disposition === 'CONTINUE' ? advanceCycle : completeLifecycleAdvance)),
           )
-    const requiresReconciliationPreflight =
-      input.interpretCycleDriver !== undefined || input.lifecycleMaintenance !== undefined
     const reconciliationPreflight =
       input.lifecycleMaintenance === undefined
         ? reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
         : attemptMutationIdleReconciliation(cadence, reconcile)
-    const runCycleAdvance = requiresReconciliationPreflight
-      ? reconciliationPreflight.pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              currentUtcInstant.pipe(
-                Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-                Effect.map((observation) => ({ observation })),
-              ),
-            onSuccess: () => continueAfterReconciliation,
-          }),
-        )
-      : advanceCycle
-    // The external driver owns one bounded command. A lifecycle advance may finalize a receipt, so it always performs
+    const runCycleAdvance = reconciliationPreflight.pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+            Effect.map((observation) => ({ observation })),
+          ),
+        onSuccess: () => continueAfterReconciliation,
+      }),
+    )
+    // Restate owns one bounded command. A lifecycle advance may finalize a receipt, so it always performs
     // a same-command reconciliation rather than reusing the ordinary cadence. Keep that preflight and maintenance in
     // the aggregate budget so a stalled prerequisite cannot outlive Restate's command window.
     const lifecycleAdvance =
       input.lifecycleMaintenance === undefined
         ? runCycleAdvance
         : input.lifecycleMaintenance.beforeReconciliation.pipe(Effect.andThen(runCycleAdvance))
-    const advance =
-      input.interpretCycleDriver === undefined
-        ? operationPermit.withPermit(lifecycleAdvance)
-        : runExternalLifecycleAdvanceWithinTimeout(
-            operationPermit,
-            lifecycleAdvance,
-            cyclePassTimeoutMs,
-            observeCycleFailure,
-          )
-    const maintainReconciliation = operationPermit.withPermit(
-      (input.lifecycleMaintenance?.beforeReconciliation ?? Effect.void).pipe(
-        Effect.andThen(reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)),
-        Effect.catch((error) =>
-          // Reconciliation persistence owns guardian readiness; do not replace Restate lifecycle progress.
-          Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
-            Effect.annotateLogs({
-              operation: error.operation,
-              failure: error.failure,
-              reason: error.message,
-            }),
-          ),
-        ),
-      ),
+    const advance = runRestateAdvanceWithinTimeout(
+      operationPermit,
+      lifecycleAdvance,
+      cyclePassTimeoutMs,
+      observeCycleFailure,
     )
     return {
       advance,
-      maintainReconciliation,
       nextDelayMs: recoveryFirstCycleNextDelayMs(input),
-      wait: (completed) =>
-        completed.result === undefined
-          ? waitAfterMutationFailure(input, startup, cadence, reconcile)
-          : waitAfterMutationPass(input, startup, cadence, reconcile, completed.result),
     }
   })
 
