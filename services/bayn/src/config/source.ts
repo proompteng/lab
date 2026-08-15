@@ -5,6 +5,11 @@ import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
+import {
+  legacyCandidateDiscoveryOperationToken,
+  legacyExecutionAuthorityToken,
+  legacyObserveAuthorityToken,
+} from '../execution/legacy-wire'
 import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
 import {
   GitSourceRevisionSchema as SourceRevision,
@@ -27,10 +32,10 @@ const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3
 const OperationalThresholdMs = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
 )
-const LegacyAuthorityTokenSchema = Schema.Literals(['OBSERVE', 'PAPER'])
+const LegacyAuthorityTokenSchema = Schema.Literals([legacyObserveAuthorityToken, legacyExecutionAuthorityToken])
 const RuntimeOperationTokenSchema = Schema.Literals([
   'EXECUTION_CANDIDATE_DISCOVERY',
-  'PAPER_CANDIDATE_DISCOVERY',
+  legacyCandidateDiscoveryOperationToken,
   'EXECUTION_PREPARE',
 ])
 

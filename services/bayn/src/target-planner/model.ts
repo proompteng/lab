@@ -7,6 +7,12 @@ import {
   PositionSchema,
   ReconciliationStatus,
 } from '../execution/contracts'
+import {
+  legacyReconciliationSchemaVersion,
+  legacyReferenceTargetPlanSchemaVersion,
+  legacyTargetPlannerInputV1SchemaVersion,
+  legacyTargetPlannerInputV2SchemaVersion,
+} from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
 import {
   IsoDateSchema,
@@ -38,7 +44,7 @@ export const TargetPlannerBrokerStateSchema = Schema.Struct({
   ordersObservedAt: UtcInstantSchema,
   accountingHash: Sha256Schema,
   reconciliation: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.paper-reconciliation.v1'),
+    schemaVersion: Schema.Literal(legacyReconciliationSchemaVersion),
     reconciliationId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
     expectedHash: Sha256Schema,
@@ -72,12 +78,12 @@ const TargetPlannerInputFields = {
 } as const
 
 export const TargetPlannerInputV1Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v1'),
+  schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
   ...TargetPlannerInputFields,
 })
 
 export const TargetPlannerInputV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v2'),
+  schemaVersion: Schema.Literal(legacyTargetPlannerInputV2SchemaVersion),
   ...TargetPlannerInputFields,
   allocationCapitalMicros: UnsignedMicrosSchema,
 })
@@ -238,7 +244,7 @@ export const ReferenceTargetIntentSchema = Schema.Struct({
 })
 
 export const TargetPlanResultFields = {
-  schemaVersion: Schema.Literal('bayn.paper-reference-target-plan.v1'),
+  schemaVersion: Schema.Literal(legacyReferenceTargetPlanSchemaVersion),
   inputHash: Sha256Schema,
   outputHash: Sha256Schema,
   targets: Schema.Array(PlannedTargetQuantitySchema),

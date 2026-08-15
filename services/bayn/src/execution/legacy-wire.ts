@@ -6,6 +6,7 @@
  */
 export const legacyObserveAuthorityToken = 'OBSERVE' as const
 export const legacyExecutionAuthorityToken = 'PAPER' as const
+export const legacyCandidateDiscoveryOperationToken = 'PAPER_CANDIDATE_DISCOVERY' as const
 export type LegacyAuthorityToken = typeof legacyObserveAuthorityToken | typeof legacyExecutionAuthorityToken
 
 export const legacyAccountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v1' as const
@@ -44,3 +45,9 @@ export const legacyMutationEventSchemaVersion = 'bayn.paper-mutation-event.v1' a
 export const legacyCycleClosureSchemaVersion = 'bayn.paper-cycle-closure.v1' as const
 export const legacyRiskPolicySchemaVersion = 'bayn.paper-risk-policy.v2' as const
 export const legacyRiskStateSchemaVersion = 'bayn.paper-risk-state.v2' as const
+export const legacyTargetPlannerInputV1SchemaVersion = 'bayn.paper-target-planner-input.v1' as const
+export const legacyTargetPlannerInputV2SchemaVersion = 'bayn.paper-target-planner-input.v2' as const
+export const legacyCloseDecisionSessionsSchemaVersion = 'bayn.paper-close-decision-sessions.v1' as const
+export const legacyReferenceTargetPlanSchemaVersion = 'bayn.paper-reference-target-plan.v1' as const
+export const legacySubmitDryRunSchemaVersion = 'bayn.paper-submit-dry-run.v1' as const
+export const legacyObserveSuccessorGenerationSchemaVersion = 'bayn.paper-observe-successor-generation.v1' as const

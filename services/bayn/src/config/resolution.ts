@@ -5,6 +5,7 @@ import { BrokerEnvironment } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
+import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from '../execution/legacy-wire'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import {
   LegacyCapitalAuthoritySelection,
@@ -155,9 +156,9 @@ const resolvePolicy = (
 
 const legacyAuthorityMatches = (legacy: LegacyAuthorityToken, policy: ExecutionPolicy): boolean => {
   switch (legacy) {
-    case 'OBSERVE':
+    case legacyObserveAuthorityToken:
       return policy.brokerAccess === BrokerAccess.ReadOnly && policy.capitalAuthority._tag === CapitalAuthorityKind.None
-    case 'PAPER':
+    case legacyExecutionAuthorityToken:
       return (
         policy.brokerAccess === BrokerAccess.Mutation && policy.capitalAuthority._tag === CapitalAuthorityKind.Granted
       )

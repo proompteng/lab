@@ -3,12 +3,11 @@ import { Effect, Result } from 'effect'
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
 import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
 import { Authority, KillState } from './execution/contracts'
+import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { currentUtcInstant } from './time'
-
-const observeSuccessorSchemaVersion = 'bayn.paper-observe-successor-generation.v1' as const
 
 /**
  * Derives the immutable OBSERVE successor for one terminal execution generation. The configured generation is only a
@@ -19,7 +18,7 @@ export const executionObserveSuccessorGenerationHash = (input: {
   readonly previousExecutionGenerationHash: string
 }): Result.Result<string, CanonicalHashFailure> =>
   canonicalHashV1Result({
-    schemaVersion: observeSuccessorSchemaVersion,
+    schemaVersion: legacyObserveSuccessorGenerationSchemaVersion,
     // This property name is part of the immutable v1 hash material. Keep it stable while the runtime API remains
     // account-neutral; changing it would orphan successors already persisted by earlier releases.
     previousPaperGenerationHash: input.previousExecutionGenerationHash,

@@ -1,6 +1,7 @@
 import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderStatus, ReconciliationStatus } from '../execution/contracts'
+import { legacyTargetPlannerInputV1SchemaVersion } from '../execution/legacy-wire'
 import { desiredQuantityMicros } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
@@ -152,7 +153,7 @@ const parseTargetPlannerFactsDataFirst = (
     minimumBuyNotional: BigInt(input.precision.minimumBuyNotionalMicros),
     equity,
     allocationCapital:
-      input.schemaVersion === 'bayn.paper-target-planner-input.v1' ? equity : BigInt(input.allocationCapitalMicros),
+      input.schemaVersion === legacyTargetPlannerInputV1SchemaVersion ? equity : BigInt(input.allocationCapitalMicros),
     availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
   }
 }

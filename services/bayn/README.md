@@ -5,30 +5,33 @@ Bayn is a single-writer quantitative research and execution runtime. Its active 
 of four horizons must be positive, and eligible sleeves are risk-budgeted by conviction per unit annualized volatility.
 The universe, monthly rebalance, 35% sleeve cap, 10% portfolio-volatility ceiling, execution costs, benchmarks,
 uncertainty policy, and economic gates are source-controlled. A terminal qualification result never grants broker or
-capital authority by itself. GitOps currently grants only bounded sandbox PAPER generations from qualified or explicit
-research bindings. The final authorization and broker-mutation core is account-environment agnostic; live-capital grants
-remain a dormant adapter boundary until separately reviewed and configured.
+capital authority by itself. The deployed controller currently has read-only broker access and no capital authority.
+Sandbox versus live selects only the broker adapter/configuration; final authorization, intent, risk, reconciliation,
+recovery, and mutation logic are account-environment agnostic. A bounded `ExecutionMandate` exists only when a
+separately reviewed durable capital grant is present.
 
 ## Runtime contract
 
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
 - Effect Config validates environment input. `BAYN_OPERATION_TIMEOUT_MS` bounds dependency operations, and
   `BAYN_HEALTH_INTERVAL_MS` controls the continuous health interval; both default to 30 seconds.
-- `BAYN_MAXIMUM_AUTHORITY` is a closed `OBSERVE`/`PAPER` process ceiling and defaults to `OBSERVE`. It never creates a
-  broker capability by itself. Submit/cancel capabilities are composed only when an exact durable PAPER generation,
-  reviewed activation, build identity, sandbox account binding, and broker preflight all agree.
+- `BAYN_MAXIMUM_AUTHORITY` accepts the durable `OBSERVE` and legacy `PAPER` wire tokens and defaults to `OBSERVE`.
+  Runtime code decodes those tokens into account-neutral execution authority. The setting never creates broker or
+  capital capability by itself; submit/cancel capability requires an exact durable capital grant, reviewed activation,
+  build/account identity, and broker preflight.
 - Public egress is denied from the Bayn Pod. A separate CONNECT proxy permits only
-  `paper-api.alpaca.markets:443`. A configured Alpaca credential is accepted only after account, position, order,
+  the configured Alpaca adapter host (`paper-api.alpaca.markets:443` for the sandbox deployment). A configured Alpaca
+  credential is accepted only after account, position, order,
   order-lookup, and fill reads pass the runtime-decoded preflight through that proxy.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
   runs versioned Effect SQL migrations at startup, and keeps a bounded two-connection pool.
-- PostgreSQL stores paper mutation transitions in one append-only `mutation_events` table. Request identity, broker
+- PostgreSQL stores execution mutation transitions in one append-only `mutation_events` table. Request identity, broker
   response identity, and the lookup delay are committed before use; unresolved outcomes block later exposure. An
-  OBSERVE generation cannot create mutation rows, while an authorized PAPER generation must durably commit its intent
-  and risk binding before broker mutation I/O.
-- Paper execution is long-only: risk blocks an existing short or a sell beyond reconciled long inventory before broker
+  observe-only generation cannot create mutation rows, while an authorized execution mandate must durably commit its
+  intent and risk binding before broker mutation I/O.
+- Execution is long-only: risk blocks an existing short or a sell beyond reconciled long inventory before broker
   I/O. Fill accounting persists Alpaca's full source timestamp and orders equal timestamps by fill ID, rejects late
   predecessors, and records a receipt only after the complete TigerBeetle transaction-tag transfer set matches.
 - The composition root builds one pure strategy value and passes it explicitly to the lifecycle. Effect services and
@@ -92,8 +95,8 @@ remain a dormant adapter boundary until separately reviewed and configured.
 - The current-only migration chain owns the unprefixed evidence, qualification, intent, and mutation schema. Startup
   rejects a legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or
   falls back to legacy records.
-- Credentials provide GET-only Alpaca access under `OBSERVE`. A validated bounded PAPER generation additionally
-  composes `BrokerMutation`, intent and mutation stores, and the coordinator. Recovery and reconciliation run before
+- Credentials currently provide GET-only Alpaca access under `OBSERVE`. A validated bounded execution mandate may
+  additionally compose `BrokerMutation`, intent and mutation stores, and the coordinator. Recovery and reconciliation run before
   new work; each intent and risk decision is committed before broker I/O; the final submit revalidates authority and
   risk under `WriterFence`. Missing or inconsistent activation, identity, mutation, or reconciliation evidence falls
   back to read-only behavior or fails closed.
@@ -102,12 +105,13 @@ remain a dormant adapter boundary until separately reviewed and configured.
 - The bounded Alpaca calendar observation is content-hashed with its request range, source/version, and normalized UTC
   sessions. A causal execution-session binding retains and revalidates that complete observation, selects its first
   post-signal session, and binds the session's exact open, close, pre-open cutoff, finalized Signal identity, and
-  reconciled planning-state identity. Paper risk approves only in `[submissionOpenAt, submissionCutoffAt)` and
+  reconciled planning-state identity. Execution risk approves only in `[submissionOpenAt, submissionCutoffAt)` and
   reserves aggregate buying power across planned buys. The submit path rechecks the committed risk-decision expiry
   with the Effect clock, then atomically revalidates it in the fenced mutation-start transaction immediately before
   POST; the cutoff instant permits no new exposure and no durable `SUBMIT_STARTED` event. Cancellation is restricted
-  to the exact broker order identified by the durable submit, the writer fence, maximum `PAPER`, and mutation-store
-  authority. That de-risking path remains available after cutoff or approval expiry and while the kill is active.
+  to the exact broker order identified by the durable submit, the writer fence, execution maximum authority (whose
+  historical wire value is `PAPER`), and mutation-store authority. That de-risking path remains available after cutoff
+  or approval expiry and while the kill is active.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
@@ -126,19 +130,20 @@ remain a dormant adapter boundary until separately reviewed and configured.
 
 ## Runtime operations
 
-`BAYN_OPERATION` has no default. When it is absent, Bayn selects the credential-free service or autonomous GET-only
-OBSERVE/PAPER service from the resolved broker and authority bindings. The autonomous service remains read-only unless
-the exact reviewed activation, durable generation, sandbox account, strategy, risk policy, source, and image bindings
-all validate. An authorized PAPER service may enter, hold, and close one bounded research or qualified generation; it
-returns to OBSERVE after terminalization.
+`BAYN_OPERATION` has no default. When it is absent, Bayn selects the credential-free service or autonomous execution
+service from the resolved broker and authority bindings. The deployed service remains read-only unless the exact
+reviewed activation, durable grant, account, strategy, risk policy, source, and image bindings all validate. An
+authorized `ExecutionMandate` may enter, hold, and close one bounded research or qualified grant; terminalization
+restricts execution authority back to observe-only behavior.
 
-`BAYN_OPERATION=PAPER_CANDIDATE_DISCOVERY` is a separate bounded OBSERVE-only operation. It requires maximum authority
+`BAYN_OPERATION=PAPER_CANDIDATE_DISCOVERY` is the retained legacy configuration token for the account-neutral
+`ExecutionCandidateDiscovery` operation. It is bounded and OBSERVE-only and requires maximum authority
 `OBSERVE`, a pinned terminal qualification, and a complete GET-only Alpaca binding, then exits before the HTTP service
 or autonomous cycle is constructed.
 
 Candidate discovery opens one PostgreSQL `REPEATABLE READ, READ ONLY` transaction through the shared client and uses
 only `CycleObservability` and `CycleStore` domain reads. It does not run migrations, reconcile, re-run planning, or
-compose `PaperStore`, `WriterFence`, intent/mutation stores, or broker mutation. The latest cycle must be `COMPLETED`
+compose execution mutation stores, `WriterFence`, intent/mutation stores, or broker mutation. The latest cycle must be `COMPLETED`
 with zero unfinished cycles and a strict persisted shadow document bound to the same cycle, snapshot, account,
 qualification, strategy, risk policy, and latest exact reconciliation. Durable maximum/effective authority must both
 be `OBSERVE`, the durable generation must match configuration, and each delta may have only `AuthorityNotPaper`.

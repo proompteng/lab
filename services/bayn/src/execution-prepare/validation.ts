@@ -3,6 +3,7 @@ import { pipe, Result, Schema } from 'effect'
 import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { CapitalGrantGeneration, CapitalGrantProofBinding } from '../execution/contracts'
 import { Authority } from '../execution/contracts'
+import { legacyAuthorityProofBindingSchemaVersion } from '../execution/legacy-wire'
 import type { ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery/model'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { canonicalHashV1Result } from '../hash'
@@ -260,7 +261,7 @@ const authenticateExecutionPrepareDiscoveryDataFirst = (
     proofPlan: input.request.proofPlan,
     proofPlanHash: input.request.proofPlanHash,
     proof: {
-      schemaVersion: 'bayn.paper-authority-proof-binding.v1',
+      schemaVersion: legacyAuthorityProofBindingSchemaVersion,
       riskPolicyHash: input.runtime.riskPolicyHash,
       proofPlanHash: input.request.proofPlanHash,
     },

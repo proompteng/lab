@@ -21,6 +21,13 @@ import { canonicalHashV1Result } from '../hash'
 import { MarketData, type MarketDataService } from '../market-data'
 import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
+import {
+  legacyCloseDecisionSessionsSchemaVersion,
+  legacyRiskPolicySchemaVersion,
+  legacyRiskStateSchemaVersion,
+  legacyTargetPlannerInputV1SchemaVersion,
+  legacyTargetPlannerInputV2SchemaVersion,
+} from '../execution/legacy-wire'
 import type { CausalProtocol } from '../protocol'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
@@ -70,7 +77,7 @@ const observeRiskLimits = {
 
 const loadObserveRiskPolicyDataFirst = (accountId: string, allowedSymbols: readonly string[]) =>
   decodePolicy({
-    schemaVersion: 'bayn.paper-risk-policy.v2',
+    schemaVersion: legacyRiskPolicySchemaVersion,
     accountId,
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
@@ -525,11 +532,11 @@ const prepareObservePlanner = <R>(
               plannerInput:
                 overrides.allocationCapitalMicros === undefined
                   ? {
-                      schemaVersion: 'bayn.paper-target-planner-input.v1' as const,
+                      schemaVersion: legacyTargetPlannerInputV1SchemaVersion,
                       ...commonPlannerInput,
                     }
                   : {
-                      schemaVersion: 'bayn.paper-target-planner-input.v2' as const,
+                      schemaVersion: legacyTargetPlannerInputV2SchemaVersion,
                       ...commonPlannerInput,
                       allocationCapitalMicros: overrides.allocationCapitalMicros,
                     },
@@ -577,7 +584,7 @@ const reduceRiskInputs = (
           ),
           (fillTerms): ShadowDeltaRiskInput => {
             const state: State = {
-              schemaVersion: 'bayn.paper-risk-state.v2',
+              schemaVersion: legacyRiskStateSchemaVersion,
               brokerMode: BrokerMode.Execution,
               account: input.reconciliation.brokerState.account,
               positions: input.reconciliation.brokerState.positions,
@@ -769,7 +776,7 @@ const makeClosingDecisionPlan = (
 ): Result.Result<DecisionPlan, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
   const sessionsHash = canonicalHashV1Result({
-    schemaVersion: 'bayn.paper-close-decision-sessions.v1',
+    schemaVersion: legacyCloseDecisionSessionsSchemaVersion,
     signalDate,
     symbols: orderedSymbols,
   })
@@ -915,7 +922,7 @@ export const buildClosingExecutionCycleDecision = (
       hashObserveMaterial('risk-policy-hash', 'execution close risk policy is not canonicalizable', policy),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const plannerInput: TargetPlannerInput = {
-      schemaVersion: 'bayn.paper-target-planner-input.v1',
+      schemaVersion: legacyTargetPlannerInputV1SchemaVersion,
       strategyName: cycle.identity.strategyName,
       cycleId: cycle.identity.cycleId,
       decisionHash: closeDecisionHash,

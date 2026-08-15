@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import { Authority } from '../../execution/contracts'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner'
@@ -24,7 +25,7 @@ const validateDecisionBinding = (
     expectedCycleId: cycle.identity.cycleId,
     actualCycleId: document.bindings.cycleId,
     expectedQualificationRunId: cycle.identity.qualificationRunId,
-    actualQualificationRunId: document.mode === 'PAPER' ? document.bindings.qualificationRunId : undefined,
+    actualQualificationRunId: document.mode === Authority.Execution ? document.bindings.qualificationRunId : undefined,
     expectedCycleStateVersion: cycle.stateVersion,
     actualDocumentCreatedAt: document.createdAt,
     expectedDecisionHash: cycle.bindings.decisionHash,
@@ -44,7 +45,8 @@ const validateDecisionBinding = (
   return cycle.bindings.decisionHash !== document.contentHash ||
     cycle.bindings.snapshotId !== document.bindings.snapshotId ||
     cycle.identity.cycleId !== document.bindings.cycleId ||
-    (document.mode === 'PAPER' && document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
+    (document.mode === Authority.Execution &&
+      document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
     cycle.identity.strategyName !== document.bindings.strategyName ||
     cycle.identity.strategyProtocolHash !== document.bindings.strategyProtocolHash ||
     cycle.identity.accountId !== document.bindings.accountId ||
@@ -84,7 +86,7 @@ const selectBoundDecisionDataFirst = (
     (): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
       switch (document.targetPlan.status) {
         case TargetPlanStatus.Planned:
-          return document.mode === 'PAPER'
+          return document.mode === Authority.Execution
             ? Result.succeed({ action: 'WAIT', cycle, observedAt })
             : Result.succeed({
                 action: 'FINISH',

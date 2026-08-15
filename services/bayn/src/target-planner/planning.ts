@@ -1,6 +1,7 @@
 import { Result, pipe } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
 import {
   TargetPlanReason,
@@ -34,7 +35,7 @@ const blocked = (
   targets: readonly PlannedTargetQuantity[] = [],
   requiredReferenceBuyNotionalMicros = '0',
 ): BlockedOutputMaterial => ({
-  schemaVersion: 'bayn.paper-reference-target-plan.v1',
+  schemaVersion: legacyReferenceTargetPlanSchemaVersion,
   inputHash,
   status: TargetPlanStatus.Blocked,
   reason,
@@ -114,7 +115,7 @@ const assembleExecutableTargetPlan = (
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
   if (notionalBlock !== undefined) return notionalBlock
   const common = {
-    schemaVersion: 'bayn.paper-reference-target-plan.v1',
+    schemaVersion: legacyReferenceTargetPlanSchemaVersion,
     inputHash: facts.inputHash,
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),

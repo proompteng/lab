@@ -1,12 +1,13 @@
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { legacyCycleClosureSchemaVersion, legacyExecutionAuthorityToken } from '../execution/legacy-wire'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { Pipeable } from '../pipeable'
 
 const ExecutionCycleClosureMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-cycle-closure.v1'),
+  schemaVersion: Schema.Literal(legacyCycleClosureSchemaVersion),
   cycleId: Sha256Schema,
   entryDecisionHash: Sha256Schema,
   document: ExecutionDecisionDocumentSchema,
@@ -15,7 +16,7 @@ const ExecutionCycleClosureMaterialSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (closure) =>
-      closure.document.mode === 'PAPER' &&
+      closure.document.mode === legacyExecutionAuthorityToken &&
       closure.document.dispatchable &&
       closure.document.bindings.cycleId === closure.cycleId &&
       closure.document.submissionCutoffAt === closure.expiresAt &&

@@ -14,6 +14,7 @@ import {
   type MutationEvidence,
   type OrderRequestBody,
 } from '../broker/alpaca-mutations'
+import { legacySubmitDryRunSchemaVersion } from './legacy-wire'
 import {
   type BrokerReadError,
   BrokerReadErrorKind,
@@ -89,7 +90,7 @@ export interface EncodedOrder {
 }
 
 export interface DryRunSubmitDecision extends EncodedOrder {
-  readonly schemaVersion: 'bayn.paper-submit-dry-run.v1'
+  readonly schemaVersion: typeof legacySubmitDryRunSchemaVersion
   readonly intentId: string
   readonly clientOrderId: string
 }
@@ -291,7 +292,7 @@ const makeDryRunSubmitDataFirst = (
     Result.flatMap(({ intent }) =>
       encodeOrder(MutationOperation.Submit, intent, 'approved intent cannot be represented as an Alpaca order').pipe(
         Result.map(({ request, requestHash }) => ({
-          schemaVersion: 'bayn.paper-submit-dry-run.v1' as const,
+          schemaVersion: legacySubmitDryRunSchemaVersion,
           intentId: intent.intentId,
           clientOrderId: intent.clientOrderId,
           requestHash,
