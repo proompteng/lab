@@ -38,6 +38,7 @@ const deployment = () => ({
               BAYN_CODE_REVISION: expected.sourceRevision,
               BAYN_IMAGE_DIGEST: expected.imageDigest,
               BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH: expected.executionControllerPlanHash,
+              BAYN_AUTHORITY_GENERATION_HASH: expected.authorityGenerationHash,
             }),
           },
         ],
@@ -66,6 +67,7 @@ const controller = () => ({
             env: env({
               BAYN_CODE_REVISION: expected.sourceRevision,
               BAYN_IMAGE_DIGEST: expected.imageDigest,
+              BAYN_AUTHORITY_GENERATION_HASH: expected.authorityGenerationHash,
               BAYN_BROKER_ACCESS: 'read-only',
               BAYN_CAPITAL_AUTHORITY: 'none',
             }),
@@ -321,6 +323,26 @@ describe('Bayn production post-deploy contract', () => {
     const value = snapshot()
     ;(value.executionController as any).spec.template.spec.containers[0].image = `${expected.imageRepository}:latest`
     expect(failure(() => validateBaynPostDeploySnapshot(value, expected, now))).toMatchObject({
+      code: 'WORKLOAD_NOT_CONVERGED',
+      retryable: true,
+    })
+  })
+
+  test('rejects live authority-generation drift in both production workloads', () => {
+    const deploymentDrift = snapshot()
+    ;(deploymentDrift.deployment as any).spec.template.spec.containers[0].env.find(
+      (item: { name: string }) => item.name === 'BAYN_AUTHORITY_GENERATION_HASH',
+    ).value = 'd'.repeat(64)
+    expect(failure(() => validateBaynPostDeploySnapshot(deploymentDrift, expected, now))).toMatchObject({
+      code: 'WORKLOAD_NOT_CONVERGED',
+      retryable: true,
+    })
+
+    const controllerDrift = snapshot()
+    ;(controllerDrift.executionController as any).spec.template.spec.containers[0].env.find(
+      (item: { name: string }) => item.name === 'BAYN_AUTHORITY_GENERATION_HASH',
+    ).value = 'e'.repeat(64)
+    expect(failure(() => validateBaynPostDeploySnapshot(controllerDrift, expected, now))).toMatchObject({
       code: 'WORKLOAD_NOT_CONVERGED',
       retryable: true,
     })

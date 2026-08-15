@@ -364,6 +364,13 @@ const validateDeployment = (value: unknown, expected: ExpectedBaynProduction): v
     'WORKLOAD_NOT_CONVERGED',
     true,
   )
+  equal(
+    env.get('BAYN_AUTHORITY_GENERATION_HASH'),
+    expected.authorityGenerationHash,
+    'deployment live authority generation',
+    'WORKLOAD_NOT_CONVERGED',
+    true,
+  )
   const status = record(deployment.status, 'deployment.status')
   equal(
     status.observedGeneration,
@@ -404,6 +411,13 @@ const validateExecutionController = (value: unknown, expected: ExpectedBaynProdu
     env.get('BAYN_IMAGE_DIGEST'),
     expected.imageDigest,
     'executionController live digest',
+    'WORKLOAD_NOT_CONVERGED',
+    true,
+  )
+  equal(
+    env.get('BAYN_AUTHORITY_GENERATION_HASH'),
+    expected.authorityGenerationHash,
+    'executionController live authority generation',
     'WORKLOAD_NOT_CONVERGED',
     true,
   )
