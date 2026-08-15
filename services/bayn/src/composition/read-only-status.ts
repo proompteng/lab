@@ -12,7 +12,10 @@ import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
-import { isResearchCapitalActivationRequest } from '../execution/configuration'
+import {
+  capitalActivationRequiresQualificationEvidence,
+  isResearchCapitalActivationRequest,
+} from '../execution/configuration'
 import { checkHealth } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
@@ -201,11 +204,18 @@ export const refreshReadOnlyQualification = (
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   qualificationRunId: string | undefined,
+  observeGenerationHash: string,
 ): string | undefined => {
-  if (Result.isFailure(configured) || configured.success === null) return qualificationRunId
+  if (Result.isFailure(configured)) return qualificationRunId
+  if (configured.success === null) return qualificationRunId ?? observeGenerationHash
   const request = configured.success.request
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
 }
+
+export const readOnlyQualificationEvidenceRequired = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+): boolean =>
+  Result.isFailure(configured) || capitalActivationRequiresQualificationEvidence(configured.success?.request ?? null)
 
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -231,13 +241,11 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const researchActivation =
-      Result.isSuccess(configured) &&
-      configured.success !== null &&
-      isResearchCapitalActivationRequest(configured.success.request)
+    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(configured)
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
+        qualificationEvidenceRequired,
         broker: {
           expectedAccountId: plan.config.alpaca.expectedAccountId,
           executionEligible: false,
@@ -269,8 +277,12 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
           dependencies,
           runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
           undefined,
-          readOnlyCycleObservationId(configured, observePlan.config.qualificationRunId),
-          !researchActivation,
+          readOnlyCycleObservationId(
+            configured,
+            observePlan.config.qualificationRunId,
+            observePlan.config.alpaca.authorityGenerationHash,
+          ),
+          qualificationEvidenceRequired,
           controller === undefined
             ? undefined
             : { controllerKey: controller.controllerKey, read: controllerStatus.read },
