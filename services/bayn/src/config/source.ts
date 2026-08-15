@@ -5,8 +5,8 @@ import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
+import { ExecutionControllerKeySchema } from '../execution/controller-key'
 import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
-import { LifecycleControllerKeySchema } from '../lifecycle-command-contract'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -127,7 +127,7 @@ export const runtimeConfigSource = Config.all({
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   lifecycleOwner: Config.schema(LifecycleOwnerSchema, 'BAYN_LIFECYCLE_OWNER').pipe(Config.withDefault('PROCESS')),
   lifecycleCommandPort: Config.port('BAYN_LIFECYCLE_COMMAND_PORT').pipe(Config.withDefault(8081)),
-  lifecycleControllerKey: Config.schema(LifecycleControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
+  lifecycleControllerKey: Config.schema(ExecutionControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
     Config.withDefault('primary'),
   ),
   lifecyclePreviousSourceRevision: Config.option(
