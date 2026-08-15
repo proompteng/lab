@@ -3,16 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
-import {
-  advanceBaynLifecycleManifests,
-  baynLifecycleCurrentPath,
-  baynLifecycleIsActive,
-  baynLifecyclePreviousPath,
-  validateBaynLifecycleActivation,
-  validateBaynLifecycleCommandAuthentication,
-  validateBaynLifecycleCommandPort,
-  validateBaynLifecycleInactiveRuntime,
-} from './lifecycle-manifests'
+import { validateNativeBaynDeployment } from './native-runtime-manifest'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const hashPattern = /^[0-9a-f]{64}$/
@@ -50,8 +41,6 @@ export interface UpdateBaynManifestOptions {
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
   readonly applicationSetPath?: string
-  readonly lifecycleCurrentPath?: string
-  readonly lifecyclePreviousPath?: string
   readonly executionControllerPath?: string
   readonly executionActivationPath?: string
 }
@@ -136,9 +125,7 @@ const nativeExecutionPins = (
   const usesDefaultManifests =
     options.kustomizationPath === undefined &&
     options.deploymentPath === undefined &&
-    options.applicationSetPath === undefined &&
-    options.lifecycleCurrentPath === undefined &&
-    options.lifecyclePreviousPath === undefined
+    options.applicationSetPath === undefined
   const controllerPath =
     options.executionControllerPath ??
     (usesDefaultManifests ? 'argocd/applications/bayn/execution-controller.yaml' : undefined)
@@ -273,19 +260,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
   const deploymentPath = options.deploymentPath ?? 'argocd/applications/bayn/deployment.yaml'
   const applicationSetPath = options.applicationSetPath ?? 'argocd/applicationsets/product.yaml'
-  const lifecycleCurrentManifestPath = options.lifecycleCurrentPath ?? baynLifecycleCurrentPath
-  const lifecyclePreviousManifestPath = options.lifecyclePreviousPath ?? baynLifecyclePreviousPath
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const deployment = readFileSync(deploymentPath, 'utf8')
-  const lifecycleActive = baynLifecycleIsActive(kustomization)
-  validateBaynLifecycleActivation(deployment, kustomization)
-  if (lifecycleActive) {
-    validateBaynLifecycleCommandPort(deployment)
-    validateBaynLifecycleCommandAuthentication(deployment)
-    environmentValue(deployment, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
-  } else {
-    validateBaynLifecycleInactiveRuntime(deployment)
-  }
+  validateNativeBaynDeployment(deployment)
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
@@ -443,14 +420,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     `$1${options.sourceSha}`,
     'BAYN_CODE_REVISION value',
   )
-  if (lifecycleActive) {
-    updatedDeployment = replaceExactlyOnce(
-      updatedDeployment,
-      /(            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: )[^\n]+/,
-      `$1${deployedSourceSha}`,
-      'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION value',
-    )
-  }
   updatedDeployment = replaceExactlyOnce(
     updatedDeployment,
     /(            - name: BAYN_IMAGE_DIGEST\n              value: )[^\n]+/,
@@ -498,20 +467,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     'Bayn ApplicationSet enabled state',
   )
 
-  const lifecycle = advanceBaynLifecycleManifests({
-    base: {
-      current: readFileSync(lifecycleCurrentManifestPath, 'utf8'),
-      previous: readFileSync(lifecyclePreviousManifestPath, 'utf8'),
-    },
-    kustomization,
-    next: { sourceSha: options.sourceSha, tag: options.tag, digest: options.digest },
-  })
-
   writeFileSync(kustomizationPath, updatedKustomization)
   writeFileSync(deploymentPath, updatedDeployment)
   writeFileSync(applicationSetPath, updatedApplicationSet)
-  writeFileSync(lifecycleCurrentManifestPath, lifecycle.current)
-  writeFileSync(lifecyclePreviousManifestPath, lifecycle.previous)
   return {
     promotionAction: 'promote',
     promotionReason: 'eligible',
