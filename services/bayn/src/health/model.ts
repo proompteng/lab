@@ -14,6 +14,11 @@ export type ProbeResult<A> =
   | { readonly _tag: 'Available'; readonly value: A }
   | { readonly _tag: 'Unavailable'; readonly error: string }
 
+export type CycleObservationBinding =
+  | { readonly _tag: 'FromEvidence' }
+  | { readonly _tag: 'Exact'; readonly bindingId: string }
+  | { readonly _tag: 'Unavailable' }
+
 export interface BrokerHealthObservation {
   readonly accountId: string
   readonly permissionError: string | null
