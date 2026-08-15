@@ -64,29 +64,37 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Admin UI exposure
 
-The tailnet admin endpoint is intentionally absent in this migration layer. The former layer-3 Tailscale Service must
-be fully pruned, including its tailnet device and MagicDNS record, before the replacement layer-7 HTTPS Ingress can
-claim the same `restate` hostname without a device-name collision. Restate itself remains available inside the cluster
-through the `restate` Service on admin port `9070`.
+`restate-admin-tailscale` exposes the Restate admin/UI port only through a layer-7 Tailscale Ingress. The operator
+terminates tailnet TLS and forwards HTTP to the cluster-internal `restate` Service on admin port `9070`.
+
+- Canonical tailnet URL: `https://restate.ide-newton.ts.net/`
+- Tailscale hostname: `restate`
+- Kubernetes Ingress: `restate-admin-tailscale`
+- External port: `443`
+- Restate backend: `restate` Service, `admin` / `9070`
+
+The Ingress does not enable Tailscale Funnel, so the admin UI remains private to authorized tailnet clients. Use the
+fully qualified `ts.net` URL for TLS validation; the certificate is provisioned for the MagicDNS name.
 
 ## Post-sync verification
 
-After Argo reconciles this app from `main`, verify the core application and removal of the old Tailscale resources:
+After Argo reconciles this app from `main`, verify the core application and generated Tailscale resources:
 
 ```sh
 kubectl get application -n argocd restate -o wide
-kubectl get svc -n restate restate -o wide
-kubectl get svc -n restate restate-admin-tailscale
+kubectl get ingress -n restate restate-admin-tailscale -o wide
 kubectl get pods -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale -o wide
 ```
 
 Expected:
 
 - the `restate` Argo Application is `Synced` and `Healthy`;
-- the cluster-internal `restate` Service remains available;
-- `restate-admin-tailscale` is `NotFound`;
-- no Tailscale proxy pod remains with parent labels for `restate-admin-tailscale`;
-- `restate.ide-newton.ts.net` no longer resolves on the tailnet before the HTTPS replacement is introduced.
+- `restate-admin-tailscale` reports `restate.ide-newton.ts.net` on TCP `443`;
+- one Tailscale proxy pod exists in the `tailscale` namespace with parent type `ingress` and parent name
+  `restate-admin-tailscale`;
+- opening `https://restate.ide-newton.ts.net/` from an authorized tailnet client reaches the Restate admin UI with a
+  valid TLS certificate;
+- TCP port `80` is not required for the tailnet endpoint.
 
 Verify the NetworkPolicy still blocks ordinary cluster workloads from admin port `9070`:
 
@@ -113,11 +121,11 @@ Expected result: `admin_access_blocked`.
 
 ## Recovery
 
-If the old `restate` tailnet device or DNS record remains after Argo sync:
+If `https://restate.ide-newton.ts.net/` is unreachable after Argo sync:
 
-1. Confirm Argo has pruned the old Service and inspect any remaining operator-owned proxy resources:
+1. Inspect the Ingress and Tailscale proxy pod:
    ```sh
-   kubectl get svc -n restate restate-admin-tailscale
+   kubectl describe ingress -n restate restate-admin-tailscale
    kubectl get pods -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale -o wide
    kubectl logs -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale --tail=200
    ```
@@ -126,7 +134,9 @@ If the old `restate` tailnet device or DNS record remains after Argo sync:
    kubectl -n restate port-forward svc/restate 9070:9070
    curl -sSf http://127.0.0.1:9070/services
    ```
-3. Do not create the replacement HTTPS Ingress until the old tailnet identity is absent. If cleanup does not converge,
-   revert this migration layer through a normal PR and let Argo restore the previous Service.
+3. Confirm the NetworkPolicy has the Tailscale parent-resource allow rule with type `ingress` for
+   `restate-admin-tailscale`.
+4. If the HTTPS endpoint does not converge, revert this Ingress layer through a normal PR and investigate the
+   Tailscale operator before restoring any layer-3 exposure.
 
 Do not expose Restate admin port `9070` through a public Ingress or unrestricted LoadBalancer. The admin port allows state-changing deployment registration.
