@@ -248,8 +248,11 @@ export const resolveReadOnlyCycleObservationIdForHealth = (
 
 export const readOnlyQualificationEvidenceRequired = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  brokerAccess: BrokerAccess,
 ): boolean =>
-  Result.isFailure(configured) || capitalActivationRequiresQualificationEvidence(configured.success?.request ?? null)
+  Result.isFailure(configured) ||
+  (configured.success === null && brokerAccess === BrokerAccess.Mutation) ||
+  capitalActivationRequiresQualificationEvidence(configured.success?.request ?? null)
 
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -275,7 +278,10 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(configured)
+    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(
+      configured,
+      plan.config.execution.brokerAccess,
+    )
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
