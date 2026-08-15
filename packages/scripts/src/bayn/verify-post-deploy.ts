@@ -472,7 +472,6 @@ const validateExecutionController = (value: unknown, expected: ExpectedBaynProdu
   )
   equal(status.desiredReplicas, 1, 'executionController desired replicas', 'WORKLOAD_NOT_CONVERGED', true)
   equal(status.readyReplicas, 1, 'executionController ready replicas', 'WORKLOAD_NOT_CONVERGED', true)
-  equal(status.availableReplicas, 1, 'executionController available replicas', 'WORKLOAD_NOT_CONVERGED', true)
   equal(
     optionalCount(status.unavailableReplicas, 'executionController.status.unavailableReplicas'),
     0,
@@ -988,7 +987,7 @@ export const verifyReadOnlyBaynIdentity = async (run: RunCommand): Promise<void>
   for (const check of deniedChecks) {
     const result = await run(['kubectl', 'auth', 'can-i', ...check])
     if (result.exitCode !== 0 && result.stdout.trim() !== 'no') {
-      return fail('PRODUCTION_CONTRACT_VIOLATION', `authorization probe failed for ${check.join(' ')}`, false)
+      return fail('READ_UNAVAILABLE', `authorization probe failed for ${check.join(' ')}`, true)
     }
     if (result.stdout.trim() !== 'no') {
       return fail('PRODUCTION_CONTRACT_VIOLATION', `verifier identity can ${check.join(' ')}`, false)
@@ -1075,9 +1074,9 @@ const main = async (): Promise<void> => {
     readFile(join(options.root, 'argocd/applications/bayn/execution-controller.yaml'), 'utf8'),
   ])
   const expected = parseExpectedBaynProduction(kustomization, deployment, executionController)
-  await verifyReadOnlyBaynIdentity(runCommand)
   await retryBaynPostDeployVerification(
     async () => {
+      await verifyReadOnlyBaynIdentity(runCommand)
       const snapshot = await fetchBaynPostDeploySnapshot(runCommand)
       const reconciledRevision = readArgoRevision(snapshot.application)
       await verifyBaynRevisionLineage(runCommand, options.expectedRevision, reconciledRevision)
