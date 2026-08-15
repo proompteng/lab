@@ -81,7 +81,6 @@ const controller = () => ({
     observedGeneration: 5,
     desiredReplicas: 1,
     readyReplicas: 1,
-    availableReplicas: 1,
     deploymentId: 'dp_test',
     conditions: [{ type: 'Ready', status: 'True' }],
   },
@@ -513,6 +512,21 @@ describe('Bayn production post-deploy contract', () => {
     expect(await asyncFailure(() => verifyReadOnlyBaynIdentity(run))).toMatchObject({
       code: 'PRODUCTION_CONTRACT_VIOLATION',
       retryable: false,
+    })
+  })
+
+  test('retries authorization probe transport failures instead of treating them as privilege drift', async () => {
+    let attempts = 0
+    const run = async (_command: readonly string[]) => {
+      attempts += 1
+      return attempts === 1
+        ? { stdout: '', stderr: 'temporary API transport failure', exitCode: 1 }
+        : { stdout: 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    expect(await asyncFailure(() => verifyReadOnlyBaynIdentity(run))).toMatchObject({
+      code: 'READ_UNAVAILABLE',
+      retryable: true,
     })
   })
 
