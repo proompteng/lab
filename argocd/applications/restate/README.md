@@ -64,31 +64,29 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Admin UI exposure
 
-`restate-admin-tailscale` exposes the Restate admin/UI port only through the Tailscale Kubernetes operator:
-
-- Tailscale hostname: `restate`
-- Kubernetes Service: `restate-admin-tailscale`
-- External port: `80`
-- Restate target port: `admin` / `9070`
-
-The Service intentionally carries `argocd.argoproj.io/ignore-healthcheck: "true"` because the Tailscale operator owns LoadBalancer readiness and the Argo health check should not block on tailnet endpoint allocation.
+The tailnet admin endpoint is intentionally absent in this migration layer. The former layer-3 Tailscale Service must
+be fully pruned, including its tailnet device and MagicDNS record, before the replacement layer-7 HTTPS Ingress can
+claim the same `restate` hostname without a device-name collision. Restate itself remains available inside the cluster
+through the `restate` Service on admin port `9070`.
 
 ## Post-sync verification
 
-After Argo reconciles this app from `main`, verify the core application and generated Tailscale resources:
+After Argo reconciles this app from `main`, verify the core application and removal of the old Tailscale resources:
 
 ```sh
 kubectl get application -n argocd restate -o wide
-kubectl get svc -n restate restate restate-admin-tailscale -o wide
+kubectl get svc -n restate restate -o wide
+kubectl get svc -n restate restate-admin-tailscale
 kubectl get pods -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale -o wide
 ```
 
 Expected:
 
 - the `restate` Argo Application is `Synced` and `Healthy`;
-- `restate-admin-tailscale` exists with `loadBalancerClass: tailscale`;
-- one Tailscale proxy pod exists in the `tailscale` namespace with parent labels for `restate-admin-tailscale`;
-- opening `http://restate` from an authorized tailnet client reaches the Restate admin UI.
+- the cluster-internal `restate` Service remains available;
+- `restate-admin-tailscale` is `NotFound`;
+- no Tailscale proxy pod remains with parent labels for `restate-admin-tailscale`;
+- `restate.ide-newton.ts.net` no longer resolves on the tailnet before the HTTPS replacement is introduced.
 
 Verify the NetworkPolicy still blocks ordinary cluster workloads from admin port `9070`:
 
@@ -115,11 +113,11 @@ Expected result: `admin_access_blocked`.
 
 ## Recovery
 
-If `http://restate` is unreachable after Argo sync:
+If the old `restate` tailnet device or DNS record remains after Argo sync:
 
-1. Inspect the Service and Tailscale proxy pod:
+1. Confirm Argo has pruned the old Service and inspect any remaining operator-owned proxy resources:
    ```sh
-   kubectl describe svc -n restate restate-admin-tailscale
+   kubectl get svc -n restate restate-admin-tailscale
    kubectl get pods -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale -o wide
    kubectl logs -n tailscale -l tailscale.com/parent-resource-ns=restate,tailscale.com/parent-resource=restate-admin-tailscale --tail=200
    ```
@@ -128,7 +126,7 @@ If `http://restate` is unreachable after Argo sync:
    kubectl -n restate port-forward svc/restate 9070:9070
    curl -sSf http://127.0.0.1:9070/services
    ```
-3. Confirm the NetworkPolicy has the Tailscale parent-resource allow rule for `restate-admin-tailscale`.
-4. If the Tailscale endpoint must be removed, revert the commit that added `admin-tailscale-service.yaml` and the matching NetworkPolicy rule, merge through GitOps, and sync the root Argo application.
+3. Do not create the replacement HTTPS Ingress until the old tailnet identity is absent. If cleanup does not converge,
+   revert this migration layer through a normal PR and let Argo restore the previous Service.
 
 Do not expose Restate admin port `9070` through a public Ingress or unrestricted LoadBalancer. The admin port allows state-changing deployment registration.

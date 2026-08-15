@@ -6,6 +6,5 @@ resources:
   - request-identity-sealedsecret.yaml
   - service-cluster.yaml
   - service.yaml
-  - admin-tailscale-service.yaml
   - statefulset.yaml
   - networkpolicy.yaml
