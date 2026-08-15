@@ -594,8 +594,12 @@ describe('Bayn production post-deploy contract', () => {
     const run = async (command: readonly string[]) => {
       const verb = command[3] ?? ''
       const resource = command[4] ?? ''
+      const subresource = command.find((part) => part.startsWith('--subresource='))
       return {
-        stdout: verb === 'update' && resource === 'deployments.apps/scale' ? 'yes\n' : 'no\n',
+        stdout:
+          verb === 'update' && resource === 'deployments.apps' && subresource === '--subresource=scale'
+            ? 'yes\n'
+            : 'no\n',
         stderr: '',
         exitCode: 0,
       }
@@ -604,6 +608,21 @@ describe('Bayn production post-deploy contract', () => {
       code: 'PRODUCTION_CONTRACT_VIOLATION',
       retryable: false,
     })
+  })
+
+  test('probes Kubernetes subresources using kubectl auth can-i --subresource', async () => {
+    const commands: string[] = []
+    const run = async (command: readonly string[]) => {
+      commands.push(command.join(' '))
+      return { stdout: 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await verifyReadOnlyBaynIdentity(run)
+    expect(commands).toContain('kubectl auth can-i update deployments.apps --subresource=scale -n bayn')
+    expect(commands).toContain('kubectl auth can-i get services --subresource=proxy -n bayn')
+    expect(commands).toContain('kubectl auth can-i create pods --subresource=eviction -n bayn')
+    expect(commands.some((command) => command.includes('services/proxy'))).toBe(false)
+    expect(commands.some((command) => command.includes('deployments.apps/scale'))).toBe(false)
   })
 
   test('retries authorization probe transport failures instead of treating them as privilege drift', async () => {
