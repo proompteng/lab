@@ -204,9 +204,10 @@ export const refreshReadOnlyQualification = (
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   qualificationRunId: string | undefined,
+  activationRequestRequired: boolean,
 ): string | undefined => {
-  if (Result.isFailure(configured)) return qualificationRunId
-  if (configured.success === null) return qualificationRunId
+  if (Result.isFailure(configured)) return undefined
+  if (configured.success === null) return activationRequestRequired ? undefined : qualificationRunId
   const request = configured.success.request
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
 }
@@ -214,10 +215,16 @@ export const readOnlyCycleObservationId = (
 export const resolveReadOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   qualificationRunId: string | undefined,
+  activationRequestRequired: boolean,
   authority: AuthorityGenerationStoreShape,
 ): Effect.Effect<string | undefined, ExecutionStoreError> => {
-  const configuredId = readOnlyCycleObservationId(configured, qualificationRunId)
-  if (configuredId !== undefined || Result.isFailure(configured) || configured.success !== null) {
+  const configuredId = readOnlyCycleObservationId(configured, qualificationRunId, activationRequestRequired)
+  if (
+    configuredId !== undefined ||
+    Result.isFailure(configured) ||
+    configured.success !== null ||
+    activationRequestRequired
+  ) {
     return Effect.succeed(configuredId)
   }
   const readAuthorityState = authority.readAuthorityState
@@ -235,10 +242,11 @@ export const resolveReadOnlyCycleObservationId = (
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   qualificationRunId: string | undefined,
+  activationRequestRequired: boolean,
   authority: AuthorityGenerationStoreShape,
   operationTimeoutMs: number,
 ): Effect.Effect<string | undefined> =>
-  resolveReadOnlyCycleObservationId(configured, qualificationRunId, authority).pipe(
+  resolveReadOnlyCycleObservationId(configured, qualificationRunId, activationRequestRequired, authority).pipe(
     Effect.timeoutOrElse({
       duration: operationTimeoutMs,
       orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(undefined)),
@@ -248,11 +256,12 @@ export const resolveReadOnlyCycleObservationIdForHealth = (
 
 export const readOnlyQualificationEvidenceRequired = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
-  brokerAccess: BrokerAccess,
-): boolean =>
-  Result.isFailure(configured) ||
-  (configured.success === null && brokerAccess === BrokerAccess.Mutation) ||
-  capitalActivationRequiresQualificationEvidence(configured.success?.request ?? null)
+  activationRequestRequired: boolean,
+): boolean => {
+  if (Result.isFailure(configured)) return true
+  if (configured.success === null) return activationRequestRequired
+  return capitalActivationRequiresQualificationEvidence(configured.success.request)
+}
 
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -278,10 +287,8 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(
-      configured,
-      plan.config.execution.brokerAccess,
-    )
+    const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
+    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(configured, activationRequestRequired)
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
@@ -314,6 +321,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
         resolveReadOnlyCycleObservationIdForHealth(
           configured,
           observePlan.config.qualificationRunId,
+          activationRequestRequired,
           activationStore.authority,
           observePlan.config.operationTimeoutMs,
         ).pipe(
