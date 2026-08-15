@@ -44,7 +44,9 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('expected_set[expected_ids[i]] = 1')
   expect(migration).toContain('if (!(actual[i] in expected_set)) bad += 1')
   expect(migration).toContain('config set --replication 2')
-  expect(migration).toContain('rows == 24 && bad == 0')
+  expect(migration).toContain('logs_replication_ready')
+  expect(migration).toContain('logs describe --all --extra "$id"')
+  expect(migration).toContain('last_replicated ~ /\\{node: 2\\}/')
   expect(migration).toContain('rows != 48')
   expect(migration).toContain('if nodes_ready && \\')
   expect(migration).toContain('docker.restate.dev/restatedev/restate:1.7.2')
@@ -57,6 +59,64 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(kustomization).toContain('- poddisruptionbudget.yaml')
   expect(kustomization).toContain('- replication-migration-job.yaml')
   expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
+})
+
+test('Restate replication migration accepts a sealed log only after its latest replicated segment reaches two', () => {
+  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = migration.spec.template.spec.containers[0].command[2] as string
+  const start = script.indexOf('logs_replication_ready() {')
+  const end = script.indexOf('\n\nfor attempt in $(seq 1 60); do', start)
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  const functionBody = script.slice(start, end)
+  const tempDir = mkdtempSync('/tmp/restate-sealed-log-')
+  const restatectl = `${tempDir}/restatectl`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" logs list "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      if [ "$i" -eq 1 ]; then
+        echo '1 4 202 sealed N/A N/A N/A N/A'
+      else
+        echo "$i 4 202 replicated \${i}_8 {node: 2} N1:6 [N1,N2,N3]"
+      fi
+      i=$((i + 1))
+    done
+    ;;
+  *" logs describe --all --extra 1 "*)
+    cat <<OUT
+3 142 replicated 1_3 {node: 1} N1:5 [N1]
+5 201 replicated 1_5 {node: \${SEALED_REPLICATION:-2}} N1:6 [N1,N2,N3]
+▶︎ 5 202 sealed
+OUT
+    ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    chmodSync(restatectl, 0o755)
+
+    const run = (sealedReplication: string) =>
+      Bun.spawnSync(['/bin/bash', '-ceu', `address=http://restate-0\n${functionBody}\nlogs_replication_ready`], {
+        env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}`, SEALED_REPLICATION: sealedReplication },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+
+    expect(run('2').exitCode).toBe(0)
+    expect(run('1').exitCode).not.toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate replication migration treats archived LSN zero as no snapshot and never mutates replication', () => {
@@ -380,9 +440,12 @@ test('Restate recovery proof opens all snapshots offline without exposing OBC cr
   expect(proof).not.toContain('--aws-secret-access-key')
   expect(scripts).toContain('restate-doctor snapshot s3://restate-snapshots/partitions')
   expect(scripts).toContain("grep -Fq 'Found 24 partition(s):'")
+  expect(scripts).toContain("grep -Fqi 'invocation_rows'")
   expect(scripts).toContain('while [ "$SECONDS" -lt 1680 ]')
   expect(scripts).toContain('Snapshot repository is not complete yet; retrying isolated restore proof')
   expect(proof).toContain('emptyDir: {}')
+  expect(proof).toContain('memory: 4096Mi')
+  expect(drill).toContain('memory: 4096Mi')
   expect(drill).toContain('schedule: "17 6 * * *"')
   expect(kustomization).toContain('- snapshot-restore-proof-job.yaml')
   expect(kustomization).toContain('- snapshot-restore-drill-cronjob.yaml')
@@ -407,7 +470,7 @@ n=$(cat "${attempts}" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" >"${attempts}"
 echo 'Found 24 partition(s): 0-23'
-echo 'invocation_rows'
+echo 'INVOCATION_ROWS'
 [ "$n" -gt 1 ] || exit 17
 `,
     )

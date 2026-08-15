@@ -115,6 +115,36 @@ spec:
                 '
               }
 
+              logs_replication_ready() {
+                logs="$(restatectl --address "$address" logs list)" || return 1
+                printf '%s\n' "$logs"
+                sealed_ids="$(printf '%s\n' "$logs" | awk '
+                  $1 ~ /^[0-9]+$/ {
+                    rows += 1
+                    if ($0 ~ /\{node: 2\}/) next
+                    if ($4 == "sealed") {
+                      sealed[++sealed_count] = $1
+                      next
+                    }
+                    bad += 1
+                  }
+                  END {
+                    if (rows != 24 || bad != 0) exit 1
+                    for (i = 1; i <= sealed_count; i += 1) print sealed[i]
+                  }
+                ')" || return 1
+
+                while IFS= read -r id; do
+                  [ -n "$id" ] || continue
+                  detail="$(restatectl --address "$address" logs describe --all --extra "$id")" || return 1
+                  printf '%s\n' "$detail"
+                  printf '%s\n' "$detail" | awk '
+                    $1 ~ /^[0-9]+$/ && $3 == "replicated" { last_replicated = $0 }
+                    END { exit !(last_replicated ~ /\{node: 2\}/) }
+                  ' || return 1
+                done <<< "$sealed_ids"
+              }
+
               for attempt in $(seq 1 60); do
                 if reactivate_retained_nodes && nodes_ready && metadata_quorum_ready && snapshots_ready; then
                   break
@@ -139,17 +169,15 @@ spec:
 
               for attempt in $(seq 1 60); do
                 config="$(restatectl --address "$address" config get)" || true
-                logs="$(restatectl --address "$address" logs list)" || true
                 partitions="$(restatectl --address "$address" partitions list)" || true
                 if nodes_ready && \
                   printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 2}' && \
                   printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 2}' && \
-                  printf '%s\n' "$logs" | awk '$1 ~ /^[0-9]+$/ { rows += 1; if ($0 !~ /\{node: 2\}/) bad += 1 } END { exit !(rows == 24 && bad == 0) }' && \
+                  logs_replication_ready && \
                   ! printf '%s\n' "$partitions" | grep -Eq 'Catching Up|Starting|UNKNOWN|->' && \
                   printf '%s\n' "$partitions" | awk '$1 ~ /^[0-9]+$/ { count[$1] += 1; rows += 1 } END { if (rows != 48) exit 1; for (i = 0; i < 24; i += 1) if (count[i] != 2) exit 1 }' && \
                   metadata_quorum_ready; then
                   printf '%s\n' "$config"
-                  printf '%s\n' "$logs"
                   printf '%s\n' "$partitions"
                   printf '%s\n' "$metadata"
                   echo "Restate replication 2 is converged across three nodes"
