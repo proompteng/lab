@@ -238,8 +238,8 @@ test('the native Restate cutover binds one read-only controller before the statu
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = 'f32e781ef2ec7a5bf45bcd2f8645316d40909f7f'
-  const imageDigest = 'sha256:7a9e445a9c6d1242ba13c776c07f20e0c456b297e655f4e26f734960bd08153d'
+  const sourceRevision = 'df6bc515e2579f4ee0f9256e45da0eb3e92104f4'
+  const imageDigest = 'sha256:58a3c6c4a157063bcb95c91c4e68a0be605f5410a2ec593b4680e2452af0b232'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -301,7 +301,7 @@ test('the native Restate cutover binds one read-only controller before the statu
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(deploymentEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '5c27ef4302777b2ec91d6ecebc4c4f847fd01a0384a8a71042415ce28eaa8893',
+    '1c6f80f63d53f31c914639bbe071e0304a2cc2705356b48d4ba796a9b7341ef5',
   )
   const previousBinding = {
     planHash: '04221d3f591bcf064ed41d9c1ddd95b445bd5aa05840caab20bc8508625a169e',
@@ -328,7 +328,7 @@ test('the native Restate cutover binds one read-only controller before the statu
   )
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '925a2badce68aacbb4349d556cb1723281313b5b9c0793584c85c9c89e9de943',
+    '1d247162d6ff18b8796a2a9f9a084332cabcd86205b10ded492b83036db115e3',
   )
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
