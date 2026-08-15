@@ -59,14 +59,22 @@ reconciliation, zero unresolved mutations, and no broker-ledger advance before a
 
 ## Legacy Restate registration retirement
 
-`restate-registration-cleanup.yaml` is a temporary PostSync hook that retires only the 18 reviewed legacy
+`restate-registration-cleanup.yaml` is a temporary PostSync hook scoped only to the 18 reviewed legacy
 `BaynLifecycle`/`BaynLifecycleBootstrap` registrations left behind by the native execution cutover. The immutable
-allowlist binds every Restate deployment ID to its exact endpoint and source-revision metadata. Each run accepts the
-full original set, any safe remaining subset from a partially successful prior attempt, or the empty set. Unknown IDs,
-service-set changes, metadata drift, and lifecycle or allowlist-pinned nonterminal invocations fail closed.
+allowlist binds every Restate deployment ID to its exact endpoint and source-revision metadata. From the complete
+original set, the hook removes the 17 drained revisions in creation order and then intentionally stops at the exact
+final deployment `dp_14g38iazTnn3gWZzr8Ze0i5`: only while that deployment still has the reviewed metadata and service
+set, has zero lifecycle or pinned nonterminal invocations, is `Active`, and hosts both revision 18 services as `Latest`
+does the hook emit a terminal `HOLD` and exit successfully without attempting removal. The empty set remains a safe
+no-op. Any other nonzero partial subset, unknown ID, service-set change, metadata drift, or invocation drift fails closed.
 
 The hook revalidates global state and the exact target before every non-force `restate deployments remove -y <id>` and
 walks the verified Restate creation order from oldest to newest. It intentionally has no service-account token,
 credentials, broker access, or Restate ingress access. Egress is limited to cluster DNS and Restate admin TCP 9070. Its
 pod keeps the historical `app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin
 ingress policy authorizes this cross-Application cleanup without requiring Restate Application ordering in this layer.
+
+If a run fails after removing some but not all of the first 17 deployments, do not rely on another retry to continue and
+do not repair Restate directly. Leave the hook failed, re-enumerate Restate read-only, and submit a narrowly reviewed
+GitOps correction that proves the exact remaining subset and the safe next action. Never use `--force`, service/deployment
+deletes, invocation termination, or direct pod/cluster mutation to advance this retirement.
