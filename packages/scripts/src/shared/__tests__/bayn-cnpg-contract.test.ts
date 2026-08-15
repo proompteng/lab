@@ -271,6 +271,10 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   ]
 
   expect(controller.kind).toBe('RestateDeployment')
+  expect(deployment.spec.strategy).toEqual({
+    type: 'RollingUpdate',
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 },
+  })
   expect(controller.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('-1')
   expect(activation.metadata.annotations).toMatchObject({
     'argocd.argoproj.io/hook': 'Sync',

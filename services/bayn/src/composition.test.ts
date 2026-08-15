@@ -714,8 +714,18 @@ describe('Bayn capital startup recovery boundary', () => {
     })
   })
 
-  test('retries transient pinned qualification recovery and stops reading after success', async () => {
-    const state = await Effect.runPromise(Ref.make(initialState({})))
+  test('retries transient pinned qualification recovery, clears request-free pending state, and stops reading after success', async () => {
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: false,
+            executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+          },
+        }),
+      ),
+    )
     const store = pinnedStore()
     let readAttempts = 0
     const evidenceStore = {
@@ -742,11 +752,25 @@ describe('Bayn capital startup recovery boundary', () => {
     })
 
     await Effect.runPromise(refresh)
-    expect((await Effect.runPromise(Ref.get(state))).evidence).toBeNull()
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      evidence: null,
+      capitalActivation: { _tag: 'Pending', requestHash: null, reason: 'STARTUP_EVIDENCE_UNAVAILABLE' },
+      broker: {
+        executionEligible: false,
+        executionDisabledReason: 'CAPITAL_ACTIVATION_NOT_PREPARED',
+      },
+    })
     await Effect.runPromise(refresh)
     await Effect.runPromise(refresh)
 
-    expect((await Effect.runPromise(Ref.get(state))).evidence?.evaluation.runId).toBe(pinnedEvaluation.runId)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      evidence: { evaluation: { runId: pinnedEvaluation.runId } },
+      capitalActivation: { _tag: 'NotConfigured' },
+      broker: {
+        executionEligible: false,
+        executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+      },
+    })
     expect(readAttempts).toBe(2)
   })
 
@@ -791,6 +815,32 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(cycleObservationId).toEqual({ _tag: 'Exact', bindingId: currentGenerationHash })
+  })
+
+  test('fails closed when request-free durable authority is not effective OBSERVE', async () => {
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        resolveReadOnlyCycleObservationId(Result.succeed(null), false, {
+          ensureAuthorityGeneration: () =>
+            Effect.die(new Error('request-free read-only status must not mutate authority')),
+          readAuthorityState: Effect.succeed({
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: hash('unexpected-paper-generation'),
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+            version: 3,
+            updatedAt: '2026-08-15T07:00:00.000Z',
+          }),
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'authority',
+      failure: 'invariant',
+      message: 'OBSERVE cycle startup requires current effective OBSERVE authority',
+    })
   })
 
   test('interrupts a stalled durable authority read before a later health pass can retain stale READY', async () => {
