@@ -21,15 +21,15 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after packaging native execution activation.
-    x86_64-linux = "sha256-w5W1nSJSgL5a92YqANHZe6477nQHQFM4jiT1feYHLKE=";
-    aarch64-linux = "sha256-m20VFC+NPshUHNlQwQqzgmrlB5OA4kyE3KG0NbL0IxA=";
+    # Refreshed from the two authoritative Linux image builders after the Bayn package manifest entry mapping changed.
+    x86_64-linux = "sha256-dclgSPM8KBLnQp/bzJwyX5QjpogTH/xgQXgRctUWxHI=";
+    aarch64-linux = "sha256-xhBnMeKBsdXhZrYGyaiSnOl0FVkkdJuZ7DskAy3RHYM=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node "
-      + "--external tigerbeetle-node --outdir=dist "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
       + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository

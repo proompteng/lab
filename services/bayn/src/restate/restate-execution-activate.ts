@@ -1,16 +1,16 @@
 import { NodeRuntime } from '@effect/platform-node'
 import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
-import { loadApplicationPlan } from './application-plan'
-import { embeddedBuildMetadata } from './build'
-import { executionControllerConfig } from './composition/native-execution-runtime'
+import { loadApplicationPlan } from '../application-plan'
+import { embeddedBuildMetadata } from '../build'
+import { executionControllerConfig } from '../composition/native-execution-runtime'
 import {
   decodeExecutionControllerState,
   resolveOptionalExecutionControllerBinding,
   type ExecutionControllerBinding,
   type ExecutionControllerState,
-} from './execution/controller'
-import { sha256 } from './hash'
+} from '../execution/controller'
+import { sha256 } from '../hash'
 import {
   executionBootstrapAuthorizationHash,
   executionControllerBootstrapHandlerTimeouts,
@@ -24,8 +24,8 @@ import {
   sendRestateInvocation,
   type RestateHttpRequest,
 } from './restate-invocation-client'
-import { GitSourceRevisionSchema, Sha256Schema } from './schemas'
-import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
+import { GitSourceRevisionSchema, Sha256Schema } from '../schemas'
+import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from '../telemetry'
 
 const InternalHttpOriginSchema = Schema.Trim.check(
   Schema.makeFilter(

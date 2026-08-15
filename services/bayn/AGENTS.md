@@ -32,6 +32,9 @@
   `Effect.forkScoped`. Acquisition, interruption, and release must have tests. Never detach a Promise or fiber.
 - Use `Effect.gen` for readable orchestration. Use `Effect.fn` for a meaningful traced operation and `Effect.fnUntraced`
   only for a reusable or measured hot helper; do not mechanically wrap one-line effects.
+- Source layout: keep production code in its cohesive owner module with colocated tests and explicit imports (no barrel or
+  re-export soup); move files only when dependency direction improves, and preserve durable wire IDs, authority and
+  idempotency semantics, plus package, Nix, image, and runtime entry contracts.
 
 ## Failures, cancellation, and time
 

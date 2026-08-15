@@ -4,10 +4,10 @@ import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
 import { Config, Data, Effect, Layer, Option, Redacted, Schema } from 'effect'
 
-import { loadApplicationPlan } from './application-plan'
-import type { ApplicationPlan, ApplicationPlanFor } from './app'
-import { acquireNativeExecutionRuntime } from './composition/native-execution-runtime'
-import { resolveOptionalExecutionControllerBinding } from './execution/controller'
+import { loadApplicationPlan } from '../application-plan'
+import type { ApplicationPlan, ApplicationPlanFor } from '../app'
+import { acquireNativeExecutionRuntime } from '../composition/native-execution-runtime'
+import { resolveOptionalExecutionControllerBinding } from '../execution/controller'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   executionBootstrapAuthorizationHash,
@@ -17,8 +17,8 @@ import {
   type NativeExecutionRuntime,
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
-import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from './schemas'
-import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from './telemetry'
+import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
+import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
   readonly message: string
