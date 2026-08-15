@@ -25,6 +25,8 @@ import { Journal, JournalLive } from '../ledger'
 import { MarketData, MarketDataLive } from '../market-data'
 import { sqlResource } from '../operations'
 
+type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
+
 export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
   ClickhouseClient.layer({
     url: config.clickhouse.url,
@@ -35,9 +37,9 @@ export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
     request_timeout: config.operationTimeoutMs,
   })
 
-export const PostgresClientResourceLive = (config: LoadedRuntimeConfig) => PostgresClientLive(config)
+export const PostgresClientResourceLive = (config: PostgresResourceConfig) => PostgresClientLive(config)
 
-export const EvidenceStoreResourceLive = (config: LoadedRuntimeConfig) => EvidenceStoreFromPostgres(config)
+export const EvidenceStoreResourceLive = (config: PostgresResourceConfig) => EvidenceStoreFromPostgres(config)
 
 export const MarketDataResourceLive = (plan: ApplicationIdentity) => MarketDataLive(plan.config, plan.protocol)
 
@@ -47,9 +49,11 @@ export const CycleObservabilityResourceLive = CycleObservabilityLive
 
 export const ExecutionStoreResourceLive = (config: LoadedRuntimeConfig) => ExecutionStoreLive(config)
 
-export const ExecutionControllerStatusResourceLive = (config: LoadedRuntimeConfig) => {
-  const postgres = sqlResource(PostgresClientResourceLive(config))
-  return ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres), Layer.provideMerge(ApplicationPlatformLive))
+export const ExecutionControllerStatusResourceLive = (config: PostgresResourceConfig) => {
+  const postgres = PostgresAuthorityLive(config)
+  return Layer.merge(postgres, ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))).pipe(
+    Layer.provideMerge(ApplicationPlatformLive),
+  )
 }
 
 export const CycleStoreResourceLive = CycleStoreLive
@@ -69,7 +73,7 @@ const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   return MarketDataResourceLive(plan).pipe(Layer.provide(clickHouse))
 }
 
-const PostgresAuthorityLive = (config: LoadedRuntimeConfig) =>
+const PostgresAuthorityLive = (config: PostgresResourceConfig) =>
   sqlResource(EvidenceStoreResourceLive(config).pipe(Layer.provideMerge(PostgresClientResourceLive(config))))
 
 export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'BrokerlessService'>) => {

@@ -2,12 +2,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
 import { config as fixtureConfig } from '../app-test-support'
+import { projectExecutionControllerState } from '../composition/native-execution-runtime'
+import { ExecutionControllerStatusResourceLive } from '../composition/resources'
 import { ExecutionControllerOutcome, ExecutionControllerStatusStore } from '../execution/controller-status'
+import { decideExecutionControllerActivation, decideExecutionControllerDeactivation } from '../execution/controller'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import { ExecutionControllerStatusStoreLive } from './execution-controller-status-postgres'
@@ -396,5 +399,172 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       status: { planHash: 'e'.repeat(64), active: true, epoch: 4, lastSequence: 3 },
     })
     expect(result.stored).toEqual(result.bound.status)
+  })
+
+  test('controller persistence bootstraps v43 before rotating an active v42 binding', async () => {
+    const controllerKey = 'primary'
+    const oldPlanHash = '04221d3f591bcf064ed41d9c1ddd95b445bd5aa05840caab20bc8508625a169e'
+    const oldSourceRevision = '9101af1d4e51da3d68f0a0a8b4928404f4566fb3'
+    const newPlanHash = '5c27ef4302777b2ec91d6ecebc4c4f847fd01a0384a8a71042415ce28eaa8893'
+    const newSourceRevision = 'f32e781ef2ec7a5bf45bcd2f8645316d40909f7f'
+    const lastReceiptHash = 'a'.repeat(64)
+    const completedAt = '2026-08-15T10:20:00.000Z'
+    const nextDueAt = '2026-08-15T10:20:30.000Z'
+
+    const v42 = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          ALTER TABLE execution_controller_status
+          DROP CONSTRAINT execution_controller_status_completion_evidence,
+          DROP COLUMN next_sequence,
+          ALTER COLUMN last_sequence SET NOT NULL,
+          ALTER COLUMN last_outcome SET NOT NULL,
+          ALTER COLUMN last_receipt_hash SET NOT NULL,
+          ALTER COLUMN completed_at SET NOT NULL
+        `
+        yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
+        yield* executionControllerPlanStatus
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id = 43`
+        yield* sql`
+          INSERT INTO execution_controller_status (
+            controller_key,
+            plan_hash,
+            active,
+            epoch,
+            last_sequence,
+            last_outcome,
+            last_receipt_hash,
+            completed_at,
+            next_due_at
+          ) VALUES (
+            ${controllerKey},
+            ${oldPlanHash},
+            true,
+            3,
+            8,
+            'Blocked',
+            ${lastReceiptHash},
+            ${completedAt},
+            ${nextDueAt}
+          )
+        `
+        const [migration] = yield* sql<{ migration_id: number; name: string }>`
+          SELECT migration_id, name FROM schema_migrations ORDER BY migration_id DESC LIMIT 1
+        `
+        const [trigger] = yield* sql<{ definition: string }>`
+          SELECT pg_get_functiondef(oid) AS definition
+          FROM pg_proc
+          WHERE proname = 'enforce_execution_controller_status_transition'
+        `
+        return { migration, triggerDefinition: trigger?.definition ?? '' }
+      }),
+    )
+
+    expect(v42.migration).toEqual({ migration_id: 42, name: 'execution_controller_plan_status' })
+    expect(v42.triggerDefinition).toContain('NEW.last_sequence <= OLD.last_sequence')
+    expect(v42.triggerDefinition).not.toContain('OLD.next_sequence IS NULL')
+
+    const projectionRuntime = ManagedRuntime.make(ExecutionControllerStatusResourceLive(config))
+    try {
+      const store = await projectionRuntime.runPromise(ExecutionControllerStatusStore)
+      const migrated = await projectionRuntime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [migration] = yield* sql<{ migration_id: number; name: string }>`
+            SELECT migration_id, name FROM schema_migrations ORDER BY migration_id DESC LIMIT 1
+          `
+          const [column] = yield* sql<{ is_nullable: string }>`
+            SELECT is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'execution_controller_status'
+              AND column_name = 'next_sequence'
+          `
+          const [row] = yield* sql<{ next_sequence: string }>`
+            SELECT next_sequence::text AS next_sequence
+            FROM execution_controller_status
+            WHERE controller_key = ${controllerKey}
+          `
+          const [trigger] = yield* sql<{ definition: string }>`
+            SELECT pg_get_functiondef(oid) AS definition
+            FROM pg_proc
+            WHERE proname = 'enforce_execution_controller_status_transition'
+          `
+          return { column, migration, row, triggerDefinition: trigger?.definition ?? '' }
+        }),
+      )
+
+      expect(migrated.migration).toEqual({ migration_id: 43, name: 'execution_controller_activation_projection' })
+      expect(migrated.column).toEqual({ is_nullable: 'NO' })
+      expect(migrated.row).toEqual({ next_sequence: '9' })
+      expect(migrated.triggerDefinition).toContain('OLD.next_sequence IS NULL')
+
+      const oldState = {
+        schemaVersion: 1 as const,
+        active: true,
+        epoch: 3,
+        planHash: oldPlanHash,
+        sourceRevision: oldSourceRevision,
+        initialSequence: 0,
+        nextSequence: 9,
+        lastCompletion: {
+          sequence: 8,
+          outcome: ExecutionControllerOutcome.Blocked,
+          receiptHash: lastReceiptHash,
+          completedAt,
+        },
+        nextDueAt,
+      }
+      const deactivation = Result.getOrThrow(
+        decideExecutionControllerDeactivation(oldState, {
+          schemaVersion: 'bayn.execution-controller-deactivation.v1',
+          controllerKey,
+          epoch: 3,
+          planHash: oldPlanHash,
+          sourceRevision: oldSourceRevision,
+        }),
+      )
+      expect(deactivation._tag).toBe('Deactivated')
+      await Effect.runPromise(projectExecutionControllerState(controllerKey, deactivation.state, store))
+
+      const activation = Result.getOrThrow(
+        decideExecutionControllerActivation(deactivation.state, {
+          schemaVersion: 'bayn.execution-controller-activation.v1',
+          controllerKey,
+          epoch: deactivation.state.epoch,
+          firstSequence: deactivation.state.nextSequence,
+          planHash: newPlanHash,
+          sourceRevision: newSourceRevision,
+        }),
+      )
+      expect(activation._tag).toBe('Activated')
+      await Effect.runPromise(projectExecutionControllerState(controllerKey, activation.state, store))
+
+      const stored = await Effect.runPromise(store.read(controllerKey))
+      expect(stored).toEqual({
+        schemaVersion: 1,
+        controllerKey,
+        planHash: newPlanHash,
+        active: true,
+        epoch: 4,
+        nextSequence: 9,
+      })
+
+      const monotonicViolation = await projectionRuntime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* Effect.exit(sql`
+            UPDATE execution_controller_status
+            SET next_sequence = 8
+            WHERE controller_key = ${controllerKey}
+          `)
+        }),
+      )
+      expect(monotonicViolation._tag).toBe('Failure')
+      expect(await Effect.runPromise(store.read(controllerKey))).toEqual(stored)
+    } finally {
+      await projectionRuntime.dispose()
+    }
   })
 })
