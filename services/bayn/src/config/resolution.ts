@@ -47,6 +47,25 @@ const validateCycleTiming = (
         cycleStallThresholdMs: parsed.cycleStallThresholdMs,
       })
 
+const validateLifecyclePorts = (
+  parsed: ParsedRuntimeConfig,
+): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> =>
+  parsed.lifecycleOwner === 'Process' || parsed.port !== parsed.lifecycleCommandPort
+    ? Result.succeed(parsed)
+    : fail({
+        _tag: 'LifecycleCommandPortConflict',
+        httpPort: parsed.port,
+        lifecycleCommandPort: parsed.lifecycleCommandPort,
+      })
+
+const validateLifecycleMode = (
+  parsed: ParsedRuntimeConfig,
+  alpaca: AlpacaRuntimeConfig | undefined,
+): Result.Result<void, RuntimeConfigResolutionFailure> =>
+  parsed.lifecycleOwner === 'Process' || (alpaca !== undefined && parsed.configuredOperation === undefined)
+    ? Result.succeed(undefined)
+    : fail({ _tag: 'RestateLifecycleRequiresAutonomousService' })
+
 const validateExecutionReconciliationTiming = (
   parsed: ParsedRuntimeConfig,
   execution: ExecutionPolicy,
@@ -288,6 +307,10 @@ const baseConfig = (
   build,
   healthIntervalMs: parsed.healthIntervalMs,
   operationTimeoutMs: parsed.operationTimeoutMs,
+  lifecycleOwner: parsed.lifecycleOwner,
+  lifecycleCommandPort: parsed.lifecycleCommandPort,
+  lifecycleControllerKey: parsed.lifecycleControllerKey,
+  lifecyclePreviousSourceRevision: parsed.lifecyclePreviousSourceRevision,
   expectedExecutionControllerPlanHash: parsed.expectedExecutionControllerPlanHash,
   cycleStallThresholdMs: parsed.cycleStallThresholdMs,
   reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
@@ -376,8 +399,12 @@ export const resolveRuntimeConfig = (
   const parsed = bounds.success
   const timing = validateCycleTiming(parsed)
   if (Result.isFailure(timing)) return Result.fail(timing.failure)
+  const lifecyclePorts = validateLifecyclePorts(parsed)
+  if (Result.isFailure(lifecyclePorts)) return Result.fail(lifecyclePorts.failure)
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
+  const lifecycleMode = validateLifecycleMode(parsed, alpaca.success)
+  if (Result.isFailure(lifecycleMode)) return Result.fail(lifecycleMode.failure)
   const capitalAuthority = resolveCapitalAuthority(parsed, alpaca.success)
   if (Result.isFailure(capitalAuthority)) return Result.fail(capitalAuthority.failure)
   const execution = resolvePolicy(parsed, alpaca.success, capitalAuthority.success)

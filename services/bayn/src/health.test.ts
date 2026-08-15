@@ -1239,7 +1239,7 @@ describe('Bayn continuous health', () => {
     })
   })
 
-  test('keeps Restate execution unavailable until its first durable controller projection', () => {
+  test('keeps Restate-owned lifecycle unavailable until its first durable controller projection', () => {
     const controllerKey = 'f'.repeat(64)
     const current: RuntimeState = {
       ...readyState(),
@@ -1282,11 +1282,11 @@ describe('Bayn continuous health', () => {
         dependencies: {
           cycleRunner: {
             status: 'UNAVAILABLE',
-            error: 'Restate execution controller has not completed its first durable pass',
+            error: 'Restate lifecycle has not completed its first durable pass',
           },
         },
       },
-      error: 'cycleRunner: Restate execution controller has not completed its first durable pass',
+      error: 'cycleRunner: Restate lifecycle has not completed its first durable pass',
     })
   })
 

@@ -7,13 +7,12 @@ import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability } from '../cycle/store'
 import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
 import { EvidenceStore } from '../db/evidence-store'
-import type { AuthorityGenerationStoreShape } from '../db/execution-store'
+import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
 import { isResearchCapitalActivationRequest } from '../execution/configuration'
-import { executionRuntimeBinding, resolveExecutionCycleObservationId } from '../execution/runtime-binding'
 import { checkHealth } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
@@ -21,7 +20,8 @@ import { MarketData } from '../market-data'
 import { initialState, type RuntimeState } from '../runtime-state'
 import { runStartup } from '../startup'
 import { currentUtcInstant } from '../time'
-import { runtimeBroker } from './lifecycle'
+import { capitalActivationRequiresQualificationEvidence } from './autonomous-runtime'
+import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
 import {
   capitalActivationOperationalError,
   capitalActivationRequestIsCurrent,
@@ -75,13 +75,14 @@ const makeReadOnlyCapitalActivationStore = (
   readReceiptHash: (generationHash) => readReceiptHash(sql, generationHash),
 })
 
-const logActivationUnavailable = (reason: string): Effect.Effect<void> =>
+const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
   Effect.logWarning('Bayn read-only capital projection remains unavailable').pipe(
     Effect.annotateLogs({
       service: 'bayn',
       component: 'capital-activation',
       mode: 'read-only-status',
       reason,
+      ...(cause === undefined ? {} : { cause }),
     }),
   )
 
@@ -201,11 +202,11 @@ export const refreshReadOnlyQualification = (
 
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
-  authority: import('../execution/contracts').AuthorityState | undefined,
-): Result.Result<string, string> =>
-  Result.flatMap(configured, (activation) =>
-    resolveExecutionCycleObservationId(executionRuntimeBinding(activation?.request ?? null), authority),
-  )
+): string | undefined => {
+  if (Result.isFailure(configured) || configured.success === null) return undefined
+  const request = configured.success.request
+  return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
+}
 
 export const readOnlyQualificationEvidenceRequired = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
@@ -214,34 +215,52 @@ export const readOnlyQualificationEvidenceRequired = (
 ): boolean => {
   if (Result.isFailure(configured)) return true
   if (configured.success === null) return activationRequestRequired || qualificationRunId !== undefined
-  return executionRuntimeBinding(configured.success.request).requiresQualificationEvidence
+  return capitalActivationRequiresQualificationEvidence(configured.success.request)
 }
+
+export const resolveReadOnlyCycleObservationId = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  activationRequestRequired: boolean,
+  authority: AuthorityGenerationStoreShape,
+): Effect.Effect<string | null, ExecutionStoreError> =>
+  Effect.gen(function* () {
+    if (Result.isFailure(configured)) return null
+    if (configured.success !== null) return readOnlyCycleObservationId(configured) ?? null
+    if (activationRequestRequired) return null
+    const readAuthorityState = authority.readAuthorityState
+    if (readAuthorityState === undefined) {
+      return yield* new ExecutionStoreError({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'read-only status authority projection is unavailable',
+      })
+    }
+    const current = yield* readAuthorityState
+    return yield* Effect.fromResult(observeCycleGenerationHash(current)).pipe(
+      Effect.mapError(
+        (message) =>
+          new ExecutionStoreError({
+            operation: 'authority',
+            failure: 'invariant',
+            message,
+          }),
+      ),
+    )
+  })
 
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
   authority: AuthorityGenerationStoreShape,
   operationTimeoutMs: number,
-): Effect.Effect<Option.Option<string>> => {
-  if (Result.isFailure(configured) || (configured.success === null && activationRequestRequired)) {
-    return Effect.succeed(Option.none())
-  }
-  const binding = executionRuntimeBinding(configured.success?.request ?? null)
-  if (binding.cycleObservation._tag !== 'ObserveAuthority') {
-    return Effect.succeed(Option.some(binding.cycleObservation.cycleObservationId))
-  }
-  const readAuthorityState = authority.readAuthorityState
-  if (readAuthorityState === undefined) return Effect.succeed(Option.none())
-  return readAuthorityState.pipe(
-    Effect.flatMap((current) => Effect.fromResult(readOnlyCycleObservationId(configured, current))),
-    Effect.map(Option.some),
+): Effect.Effect<string | null> =>
+  resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(
     Effect.timeoutOrElse({
       duration: operationTimeoutMs,
-      orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(Option.none())),
+      orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(null)),
     }),
-    Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(Option.none()))),
+    Effect.catch((cause) => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE', cause).pipe(Effect.as(null))),
   )
-}
 
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -298,28 +317,30 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       evidenceStore.read,
     )
 
-    const cycleObservationId = resolveReadOnlyCycleObservationIdForHealth(
-      configured,
-      activationRequestRequired,
-      activationStore.authority,
-      observePlan.config.operationTimeoutMs,
-    )
-
     const healthPass = refreshReadOnlyQualification(observePlan, configured, state, dependencies).pipe(
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
-      Effect.andThen(Effect.all({ current: Ref.get(state), cycleObservationId })),
-      Effect.flatMap(({ current, cycleObservationId }) =>
-        checkHealth(
-          observePlan.config,
-          state,
-          dependencies,
-          runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
-          undefined,
-          Option.getOrNull(cycleObservationId),
-          qualificationEvidenceRequired,
-          controller === undefined
-            ? undefined
-            : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+      Effect.andThen(Ref.get(state)),
+      Effect.flatMap((current) =>
+        resolveReadOnlyCycleObservationIdForHealth(
+          configured,
+          activationRequestRequired,
+          activationStore.authority,
+          observePlan.config.operationTimeoutMs,
+        ).pipe(
+          Effect.flatMap((cycleObservationId) =>
+            checkHealth(
+              observePlan.config,
+              state,
+              dependencies,
+              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              undefined,
+              cycleObservationId,
+              qualificationEvidenceRequired,
+              controller === undefined
+                ? undefined
+                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+            ),
+          ),
         ),
       ),
     )

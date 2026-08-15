@@ -22,7 +22,7 @@ const fakeRequest = {
 
 describe('Bayn Restate telemetry', () => {
   test('is a no-op when no OTLP endpoint is configured', async () => {
-    const telemetry = await Effect.runPromise(Effect.scoped(acquireRestateTelemetry({ serviceName: 'bayn-restate' })))
+    const telemetry = await Effect.runPromise(Effect.scoped(acquireRestateTelemetry({ serviceName: 'bayn-lifecycle' })))
 
     expect(telemetry.hooks).toEqual([])
     expect(telemetry.traceHeaders()).toEqual({})
@@ -52,7 +52,7 @@ describe('Bayn Restate telemetry', () => {
         Effect.scoped(
           Effect.gen(function* () {
             const telemetry = yield* acquireRestateTelemetry({
-              serviceName: 'bayn-restate-test',
+              serviceName: 'bayn-lifecycle-test',
               serviceVersion: 'test-version',
               endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
             })
@@ -73,7 +73,7 @@ describe('Bayn Restate telemetry', () => {
       const request = await received
       expect(request.path).toBe('/v1/traces')
       expect(request.body.byteLength).toBeGreaterThan(0)
-      expect(Buffer.from(request.body).includes(Buffer.from('bayn-restate-test'))).toBe(true)
+      expect(Buffer.from(request.body).includes(Buffer.from('bayn-lifecycle-test'))).toBe(true)
       expect(Buffer.from(request.body).includes(Buffer.from('attempt BaynLifecycle/advance'))).toBe(true)
       expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
       if (traceparent === undefined) throw new Error('Restate trace context was not propagated')

@@ -1,0 +1,442 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn-lifecycle-2e6a1cbf1dce
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 2e6a1cbf1dce
+  annotations:
+    bayn.proompteng.ai/source-revision: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  progressDeadlineSeconds: 600
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-lifecycle
+      app.kubernetes.io/version: 2e6a1cbf1dce
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-lifecycle
+        app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/version: 2e6a1cbf1dce
+    spec:
+      serviceAccountName: bayn-lifecycle
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lifecycle
+          image: registry.ide-newton.ts.net/lab/bayn:sha-2e6a1cbf1dce6737f6c96e25c097d214366af48d@sha256:ebe9ffea6582ae356b2ea870da1873ef74f46d064d60ca58b3fd8e27f535d3a3
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restate-lifecycle-server.js
+          ports:
+            - name: restate
+              containerPort: 9080
+              protocol: TCP
+          env:
+            - name: BAYN_CODE_REVISION
+              value: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: BAYN_LIFECYCLE_CONTROLLER_KEY
+              value: primary
+            - name: BAYN_LIFECYCLE_COMMAND_URL
+              value: http://bayn-lifecycle-command.bayn.svc.cluster.local:8081
+            - name: BAYN_LIFECYCLE_COMMAND_TOKEN_PATH
+              value: /var/run/secrets/bayn-lifecycle-command/token
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: PORT
+              value: "9080"
+            - name: NODE_ENV
+              value: production
+          startupProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              port: restate
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: command-identity
+              mountPath: /var/run/secrets/bayn-lifecycle-command
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: command-identity
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  audience: bayn.proompteng.ai/lifecycle-command
+                  expirationSeconds: 3600
+                  path: token
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bayn-lifecycle-2e6a1cbf1dce
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 2e6a1cbf1dce
+  annotations:
+    bayn.proompteng.ai/source-revision: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/version: 2e6a1cbf1dce
+  ports:
+    - name: restate
+      port: 9080
+      targetPort: restate
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bayn-lifecycle
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bayn-lifecycle-token-reviewer
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-command
+    app.kubernetes.io/part-of: bayn
+rules:
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bayn-lifecycle-token-reviewer
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-command
+    app.kubernetes.io/part-of: bayn
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: bayn-lifecycle-token-reviewer
+subjects:
+  - kind: ServiceAccount
+    name: bayn
+    namespace: bayn
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bayn-lifecycle-command
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-command
+    app.kubernetes.io/part-of: bayn
+spec:
+  type: ClusterIP
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: bayn
+  ports:
+    - name: lifecycle-cmd
+      port: 8081
+      targetPort: lifecycle-cmd
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-lifecycle-command
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-command
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-lifecycle
+      ports:
+        - port: lifecycle-cmd
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-lifecycle-token-review
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-command
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
+    # This cluster evaluates Service traffic after translation to the control-plane endpoint. Keep the API VIP above
+    # and permit only the current control-plane endpoints on the secure API port.
+    - to:
+        - ipBlock:
+            cidr: 100.100.244.141/32
+        - ipBlock:
+            cidr: 100.100.244.142/32
+        - ipBlock:
+            cidr: 100.100.244.190/32
+      ports:
+        - port: 6443
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-lifecycle-worker
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-lifecycle
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: restate
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
+      ports:
+        - port: lifecycle-cmd
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-lifecycle-register
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-register
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-lifecycle-register
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 9070
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/component: distributor
+      ports:
+        - port: 4318
+          protocol: TCP
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-lifecycle-register-2e6a1cbf1dce
+  labels:
+    app.kubernetes.io/name: bayn-lifecycle-register
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/version: 2e6a1cbf1dce
+  annotations:
+    # The command Service publishes not-ready Bayn endpoints, so this same-wave hook can activate the first durable
+    # tick that makes strict Restate-owned readiness healthy. PostSync would deadlock behind that readiness gate.
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 720
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-lifecycle-register
+        app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/version: 2e6a1cbf1dce
+    spec:
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: register
+          image: registry.ide-newton.ts.net/lab/bayn:sha-2e6a1cbf1dce6737f6c96e25c097d214366af48d@sha256:ebe9ffea6582ae356b2ea870da1873ef74f46d064d60ca58b3fd8e27f535d3a3
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restate-lifecycle-register.js
+          env:
+            - name: BAYN_CODE_REVISION
+              value: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
+            - name: BAYN_LIFECYCLE_CONTROLLER_KEY
+              value: primary
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_RESTATE_ENDPOINT_URI
+              value: http://bayn-lifecycle-2e6a1cbf1dce.bayn.svc.cluster.local:9080
+            - name: RESTATE_ADMIN_ORIGIN
+              value: http://restate.restate.svc.cluster.local:9070
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: NODE_ENV
+              value: production
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

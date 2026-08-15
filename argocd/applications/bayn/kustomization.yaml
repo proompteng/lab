@@ -17,8 +17,29 @@ resources:
   - execution-controller.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
+  - lifecycle-current.yaml
+  - lifecycle-previous.yaml
   - service.yaml
   - networkpolicy.yaml
+patches:
+  - target:
+      kind: Job
+      labelSelector: app.kubernetes.io/name=bayn-lifecycle-register
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: ignored
+  - target:
+      kind: NetworkPolicy
+      labelSelector: app.kubernetes.io/name=bayn-lifecycle-register
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: ignored
 configMapGenerator:
   - name: bayn-egress-proxy
     files:

@@ -113,6 +113,9 @@ const cycleObservability = {
 const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig => ({
   ...runtime,
   runtimeMode: 'BrokerlessService',
+  lifecycleOwner: runtime.lifecycleOwner ?? 'Process',
+  lifecycleCommandPort: runtime.lifecycleCommandPort ?? 8081,
+  lifecycleControllerKey: runtime.lifecycleControllerKey ?? 'primary',
   cyclePollIntervalMs: 30_000,
   execution: {
     brokerIdentity: undefined,
