@@ -5,6 +5,10 @@ const workflow = readFileSync(
   new URL('../../../../.github/workflows/bayn-post-deploy-verify.yml', import.meta.url),
   'utf8',
 )
+const networkPolicy = readFileSync(
+  new URL('../../../../argocd/applications/bayn/networkpolicy.yaml', import.meta.url),
+  'utf8',
+)
 
 describe('Bayn post-deploy verifier workflow', () => {
   test('runs after Bayn GitOps changes and supports exact manual verification', () => {
@@ -32,10 +36,26 @@ describe('Bayn post-deploy verifier workflow', () => {
     expect(workflow).toContain('http://bayn.bayn.svc.cluster.local/v1/status')
   })
 
+  test('admits only the repository arm64 runner to the Bayn HTTP evidence surface', () => {
+    expect(networkPolicy).toContain('kubernetes.io/metadata.name: arc')
+    expect(networkPolicy).toContain('actions-ephemeral-runner: "True"')
+    expect(networkPolicy).toContain('actions.github.com/organization: proompteng')
+    expect(networkPolicy).toContain('actions.github.com/repository: lab')
+    expect(networkPolicy).toContain('actions.github.com/scale-set-name: arc-arm64')
+    expect(networkPolicy).toContain('app.kubernetes.io/component: runner')
+  })
+
   test('allows only a safe descendant revision that leaves Bayn GitOps inputs unchanged', () => {
     expect(workflow).toContain('git merge-base --is-ancestor "${EXPECTED_REVISION}" "${actual}"')
     expect(workflow).toContain('git diff --quiet "${EXPECTED_REVISION}..${actual}" --')
     expect(workflow).toContain('argocd/applications/bayn')
     expect(workflow).toContain('argocd/applicationsets/product.yaml')
+  })
+
+  test('loads runtime pins from the Argo revision being verified rather than the workflow checkout', () => {
+    expect(workflow).toContain('git show "${BAYN_POST_DEPLOY_ARGO_REVISION}:argocd/applications/bayn/deployment.yaml"')
+    expect(workflow).toContain(
+      'git show "${BAYN_POST_DEPLOY_ARGO_REVISION}:argocd/applications/bayn/kustomization.yaml"',
+    )
   })
 })
