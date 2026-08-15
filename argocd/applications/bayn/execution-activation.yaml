@@ -90,9 +90,11 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              # canonicalHashV1(bayn.execution-controller-activation.v1,
-              # controller key, plan, source, and image)
-              value: "dfdd8149080a54bb1115d909c8b7856a32e21706c7d5ce68ecf2f7620f589703"
+              # Reactivation generation after the first immutable activation
+              # terminally observed the previous revision's writer fence.
+              # canonicalHashV1(bayn.execution-controller-reactivation.v1,
+              # previous activation generation, retry ordinal 1)
+              value: "f0821cf3692e0041568b5646d26a0ffdcd4ade8189e9719016b07c3a1ebe1059"
             - name: BAYN_CODE_REVISION
               value: 672a905311f5999302ec87f943d66c9d577301b0
             - name: BAYN_IMAGE_REPOSITORY

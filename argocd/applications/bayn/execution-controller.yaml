@@ -17,7 +17,9 @@ spec:
         name: restate
         namespace: restate
         port: 9070
-    drainDelaySeconds: 300
+    # Bayn owns a process-wide PostgreSQL writer fence. Retaining the previous
+    # service revision overlaps two writer processes and makes activation fail.
+    drainDelaySeconds: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-execution-controller

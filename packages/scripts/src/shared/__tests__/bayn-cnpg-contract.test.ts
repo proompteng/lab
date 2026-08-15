@@ -326,8 +326,9 @@ test('the native Restate cutover binds one read-only controller before the statu
   expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')?.value).toBe(
     '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
   )
+  expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'dfdd8149080a54bb1115d909c8b7856a32e21706c7d5ce68ecf2f7620f589703',
+    'f0821cf3692e0041568b5646d26a0ffdcd4ade8189e9719016b07c3a1ebe1059',
   )
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
