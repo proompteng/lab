@@ -23,7 +23,7 @@ import { MarketData } from '../market-data'
 import { initialState, type RuntimeState } from '../runtime-state'
 import { runStartup } from '../startup'
 import { currentUtcInstant } from '../time'
-import { runtimeBroker } from './lifecycle'
+import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
 import {
   capitalActivationOperationalError,
   capitalActivationRequestIsCurrent,
@@ -77,8 +77,11 @@ const makeReadOnlyCapitalActivationStore = (
   readReceiptHash: (generationHash) => readReceiptHash(sql, generationHash),
 })
 
-const logActivationUnavailable = (reason: string): Effect.Effect<void> =>
-  Effect.logWarning('Bayn read-only capital projection remains unavailable').pipe(
+const logActivationUnavailable = (reason: string, cause?: unknown): Effect.Effect<void> =>
+  (cause === undefined
+    ? Effect.logWarning('Bayn read-only capital projection remains unavailable')
+    : Effect.logWarning('Bayn read-only capital projection remains unavailable', cause)
+  ).pipe(
     Effect.annotateLogs({
       service: 'bayn',
       component: 'capital-activation',
@@ -86,6 +89,30 @@ const logActivationUnavailable = (reason: string): Effect.Effect<void> =>
       reason,
     }),
   )
+
+const clearRecoveredRequestFreeQualificationPending = (state: Ref.Ref<RuntimeState>): Effect.Effect<void> =>
+  Ref.update(state, (current) => {
+    const activation = current.capitalActivation
+    if (
+      activation?._tag !== 'Pending' ||
+      activation.requestHash !== null ||
+      activation.reason !== 'STARTUP_EVIDENCE_UNAVAILABLE'
+    ) {
+      return current
+    }
+    return {
+      ...current,
+      capitalActivation: { _tag: 'NotConfigured' as const },
+      broker:
+        current.broker === null
+          ? null
+          : {
+              ...current.broker,
+              executionEligible: false,
+              executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+            },
+    }
+  })
 
 export const refreshReadOnlyCapitalActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -191,6 +218,11 @@ export const refreshReadOnlyQualification = (
     Effect.flatMap((current) => {
       if (current.evidence?.evaluation.runId === runId || current.status === 'FAILED') return Effect.void
       return runStartup(plan.config, state, plan.strategy, dependencies).pipe(
+        Effect.andThen(
+          Result.isSuccess(configured) && configured.success === null
+            ? clearRecoveredRequestFreeQualificationPending(state)
+            : Effect.void,
+        ),
         Effect.catch(() =>
           pendingCapitalActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
             Effect.andThen(logActivationUnavailable('QUALIFICATION_EVIDENCE_UNAVAILABLE')),
@@ -238,7 +270,19 @@ export const resolveReadOnlyCycleObservationId = (
         }),
       )
     : readAuthorityState.pipe(
-        Effect.map((current): CycleObservationBinding => ({ _tag: 'Exact', bindingId: current.generationHash })),
+        Effect.flatMap((current) =>
+          Effect.fromResult(observeCycleGenerationHash(current)).pipe(
+            Effect.mapError(
+              (message) =>
+                new ExecutionStoreError({
+                  operation: 'authority',
+                  failure: 'invariant',
+                  message,
+                }),
+            ),
+            Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+          ),
+        ),
       )
 }
 
@@ -254,8 +298,8 @@ export const resolveReadOnlyCycleObservationIdForHealth = (
       orElse: () =>
         logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as({ _tag: 'Unavailable' as const })),
     }),
-    Effect.catch(() =>
-      logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as({ _tag: 'Unavailable' as const })),
+    Effect.catch((cause) =>
+      logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE', cause).pipe(Effect.as({ _tag: 'Unavailable' as const })),
     ),
   )
 
