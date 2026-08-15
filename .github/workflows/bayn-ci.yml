@@ -52,6 +52,7 @@ jobs:
               nix/oci-push.sh | \
               nix/oci-release-contract.sh | \
               nix/verify-bayn-image-command.sh | \
+              nix/verify-bayn-image-command.test.sh | \
               flake.nix | flake.lock | bun.lock | package.json | */package.json | \
               .npmrc | bunfig.toml | patches/* | tsconfig.base.json | \
               .github/actions/setup-nix-toolchain/* | \
@@ -75,6 +76,7 @@ jobs:
               nix/oci-inspect-archive.sh | \
               nix/oci-push.sh | \
               nix/verify-bayn-image-command.sh | \
+              nix/verify-bayn-image-command.test.sh | \
               flake.nix | flake.lock | bun.lock | package.json | */package.json | \
               .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
                 image=true
@@ -236,7 +238,9 @@ jobs:
             experimental-features = nix-command flakes
             substituters = https://cache.nixos.org/
       - name: Prove dependency source boundary
-        run: bash nix/images/bun-workspace-deps-source.test.sh
+        run: |
+          bash nix/images/bun-workspace-deps-source.test.sh
+          bash nix/verify-bayn-image-command.test.sh
 
   image:
     needs: changes
