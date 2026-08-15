@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
@@ -355,5 +355,9 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(kustomization.resources).toContain('execution-activation.yaml')
   expect(kustomization.resources).not.toContain('lifecycle-current.yaml')
   expect(kustomization.resources).not.toContain('lifecycle-previous.yaml')
+  expect(kustomization.resources).not.toContain('restate-retirement-hook-gc.yaml')
+  expect(existsSync(new URL('argocd/applications/bayn/lifecycle-current.yaml', repoRoot))).toBe(false)
+  expect(existsSync(new URL('argocd/applications/bayn/lifecycle-previous.yaml', repoRoot))).toBe(false)
+  expect(existsSync(new URL('argocd/applications/bayn/restate-retirement-hook-gc.yaml', repoRoot))).toBe(false)
   expect(kustomization.patches).toBeUndefined()
 })
