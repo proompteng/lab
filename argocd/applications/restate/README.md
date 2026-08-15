@@ -62,6 +62,48 @@ remove the operator application before its CRD application, and never manually d
 The rollback must leave the Restate PVC and prior service registrations intact. Recheck the StatefulSet, Services, and
 admin API after the revert before resuming the Bayn worker layer.
 
+## Resilience migration
+
+Restate 1.7.2 remains pinned for the resilience migration. The existing `restate-0` node and its retained RBD PVC are
+the cluster seed; this application must never auto-provision another cluster. `RESTATE_AUTO_PROVISION=false` and the
+three stable StatefulSet node addresses are therefore configured before replicas are increased.
+
+The migration intentionally enables partition snapshots before adding worker nodes. Restate's HA guidance requires a
+snapshot repository when growing a cluster because a new partition processor may need a snapshot if its log was
+trimmed before the node joined. `restate-snapshots` is a Rook `ObjectBucketClaim`; generated RGW credentials are read
+only from the OBC Secret and never stored in Git. Snapshots are written below
+`s3://restate-snapshots/partitions`, scheduled every 30 minutes, and retain the newest two snapshots per partition.
+RGW is only a partition-snapshot repository: Restate's replicated metadata/Raft state and replicated logs remain on
+the per-node RBD volumes.
+
+The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
+was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
+StatefulSet downscale after replication is one, removable workers/log servers are drained, metadata is singleton, a
+snapshot has trimmed historic nodesets, and all 24 partitions/logs reference only `restate-0`.
+
+The `restate-snapshot-bootstrap` PostSync hook forces the first partition snapshot after the singleton restarts with
+the repository configured. It succeeds only when all 24 partition processors report an archived LSN. Do not increase
+replicas until that hook has succeeded and the snapshot objects are present in RGW.
+
+The placement contract is deliberately host-based. The current Kubernetes nodes do not carry zone labels, so the
+StatefulSet uses required pod anti-affinity and a `DoNotSchedule` topology spread on `kubernetes.io/hostname`; a zone
+spread would claim a failure domain the cluster does not actually advertise. Restate gets 60 seconds for graceful
+shutdown inside a 90-second Kubernetes termination window.
+
+Useful read-only checks for the snapshot foundation are:
+
+```sh
+kubectl get objectbucketclaim -n restate restate-snapshots
+kubectl get job -n restate restate-snapshot-bootstrap
+kubectl exec -n restate restate-0 -- restatectl --address http://127.0.0.1:5122 config get
+kubectl exec -n restate restate-0 -- restatectl --address http://127.0.0.1:5122 partitions list
+```
+
+The official contracts used by this migration are Restate's
+[HA cluster guide](https://docs.restate.dev/server/deploy/ha),
+[metadata storage guide](https://docs.restate.dev/server/deploy/metadata), and
+[snapshots and backups guide](https://docs.restate.dev/server/deploy/snapshots).
+
 ## Admin UI exposure
 
 `restate-admin-tailscale` exposes the Restate admin/UI port only through a layer-7 Tailscale Ingress. The operator

@@ -4,8 +4,11 @@ namespace: restate
 resources:
   - serviceaccount.yaml
   - request-identity-sealedsecret.yaml
+  - objectbucketclaim.yaml
   - service-cluster.yaml
   - service.yaml
   - admin-tailscale-ingress.yaml
   - statefulset.yaml
   - networkpolicy.yaml
+  - singleton-rollback-guard.yaml
+  - snapshot-bootstrap-job.yaml
