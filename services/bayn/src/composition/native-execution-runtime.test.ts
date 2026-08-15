@@ -135,6 +135,9 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
+      lifecycleOwner: 'Restate',
+      lifecycleCommandPort: 8081,
+      lifecycleControllerKey: 'primary',
       alpaca: {
         provider: BrokerProvider.Alpaca,
         environment: BrokerEnvironment.Sandbox,

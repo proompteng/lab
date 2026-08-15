@@ -9,6 +9,7 @@ import {
   type BaynCandidateRuntime,
   type UpdateBaynManifestOptions,
 } from './update-manifests'
+import { renderBaynLifecycleCurrent, renderBaynLifecyclePrevious } from './lifecycle-manifests'
 
 const currentSnapshotId = '840c75885270b349d4a992e003918ce7e6fe39730f981a20b2e88ae2db45a2e2'
 const strategyBehaviorHash = '1'.repeat(64)
@@ -44,6 +45,8 @@ interface FixturePaths {
   readonly kustomizationPath: string
   readonly deploymentPath: string
   readonly applicationSetPath: string
+  readonly lifecycleCurrentPath: string
+  readonly lifecyclePreviousPath: string
 }
 
 let directory: string | undefined
@@ -62,6 +65,8 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     kustomizationPath: join(directory, 'kustomization.yaml'),
     deploymentPath: join(directory, 'deployment.yaml'),
     applicationSetPath: join(directory, 'product.yaml'),
+    lifecycleCurrentPath: join(directory, 'lifecycle-current.yaml'),
+    lifecyclePreviousPath: join(directory, 'lifecycle-previous.yaml'),
   }
   const bindings = {
     ...currentBindings,
@@ -73,6 +78,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+    environmentBlock('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION', 'f'.repeat(40)),
     environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
     environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
@@ -96,6 +102,15 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     paths.applicationSetPath,
     'elements:\n              - name: bayn\n                path: argocd/applications/bayn\n                enabled: "false"\n              - name: next\n                enabled: "true"\n',
   )
+  writeFileSync(
+    paths.lifecycleCurrentPath,
+    renderBaynLifecycleCurrent({
+      sourceSha: '0'.repeat(40),
+      tag: `sha-${'0'.repeat(40)}`,
+      digest: `sha256:${'0'.repeat(64)}`,
+    }),
+  )
+  writeFileSync(paths.lifecyclePreviousPath, renderBaynLifecyclePrevious(null))
   return paths
 }
 
@@ -207,9 +222,30 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
+    )
     expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
+    expect(readFileSync(paths.lifecycleCurrentPath, 'utf8')).toContain(`source-revision: ${'a'.repeat(40)}`)
+    expect(readFileSync(paths.lifecyclePreviousPath, 'utf8')).toBe(renderBaynLifecyclePrevious(null))
+  })
+
+  test('rotates one prior lifecycle endpoint only after lifecycle activation', () => {
+    const paths = makeFixture()
+    writeFileSync(
+      paths.kustomizationPath,
+      `${readFileSync(paths.kustomizationPath, 'utf8')}resources:\n  - lifecycle-current.yaml\n  - lifecycle-previous.yaml\n`,
+    )
+
+    promote(paths)
+
+    expect(readFileSync(paths.lifecycleCurrentPath, 'utf8')).toContain(`source-revision: ${'a'.repeat(40)}`)
+    expect(readFileSync(paths.lifecyclePreviousPath, 'utf8')).toContain(`source-revision: ${'0'.repeat(40)}`)
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
+    )
   })
 
   test('preserves and replaces qualification using only the run-ID pin', () => {
