@@ -14,7 +14,7 @@ import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
 import { isResearchCapitalActivationRequest } from '../execution/configuration'
 import { executionRuntimeBinding, resolveExecutionCycleObservationId } from '../execution/runtime-binding'
-import { checkHealth } from '../health'
+import { checkHealth, type CycleObservationBinding } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { MarketData } from '../market-data'
@@ -207,6 +207,49 @@ export const readOnlyCycleObservationId = (
     resolveExecutionCycleObservationId(executionRuntimeBinding(activation?.request ?? null), authority),
   )
 
+export const readOnlyQualificationEvidenceRequired = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  qualificationRunId: string | undefined,
+  activationRequestRequired: boolean,
+): boolean => {
+  if (Result.isFailure(configured)) return true
+  if (configured.success === null) return activationRequestRequired || qualificationRunId !== undefined
+  return executionRuntimeBinding(configured.success.request).requiresQualificationEvidence
+}
+
+export const resolveReadOnlyCycleObservationBinding = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  activationRequestRequired: boolean,
+  authority: AuthorityGenerationStoreShape,
+  operationTimeoutMs: number,
+): Effect.Effect<CycleObservationBinding> => {
+  if (Result.isFailure(configured) || (configured.success === null && activationRequestRequired)) {
+    return Effect.succeed({ _tag: 'Unavailable' })
+  }
+  if (configured.success !== null) {
+    return Effect.fromResult(readOnlyCycleObservationId(configured, undefined)).pipe(
+      Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+      Effect.orElseSucceed(() => ({ _tag: 'Unavailable' as const })),
+    )
+  }
+  const readAuthorityState = authority.readAuthorityState
+  if (readAuthorityState === undefined) {
+    return logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as({ _tag: 'Unavailable' as const }))
+  }
+  return readAuthorityState.pipe(
+    Effect.flatMap((current) => Effect.fromResult(readOnlyCycleObservationId(configured, current))),
+    Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+    Effect.timeoutOrElse({
+      duration: operationTimeoutMs,
+      orElse: () =>
+        logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as({ _tag: 'Unavailable' as const })),
+    }),
+    Effect.catch(() =>
+      logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as({ _tag: 'Unavailable' as const })),
+    ),
+  )
+}
+
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
 ): { readonly controllerKey: string; readonly planHash: string } | undefined => {
@@ -231,10 +274,16 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const runtimeBinding = Result.map(configured, (activation) => executionRuntimeBinding(activation?.request ?? null))
+    const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
+    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(
+      configured,
+      observePlan.config.qualificationRunId,
+      activationRequestRequired,
+    )
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
+        qualificationEvidenceRequired,
         broker: {
           expectedAccountId: plan.config.alpaca.expectedAccountId,
           executionEligible: false,
@@ -256,42 +305,30 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       evidenceStore.read,
     )
 
-    const cycleObservationId = Result.isFailure(runtimeBinding)
-      ? Effect.succeed(Option.none<string>())
-      : runtimeBinding.success.cycleObservation._tag === 'ObserveAuthority'
-        ? activationStore.authority.readAuthorityState === undefined
-          ? Effect.succeed(Option.none<string>())
-          : activationStore.authority.readAuthorityState.pipe(
-              Effect.flatMap((authority) => Effect.fromResult(readOnlyCycleObservationId(configured, authority))),
-              Effect.map(Option.some),
-              Effect.catch((cause) =>
-                Effect.logWarning('Bayn read-only OBSERVE authority binding is unavailable').pipe(
-                  Effect.annotateLogs({
-                    service: 'bayn',
-                    component: 'execution-status',
-                    reason: cause instanceof Error ? cause.message : String(cause),
-                  }),
-                  Effect.as(Option.none<string>()),
-                ),
-              ),
-            )
-        : Effect.succeed(Option.some(runtimeBinding.success.cycleObservation.cycleObservationId))
-
     const healthPass = refreshReadOnlyQualification(observePlan, configured, state, dependencies).pipe(
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
-      Effect.andThen(Effect.all({ current: Ref.get(state), cycleObservationId })),
-      Effect.flatMap(({ current, cycleObservationId }) =>
-        checkHealth(
-          observePlan.config,
-          state,
-          dependencies,
-          runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
-          undefined,
-          Option.getOrUndefined(cycleObservationId),
-          Result.isSuccess(runtimeBinding) && runtimeBinding.success.requiresQualificationEvidence,
-          controller === undefined
-            ? undefined
-            : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+      Effect.andThen(Ref.get(state)),
+      Effect.flatMap((current) =>
+        resolveReadOnlyCycleObservationBinding(
+          configured,
+          activationRequestRequired,
+          activationStore.authority,
+          observePlan.config.operationTimeoutMs,
+        ).pipe(
+          Effect.flatMap((cycleObservation) =>
+            checkHealth(
+              observePlan.config,
+              state,
+              dependencies,
+              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              undefined,
+              cycleObservation,
+              qualificationEvidenceRequired,
+              controller === undefined
+                ? undefined
+                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+            ),
+          ),
         ),
       ),
     )

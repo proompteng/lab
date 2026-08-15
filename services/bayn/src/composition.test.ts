@@ -87,8 +87,10 @@ import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
   readOnlyCycleObservationId,
+  readOnlyQualificationEvidenceRequired,
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
+  resolveReadOnlyCycleObservationBinding,
 } from './composition/read-only-status'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
@@ -714,6 +716,94 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(readOnlyCycleObservationId(Result.fail('invalid activation'), observeAuthority)).toEqual(
       Result.fail('invalid activation'),
     )
+  })
+
+  test('keeps continuous qualification checks only where status has evidence to defend', () => {
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), undefined, false)).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), pinnedEvaluation.runId, false)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), undefined, true)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), undefined, false)).toBe(true)
+    expect(
+      readOnlyQualificationEvidenceRequired(
+        Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+        undefined,
+        true,
+      ),
+    ).toBe(false)
+  })
+
+  test('binds request-free status to current durable OBSERVE and fails closed when mutation activation is missing', async () => {
+    const currentObserveAuthority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: hash('9'),
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      version: 7,
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    }
+    let reads = 0
+    const authority = continuationAuthorityStore(null, currentObserveAuthority)
+    const countingAuthority: AuthorityGenerationStoreShape = {
+      ...authority,
+      readAuthorityState: Effect.sync(() => {
+        reads += 1
+        return currentObserveAuthority
+      }),
+    }
+
+    expect(
+      await Effect.runPromise(
+        resolveReadOnlyCycleObservationBinding(Result.succeed(null), false, countingAuthority, 10),
+      ),
+    ).toEqual({ _tag: 'Exact', bindingId: currentObserveAuthority.generationHash })
+    expect(reads).toBe(1)
+
+    const missingMutation = await Effect.runPromise(
+      resolveReadOnlyCycleObservationBinding(Result.succeed(null), true, countingAuthority, 10),
+    )
+    expect(missingMutation).toEqual({ _tag: 'Unavailable' })
+    expect(reads).toBe(1)
+
+    const validMutation = await Effect.runPromise(
+      resolveReadOnlyCycleObservationBinding(
+        Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+        true,
+        countingAuthority,
+        10,
+      ),
+    )
+    expect(validMutation).toEqual({ _tag: 'Exact', bindingId: continuationRequest.grant.planHash })
+    expect(reads).toBe(1)
+  })
+
+  test('bounds current-authority status reads and preserves timeout as unavailable', async () => {
+    const started = await Effect.runPromise(Deferred.make<void>())
+    let interrupted = false
+    const stalledAuthority: AuthorityGenerationStoreShape = {
+      ...continuationAuthorityStore(),
+      readAuthorityState: Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(Effect.sync(() => (interrupted = true))),
+      ),
+    }
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* resolveReadOnlyCycleObservationBinding(
+          Result.succeed(null),
+          false,
+          stalledAuthority,
+          10,
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(10)
+        return yield* Fiber.join(fiber)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(result).toEqual({ _tag: 'Unavailable' })
+    expect(interrupted).toBe(true)
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {

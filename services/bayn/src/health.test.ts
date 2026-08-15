@@ -40,6 +40,7 @@ import {
   checkHealth,
   runHealthMonitor,
   type BrokerProbe,
+  type CycleObservationBinding,
   ensureDurableEvidence,
   ensureSignalIdentity,
   renderDurableEvidenceFailure,
@@ -65,7 +66,7 @@ const probe = (
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservation?: string | CycleObservationBinding,
   qualificationEvidenceRequired = true,
 ) =>
   testHealthDependencies.pipe(
@@ -76,7 +77,7 @@ const probe = (
         dependencies,
         broker,
         cycleFiber,
-        cycleObservationId,
+        typeof cycleObservation === 'string' ? { _tag: 'Exact', bindingId: cycleObservation } : cycleObservation,
         qualificationEvidenceRequired,
       ),
     ),
@@ -416,6 +417,21 @@ const provideHealthyDependencies = (
   )
 
 describe('Bayn continuous health', () => {
+  test('keeps readiness closed while capital activation remains pending', () => {
+    const state: RuntimeState = {
+      ...readyState(),
+      qualificationEvidenceRequired: false,
+      capitalActivation: {
+        _tag: 'Pending',
+        requestHash: 'a'.repeat(64),
+        reason: 'PREPARATION_FAILED',
+      },
+    }
+
+    expect(qualificationEvidenceSatisfied(state)).toBe(false)
+    expect(isReady(state)).toBe(false)
+  })
+
   test('reaches readiness in request-free OBSERVE without qualification evidence', () => {
     const checkedAt = '2026-08-13T12:00:00.000Z'
     const current: RuntimeState = {
@@ -1124,6 +1140,43 @@ describe('Bayn continuous health', () => {
     }).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)
+  })
+
+  test('does not fall back to retained evidence when cycle observation is explicitly unavailable', async () => {
+    const initial = readyState()
+    const observedBindings: string[] = []
+    const state = await Effect.runPromise(Ref.make(initial))
+
+    await Effect.runPromise(
+      provideHealthyDependencies(initial, probe(config, state, undefined, undefined, { _tag: 'Unavailable' })).pipe(
+        Effect.provideService(
+          CycleObservability,
+          cycleObservability((bindingId) =>
+            Effect.sync(() => {
+              observedBindings.push(bindingId)
+              return emptyCycleProjection()
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(observedBindings).toEqual([])
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        dependencies: {
+          cycle: {
+            status: 'UNAVAILABLE',
+            error: 'cycle observation binding is unavailable',
+          },
+        },
+      },
+      cycle: {
+        condition: CycleOperationsCondition.Unknown,
+        reason: CycleOperationsReason.ObservationUnavailable,
+      },
+    })
   })
 
   test('does not manufacture a cycle-runner stall from a rejected finite clock', () => {

@@ -6,7 +6,7 @@ import type { CausalProtocol } from './protocol'
 import type { CycleObservabilityShape } from './cycle/store'
 import type { EvidenceStoreService } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
-import { runHealthMonitor, type BrokerProbe, type HealthDependencies } from './health'
+import { runHealthMonitor, type BrokerProbe, type CycleObservationBinding, type HealthDependencies } from './health'
 import { serveHttp } from './http'
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'
@@ -165,6 +165,15 @@ const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, Loop
 const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): boolean =>
   runtime._tag === 'Brokerless' || runtime.requiresQualificationEvidence !== false
 
+const cycleObservationBinding = <StartupR, LoopR>(
+  runtime: ApplicationRuntime<StartupR, LoopR>,
+): CycleObservationBinding => {
+  if (runtime._tag === 'Brokerless') return { _tag: 'FromEvidence' }
+  const bindingId = runtime.cycleObservationId ?? runtime.cycleBindingId
+  if (bindingId === null) return { _tag: 'Unavailable' }
+  return bindingId === undefined ? { _tag: 'FromEvidence' } : { _tag: 'Exact', bindingId }
+}
+
 const initialRuntimeState = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
   autonomousCycleLoopOwner: 'Process' | 'Restate' = 'Process',
@@ -302,9 +311,7 @@ const runApplicationDataFirst = <StartupR, LoopR>(
       dependencies,
       brokerProbe(resolvedRuntime),
       autonomousCycleFiber,
-      resolvedRuntime._tag === 'Brokerless'
-        ? undefined
-        : (resolvedRuntime.cycleObservationId ?? resolvedRuntime.cycleBindingId ?? undefined),
+      cycleObservationBinding(resolvedRuntime),
       qualificationEvidenceRequired(resolvedRuntime),
     ).pipe(Effect.forkScoped({ startImmediately: true }))
     return yield* Effect.never
