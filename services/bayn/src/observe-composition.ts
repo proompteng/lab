@@ -68,10 +68,7 @@ export {
 } from './observe-composition/execution-cycle'
 export type { PrepareNextMutationIntentInput } from './observe-composition/execution-cycle'
 
-export {
-  interpretRecoveryFirstCycleInProcess,
-  recoveryFirstCycleNextDelayMs,
-} from './observe-composition/recovery-driver'
+export { recoveryFirstCycleNextDelayMs } from './observe-composition/recovery-driver'
 
 export {
   makeMutationAutonomousCycleStartup,

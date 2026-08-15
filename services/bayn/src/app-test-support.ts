@@ -58,9 +58,6 @@ export const historicalEvidence: StoredEvaluationEvidence = {
 export const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  lifecycleOwner: 'Process',
-  lifecycleCommandPort: 8081,
-  lifecycleControllerKey: 'primary',
   execution: {
     brokerIdentity: undefined,
     brokerAccess: BrokerAccess.ReadOnly,

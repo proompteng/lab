@@ -437,18 +437,6 @@ const makeRecoveryFirstCycleDriver = (
     }
   })
 
-export const interpretRecoveryFirstCycleInProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
-  const run = (): Effect.Effect<void, never, RecoveryFirstRuntime> =>
-    Effect.suspend(() =>
-      driver.advance.pipe(
-        Effect.flatMap(driver.wait),
-        Effect.catch((restrictionError) => Effect.die(restrictionError)),
-        Effect.andThen(run()),
-      ),
-    )
-  return run()
-}
-
 export const makeRecoveryFirstAutonomousLoop = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
@@ -457,6 +445,7 @@ export const makeRecoveryFirstAutonomousLoop = (
   capability: ExecutionCapability,
   buildDecision: RecoveryFirstDecisionBuilder,
   operation: 'autonomous cycle loop' | 'mutation autonomous cycle loop',
+  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
 ): Result.Result<AutonomousCycleLoop<RecoveryFirstRuntime>, OperationalError> => {
   const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
   return Result.mapError(
@@ -465,7 +454,7 @@ export const makeRecoveryFirstAutonomousLoop = (
       Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
       Result.map(() =>
         makeRecoveryFirstCycleDriver(input, startup, preparation, policy, capability, buildDecision).pipe(
-          Effect.flatMap(input.interpretCycleDriver ?? interpretRecoveryFirstCycleInProcess),
+          Effect.flatMap(interpretCycleDriver),
         ),
       ),
     ),

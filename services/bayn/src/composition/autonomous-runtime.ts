@@ -3,7 +3,6 @@ import { Deferred, Effect, Layer, Option, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
-  runApplication,
   type ApplicationPlanFor,
   type AutonomousCycleStartup,
   type AutonomousCycleStartupInput,
@@ -13,7 +12,6 @@ import {
 import {
   advanceRestrictedGenerationRecovery,
   recoverTerminalGenerationToObserve,
-  recoverRestrictedGenerationBeforeRollover,
   type TerminalGenerationRolloverReceipt,
 } from '../blocked-generation-recovery'
 import { BrokerRead, BrokerSession } from '../broker/alpaca'
@@ -97,12 +95,12 @@ import {
 } from './capital-activation'
 
 export interface AutonomousServiceRuntimeOptions {
-  readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
+  readonly interpretCycleDriver: RecoveryFirstCycleDriverInterpreter
 }
 
 export const makeAutonomousServiceRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  options: AutonomousServiceRuntimeOptions = {},
+  options: AutonomousServiceRuntimeOptions,
 ) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
@@ -726,48 +724,36 @@ export const makeAutonomousServiceRuntime = (
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
-                                      const externalInterpreter = options.interpretCycleDriver
-                                      const recover: RecoveryFirstCycleDriverInterpreter =
-                                        externalInterpreter === undefined
-                                          ? (driver) =>
-                                              recoverRestrictedGenerationBeforeRollover({
-                                                advance: driver.advance,
-                                                wait: driver.wait,
-                                                settle: recoverBlockedGeneration,
-                                              }).pipe(
-                                                Effect.asVoid,
-                                                Effect.catch((cause) => Effect.die(cause)),
-                                              )
-                                          : (driver) =>
-                                              Deferred.make<void>().pipe(
-                                                Effect.flatMap((rolledOver) => {
-                                                  const externallyOwnedDriver = {
-                                                    ...driver,
-                                                    advance: advanceRestrictedGenerationRecovery(
-                                                      driver.advance,
-                                                      recoverBlockedGeneration,
-                                                    ).pipe(
-                                                      Effect.catch((cause) =>
-                                                        cause instanceof OperationalError
-                                                          ? Effect.die(cause)
-                                                          : Effect.fail(cause),
-                                                      ),
-                                                      Effect.tap((step) =>
-                                                        step._tag === 'RolledOver'
-                                                          ? Deferred.succeed(rolledOver, undefined)
-                                                          : Effect.void,
-                                                      ),
-                                                      Effect.map((step) => step.advance),
-                                                    ),
-                                                  }
-                                                  return Effect.raceFirst(
-                                                    externalInterpreter(externallyOwnedDriver).pipe(
-                                                      Effect.andThen(Effect.never),
-                                                    ),
-                                                    Deferred.await(rolledOver),
-                                                  )
-                                                }),
-                                              )
+                                      const recover: RecoveryFirstCycleDriverInterpreter = (driver) =>
+                                        Deferred.make<void>().pipe(
+                                          Effect.flatMap((rolledOver) => {
+                                            const externallyOwnedDriver = {
+                                              ...driver,
+                                              advance: advanceRestrictedGenerationRecovery(
+                                                driver.advance,
+                                                recoverBlockedGeneration,
+                                              ).pipe(
+                                                Effect.catch((cause) =>
+                                                  cause instanceof OperationalError
+                                                    ? Effect.die(cause)
+                                                    : Effect.fail(cause),
+                                                ),
+                                                Effect.tap((step) =>
+                                                  step._tag === 'RolledOver'
+                                                    ? Deferred.succeed(rolledOver, undefined)
+                                                    : Effect.void,
+                                                ),
+                                                Effect.map((step) => step.advance),
+                                              ),
+                                            }
+                                            return Effect.raceFirst(
+                                              options
+                                                .interpretCycleDriver(externallyOwnedDriver)
+                                                .pipe(Effect.andThen(Effect.never)),
+                                              Deferred.await(rolledOver),
+                                            )
+                                          }),
+                                        )
                                       return startCycle(
                                         {
                                           qualificationRunId: cycleBindingId,
@@ -863,8 +849,3 @@ export const makeAutonomousServiceRuntime = (
       },
     }
   })
-
-export const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
-  makeAutonomousServiceRuntime(plan).pipe(
-    Effect.flatMap(({ dependencies, runtime }) => runApplication(plan.config, plan.strategy, dependencies, runtime)),
-  )
