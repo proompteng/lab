@@ -68,8 +68,6 @@ spec:
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b"
-            - name: BAYN_LIFECYCLE_OWNER
-              value: RESTATE
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

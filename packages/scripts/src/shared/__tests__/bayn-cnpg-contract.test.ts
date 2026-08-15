@@ -224,7 +224,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
 
-test('the native Restate cutover binds one read-only controller before the status rollout', () => {
+test('the native Restate controller is the only rendered Bayn lifecycle owner', () => {
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
   const activationDocuments = YAML.parseAllDocuments(
@@ -300,6 +300,19 @@ test('the native Restate cutover binds one read-only controller before the statu
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(deploymentEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+  expect(deploymentEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
+  expect(deploymentEnvironment.has('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')).toBe(false)
+  expect(deployment.spec.template.spec.containers[0].ports).toEqual([
+    { name: 'http', containerPort: 8080, protocol: 'TCP' },
+  ])
+  expect(
+    deployment.spec.template.spec.containers[0].volumeMounts.map((entry: { name: string }) => entry.name),
+  ).not.toContain('bayn-lifecycle-reviewer')
+  expect(deployment.spec.template.spec.volumes.map((entry: { name: string }) => entry.name)).not.toContain(
+    'bayn-lifecycle-reviewer',
+  )
+  expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
+  expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
     '3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784',
   )
@@ -343,20 +356,7 @@ test('the native Restate cutover binds one read-only controller before the statu
     expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
   }
   expect(kustomization.resources).toContain('execution-activation.yaml')
-  expect(kustomization.patches).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        target: expect.objectContaining({
-          kind: 'Job',
-          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
-        }),
-      }),
-      expect.objectContaining({
-        target: expect.objectContaining({
-          kind: 'NetworkPolicy',
-          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
-        }),
-      }),
-    ]),
-  )
+  expect(kustomization.resources).not.toContain('lifecycle-current.yaml')
+  expect(kustomization.resources).not.toContain('lifecycle-previous.yaml')
+  expect(kustomization.patches).toBeUndefined()
 })

@@ -21,6 +21,7 @@ import {
   isBaynPromotionBuildRunCandidate,
   isBaynPromotionCliFailure,
   isBaynPromotionSourceAffectingPath,
+  parseBaynPromotionPins,
   parseVerifyPromotionArguments,
   pollBaynPromotionEligibility,
   resolveBaynPromotionReleaseRun,
@@ -65,7 +66,46 @@ interface ManifestPins {
   readonly rolloutTimestamp: string
 }
 
-const deployment = (pins: ManifestPins): string => `apiVersion: apps/v1
+const activeLifecyclePort = `          ports:
+            - name: lifecycle-cmd
+              containerPort: 8081
+              protocol: TCP
+`
+
+const activeLifecycleEnvironment = (
+  previousSourceRevision: string,
+): string => `            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION
+              value: ${previousSourceRevision}
+            - name: BAYN_LIFECYCLE_OWNER
+              value: RESTATE
+`
+
+const activeLifecycleVolumeMount = `          volumeMounts:
+            - name: bayn-lifecycle-reviewer
+              mountPath: /var/run/secrets/bayn-lifecycle-reviewer
+              readOnly: true
+`
+
+const activeLifecycleVolume = `      volumes:
+        - name: bayn-lifecycle-reviewer
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+`
+
+const deployment = (
+  pins: ManifestPins,
+  lifecycleActive = false,
+  previousSourceRevision = oldSourceSha,
+): string => `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: bayn
@@ -79,16 +119,10 @@ spec:
       containers:
         - name: bayn
           image: bayn-main
-          ports:
-            - name: lifecycle-cmd
-              containerPort: 8081
-              protocol: TCP
-          env:
+${lifecycleActive ? activeLifecyclePort : ''}          env:
             - name: BAYN_CODE_REVISION
               value: ${pins.sourceSha}
-            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION
-              value: ${oldSourceSha}
-            - name: BAYN_IMAGE_REPOSITORY
+${lifecycleActive ? activeLifecycleEnvironment(previousSourceRevision) : ''}            - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
               value: ${pins.digest}
@@ -120,14 +154,18 @@ spec:
               value: "ledger-0:3000,ledger-1:3000,ledger-2:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
+${lifecycleActive ? activeLifecycleVolumeMount : ''}${lifecycleActive ? activeLifecycleVolume : ''}
 `
 
-const kustomization = (pins: ManifestPins): string => `apiVersion: kustomize.config.k8s.io/v1beta1
+const kustomization = (
+  pins: ManifestPins,
+  lifecycleActive = false,
+): string => `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: bayn
 resources:
   - deployment.yaml
-images:
+${lifecycleActive ? '  - lifecycle-current.yaml\n  - lifecycle-previous.yaml\n' : ''}images:
   - name: bayn-main
     newName: registry.ide-newton.ts.net/lab/bayn
     newTag: ${JSON.stringify(pins.tag)}
@@ -154,6 +192,19 @@ const manifests = (pins: ManifestPins, enabled = true): BaynPromotionManifestCon
   applicationSet: applicationSet(enabled),
   lifecycleCurrent: renderBaynLifecycleCurrent(pins),
   lifecyclePrevious: renderBaynLifecyclePrevious(null),
+})
+
+const activeManifests = (
+  pins: ManifestPins,
+  previousSourceRevision = oldSourceSha,
+  previousLifecycle: ManifestPins | null = null,
+  enabled = true,
+): BaynPromotionManifestContents => ({
+  deployment: deployment(pins, true, previousSourceRevision),
+  kustomization: kustomization(pins, true),
+  applicationSet: applicationSet(enabled),
+  lifecycleCurrent: renderBaynLifecycleCurrent(pins),
+  lifecyclePrevious: renderBaynLifecyclePrevious(previousLifecycle),
 })
 
 const basePins: ManifestPins = {
@@ -309,6 +360,53 @@ const evaluateCurrentBaseRefresh = (value: BaynPromotionCurrentBaseRefreshSnapsh
   })
 
 describe('Bayn promotion eligibility', () => {
+  test('parses the checked-in inactive lifecycle retirement without command bridge inputs', () => {
+    const parsed = parseBaynPromotionPins({
+      deployment: readFileSync(
+        new URL('../../../../argocd/applications/bayn/deployment.yaml', import.meta.url),
+        'utf8',
+      ),
+      kustomization: readFileSync(
+        new URL('../../../../argocd/applications/bayn/kustomization.yaml', import.meta.url),
+        'utf8',
+      ),
+      applicationSet: readFileSync(new URL('../../../../argocd/applicationsets/product.yaml', import.meta.url), 'utf8'),
+      lifecycleCurrent: readFileSync(
+        new URL('../../../../argocd/applications/bayn/lifecycle-current.yaml', import.meta.url),
+        'utf8',
+      ),
+      lifecyclePrevious: readFileSync(
+        new URL('../../../../argocd/applications/bayn/lifecycle-previous.yaml', import.meta.url),
+        'utf8',
+      ),
+    })
+
+    expect(parsed.lifecycleActive).toBeFalse()
+    expect(parsed.lifecyclePreviousSourceRevision).toBeNull()
+    expect(parsed.sourceSha).toBe('0df47ceec972e14548040ccdca3f6df43fe97bd8')
+  })
+
+  test('keeps active lifecycle command port and authentication validation fail closed', () => {
+    const active = activeManifests(headPins)
+    expect(parseBaynPromotionPins(active)).toMatchObject({
+      lifecycleActive: true,
+      lifecyclePreviousSourceRevision: oldSourceSha,
+    })
+
+    expect(() =>
+      parseBaynPromotionPins({
+        ...active,
+        deployment: active.deployment.replace(activeLifecyclePort, ''),
+      }),
+    ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
+    expect(() =>
+      parseBaynPromotionPins({
+        ...active,
+        deployment: active.deployment.replace(activeLifecycleVolumeMount, ''),
+      }),
+    ).toThrow('Bayn deployment must mount exactly one read-only lifecycle TokenReview identity')
+  })
+
   test('accepts a valid current promotion with exact-head review and immutable release provenance', () => {
     expect(evaluate(snapshot())).toMatchObject({
       status: 'eligible',
@@ -694,14 +792,28 @@ describe('Bayn promotion eligibility', () => {
   })
 
   test('rejects a command boundary that does not retain exactly the promotion base source', () => {
-    const valid = manifests(headPins)
+    const valid = activeManifests(headPins, oldSourceSha, basePins)
+    const activeBase = activeManifests(basePins, staleHeadSha)
+    const activeFiles = [
+      ...pullRequest().files,
+      {
+        path: 'argocd/applications/bayn/lifecycle-previous.yaml',
+        status: 'modified',
+        previousPath: null,
+      },
+    ]
     expect(
       evaluate(
         snapshot({
+          baseManifests: activeBase,
           headManifests: {
             ...valid,
-            deployment: valid.deployment.replace(`value: ${oldSourceSha}`, `value: ${staleHeadSha}`),
+            deployment: valid.deployment.replace(
+              activeLifecycleEnvironment(oldSourceSha),
+              activeLifecycleEnvironment(staleHeadSha),
+            ),
           },
+          pullRequest: pullRequest({ files: activeFiles }),
         }),
       ),
     ).toMatchObject({

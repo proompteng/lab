@@ -39,6 +39,7 @@ interface FixtureOptions {
   readonly parameterHash?: string
   readonly qualificationRunId?: string | null
   readonly capitalActivationRequest?: 'canonical' | 'legacy'
+  readonly lifecycleActive?: boolean
 }
 
 interface FixturePaths {
@@ -59,6 +60,10 @@ afterEach(() => {
 const environmentBlock = (name: string, value: string): string =>
   `            - name: ${name}\n              value: ${JSON.stringify(value)}\n`
 
+const activeLifecyclePort = `          ports:\n            - name: lifecycle-cmd\n              containerPort: 8081\n              protocol: TCP\n`
+const activeLifecycleVolumeMount = `          volumeMounts:\n            - name: bayn-lifecycle-reviewer\n              mountPath: /var/run/secrets/bayn-lifecycle-reviewer\n              readOnly: true\n`
+const activeLifecycleVolume = `      volumes:\n        - name: bayn-lifecycle-reviewer\n          projected:\n            defaultMode: 0444\n            sources:\n              - serviceAccountToken:\n                  expirationSeconds: 3600\n                  path: token\n              - configMap:\n                  name: kube-root-ca.crt\n                  items:\n                    - key: ca.crt\n                      path: ca.crt\n`
+
 const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
   const paths = {
@@ -78,7 +83,8 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
-    environmentBlock('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION', 'f'.repeat(40)),
+    options.lifecycleActive ? environmentBlock('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION', 'f'.repeat(40)) : '',
+    options.lifecycleActive ? environmentBlock('BAYN_LIFECYCLE_OWNER', 'RESTATE') : '',
     environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
     environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
@@ -92,11 +98,13 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
 
   writeFileSync(
     paths.kustomizationPath,
-    'images:\n  - name: bayn-main\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n',
+    `images:\n  - name: bayn-main\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n${
+      options.lifecycleActive ? 'resources:\n  - lifecycle-current.yaml\n  - lifecycle-previous.yaml\n' : ''
+    }`,
   )
   writeFileSync(
     paths.deploymentPath,
-    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}`,
+    `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: bayn\nspec:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - name: bayn\n${options.lifecycleActive ? activeLifecyclePort : ''}          env:\n${environment}${options.lifecycleActive ? activeLifecycleVolumeMount : ''}${options.lifecycleActive ? activeLifecycleVolume : ''}`,
   )
   writeFileSync(
     paths.applicationSetPath,
@@ -222,9 +230,7 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
-    )
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
     expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
@@ -232,12 +238,21 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.lifecyclePreviousPath, 'utf8')).toBe(renderBaynLifecyclePrevious(null))
   })
 
-  test('rotates one prior lifecycle endpoint only after lifecycle activation', () => {
+  test('keeps the retired lifecycle bridge absent while updating native promotion fields', () => {
     const paths = makeFixture()
-    writeFileSync(
-      paths.kustomizationPath,
-      `${readFileSync(paths.kustomizationPath, 'utf8')}resources:\n  - lifecycle-current.yaml\n  - lifecycle-previous.yaml\n`,
-    )
+    promote(paths)
+
+    const updated = readFileSync(paths.deploymentPath, 'utf8')
+    expect(updated).not.toContain('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
+    expect(updated).not.toContain('BAYN_LIFECYCLE_OWNER')
+    expect(updated).not.toContain('lifecycle-cmd')
+    expect(updated).not.toContain('bayn-lifecycle-reviewer')
+    expect(updated).toContain(`- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`)
+    expect(updated).toContain(`- name: BAYN_IMAGE_DIGEST\n              value: sha256:${'b'.repeat(64)}`)
+  })
+
+  test('rotates one prior lifecycle endpoint only after lifecycle activation', () => {
+    const paths = makeFixture({ lifecycleActive: true })
 
     promote(paths)
 
@@ -245,6 +260,36 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.lifecyclePreviousPath, 'utf8')).toContain(`source-revision: ${'0'.repeat(40)}`)
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       `- name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
+    )
+  })
+
+  test('fails closed when active lifecycle command authentication is incomplete', () => {
+    const paths = makeFixture({ lifecycleActive: true })
+    writeFileSync(
+      paths.deploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8').replace(activeLifecycleVolumeMount, ''),
+    )
+
+    expect(() => promote(paths)).toThrow(
+      'Bayn deployment must mount exactly one read-only lifecycle TokenReview identity',
+    )
+  })
+
+  test('fails closed when inactive lifecycle bridge inputs remain', () => {
+    const paths = makeFixture()
+    writeFileSync(
+      paths.deploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8').replace(
+        environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+        `${environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40))}${environmentBlock(
+          'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION',
+          'f'.repeat(40),
+        )}`,
+      ),
+    )
+
+    expect(() => promote(paths)).toThrow(
+      'inactive Bayn lifecycle must not retain lifecycle owner or previous-source inputs',
     )
   })
 

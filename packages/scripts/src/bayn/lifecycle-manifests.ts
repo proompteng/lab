@@ -125,6 +125,36 @@ export const validateBaynLifecycleCommandAuthentication = (deployment: string): 
   }
 }
 
+export const validateBaynLifecycleInactiveRuntime = (deployment: string): void => {
+  const container = baynContainer(deployment)
+  const ports = Array.isArray(container.ports) ? container.ports : []
+  if (ports.some((port) => record(port) && (port.name === 'lifecycle-cmd' || port.containerPort === 8081))) {
+    throw new Error('inactive Bayn lifecycle must not expose the lifecycle command port')
+  }
+
+  const mounts = Array.isArray(container.volumeMounts) ? container.volumeMounts : []
+  if (
+    mounts.some(
+      (mount) =>
+        record(mount) &&
+        (mount.name === 'bayn-lifecycle-reviewer' || mount.mountPath === '/var/run/secrets/bayn-lifecycle-reviewer'),
+    )
+  ) {
+    throw new Error('inactive Bayn lifecycle must not mount the lifecycle TokenReview identity')
+  }
+
+  const volumes = baynPodSpec(deployment).volumes
+  if (Array.isArray(volumes) && volumes.some((volume) => record(volume) && volume.name === 'bayn-lifecycle-reviewer')) {
+    throw new Error('inactive Bayn lifecycle must not project the lifecycle TokenReview identity')
+  }
+
+  const environment = Array.isArray(container.env) ? container.env : []
+  const retiredNames = new Set(['BAYN_LIFECYCLE_OWNER', 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'])
+  if (environment.some((entry) => record(entry) && typeof entry.name === 'string' && retiredNames.has(entry.name))) {
+    throw new Error('inactive Bayn lifecycle must not retain lifecycle owner or previous-source inputs')
+  }
+}
+
 export const validateBaynLifecycleOperationTimeout = (deployment: string): void => {
   const environment = baynContainer(deployment).env
   const timeouts = Array.isArray(environment)
