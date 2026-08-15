@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn:sha-9101af1d4e51da3d68f0a0a8b4928404f4566fb3@sha256:e3161c70906a4689fdaeca68d7802651ae8ff9031bcb61e6b09b59603c6516ad
+          image: registry.ide-newton.ts.net/lab/bayn:sha-f32e781ef2ec7a5bf45bcd2f8645316d40909f7f@sha256:7a9e445a9c6d1242ba13c776c07f20e0c456b297e655f4e26f734960bd08153d
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -55,15 +55,15 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 9101af1d4e51da3d68f0a0a8b4928404f4566fb3
+              value: f32e781ef2ec7a5bf45bcd2f8645316d40909f7f
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:e3161c70906a4689fdaeca68d7802651ae8ff9031bcb61e6b09b59603c6516ad
+              value: sha256:7a9e445a9c6d1242ba13c776c07f20e0c456b297e655f4e26f734960bd08153d
             - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "5b16569ed3b0824e589ab3fb2c2cdbe9a6216e77506732c52a6e145d06327ab7"
+              value: "04221d3f591bcf064ed41d9c1ddd95b445bd5aa05840caab20bc8508625a169e"
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: f0769cb31805bfb869d0af0bbac4fdbf6120aab8
+              value: 9101af1d4e51da3d68f0a0a8b4928404f4566fb3
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
