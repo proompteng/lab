@@ -779,7 +779,7 @@ describe('Bayn capital startup recovery boundary', () => {
       }),
     )
 
-    expect(cycleObservationId).toBe(currentGenerationHash)
+    expect(cycleObservationId).toEqual({ _tag: 'Exact', bindingId: currentGenerationHash })
   })
 
   test('interrupts a stalled durable authority read before a later health pass can retain stale READY', async () => {
@@ -809,7 +809,7 @@ describe('Bayn capital startup recovery boundary', () => {
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(result).toBeNull()
+    expect(result).toEqual({ _tag: 'Unavailable' })
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
@@ -835,7 +835,7 @@ describe('Bayn capital startup recovery boundary', () => {
       }),
     )
 
-    expect(cycleObservationId).toBeNull()
+    expect(cycleObservationId).toEqual({ _tag: 'Unavailable' })
     expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), pinnedEvaluation.runId, true)).toBe(true)
   })
 

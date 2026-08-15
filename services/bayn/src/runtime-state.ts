@@ -270,16 +270,19 @@ export const initialState = (input: InitialRuntimeStateInput): RuntimeState => (
   error: null,
 })
 
-export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean =>
-  !state.qualificationEvidenceRequired ||
-  state.evidence !== null ||
-  ((state.capitalActivation?._tag === 'Realized' || state.capitalActivation?._tag === 'Completed') &&
-    state.capitalActivation.grant === 'Research')
+export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean => {
+  if (state.capitalActivation?._tag === 'Pending') return false
+  return (
+    !state.qualificationEvidenceRequired ||
+    state.evidence !== null ||
+    ((state.capitalActivation?._tag === 'Realized' || state.capitalActivation?._tag === 'Completed') &&
+      state.capitalActivation.grant === 'Research')
+  )
+}
 
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
   qualificationEvidenceSatisfied(state) &&
-  state.capitalActivation?._tag !== 'Pending' &&
   state.cycle.condition !== CycleOperationsCondition.Unknown &&
   state.cycle.condition !== CycleOperationsCondition.Stalled &&
   state.cycle.condition !== CycleOperationsCondition.Failed &&
