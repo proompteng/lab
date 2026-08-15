@@ -7,6 +7,7 @@ import { BrokerAccess, CapitalAuthorityKind } from './authority'
 import { Authority, makeResearchCapitalGrantGenerationResult } from './contracts'
 import {
   CapitalAuthoritySelection,
+  capitalActivationRequiresQualificationEvidence,
   decodeCapitalActivationConfigurationResult,
   decodeCapitalActivationRequestResult,
   makeCapitalActivationRequest,
@@ -181,6 +182,7 @@ describe('execution policy configuration', () => {
       expiresAt: '2026-07-28T09:30:00.000Z',
     }
     const request = Result.getOrThrow(makeCapitalActivationRequest(material))
+    expect(capitalActivationRequiresQualificationEvidence(request)).toBe(true)
     expect(decodeCapitalActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
     expect(decodeCapitalActivationRequestResult({ ...request, requestHash: 'c'.repeat(64) })).toMatchObject({
       _tag: 'Failure',
@@ -246,6 +248,7 @@ describe('execution policy configuration', () => {
         ...planFields,
       }),
     )
+    expect(capitalActivationRequiresQualificationEvidence(request)).toBe(false)
     expect(decodeCapitalActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
     expect(decodeCapitalActivationRequestResult({ ...request, grant: { _tag: 'Qualified' } })).toMatchObject({
       _tag: 'Failure',
