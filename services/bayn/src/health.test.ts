@@ -445,6 +445,22 @@ describe('Bayn continuous health', () => {
     expect(isReady(transition.next)).toBe(true)
   })
 
+  test('fails readiness while capital activation is pending even when health probes are otherwise ready', () => {
+    const pending: RuntimeState = {
+      ...readyState(),
+      capitalActivation: { _tag: 'Pending', requestHash: null, reason: 'REQUEST_INVALID' },
+    }
+
+    expect(isReady(pending)).toBe(false)
+    expect(readinessResponseDecision(pending)).toMatchObject({
+      status: 503,
+      body: {
+        ready: false,
+        failedDependencies: ['capitalActivation'],
+      },
+    })
+  })
+
   test('returns structured signal and durable evidence invariant failures', () => {
     const current = readyState()
     const evidence = current.evidence
