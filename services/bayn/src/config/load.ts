@@ -22,16 +22,6 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'cycle-loop',
         message: 'cycle poll interval must be shorter than the cycle stall threshold',
       }
-    case 'LifecycleCommandPortConflict':
-      return {
-        operation: 'lifecycle-command',
-        message: 'Restate lifecycle command port must differ from the public Bayn HTTP port',
-      }
-    case 'RestateLifecycleRequiresAutonomousService':
-      return {
-        operation: 'lifecycle-command',
-        message: 'Restate lifecycle ownership requires an autonomous broker-bound Bayn service',
-      }
     case 'ExecutionReconciliationCadenceNotWithinStaleThreshold':
       return {
         operation: 'cycle-loop',

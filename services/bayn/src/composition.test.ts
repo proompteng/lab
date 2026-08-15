@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 
 import { PgClient } from '@effect/sql-pg'
 import {
-  Cause,
   Context,
   Deferred,
   Effect,
-  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -54,7 +53,6 @@ import {
   refreshResearchCapitalActivationReconciliation,
   restrictExpiredCapitalActivation,
   runExecutionLifecycleMaintenance,
-  runRestateLifecycleWithReconciliationGuardian,
 } from './composition'
 import { makeApplicationPlan, type ApplicationPlanFor } from './app'
 import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
@@ -246,9 +244,6 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
-      lifecycleOwner: config.lifecycleOwner ?? 'Process',
-      lifecycleCommandPort: config.lifecycleCommandPort ?? 8081,
-      lifecycleControllerKey: config.lifecycleControllerKey ?? 'primary',
       cyclePollIntervalMs: 30_000,
       execution: {
         brokerIdentity: continuationBrokerIdentity,
@@ -360,6 +355,21 @@ const recoverBuildContinuation = (continuation = researchBuildContinuation) =>
   )
 
 describe('Bayn application platform', () => {
+  test('routes the production AutonomousService entrypoint through read-only status resources only', () => {
+    const source = readFileSync(new URL('./composition.ts', import.meta.url), 'utf8')
+    const start = source.indexOf("Match.tag('AutonomousService'")
+    const end = source.indexOf("Match.tag('ExecutionCandidateDiscovery'", start)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    const autonomousBranch = source.slice(start, end)
+
+    expect(autonomousBranch).toContain('runReadOnlyAutonomousStatusService(plan)')
+    expect(autonomousBranch).toContain('AutonomousStatusApplicationResourcesLive(plan)')
+    expect(autonomousBranch).not.toContain('makeAutonomousServiceRuntime')
+    expect(autonomousBranch).not.toContain('AutonomousApplicationResourcesLive')
+    expect(autonomousBranch).not.toContain('runApplication(')
+  })
+
   test('provides filesystem access for TLS-backed PostgreSQL acquisition', async () => {
     const context = await Effect.runPromise(Effect.scoped(Layer.build(ApplicationPlatformLive)))
 
@@ -434,56 +444,6 @@ describe('Bayn application platform', () => {
       ),
     )
     expect(mismatch.message).toBe('qualified capital authority does not match the prepared generation')
-  })
-
-  test('owns the Restate reconciliation guardian for exactly the service scope', async () => {
-    let interrupted = false
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
-          yield* runRestateLifecycleWithReconciliationGuardian(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
-            ),
-            30_000,
-            Effect.never,
-          ).pipe(Effect.forkScoped)
-          yield* Deferred.await(started)
-        }),
-      ),
-    )
-
-    expect(interrupted).toBe(true)
-  })
-
-  test('propagates a reconciliation guardian defect to the owning Restate lifecycle', async () => {
-    const defect = new Error('guardian invariant defect')
-
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        const lifecycleStarted = yield* Deferred.make<void>()
-        const lifecycleInterrupted = yield* Deferred.make<void>()
-        const result = yield* runRestateLifecycleWithReconciliationGuardian(
-          Deferred.await(lifecycleStarted).pipe(Effect.andThen(Effect.die(defect))),
-          30_000,
-          Deferred.succeed(lifecycleStarted, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.onInterrupt(() => Deferred.succeed(lifecycleInterrupted, undefined)),
-          ),
-        ).pipe(Effect.exit)
-        yield* Deferred.await(lifecycleInterrupted)
-        return result
-      }),
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) {
-      expect(Cause.hasDies(exit.cause)).toBe(true)
-      expect(Cause.pretty(exit.cause)).toContain(defect.message)
-    }
   })
 })
 

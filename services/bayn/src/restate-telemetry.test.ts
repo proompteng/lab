@@ -8,9 +8,9 @@ import { acquireRestateTelemetry, currentOpenTelemetryLogAnnotations } from './r
 
 const fakeRequest = {
   target: {
-    service: 'BaynLifecycle',
-    handler: 'advance',
-    toString: () => 'BaynLifecycle/advance',
+    service: 'BaynExecutionController',
+    handler: 'tick',
+    toString: () => 'BaynExecutionController/tick',
   },
   id: 'inv_test',
   headers: new Map(),
@@ -22,7 +22,9 @@ const fakeRequest = {
 
 describe('Bayn Restate telemetry', () => {
   test('is a no-op when no OTLP endpoint is configured', async () => {
-    const telemetry = await Effect.runPromise(Effect.scoped(acquireRestateTelemetry({ serviceName: 'bayn-lifecycle' })))
+    const telemetry = await Effect.runPromise(
+      Effect.scoped(acquireRestateTelemetry({ serviceName: 'bayn-execution-controller' })),
+    )
 
     expect(telemetry.hooks).toEqual([])
     expect(telemetry.traceHeaders()).toEqual({})
@@ -52,7 +54,7 @@ describe('Bayn Restate telemetry', () => {
         Effect.scoped(
           Effect.gen(function* () {
             const telemetry = yield* acquireRestateTelemetry({
-              serviceName: 'bayn-lifecycle-test',
+              serviceName: 'bayn-execution-controller-test',
               serviceVersion: 'test-version',
               endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
             })
@@ -73,8 +75,8 @@ describe('Bayn Restate telemetry', () => {
       const request = await received
       expect(request.path).toBe('/v1/traces')
       expect(request.body.byteLength).toBeGreaterThan(0)
-      expect(Buffer.from(request.body).includes(Buffer.from('bayn-lifecycle-test'))).toBe(true)
-      expect(Buffer.from(request.body).includes(Buffer.from('attempt BaynLifecycle/advance'))).toBe(true)
+      expect(Buffer.from(request.body).includes(Buffer.from('bayn-execution-controller-test'))).toBe(true)
+      expect(Buffer.from(request.body).includes(Buffer.from('attempt BaynExecutionController/tick'))).toBe(true)
       expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
       if (traceparent === undefined) throw new Error('Restate trace context was not propagated')
       const [, traceId, spanId] = traceparent.split('-')
