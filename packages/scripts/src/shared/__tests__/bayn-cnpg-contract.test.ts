@@ -238,8 +238,8 @@ test('the native Restate cutover binds one read-only controller before the statu
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = 'df6bc515e2579f4ee0f9256e45da0eb3e92104f4'
-  const imageDigest = 'sha256:58a3c6c4a157063bcb95c91c4e68a0be605f5410a2ec593b4680e2452af0b232'
+  const sourceRevision = '0df47ceec972e14548040ccdca3f6df43fe97bd8'
+  const imageDigest = 'sha256:8b850c6c2b1cf99f34efc80921142a4ff62fae01cf8df85c986322fcc7f5a590'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -301,11 +301,11 @@ test('the native Restate cutover binds one read-only controller before the statu
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(deploymentEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '1c6f80f63d53f31c914639bbe071e0304a2cc2705356b48d4ba796a9b7341ef5',
+    '3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784',
   )
   const previousBinding = {
-    planHash: '04221d3f591bcf064ed41d9c1ddd95b445bd5aa05840caab20bc8508625a169e',
-    sourceRevision: '9101af1d4e51da3d68f0a0a8b4928404f4566fb3',
+    planHash: '1c6f80f63d53f31c914639bbe071e0304a2cc2705356b48d4ba796a9b7341ef5',
+    sourceRevision: 'df6bc515e2579f4ee0f9256e45da0eb3e92104f4',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
@@ -328,7 +328,7 @@ test('the native Restate cutover binds one read-only controller before the statu
   )
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '1d247162d6ff18b8796a2a9f9a084332cabcd86205b10ded492b83036db115e3',
+    '76bc1cd4efb74017c7ca66e24d88829eae57bd75dd721d9f4707a64106dcb9e7',
   )
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
