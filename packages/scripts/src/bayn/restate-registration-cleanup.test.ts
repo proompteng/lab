@@ -39,6 +39,8 @@ type FakeState = {
   pollCount: number
   deploymentDisappearAfterPolls: number
   serviceDisappearAfterPolls: number
+  sqlCallCount: number
+  sqlFailuresRemaining: number
   injectLegacyInvocationAfterRemove?: boolean
   mutateNativeAfterRemove?: boolean
   failRemove?: boolean
@@ -174,6 +176,8 @@ const makeState = (lifecycleDeployments: Deployment[] = [lifecycleDeployment(exp
   pollCount: 0,
   deploymentDisappearAfterPolls: 1,
   serviceDisappearAfterPolls: 1,
+  sqlCallCount: 0,
+  sqlFailuresRemaining: 0,
 })
 
 const fakeRestateSource = String.raw`#!${process.execPath}
@@ -207,6 +211,12 @@ const progressRemoval = (query) => {
 }
 
 if (args[0] === 'sql') {
+  state.sqlCallCount += 1
+  if (state.sqlFailuresRemaining > 0) {
+    state.sqlFailuresRemaining -= 1
+    save()
+    process.exit(99)
+  }
   const query = args.at(-1) ?? ''
   progressRemoval(query)
   const expectedById = new Map(state.expected.map((entry) => [entry.id, entry]))
@@ -297,6 +307,7 @@ if (args[0] === 'sql') {
     process.exit(92)
   }
 
+  save()
   console.log(JSON.stringify({ count }))
   process.exit(0)
 }
@@ -340,7 +351,7 @@ process.exit(97)
 const writeState = (path: string, state: FakeState): void => writeFileSync(path, JSON.stringify(state))
 const readState = (path: string): FakeState => JSON.parse(readFileSync(path, 'utf8')) as FakeState
 
-const runCleanup = (initialState: FakeState, pollAttempts = 30) => {
+const runCleanup = (initialState: FakeState, pollAttempts = 30, sqlRetryAttempts = 30) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-restate-cleanup-'))
   temporaryDirectories.push(directory)
   const bin = join(directory, 'bin')
@@ -356,7 +367,9 @@ const runCleanup = (initialState: FakeState, pollAttempts = 30) => {
   writeState(statePath, initialState)
   writeFileSync(callsPath, '')
 
-  const executableScript = cleanupScript.replace('poll_attempts=30', `poll_attempts=${pollAttempts}`)
+  const executableScript = cleanupScript
+    .replace('poll_attempts=30', `poll_attempts=${pollAttempts}`)
+    .replace('sql_retry_attempts=30', `sql_retry_attempts=${sqlRetryAttempts}`)
   const run = () =>
     spawnSync('/bin/sh', ['-eu', '-c', executableScript], {
       encoding: 'utf8',
@@ -391,9 +404,9 @@ afterEach(() => {
 describe('Bayn legacy Restate registration final retirement', () => {
   test('pins the reviewed CLI, network isolation, and one exact force target', () => {
     expect(networkPolicy.metadata.annotations).toEqual({
-      'bayn.proompteng.ai/retirement-sync': 'final-legacy-registration-v1',
+      'bayn.proompteng.ai/retirement-sync': 'final-legacy-registration-v2',
     })
-    expect(job.metadata.name).toBe('bayn-restate-registration-final-retirement')
+    expect(job.metadata.name).toBe('bayn-restate-registration-final-retirement-v2')
     expect(job.metadata.annotations).toEqual({
       'argocd.argoproj.io/hook': 'PostSync',
       'argocd.argoproj.io/hook-delete-policy': 'HookSucceeded',
@@ -469,6 +482,8 @@ describe('Bayn legacy Restate registration final retirement', () => {
     expect(cleanupScript).toContain(`native_endpoint='${nativeEndpoint}'`)
     expect(cleanupScript).toContain('poll_attempts=30')
     expect(cleanupScript).toContain('poll_interval_seconds=2')
+    expect(cleanupScript).toContain('sql_retry_attempts=30')
+    expect(cleanupScript).toContain('sql_retry_interval_seconds=2')
     expect(cleanupScript).not.toMatch(/restate deployments remove (?!--force -y "\$final_id")/)
     expect(cleanupScript).not.toContain('curl')
     expect(cleanupScript).not.toContain('DELETE')
@@ -478,11 +493,12 @@ describe('Bayn legacy Restate registration final retirement', () => {
     expect(cleanupReadme).toContain(finalId)
     expect(cleanupReadme).toContain(nativeId)
     expect(cleanupReadme).toContain('already-empty reruns')
-    expect(cleanupReadme).toContain('bayn.proompteng.ai/retirement-sync=final-legacy-registration-v1')
-    expect(cleanupReadme).toContain('bayn-restate-registration-final-retirement')
+    expect(cleanupReadme).toContain('bayn.proompteng.ai/retirement-sync=final-legacy-registration-v2')
+    expect(cleanupReadme).toContain('bayn-restate-registration-final-retirement-v2')
+    expect(cleanupReadme).toContain('30 attempts at two-second intervals')
     expect(cleanupReadme).toContain('`backoffLimit: 0`')
     expect(cleanupReadme).toContain('`restartPolicy: Never`')
-    expect(cleanupReadme).toContain('`HookSucceeded` deletion only')
+    expect(cleanupReadme).toContain('`HookSucceeded` deletion')
   })
 
   test('force-removes only the exact final deployment and reaches the empty retired state', () => {
@@ -498,6 +514,33 @@ describe('Bayn legacy Restate registration final retirement', () => {
     expect(state.deployments.map(({ id }) => id)).toEqual([nativeId, 'dp_greeter'])
     expect(state.legacyServices).toEqual([])
     expect(state.nativeServices).toEqual(nativeBindings())
+  })
+
+  test('retries transient read-only SQL startup failures without retrying the force removal', () => {
+    const state = makeState()
+    state.sqlFailuresRemaining = 2
+    const harness = runCleanup(state)
+    const result = harness.run()
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('Restate SQL read unavailable (attempt 1/30); retrying.')
+    expect(result.stderr).toContain('Restate SQL read unavailable (attempt 2/30); retrying.')
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
+    expect(readState(harness.statePath).sqlFailuresRemaining).toBe(0)
+    expect(readState(harness.statePath).sqlCallCount).toBeGreaterThan(2)
+  }, 10_000)
+
+  test('fails before force removal when read-only SQL remains unavailable through the bounded retry window', () => {
+    const state = makeState()
+    state.sqlFailuresRemaining = 99
+    const harness = runCleanup(state, 30, 3)
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Restate SQL query failed after 3 attempts')
+    expect(removalCalls(harness.calls())).toEqual([])
+    expect(readState(harness.statePath).sqlCallCount).toBe(3)
+    expect(readState(harness.statePath).removalCount).toBe(0)
   })
 
   test('waits through bounded asynchronous deployment and service disappearance', () => {
