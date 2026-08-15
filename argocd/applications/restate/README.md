@@ -64,17 +64,17 @@ admin API after the revert before resuming the Bayn worker layer.
 
 ## Resilience migration
 
-Restate 1.7.2 remains pinned for the resilience migration. The existing `restate-0` node and its retained RBD PVC are
-the cluster seed; this application must never auto-provision another cluster. `RESTATE_AUTO_PROVISION=false` and the
-three stable StatefulSet node addresses are therefore configured before replicas are increased.
+Restate stays pinned at 1.7.2. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
+`RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
+Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
+and require all 24 partitions archived before three PVCs. RGW stores snapshots only; metadata/Raft and logs stay on
+RBD. Host anti-affinity/`DoNotSchedule`, `minAvailable: 3`, and 60s/90s shutdown windows bound disruption; the PDB
+therefore permits zero voluntary evictions until a separately reviewed post-rollout relaxation.
+`restate-replication-migration` requires three ready nodes, one identical three-member Raft set, and archived snapshots
+before `restatectl config set --replication 2 --yes`; it rejects mixed state and waits for all 24 logs plus two active
+processors per partition. `default-replication` is initial-provisioning only.
 
-The migration intentionally enables partition snapshots before adding worker nodes. Restate's HA guidance requires a
-snapshot repository when growing a cluster because a new partition processor may need a snapshot if its log was
-trimmed before the node joined. `restate-snapshots` is a Rook `ObjectBucketClaim`; generated RGW credentials are read
-only from the OBC Secret and never stored in Git. Snapshots are written below
-`s3://restate-snapshots/partitions`, scheduled every 30 minutes, and retain the newest two snapshots per partition.
-RGW is only a partition-snapshot repository: Restate's replicated metadata/Raft state and replicated logs remain on
-the per-node RBD volumes.
+Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
 
 The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
 was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
@@ -83,9 +83,7 @@ snapshot has trimmed historic nodesets, and all 24 partitions/logs reference onl
 This HA layer omits that guard during normal operation; reverting this layer reintroduces the parent PreSync guard
 before Argo can apply the singleton StatefulSet.
 
-The `restate-snapshot-bootstrap` PostSync hook forces the first partition snapshot after the singleton restarts with
-the repository configured. It succeeds only when all 24 partition processors report an archived LSN. Do not increase
-replicas until that hook has succeeded and the snapshot objects are present in RGW.
+## Recovery proof and control-plane telemetry
 
 The next stack layer expands the unchanged StatefulSet pod template from one replica to three. Because the snapshot
 foundation is merged first, `restate-0` is not restarted by this scale change; `restate-1` and `restate-2` join the
@@ -103,24 +101,34 @@ two active processors. On roll-forward after singleton rollback it reactivates o
 unexpected identities. This is intentionally different from setting `default-replication`: Restate documents that the
 default is only used when a cluster is initially provisioned and does not migrate existing logs or partitions.
 
-The placement contract is deliberately host-based. The current Kubernetes nodes do not carry zone labels, so the
-StatefulSet uses required pod anti-affinity and a `DoNotSchedule` topology spread on `kubernetes.io/hostname`; a zone
-spread would claim a failure domain the cluster does not actually advertise. Restate gets 60 seconds for graceful
-shutdown inside a 90-second Kubernetes termination window.
+## Recovery proof and control-plane telemetry
 
-Useful read-only checks for the snapshot foundation are:
+All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, lag, snapshots, and audit/drill
+freshness. The five-minute SQL audit requires replication two plus zero paused, recently killed, or active old-deployment
+invocations. The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs
+read-only SQL without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 
-```sh
-kubectl get objectbucketclaim -n restate restate-snapshots
-kubectl get job -n restate restate-snapshot-bootstrap
-kubectl exec -n restate restate-0 -- restatectl --address http://127.0.0.1:5122 config get
-kubectl exec -n restate restate-0 -- restatectl --address http://127.0.0.1:5122 partitions list
-```
+Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
+snapshot open keeps the Restate Application from completing rather than bypassing recovery proof. The proof and daily
+drill each request 100m CPU/768Mi memory and are capped at 2 CPU/1536Mi while downloading the latest 24 snapshots into
+ephemeral storage; expect bounded RGW/network reads but no object-store writes. The Alloy configuration hash change
+restarts the single cluster-metrics collector, so require its rollout plus all pre-existing scrape jobs and all three
+Restate NodeCtl targets to return before considering telemetry healthy.
 
-The official contracts used by this migration are Restate's
-[HA cluster guide](https://docs.restate.dev/server/deploy/ha),
-[metadata storage guide](https://docs.restate.dev/server/deploy/metadata), and
-[snapshots and backups guide](https://docs.restate.dev/server/deploy/snapshots).
+If the PostSync proof fails, inspect the Job and its logs without printing OBC Secret values, verify fresh partition
+snapshots exist, and fix forward; do not delete production Restate data or skip the hook. A failed daily drill is
+visible through its CronJob status and Mimir alerts and should be rerun only through normal Kubernetes scheduling/GitOps
+changes. Rollback of this layer is a normal reviewed Git revert: it removes the proof/drill/audit resources and restores
+the previous Alloy config/rules while the protected OBC and snapshots remain retained. The HA PDB intentionally stays
+at `minAvailable: 3`; relaxing it is a separate post-rollout change only after live replication-two/quorum proof.
+
+### Safe replacement and rollback
+
+Before one-pod replacement require exact reviewed Argo source, three distinct healthy hosts, quorum/replication two,
+fresh restore proof, Bayn `RestateDeployment` Ready, EXACT/zero unresolved/read-only/one owner; require full recovery.
+The normal HA layer omits the parent singleton rollback guard. Reverting the HA layer reintroduces that PreSync guard,
+which contracts replication, workers/log servers, metadata membership, and historic nodesets before Argo may downscale
+the StatefulSet to one. Never bypass the guard with direct cluster edits or a direct manual scale-down.
 
 ## Admin UI exposure
 

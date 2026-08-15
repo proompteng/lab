@@ -155,9 +155,22 @@ prometheus.scrape "restate_server" {
 	job_name = "restate-server"
 	targets  = [
 		{
-			"__address__" = "restate.restate.svc.cluster.local:5122",
-			"namespace"   = "restate",
-			"service"     = "restate",
+			"__address__"  = "restate-0.restate-cluster.restate.svc.cluster.local:5122",
+			"namespace"    = "restate",
+			"service"      = "restate",
+			"restate_node" = "restate-0",
+		},
+		{
+			"__address__"  = "restate-1.restate-cluster.restate.svc.cluster.local:5122",
+			"namespace"    = "restate",
+			"service"      = "restate",
+			"restate_node" = "restate-1",
+		},
+		{
+			"__address__"  = "restate-2.restate-cluster.restate.svc.cluster.local:5122",
+			"namespace"    = "restate",
+			"service"      = "restate",
+			"restate_node" = "restate-2",
 		},
 	]
 	scrape_interval = "30s"

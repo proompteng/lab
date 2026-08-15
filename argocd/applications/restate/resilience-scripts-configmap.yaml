@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restate-resilience-scripts
+data:
+  control-plane-audit.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    address=http://restate-0.restate-cluster:5122
+    failed=0
+
+    nodes="$(restatectl --address "$address" nodes list --extra)"
+    printf '%s\n' "$nodes"
+    for node in restate-0 restate-1 restate-2; do
+      if ! printf '%s\n' "$nodes" | grep -Eq "[[:space:]]${node}[[:space:]].*Alive[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Member"; then
+        echo "Restate node is not fully healthy: $node" >&2
+        failed=1
+      fi
+    done
+    expected_members="$(printf '%s\n' "$nodes" | awk '
+      $3 ~ /^restate-[0-2]$/ {
+        if (seen_name[$3]++ || seen_id[$1]++) duplicate = 1
+        ids[++count] = $1
+      }
+      END {
+        if (duplicate || count != 3) exit 1
+        for (i = 1; i <= count; i += 1) printf "%s%s", i == 1 ? "" : ",", ids[i]
+        print ""
+      }
+    ')"
+
+    metadata="$(restatectl --address "$address" metadata-server list)"
+    printf '%s\n' "$metadata"
+    if ! printf '%s\n' "$metadata" | awk -v expected="$expected_members" '
+      BEGIN {
+        expected_count = split(expected, expected_ids, ",")
+        for (i = 1; i <= expected_count; i += 1) expected_set[expected_ids[i]] = 1
+      }
+      $1 ~ /^N[0-9]+$/ {
+        rows += 1
+        if ($2 != "Member") bad += 1
+        members = $5
+        gsub(/^\[/, "", members)
+        gsub(/\]$/, "", members)
+        actual_count = split(members, actual, ",")
+        if (actual_count != expected_count) bad += 1
+        for (i = 1; i <= actual_count; i += 1) if (!(actual[i] in expected_set)) bad += 1
+        for (id in expected_set) {
+          found = 0
+          for (i = 1; i <= actual_count; i += 1) if (actual[i] == id) found = 1
+          if (!found) bad += 1
+        }
+      }
+      END { exit !(rows == 3 && bad == 0) }
+    '; then
+      echo "Restate metadata quorum is not the expected three-member set" >&2
+      failed=1
+    fi
+
+    config="$(restatectl --address "$address" config get)"
+    printf '%s\n' "$config"
+    if ! printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 2}' || \
+      ! printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 2}'; then
+      echo "Restate replication is not exactly two" >&2
+      failed=1
+    fi
+
+    audit_zero() {
+      local name="$1"
+      local query="$2"
+      local result count
+      result="$(restate sql --json "$query")"
+      count="$(printf '%s' "$result" | jq -er '.[0].count | tonumber')"
+      echo "$name=$count"
+      if [ "$count" -ne 0 ]; then
+        failed=1
+      fi
+    }
+
+    audit_zero paused_invocations \
+      "SELECT COUNT(*) AS count FROM sys_invocation WHERE status = 'paused'"
+    audit_zero recently_killed_invocations \
+      "SELECT COUNT(*) AS count FROM sys_vqueue_entry_status WHERE status = 'killed' AND transitioned_at >= NOW() - INTERVAL '10 minutes'"
+    audit_zero undrained_deployment_invocations \
+      "SELECT COUNT(*) AS count FROM sys_invocation i JOIN sys_service s ON i.target_service_name = s.name WHERE i.pinned_deployment_id IS NOT NULL AND i.pinned_deployment_id <> s.deployment_id AND i.status <> 'completed'"
+
+    if [ "$failed" -ne 0 ]; then
+      echo "Restate control-plane audit failed" >&2
+      exit 1
+    fi
+    echo "Restate control-plane audit passed"
+
+  snapshot-restore.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    output="$({
+      restate-doctor snapshot s3://restate-snapshots/partitions \
+        --aws-region "$AWS_REGION" \
+        --aws-endpoint-url http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local \
+        --aws-allow-http \
+        --cache-dir /tmp/restate-snapshot-restore \
+        --rocksdb-memory-budget 536870912 \
+        --query "SELECT COUNT(*) AS invocation_rows FROM sys_invocation_status"
+    } 2>&1)"
+    printf '%s\n' "$output"
+    printf '%s\n' "$output" | grep -Fq 'Found 24 partition(s):'
+    printf '%s\n' "$output" | grep -Fq 'invocation_rows'
+    echo "All 24 latest Restate partition snapshots opened in an isolated read-only store"

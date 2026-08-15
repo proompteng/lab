@@ -2725,7 +2725,7 @@ data:
             expr: |
               absent(up{job="restate-server", namespace="restate", service="restate"})
               or
-              up{job="restate-server", namespace="restate", service="restate"} != 1
+              sum(up{job="restate-server", namespace="restate", service="restate"}) < 3
             for: 2m
             labels:
               severity: critical
@@ -2733,7 +2733,169 @@ data:
               notify: email
             annotations:
               summary: Restate server metrics are unavailable
-              description: The Restate NodeCtl metrics endpoint has not been reachable for two minutes.
+              description: Fewer than three Restate NodeCtl metrics endpoints have been reachable for two minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateNodeHealthDegraded
+            expr: |
+              max(restate_failure_detector_nodes_total{
+                job="restate-server",
+                state=~"dead|suspect|failing_over"
+              }) > 0
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate failure detector reports an unhealthy node
+              description: At least one Restate node has remained dead, suspect, or failing over for two minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateMetadataQuorumUnavailable
+            expr: |
+              absent(restate_metadata_server_replicated_committed_lsn{job="restate-server"})
+              or
+              count(restate_metadata_server_replicated_committed_lsn{job="restate-server"}) < 2
+            for: 2m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate metadata quorum telemetry is unavailable
+              description: Fewer than two metadata Raft members are exporting committed LSN state.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateMetadataApplyLag
+            expr: |
+              max(
+                restate_metadata_server_replicated_committed_lsn{job="restate-server"}
+                - restate_metadata_server_replicated_applied_lsn{job="restate-server"}
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate metadata Raft apply state is lagging
+              description: At least one metadata member has not applied its committed Raft LSN for five minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestatePartitionBacklog
+            expr: max(restate_partition_applied_lsn_lag{job="restate-server"}) > 0
+            for: 10m
+            labels:
+              severity: warning
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition processing is persistently behind its log
+              description: A partition has had non-zero applied-LSN lag for ten minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotMissing
+            expr: absent(restate_partition_snapshot_age_seconds{job="restate-server"})
+            for: 15m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot telemetry is missing
+              description: No partition snapshot-age metric has been exported for fifteen minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotStale
+            expr: max(restate_partition_snapshot_age_seconds{job="restate-server"}) > 3600
+            for: 10m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot is stale
+              description: A partition has not completed a snapshot within one hour despite the 30-minute schedule.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotUploadFailure
+            expr: increase(restate_partition_store_snapshots_upload_failed_total{job="restate-server"}[15m]) > 0
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate partition snapshot upload failed
+              description: Restate reported at least one snapshot-upload failure in the last fifteen minutes.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateControlPlaneAuditStale
+            expr: |
+              absent(kube_cronjob_created{
+                namespace="restate",
+                cronjob="restate-control-plane-audit"
+              })
+              or
+              (
+                kube_cronjob_created{
+                  namespace="restate",
+                  cronjob="restate-control-plane-audit"
+                } < time() - 600
+                unless on(namespace, cronjob)
+                kube_cronjob_status_last_successful_time{
+                  namespace="restate",
+                  cronjob="restate-control-plane-audit"
+                }
+              )
+              or
+              time() - kube_cronjob_status_last_successful_time{
+                namespace="restate",
+                cronjob="restate-control-plane-audit"
+              } > 600
+            for: 1m
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate exact control-plane audit has stopped succeeding
+              description: The audit checks three-member metadata quorum, replication two, paused or recently killed invocations, and active invocations pinned to an old deployment.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotRestoreDrillStale
+            expr: |
+              time() - kube_cronjob_status_last_successful_time{
+                namespace="restate",
+                cronjob="restate-snapshot-restore-drill"
+              } > 108000
+            for: 1h
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate isolated snapshot restore drill is stale
+              description: The daily offline snapshot-open drill has not succeeded for more than thirty hours.
+              runbook_url: argocd/applications/restate/README.md
+          - alert: RestateSnapshotRestoreDrillNeverSucceeded
+            expr: |
+              absent(kube_cronjob_created{
+                namespace="restate",
+                cronjob="restate-snapshot-restore-drill"
+              })
+              or
+              (
+                kube_cronjob_created{
+                  namespace="restate",
+                  cronjob="restate-snapshot-restore-drill"
+                } < time() - 93600
+                unless on(namespace, cronjob)
+                kube_cronjob_status_last_successful_time{
+                  namespace="restate",
+                  cronjob="restate-snapshot-restore-drill"
+                }
+              )
+            for: 1h
+            labels:
+              severity: critical
+              service: restate
+              notify: email
+            annotations:
+              summary: Restate isolated snapshot restore drill has never succeeded
+              description: The restore drill has existed for more than twenty-six hours without a successful run.
+              runbook_url: argocd/applications/restate/README.md
           - alert: RestateOperatorMetricsUnavailable
             expr: |
               absent(up{job="restate-operator", namespace="restate-operator", service="restate-operator"})
