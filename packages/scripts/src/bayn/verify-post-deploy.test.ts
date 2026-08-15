@@ -40,6 +40,8 @@ const deployment = () => ({
               BAYN_IMAGE_DIGEST: expected.imageDigest,
               BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH: expected.executionControllerPlanHash,
               BAYN_AUTHORITY_GENERATION_HASH: expected.authorityGenerationHash,
+              BAYN_BROKER_ACCESS: 'read-only',
+              BAYN_CAPITAL_AUTHORITY: 'none',
             }),
           },
         ],
@@ -438,6 +440,22 @@ describe('Bayn production post-deploy contract', () => {
       code: 'WORKLOAD_NOT_CONVERGED',
       retryable: true,
     })
+  })
+
+  test('fails closed on live public Deployment authority drift', () => {
+    for (const [name, value] of [
+      ['BAYN_BROKER_ACCESS', 'mutation'],
+      ['BAYN_CAPITAL_AUTHORITY', 'granted'],
+    ] as const) {
+      const drift = snapshot()
+      ;(drift.deployment as any).spec.template.spec.containers[0].env.find(
+        (item: { name: string }) => item.name === name,
+      ).value = value
+      expect(failure(() => validateBaynPostDeploySnapshot(drift, expected, now))).toMatchObject({
+        code: 'PRODUCTION_CONTRACT_VIOLATION',
+        retryable: false,
+      })
+    }
   })
 
   test('rejects sensitive identity fields from the public status payload', () => {
