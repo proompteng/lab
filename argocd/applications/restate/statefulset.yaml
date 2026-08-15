@@ -27,6 +27,7 @@ spec:
         kubectl.kubernetes.io/default-container: restate
     spec:
       serviceAccountName: restate
+      terminationGracePeriodSeconds: 90
       securityContext:
         fsGroup: 2000
         fsGroupChangePolicy: OnRootMismatch
@@ -37,8 +38,15 @@ spec:
             matchLabels:
               app: restate
           maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: restate
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: restate
           image: docker.restate.dev/restatedev/restate:1.7.2
@@ -90,10 +98,43 @@ spec:
               value: info
             - name: RESTATE_CLUSTER_NAME
               value: proompteng-self-hosted
+            - name: RESTATE_AUTO_PROVISION
+              value: "false"
+            - name: RESTATE_METADATA_CLIENT__ADDRESSES
+              value: '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]'
+            - name: RESTATE_DEFAULT_REPLICATION
+              value: "1"
+            - name: RESTATE_SHUTDOWN_TIMEOUT
+              value: 60s
             - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE
               value: 1Gi
             - name: RESTATE_LISTEN_MODE
               value: tcp
+            - name: RESTATE_WORKER__SNAPSHOTS__DESTINATION
+              value: s3://restate-snapshots/partitions
+            - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL
+              value: 30m
+            - name: RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED
+              value: "2"
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: restate-snapshots
+                  key: BUCKET_REGION
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ENDPOINT_URL
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ALLOW_HTTP
+              value: "true"
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: restate-snapshots
+                  key: AWS_ACCESS_KEY_ID
+            - name: RESTATE_WORKER__SNAPSHOTS__AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: restate-snapshots
+                  key: AWS_SECRET_ACCESS_KEY
             - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE
               value: /var/run/secrets/restate/request-identity/private.pem
           readinessProbe:
