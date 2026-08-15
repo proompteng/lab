@@ -31,6 +31,7 @@ import type {
   AutonomousCycleFiberObservation,
   BrokerHealthObservation,
   BrokerProbe,
+  CycleObservationBinding,
   ExecutionControllerProbe,
   HealthDependencies,
   HealthLogDecision,
@@ -216,12 +217,16 @@ const collectHealthProbeResults = (
   evidenceStore: HealthDependencies['evidenceStore'],
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
-  cycleObservationId: string | null | undefined,
+  cycleObservation: CycleObservationBinding,
   qualificationEvidenceRequired: boolean,
   executionController: ExecutionControllerProbe | undefined,
 ): Effect.Effect<HealthProbeResults, never> => {
   const cycleBindingId =
-    cycleObservationId === undefined ? evidence?.evaluation.runId : (cycleObservationId ?? undefined)
+    cycleObservation._tag === 'Exact'
+      ? cycleObservation.bindingId
+      : cycleObservation._tag === 'FromEvidence'
+        ? evidence?.evaluation.runId
+        : undefined
   return Effect.map(
     Effect.all(
       [
@@ -285,7 +290,7 @@ const collectHealthProbeResults = (
                 operationalError({
                   component: 'database',
                   operation: 'cycle-observability',
-                  message: 'startup evidence is unavailable',
+                  message: 'cycle observation binding is unavailable',
                 }),
               )
             : withinDeadline(
@@ -334,13 +339,15 @@ const collectHealthProbeResults = (
   )
 }
 
+const defaultCycleObservationBinding: CycleObservationBinding = { _tag: 'FromEvidence' }
+
 const checkHealthDataFirst = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string | null,
+  cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
   qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
@@ -354,7 +361,7 @@ const checkHealthDataFirst = (
       dependencies.evidenceStore,
       dependencies.cycleObservability,
       broker,
-      cycleObservationId,
+      cycleObservation,
       qualificationEvidenceRequired,
       executionController,
     )
@@ -385,7 +392,7 @@ export const checkHealth = Pipeable.by<
     dependencies: HealthDependencies,
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservationId?: string | null,
+    cycleObservation?: CycleObservationBinding,
     qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
@@ -401,7 +408,7 @@ const runHealthMonitorDataFirst = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string | null,
+  cycleObservation: CycleObservationBinding = defaultCycleObservationBinding,
   qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
@@ -411,7 +418,7 @@ const runHealthMonitorDataFirst = (
     dependencies,
     broker,
     autonomousCycleFiber,
-    cycleObservationId,
+    cycleObservation,
     qualificationEvidenceRequired,
     executionController,
   ).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)
@@ -422,7 +429,7 @@ export const runHealthMonitor = Pipeable.by<
     dependencies: HealthDependencies,
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservationId?: string | null,
+    cycleObservation?: CycleObservationBinding,
     qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
