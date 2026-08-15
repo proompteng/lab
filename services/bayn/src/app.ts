@@ -174,17 +174,14 @@ const cycleObservationBinding = <StartupR, LoopR>(
   return bindingId === undefined ? { _tag: 'FromEvidence' } : { _tag: 'Exact', bindingId }
 }
 
-const initialRuntimeState = <StartupR, LoopR>(
-  config: RuntimeConfig,
-  runtime: ApplicationRuntime<StartupR, LoopR>,
-): RuntimeState =>
+const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
   runtime._tag === 'Brokerless'
     ? initialState({})
     : initialState({
         qualificationEvidenceRequired: qualificationEvidenceRequired(runtime),
         broker: runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
         autonomousCycleLoopConfigured: true,
-        autonomousCycleLoopOwner: config.lifecycleOwner ?? 'Process',
+        autonomousCycleLoopOwner: 'Restate',
       })
 
 const resolveRuntimeAfterStartup = <StartupR, LoopR>(
@@ -268,7 +265,7 @@ export const prepareAutonomousApplication = <StartupR, LoopR>(
   runtime: AutonomousRuntime<StartupR, LoopR>,
 ): Effect.Effect<PreparedAutonomousApplication<StartupR, LoopR>, OperationalError, StartupR | LoopR | Scope.Scope> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialRuntimeState(config, runtime))
+    const state = yield* Ref.make(initialRuntimeState(runtime))
     if (qualificationEvidenceRequired(runtime)) {
       yield* runStartup(config, state, strategy, dependencies)
     }
@@ -298,19 +295,18 @@ const runApplicationDataFirst = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
 ): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialRuntimeState(config, runtime))
+    const state = yield* Ref.make(initialRuntimeState(runtime))
     yield* serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read)
     if (qualificationEvidenceRequired(runtime)) {
       yield* runStartup(config, state, strategy, dependencies)
     }
     const resolvedRuntime = yield* resolveRuntimeAfterStartup(runtime, state)
-    const autonomousCycleFiber = yield* startAutonomousCycle(resolvedRuntime, state)
     yield* runHealthMonitor(
       config,
       state,
       dependencies,
       brokerProbe(resolvedRuntime),
-      autonomousCycleFiber,
+      undefined,
       cycleObservationBinding(resolvedRuntime),
       qualificationEvidenceRequired(resolvedRuntime),
     ).pipe(Effect.forkScoped({ startImmediately: true }))
