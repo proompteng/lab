@@ -13,15 +13,16 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 ## Trace one lifecycle pass
 
-1. Query Tempo for `resource.service.name = "restate"`, `"bayn-lifecycle"`, and `"bayn"` over the same bounded window.
-2. Follow the Restate invocation attempt into the lifecycle command HTTP request, then the `bayn.lifecycle.advance`
-   and `bayn.reconciliation.run` spans. Broker and mutation spans remain children of the Bayn command trace.
+1. Query Tempo for `resource.service.name = "restate"`, `"bayn-execution-controller"`, and `"bayn"` over the same
+   bounded window.
+2. Follow the `BaynExecutionController/tick` Restate attempt into the native execution advance and
+   `bayn.reconciliation.run` spans. Broker and mutation spans remain children of the Bayn execution trace.
 3. Use the emitted `trace_id` and `span_id` fields to move between Tempo and the correlated JSON logs in Loki. Never
    use account identifiers, credentials, order payloads, or other high-cardinality business data as trace attributes.
    Query the bounded log stream with `{job="bayn", namespace="bayn"} |= "<trace_id>"`; the trace ID stays in the JSON
    payload rather than becoming a high-cardinality Loki label.
 4. Treat a missing segment as an observability failure: verify the workload's exact source revision, its OTLP endpoint,
-   and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not lifecycle proof.
+   and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not execution proof.
 
 ## Alert actions
 

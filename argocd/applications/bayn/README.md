@@ -4,14 +4,14 @@
 
 The `bayn-execution-controller` `RestateDeployment` is the single execution scheduler. It starts with read-only broker
 access and no capital authority. A source-versioned Argo sync hook authenticates to the Restate ingress, verifies the
-exact source/image/strategy/account plan, deactivates the legacy lifecycle owner, and only then activates the native
-controller. The public Bayn deployment rolls out after that verified handoff.
+exact source/image/strategy/account plan and current native binding, then idempotently activates or rotates the
+account-keyed native controller. The public Bayn deployment rolls out after that verified native binding.
 
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
 `argocd/applications/restate/README.md`. The bootstrap `SealedSecret` uses sync wave `-2` and the repository's
 current-generation health gate; the `RestateDeployment` follows in wave `-1`, activation runs in wave `0`, and the
-read-only status deployment follows in wave `1`. A missing Secret, unregistered worker, legacy-binding mismatch, or
+read-only status deployment follows in wave `1`. A missing Secret, unregistered worker, native-binding mismatch, or
 activation-verification failure blocks the sync before the public status rollout.
 
 After the normal Argo sync, verify the handoff without printing credentials or invoking the bootstrap handler by hand:
@@ -36,7 +36,7 @@ Expected:
 - the SealedSecret is current and the generated Secret exists before the worker pod starts;
 - the operator reports one available worker revision at the committed image digest and drains the previous revision;
 - the activation hook completes once for the exact committed plan and source;
-- the legacy lifecycle state is inactive before native controller state becomes active;
+- zero legacy lifecycle registrations exist and no second execution owner is active alongside the native controller;
 - delayed native ticks project fresh controller status while authority remains read-only with no capital grant;
 - the public status pod runs the same immutable image and reports exact reconciliation with zero unresolved mutations.
 
@@ -52,10 +52,11 @@ Until the release updater emits that complete reviewed binding, it must continue
 `native-execution-controller-refresh-required` without changing GitOps. Never promote only the public status image
 while execution remains pinned to an older plan.
 
-Rollback is another serialized ownership transfer, not pruning an active worker. Through a reviewed GitOps change,
-deactivate the native controller and prove its writer fence is clear before activating a compatible legacy or replacement
-controller. Do not delete Restate registrations, CRDs, PVCs, durable state, or controller pods by hand. Confirm exact
-reconciliation, zero unresolved mutations, and no broker-ledger advance before and after the handoff.
+Rollback is another serialized native ownership transfer, not pruning an active worker. Through a reviewed GitOps
+change, move the account-keyed binding to a compatible native replacement, or deactivate the native controller so Bayn
+returns to OBSERVE-only operation. Never recreate the retired legacy controller. Do not delete Restate registrations,
+CRDs, PVCs, durable state, or controller pods by hand. Confirm exact reconciliation, zero unresolved mutations, and no
+broker-ledger advance before and after the handoff.
 
 ## Legacy Restate registration retirement
 

@@ -16,8 +16,6 @@ on:
       - 'argocd/applications/bayn/deployment.yaml'
       - 'argocd/applications/bayn/kustomization.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - 'argocd/applications/bayn/lifecycle-current.yaml'
-      - 'argocd/applications/bayn/lifecycle-previous.yaml'
   issue_comment:
     types:
       - created
