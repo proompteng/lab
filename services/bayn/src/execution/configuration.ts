@@ -281,6 +281,9 @@ export const CapitalActivationRequestSchema = Schema.Union([
 ])
 export type CapitalActivationRequest = typeof CapitalActivationRequestSchema.Type
 
+export const capitalActivationRequiresQualificationEvidence = (request: CapitalActivationRequest | null): boolean =>
+  request !== null && !isResearchCapitalActivationRequest(request)
+
 export const CapitalActivationConfigurationSchema = Schema.Union([
   CapitalActivationRequestSchema,
   ResearchCapitalBuildContinuationSchema,

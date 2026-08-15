@@ -40,6 +40,7 @@ import {
   checkHealth,
   runHealthMonitor,
   type BrokerProbe,
+  type CycleObservationBinding,
   ensureDurableEvidence,
   ensureSignalIdentity,
   renderDurableEvidenceFailure,
@@ -65,7 +66,7 @@ const probe = (
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservation?: string | CycleObservationBinding,
   qualificationEvidenceRequired = true,
 ) =>
   testHealthDependencies.pipe(
@@ -76,7 +77,7 @@ const probe = (
         dependencies,
         broker,
         cycleFiber,
-        cycleObservationId,
+        typeof cycleObservation === 'string' ? { _tag: 'Exact', bindingId: cycleObservation } : cycleObservation,
         qualificationEvidenceRequired,
       ),
     ),
@@ -398,6 +399,7 @@ const cycleObservability = (
 const provideHealthyDependencies = (
   initial: RuntimeState,
   effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,
+  cycleStore: CycleObservabilityShape = cycleObservability(),
 ) =>
   effect.pipe(
     Effect.provideService(MarketData, {
@@ -412,7 +414,7 @@ const provideHealthyDependencies = (
     }),
     Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
     Effect.provideService(EvidenceStore, recoveringStore(initial)),
-    Effect.provideService(CycleObservability, cycleObservability()),
+    Effect.provideService(CycleObservability, cycleStore),
   )
 
 describe('Bayn continuous health', () => {
@@ -443,6 +445,48 @@ describe('Bayn continuous health', () => {
 
     expect(transition.next.status).toBe('READY')
     expect(isReady(transition.next)).toBe(true)
+  })
+
+  test('keeps a pending research activation out of readiness without enabling qualification probes', () => {
+    const current: RuntimeState = {
+      ...readyState(),
+      status: 'READY',
+      qualificationEvidenceRequired: false,
+      evidence: null,
+      capitalActivation: { _tag: 'Pending', requestHash: 'a'.repeat(64), reason: 'PREPARATION_FAILED' },
+    }
+
+    expect(qualificationEvidenceSatisfied(current)).toBe(false)
+    expect(isReady(current)).toBe(false)
+    expect(readinessResponseDecision(current)).toMatchObject({
+      status: 503,
+      body: {
+        ready: false,
+        failedDependencies: ['capitalActivation'],
+      },
+    })
+  })
+
+  test('does not fall back to retained evidence when the cycle binding is explicitly unavailable', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    let cycleReads = 0
+
+    await Effect.runPromise(
+      provideHealthyDependencies(
+        initial,
+        probe(config, state, undefined, undefined, { _tag: 'Unavailable' }),
+        cycleObservability(() => {
+          cycleReads += 1
+          return Effect.die(new Error('an unavailable binding must not read retained cycle evidence'))
+        }),
+      ),
+    )
+
+    const observed = await Effect.runPromise(Ref.get(state))
+    expect(cycleReads).toBe(0)
+    expect(observed.status).toBe('DEGRADED')
+    expect(observed.health.dependencies.cycle).toMatchObject({ status: 'UNAVAILABLE' })
   })
 
   test('returns structured signal and durable evidence invariant failures', () => {
