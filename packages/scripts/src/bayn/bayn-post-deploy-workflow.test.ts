@@ -26,7 +26,7 @@ describe('Bayn post-deploy workflow', () => {
     expect(workflow).toContain('verify-post-deploy.ts')
   })
 
-  test('grants only named Bayn reads to the no-permission runner identity', () => {
+  test('adds only the missing named Bayn reads to the no-permission runner identity', () => {
     expect(agentsCiKustomization).toContain('- bayn-post-deploy-rbac.yaml')
     expect(rbac).toContain('name: arc-amd64-gha-rs-no-permission')
     expect(rbac).toContain('namespace: arc')
@@ -34,6 +34,7 @@ describe('Bayn post-deploy workflow', () => {
     expect(rbac).toContain('- bayn:80')
     expect(rbac).toContain('resourceNames:\n      - bayn-execution-controller')
     expect(rbac).toContain('- services/proxy')
+    expect(rbac).not.toContain('- deployments')
     expect(rbac).not.toContain('secrets')
     expect(rbac).not.toContain('- create')
     expect(rbac).not.toContain('- update')
