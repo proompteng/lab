@@ -22,7 +22,8 @@ cleanup() {
 trap cleanup EXIT
 archive="${work}/archive"
 rootfs="${work}/rootfs"
-mkdir -p "${archive}" "${rootfs}"
+command_root="${work}/command-root"
+mkdir -p "${archive}" "${rootfs}" "${command_root}/bin" "${command_root}/app/services/bayn/dist"
 tar -xf "${image_tar}" -C "${archive}"
 
 mapfile -t layers < <(jq -er '.[0].Layers[]' "${archive}/manifest.json")
@@ -70,14 +71,10 @@ test -x "${forward_wrapper}"
 test -f "${forward_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
-grep -F "exec \"\$root/bin/node\" \"\$root/app/services/bayn/dist/forward-performance-command.js\" \"\$@\"" \
-  "${forward_wrapper}" >/dev/null
 
-if [[ "$(head -c 2 "${image_node}")" == '#!' ]]; then
-  actual="$(NODE_ENV=production bash "${image_node}" "${forward_command}" --help)"
-else
-  actual="$(NODE_ENV=production "${image_node}" "${forward_command}" --help)"
-fi
+ln -s "${image_node}" "${command_root}/bin/node"
+ln -s "${forward_command}" "${command_root}/app/services/bayn/dist/forward-performance-command.js"
+actual="$(NODE_ENV=production BAYN_IMAGE_ROOT="${command_root}" "${forward_wrapper}" --help)"
 expected='Usage: bayn-forward-performance [--help]'
 if [[ "${actual}" != "${expected}" ]]; then
   printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
