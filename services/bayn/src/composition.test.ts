@@ -756,15 +756,19 @@ describe('Bayn capital startup recovery boundary', () => {
       buildContinuation: researchBuildContinuation,
     })
 
-    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId)).toBe(continuationRequest.grant.planHash)
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
-    expect(readOnlyCycleObservationId(Result.succeed(null), undefined)).toBeUndefined()
+    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId, true)).toBe(
+      continuationRequest.grant.planHash,
+    )
+    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, false)).toBe(pinnedEvaluation.runId)
+    expect(readOnlyCycleObservationId(Result.succeed(null), undefined, false)).toBeUndefined()
+    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, true)).toBeUndefined()
+    expect(readOnlyCycleObservationId(Result.fail('invalid activation'), pinnedEvaluation.runId, false)).toBeUndefined()
   })
 
   test('binds request-free status to the current durable OBSERVE generation after rotation', async () => {
     const currentGenerationHash = hash('current-durable-observe-generation')
     const cycleObservationId = await Effect.runPromise(
-      resolveReadOnlyCycleObservationId(Result.succeed(null), undefined, {
+      resolveReadOnlyCycleObservationId(Result.succeed(null), undefined, false, {
         ensureAuthorityGeneration: () =>
           Effect.die(new Error('request-free read-only status must not mutate authority')),
         readAuthorityState: Effect.succeed({
@@ -790,6 +794,7 @@ describe('Bayn capital startup recovery boundary', () => {
         const resolution = resolveReadOnlyCycleObservationIdForHealth(
           Result.succeed(null),
           undefined,
+          false,
           {
             ensureAuthorityGeneration: () =>
               Effect.die(new Error('request-free read-only status must not mutate authority')),
@@ -813,15 +818,28 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), BrokerAccess.ReadOnly)).toBe(false)
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), BrokerAccess.Mutation)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), false)).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), true)).toBe(true)
     expect(
       readOnlyQualificationEvidenceRequired(
         Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation }),
-        BrokerAccess.Mutation,
+        true,
       ),
     ).toBe(false)
-    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), BrokerAccess.ReadOnly)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), false)).toBe(true)
+  })
+
+  test('blocks missing mutation activation before legacy qualification or durable OBSERVE can satisfy readiness', async () => {
+    const unreachable = Effect.die(new Error('missing mutation activation must not inspect durable authority'))
+    const cycleObservationId = await Effect.runPromise(
+      resolveReadOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, true, {
+        ensureAuthorityGeneration: () => unreachable,
+        readAuthorityState: unreachable,
+      }),
+    )
+
+    expect(cycleObservationId).toBeUndefined()
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), true)).toBe(true)
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
