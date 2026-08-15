@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import {
   advanceBaynLifecycleManifests,
@@ -83,6 +83,15 @@ describe('Bayn lifecycle release manifests', () => {
       new URL('../../../../argocd/applications/bayn/deployment.yaml', import.meta.url),
       'utf8',
     )
+    const restateNetworkPolicy = readFileSync(
+      new URL('../../../../argocd/applications/restate/networkpolicy.yaml', import.meta.url),
+      'utf8',
+    )
+    const readme = readFileSync(new URL('../../../../argocd/applications/bayn/README.md', import.meta.url), 'utf8')
+    const cleanupManifest = new URL(
+      '../../../../argocd/applications/bayn/restate-registration-cleanup.yaml',
+      import.meta.url,
+    )
 
     expect(parseBaynLifecycleCurrent(current)).toEqual({
       sourceSha: '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
@@ -95,6 +104,12 @@ describe('Bayn lifecycle release manifests', () => {
       digest: 'sha256:a0b49f9c5a7a1ee7011dca5fa3ee8799d36924f4ec3e131397d108a1ddf35908',
     })
     expect(baynLifecycleIsActive(kustomization)).toBeFalse()
+    expect(kustomization).not.toContain('restate-registration-cleanup.yaml')
+    expect(existsSync(cleanupManifest)).toBeFalse()
+    expect(restateNetworkPolicy).not.toContain('app.kubernetes.io/name: bayn-lifecycle-register')
+    expect(readme).toContain(
+      'The legacy `BaynLifecycle`/`BaynLifecycleBootstrap` Restate registration set is fully retired.',
+    )
     expect(() => validateBaynLifecycleCommandPort(deployment)).toThrow(
       'Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081',
     )
