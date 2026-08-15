@@ -750,13 +750,24 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(readAttempts).toBe(2)
   })
 
-  test('keeps cycle observations keyed by the immutable grant after execution completes', () => {
+  test('keeps mutation-capable cycle observations keyed by the immutable grant', async () => {
     const configured = Result.succeed({
       request: continuationRequest,
       buildContinuation: researchBuildContinuation,
     })
 
     expect(readOnlyCycleObservationId(configured)).toBe(continuationRequest.grant.planHash)
+    expect(
+      await Effect.runPromise(
+        resolveReadOnlyCycleObservationId(configured, true, {
+          ensureAuthorityGeneration: () =>
+            Effect.die(new Error('a valid activation request must not fall back to durable OBSERVE authority')),
+          readAuthorityState: Effect.die(
+            new Error('a valid activation request must not fall back to durable OBSERVE authority'),
+          ),
+        }),
+      ),
+    ).toEqual({ _tag: 'Exact', bindingId: continuationRequest.grant.planHash })
     expect(readOnlyCycleObservationId(Result.succeed(null))).toBeUndefined()
     expect(readOnlyCycleObservationId(Result.fail('invalid activation'))).toBeUndefined()
   })
