@@ -8,7 +8,7 @@ metadata:
   annotations:
     # Hooks do not contribute to Application sync status. This tracked no-op metadata change makes the final
     # retirement revision OutOfSync exactly once so automated sync executes the PostSync hook naturally.
-    bayn.proompteng.ai/retirement-sync: final-legacy-registration-v1
+    bayn.proompteng.ai/retirement-sync: final-legacy-registration-v2
 spec:
   podSelector:
     matchLabels:
@@ -43,9 +43,9 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # Use a fresh fixed name for the final retirement transaction. The prior successful HOLD-era Job still exists
-  # under bayn-restate-registration-cleanup, and named Argo hooks are not recreated without BeforeHookCreation.
-  name: bayn-restate-registration-final-retirement
+  # Use a fresh fixed name for the v2 final retirement transaction. The v1 hook is intentionally retained after its
+  # pre-mutation admin-connectivity failure, and named Argo hooks are not recreated without BeforeHookCreation.
+  name: bayn-restate-registration-final-retirement-v2
   labels:
     app.kubernetes.io/name: bayn-lifecycle-register
     app.kubernetes.io/part-of: bayn
@@ -91,6 +91,8 @@ spec:
 
               readonly_admin_url='http://restate.restate.svc.cluster.local:9070'
               [ "${RESTATE_ADMIN_URL:-}" = "$readonly_admin_url" ] || fail 'unexpected Restate admin endpoint'
+              sql_retry_attempts=30
+              sql_retry_interval_seconds=2
 
               allowlist() {
                 cat <<'EOF'
@@ -116,10 +118,21 @@ spec:
               }
 
               sql_count() {
-                result="$(restate sql --jsonl "$1")" || fail 'Restate SQL query failed'
-                count="$(printf '%s\n' "$result" | sed -n 's/^{"count":\([0-9][0-9]*\)}$/\1/p')"
-                [ -n "$count" ] || fail "unexpected Restate SQL result: $result"
-                printf '%s\n' "$count"
+                query="$1"
+                sql_attempt=1
+                while [ "$sql_attempt" -le "$sql_retry_attempts" ]; do
+                  if result="$(restate sql --jsonl "$query")"; then
+                    count="$(printf '%s\n' "$result" | sed -n 's/^{"count":\([0-9][0-9]*\)}$/\1/p')"
+                    [ -n "$count" ] || fail "unexpected Restate SQL result: $result"
+                    printf '%s\n' "$count"
+                    return 0
+                  fi
+                  [ "$sql_attempt" -lt "$sql_retry_attempts" ] ||
+                    fail "Restate SQL query failed after $sql_retry_attempts attempts"
+                  echo "Restate SQL read unavailable (attempt $sql_attempt/$sql_retry_attempts); retrying." >&2
+                  sql_attempt=$((sql_attempt + 1))
+                  sleep "$sql_retry_interval_seconds"
+                done
               }
 
               expected_values=''

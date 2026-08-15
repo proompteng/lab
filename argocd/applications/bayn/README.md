@@ -88,14 +88,20 @@ cluster DNS and Restate admin TCP 9070. Its pod keeps the historical
 `app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin ingress policy authorizes this
 cross-Application retirement without requiring Restate Application ordering. Because Argo hooks themselves do not
 contribute to Application sync status, the tracked cleanup NetworkPolicy carries the inert
-`bayn.proompteng.ai/retirement-sync=final-legacy-registration-v1` annotation. That one metadata delta makes the final
+`bayn.proompteng.ai/retirement-sync=final-legacy-registration-v2` annotation. That one metadata delta makes the current
 revision OutOfSync so automated sync naturally runs the PostSync hook; it does not widen network access or alter the
 cleanup pod selector. Do not terminate invocations, delete services generically, mutate Restate directly, or apply/sync
 cluster state by hand; failures remain GitOps-reviewed.
 
-The final transaction uses the fresh fixed Job name `bayn-restate-registration-final-retirement`, because the previous
-successful HOLD-era Job still exists under `bayn-restate-registration-cleanup`. It has `backoffLimit: 0`,
-`restartPolicy: Never`, no finished-Job TTL, and Argo `HookSucceeded` deletion only. A successful transaction is removed
-so later already-empty syncs can rerun against future native revisions. A failed transaction remains under its fixed
-name; Argo cannot create another named instance and reinterpret a post-force failure as a clean empty rerun. Advancing
-after such a failure therefore requires a new reviewed GitOps correction rather than an automatic Job or sync retry.
+The first final transaction, `bayn-restate-registration-final-retirement`, failed before mutation on its first read-only
+Restate SQL request with `Unable to connect to the Restate server`; its retained pod exited once with restart count zero,
+so the force-removal command was never reached. The v2 transaction therefore uses the fresh fixed Job name
+`bayn-restate-registration-final-retirement-v2` and retries only an individual read-only `restate sql` probe, bounded to
+30 attempts at two-second intervals. This absorbs transient pod-start/admin reachability without retrying the destructive
+command or the whole transaction.
+
+The v2 Job retains `backoffLimit: 0`, `restartPolicy: Never`, no finished-Job TTL, and Argo `HookSucceeded` deletion
+only. A successful transaction is removed so later already-empty syncs can rerun against future native revisions. A
+failed transaction remains under its fixed name; Argo cannot create another named instance and reinterpret a post-force
+failure as a clean empty rerun. Advancing after such a failure therefore requires a new reviewed GitOps correction
+rather than an automatic Job or sync retry.
