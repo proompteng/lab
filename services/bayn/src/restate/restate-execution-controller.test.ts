@@ -3,8 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import type { Context, ObjectContext } from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
-import type { ExecutionControllerState } from './execution/controller'
-import { ExecutionControllerOutcome } from './execution/controller-status'
+import type { ExecutionControllerState } from '../execution/controller'
+import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,

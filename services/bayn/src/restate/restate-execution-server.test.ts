@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
-import type { ApplicationPlan } from './app'
+import type { ApplicationPlan } from '../app'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
   decodeRestateRequestIdentityKeys,
@@ -105,8 +105,27 @@ describe('native Restate execution server', () => {
       ),
     )
 
-    const services = (discovery as { readonly services?: readonly { readonly name?: string }[] }).services ?? []
-    expect(services.map(({ name }) => name)).toEqual(['BaynExecutionController', 'BaynExecutionBootstrap'])
+    const services =
+      (
+        discovery as {
+          readonly services?: readonly {
+            readonly name?: string
+            readonly handlers?: readonly { readonly name?: string }[]
+          }[]
+        }
+      ).services ?? []
+    expect(
+      services.map(({ name, handlers }) => ({ name, handlers: handlers?.map((handler) => handler.name) })),
+    ).toEqual([
+      {
+        name: 'BaynExecutionController',
+        handlers: ['activate', 'tick', 'deactivate', 'status'],
+      },
+      {
+        name: 'BaynExecutionBootstrap',
+        handlers: ['start'],
+      },
+    ])
   })
 
   test('requires a bounded unique Restate request-identity key set', () => {

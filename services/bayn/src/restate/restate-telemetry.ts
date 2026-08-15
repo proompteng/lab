@@ -6,7 +6,7 @@ import type { HooksProvider } from '@restatedev/restate-sdk'
 import { openTelemetryHook } from '@restatedev/restate-sdk-opentelemetry'
 import { Effect } from 'effect'
 
-import { decodeOtlpTraceEndpoint, type TelemetryRuntimeOptions } from './telemetry'
+import { decodeOtlpTraceEndpoint, type TelemetryRuntimeOptions } from '../telemetry'
 
 export interface TraceContextHeaders {
   readonly traceparent?: string

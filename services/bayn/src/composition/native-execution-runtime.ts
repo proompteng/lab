@@ -35,8 +35,8 @@ import {
   type RecoveryFirstCycleDriverInterpreter,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
-import { currentOpenTelemetryLogAnnotations } from '../restate-telemetry'
-import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate-execution-controller'
+import { currentOpenTelemetryLogAnnotations } from '../restate/restate-telemetry'
+import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'

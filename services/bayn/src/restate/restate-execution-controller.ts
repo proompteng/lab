@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import * as restate from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
-import { maximumConsistencyDelayMs } from './execution/mutations'
+import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
@@ -23,8 +23,8 @@ import {
   type ExecutionControllerDeactivation,
   type ExecutionControllerState,
   type ExecutionControllerTick,
-} from './execution/controller'
-import { sha256 } from './hash'
+} from '../execution/controller'
+import { sha256 } from '../hash'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -68,7 +68,7 @@ export interface ExecutionControllerConfig {
 
 export interface NativeExecutionRuntime {
   readonly advance: (
-    command: import('./execution/advance').AdvanceExecutionCommand,
+    command: import('../execution/advance').AdvanceExecutionCommand,
     signal: AbortSignal,
   ) => Promise<ExecutionAdvanceStepResult>
   readonly log: (
