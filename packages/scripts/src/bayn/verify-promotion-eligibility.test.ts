@@ -383,7 +383,7 @@ describe('Bayn promotion eligibility', () => {
 
     expect(parsed.lifecycleActive).toBeFalse()
     expect(parsed.lifecyclePreviousSourceRevision).toBeNull()
-    expect(parsed.sourceSha).toBe('5f366810884463ee593b417e21bc76bf2176de36')
+    expect(parsed.sourceSha).toBe('7bc61449a217f268e81510e3818d5b5ebc379553')
   })
 
   test('keeps active lifecycle command port and authentication validation fail closed', () => {
