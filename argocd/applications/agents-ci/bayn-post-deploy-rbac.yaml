@@ -1,0 +1,37 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bayn-post-deploy-verifier
+  namespace: bayn
+rules:
+  - apiGroups:
+      - restate.dev
+    resources:
+      - restatedeployments
+    resourceNames:
+      - bayn-execution-controller
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - services/proxy
+    resourceNames:
+      - bayn
+      - bayn:80
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bayn-post-deploy-verifier
+  namespace: bayn
+subjects:
+  - kind: ServiceAccount
+    name: arc-amd64-gha-rs-no-permission
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bayn-post-deploy-verifier
