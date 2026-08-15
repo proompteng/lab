@@ -59,22 +59,29 @@ reconciliation, zero unresolved mutations, and no broker-ledger advance before a
 
 ## Legacy Restate registration retirement
 
-`restate-registration-cleanup.yaml` is a temporary PostSync hook scoped only to the 18 reviewed legacy
-`BaynLifecycle`/`BaynLifecycleBootstrap` registrations left behind by the native execution cutover. The immutable
-allowlist binds every Restate deployment ID to its exact endpoint and source-revision metadata. From the complete
-original set, the hook removes the 17 drained revisions in creation order and then intentionally stops at the exact
-final deployment `dp_14g38iazTnn3gWZzr8Ze0i5`: only while that deployment still has the reviewed metadata and service
-set, has zero lifecycle or pinned nonterminal invocations, is `Active`, and hosts both revision 18 services as `Latest`
-does the hook emit a terminal `HOLD` and exit successfully without attempting removal. The empty set remains a safe
-no-op. Any other nonzero partial subset, unknown ID, service-set change, metadata drift, or invocation drift fails closed.
+`restate-registration-cleanup.yaml` is the final temporary PostSync retirement hook for the legacy
+`BaynLifecycle`/`BaynLifecycleBootstrap` registration. The prior reviewed cleanup removed the first 17 immutable
+allowlisted deployments. This final layer accepts only two states: the exact singleton
+`dp_14g38iazTnn3gWZzr8Ze0i5`, or the fully retired empty set. Any other nonzero subset, unknown lifecycle classifier
+member, endpoint/service-set drift, source metadata drift, revision drift, or lifecycle/pinned nonterminal invocation
+fails closed before mutation.
 
-The hook revalidates global state and the exact target before every non-force `restate deployments remove -y <id>` and
-walks the verified Restate creation order from oldest to newest. It intentionally has no service-account token,
-credentials, broker access, or Restate ingress access. Egress is limited to cluster DNS and Restate admin TCP 9070. Its
-pod keeps the historical `app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin
-ingress policy authorizes this cross-Application cleanup without requiring Restate Application ordering in this layer.
+For the singleton, the hook also requires the current native deployment
+`dp_14MYpEXKeHNXBkzJQMMIHSx` at
+`http://bayn-execution-controller-686554d857.bayn.svc.cluster.local:9080/`, exactly
+`BaynExecutionController` + `BaynExecutionBootstrap` revision 11, recent completed ticks pinned to that deployment, a
+bounded current native nonterminal tick set, and no nonterminal native tick pinned elsewhere. Only after those checks are
+repeated immediately before mutation does the hook perform one exact force removal:
+`restate deployments remove --force -y dp_14g38iazTnn3gWZzr8Ze0i5`. There is no other force target.
 
-If a run fails after removing some but not all of the first 17 deployments, do not rely on another retry to continue and
-do not repair Restate directly. Leave the hook failed, re-enumerate Restate read-only, and submit a narrowly reviewed
-GitOps correction that proves the exact remaining subset and the safe next action. Never use `--force`, service/deployment
-deletes, invocation termination, or direct pod/cluster mutation to advance this retirement.
+Restate accepts deployment deletion asynchronously, so the hook polls a bounded 30 times at two-second intervals. It
+requires the final deployment and both legacy services to disappear, keeps checking zero lifecycle/pinned nonterminal
+invocations, and revalidates the native rev11 deployment, services, and tick continuity on every poll. Zombie legacy
+invocations, service residue, unexpected partial disappearance, native collateral, or timeout fails the hook. Once both
+the deployment and services are absent, empty-set reruns are idempotent and perform no mutation.
+
+The hook has no service-account token, credentials, broker access, or Restate ingress access. Egress is limited to
+cluster DNS and Restate admin TCP 9070. Its pod keeps the historical
+`app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin ingress policy authorizes this
+cross-Application retirement without requiring Restate Application ordering. Do not terminate invocations, delete
+services generically, mutate Restate directly, or apply/sync cluster state by hand; failures remain GitOps-reviewed.

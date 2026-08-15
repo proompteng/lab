@@ -17,15 +17,31 @@ type Deployment = {
   latest: boolean
 }
 
+type ServiceBinding = {
+  name: string
+  revision: number
+  public: boolean
+  ty: 'service' | 'virtual_object'
+  deploymentId: string
+}
+
 type FakeState = {
   expected: Array<Pick<Deployment, 'id' | 'endpoint'>>
   deployments: Deployment[]
-  nonterminalInvocations: number
+  legacyServices: ServiceBinding[]
+  nativeServices: ServiceBinding[]
+  legacyNonterminalInvocations: number
+  nativeCompletedTicks: number
+  nativeNonterminalTicks: number
+  nativeWrongPinnedNonterminalTicks: number
   removalCount: number
-  abortSqlAfterRemovalCount?: number
-  abortSqlEnabled?: boolean
-  injectInvocationAfterRemovalCount?: number
-  failRemoveId?: string
+  removalRequested: boolean
+  pollCount: number
+  deploymentDisappearAfterPolls: number
+  serviceDisappearAfterPolls: number
+  injectLegacyInvocationAfterRemove?: boolean
+  mutateNativeAfterRemove?: boolean
+  failRemove?: boolean
 }
 
 const expected = [
@@ -48,6 +64,10 @@ const expected = [
   ['dp_12ofR4iEES29PwwttZZGqsN', 'bf16e466d988', 'bf16e466d98825d889a71675bcc8ba9458ab12b6'],
   ['dp_14g38iazTnn3gWZzr8Ze0i5', '2e6a1cbf1dce', '2e6a1cbf1dce6737f6c96e25c097d214366af48d'],
 ] as const
+
+const finalId = expected[17][0]
+const nativeId = 'dp_14MYpEXKeHNXBkzJQMMIHSx'
+const nativeEndpoint = 'http://bayn-execution-controller-686554d857.bayn.svc.cluster.local:9080/'
 
 const cleanupManifest = readFileSync(
   new URL('../../../../argocd/applications/bayn/restate-registration-cleanup.yaml', import.meta.url),
@@ -76,39 +96,84 @@ const lifecycleDeployment = ([id, version, sourceRevision]: (typeof expected)[nu
   }
 }
 
-const unrelatedDeployments = (): Deployment[] => [
+const nativeDeployment = (): Deployment => ({
+  id: nativeId,
+  endpoint: nativeEndpoint,
+  sourceRevision: '5f366810884463ee593b417e21bc76bf2176de36',
+  services: ['BaynExecutionController', 'BaynExecutionBootstrap'],
+  managedBy: 'native',
+  serviceMetadata: 'bayn-execution-controller',
+  status: 'Active',
+  revision: 11,
+  latest: true,
+})
+
+const greeterDeployment = (): Deployment => ({
+  id: 'dp_greeter',
+  endpoint: 'http://restate-example.restate-example.svc.cluster.local:9080/',
+  sourceRevision: 'example',
+  services: ['Greeter'],
+  managedBy: 'example',
+  serviceMetadata: 'restate-example',
+  status: 'Active',
+  revision: 3,
+  latest: true,
+})
+
+const legacyBindings = (deployment: Deployment | undefined): ServiceBinding[] =>
+  deployment === undefined
+    ? []
+    : [
+        {
+          name: 'BaynLifecycle',
+          revision: deployment.revision,
+          public: false,
+          ty: 'virtual_object',
+          deploymentId: deployment.id,
+        },
+        {
+          name: 'BaynLifecycleBootstrap',
+          revision: deployment.revision,
+          public: true,
+          ty: 'service',
+          deploymentId: deployment.id,
+        },
+      ]
+
+const nativeBindings = (): ServiceBinding[] => [
   {
-    id: 'dp_native',
-    endpoint: 'http://bayn-execution-controller-current.bayn.svc.cluster.local:9080/',
-    sourceRevision: 'native',
-    services: ['BaynExecutionController', 'BaynExecutionBootstrap'],
-    managedBy: 'restate-operator',
-    serviceMetadata: 'bayn-execution-controller',
-    status: 'Active',
-    revision: 10,
-    latest: true,
+    name: 'BaynExecutionController',
+    revision: 11,
+    public: false,
+    ty: 'virtual_object',
+    deploymentId: nativeId,
   },
   {
-    id: 'dp_greeter',
-    endpoint: 'http://restate-example.restate-example.svc.cluster.local:9080/',
-    sourceRevision: 'example',
-    services: ['Greeter'],
-    managedBy: 'example',
-    serviceMetadata: 'restate-example',
-    status: 'Active',
-    revision: 3,
-    latest: true,
+    name: 'BaynExecutionBootstrap',
+    revision: 11,
+    public: true,
+    ty: 'service',
+    deploymentId: nativeId,
   },
 ]
 
-const makeState = (deployments = expected.map(lifecycleDeployment)): FakeState => ({
+const makeState = (lifecycleDeployments: Deployment[] = [lifecycleDeployment(expected[17])]): FakeState => ({
   expected: expected.map(([id, version]) => ({
     id,
     endpoint: `http://bayn-lifecycle-${version}.bayn.svc.cluster.local:9080/`,
   })),
-  deployments: [...deployments, ...unrelatedDeployments()],
-  nonterminalInvocations: 0,
+  deployments: [...lifecycleDeployments, nativeDeployment(), greeterDeployment()],
+  legacyServices: legacyBindings(lifecycleDeployments.at(-1)),
+  nativeServices: nativeBindings(),
+  legacyNonterminalInvocations: 0,
+  nativeCompletedTicks: 8,
+  nativeNonterminalTicks: 1,
+  nativeWrongPinnedNonterminalTicks: 0,
   removalCount: 0,
+  removalRequested: false,
+  pollCount: 0,
+  deploymentDisappearAfterPolls: 1,
+  serviceDisappearAfterPolls: 1,
 })
 
 const fakeRestateSource = String.raw`#!${process.execPath}
@@ -122,17 +187,31 @@ const state = JSON.parse(readFileSync(statePath, 'utf8'))
 const save = () => writeFileSync(statePath, JSON.stringify(state))
 appendFileSync(callsPath, JSON.stringify(args) + '\n')
 
-if (args[0] === 'sql') {
+const finalId = '${finalId}'
+const nativeId = '${nativeId}'
+const nativeEndpoint = '${nativeEndpoint}'
+
+const progressRemoval = (query) => {
   if (
-    state.abortSqlEnabled &&
-    state.abortSqlAfterRemovalCount !== undefined &&
-    state.removalCount >= state.abortSqlAfterRemovalCount
-  ) {
-    process.exit(91)
+    !state.removalRequested ||
+    query.includes('FROM classified d') ||
+    !query.includes('JOIN expected e ON d.id = e.id')
+  )
+    return
+  state.pollCount += 1
+  if (state.pollCount >= state.deploymentDisappearAfterPolls) {
+    state.deployments = state.deployments.filter((deployment) => deployment.id !== finalId)
   }
+  if (state.pollCount >= state.serviceDisappearAfterPolls) state.legacyServices = []
+  save()
+}
+
+if (args[0] === 'sql') {
   const query = args.at(-1) ?? ''
+  progressRemoval(query)
   const expectedById = new Map(state.expected.map((entry) => [entry.id, entry]))
   let count
+
   if (query.includes('FROM classified d')) {
     const lifecycleNames = new Set(['BaynLifecycle', 'BaynLifecycleBootstrap'])
     const classified = state.deployments.filter(
@@ -151,23 +230,80 @@ if (args[0] === 'sql') {
         !deployment.services.includes('BaynLifecycleBootstrap')
       )
     }).length
-  } else if (query.includes('FROM sys_invocation')) {
-    count = state.nonterminalInvocations
+  } else if (query.includes("target_service_name IN ('BaynLifecycle', 'BaynLifecycleBootstrap')")) {
+    count = state.legacyNonterminalInvocations
+  } else if (query.includes('JOIN expected e ON d.id = e.id')) {
+    count = state.deployments.filter((deployment) => expectedById.has(deployment.id)).length
+  } else if (query.includes("OR deployment_id IN ('dp_13XIXwisR4a4XPwInU61DdD'")) {
+    count = state.legacyServices.length
+  } else if (query.includes("name = 'BaynLifecycle'") && query.includes('revision = 18')) {
+    count = state.legacyServices.filter(
+      (service) =>
+        (service.name === 'BaynLifecycle' &&
+          service.revision === 18 &&
+          service.public === false &&
+          service.ty === 'virtual_object' &&
+          service.deploymentId === finalId) ||
+        (service.name === 'BaynLifecycleBootstrap' &&
+          service.revision === 18 &&
+          service.public === true &&
+          service.ty === 'service' &&
+          service.deploymentId === finalId),
+    ).length
+  } else if (query.includes("WHERE id = '" + nativeId + "'") && query.includes('AND endpoint =')) {
+    count = state.deployments.filter(
+      (deployment) =>
+        deployment.id === nativeId &&
+        deployment.endpoint === nativeEndpoint &&
+        deployment.services.length === 2 &&
+        deployment.services.includes('BaynExecutionController') &&
+        deployment.services.includes('BaynExecutionBootstrap'),
+    ).length
+  } else if (query.includes("name IN ('BaynExecutionController', 'BaynExecutionBootstrap')")) {
+    count = state.nativeServices.length
+  } else if (query.includes("name = 'BaynExecutionController'") && query.includes('revision = 11')) {
+    count = state.nativeServices.filter(
+      (service) =>
+        (service.name === 'BaynExecutionController' &&
+          service.revision === 11 &&
+          service.public === false &&
+          service.ty === 'virtual_object' &&
+          service.deploymentId === nativeId) ||
+        (service.name === 'BaynExecutionBootstrap' &&
+          service.revision === 11 &&
+          service.public === true &&
+          service.ty === 'service' &&
+          service.deploymentId === nativeId),
+    ).length
+  } else if (
+    query.includes("target_service_name = 'BaynExecutionController'") &&
+    query.includes("status = 'completed'")
+  ) {
+    count = state.nativeCompletedTicks
+  } else if (
+    query.includes("target_service_name = 'BaynExecutionController'") &&
+    query.includes('pinned_deployment_id IS NOT NULL')
+  ) {
+    count = state.nativeWrongPinnedNonterminalTicks
+  } else if (
+    query.includes("target_service_name = 'BaynExecutionController'") &&
+    query.includes("status <> 'completed'")
+  ) {
+    count = state.nativeNonterminalTicks
   } else if (query.includes("FROM sys_deployment WHERE id = '")) {
     const id = query.match(/WHERE id = '([^']+)'/)?.[1]
     count = state.deployments.filter((deployment) => deployment.id === id).length
-  } else if (query.includes('JOIN expected e ON d.id = e.id')) {
-    count = state.deployments.filter((deployment) => expectedById.has(deployment.id)).length
   } else {
     process.exit(92)
   }
+
   console.log(JSON.stringify({ count }))
   process.exit(0)
 }
 
 if (args[0] === 'deployments' && args[1] === 'describe') {
   const deployment = state.deployments.find((entry) => entry.id === args[2])
-  if (!deployment) process.exit(93)
+  if (!deployment || args.length !== 4 || args[3] !== '--extra') process.exit(93)
   console.log(
     [
       ' ID: ' + deployment.id,
@@ -187,20 +323,13 @@ if (args[0] === 'deployments' && args[1] === 'describe') {
 }
 
 if (args[0] === 'deployments' && args[1] === 'remove') {
-  if (args.length !== 4 || args[2] !== '-y') process.exit(94)
-  const id = args[3]
-  if (state.failRemoveId === id) process.exit(95)
-  const index = state.deployments.findIndex((deployment) => deployment.id === id)
-  if (index < 0) process.exit(96)
-  if (state.deployments[index].status === 'Active') process.exit(98)
-  state.deployments.splice(index, 1)
+  if (args.length !== 5 || args[2] !== '--force' || args[3] !== '-y' || args[4] !== finalId) process.exit(94)
+  if (state.failRemove) process.exit(95)
+  if (!state.deployments.some((deployment) => deployment.id === finalId)) process.exit(96)
+  state.removalRequested = true
   state.removalCount += 1
-  if (
-    state.injectInvocationAfterRemovalCount !== undefined &&
-    state.removalCount >= state.injectInvocationAfterRemovalCount
-  ) {
-    state.nonterminalInvocations = 1
-  }
+  if (state.injectLegacyInvocationAfterRemove) state.legacyNonterminalInvocations = 1
+  if (state.mutateNativeAfterRemove) state.nativeServices[0].revision = 12
   save()
   process.exit(0)
 }
@@ -211,21 +340,25 @@ process.exit(97)
 const writeState = (path: string, state: FakeState): void => writeFileSync(path, JSON.stringify(state))
 const readState = (path: string): FakeState => JSON.parse(readFileSync(path, 'utf8')) as FakeState
 
-const runCleanup = (initialState: FakeState) => {
+const runCleanup = (initialState: FakeState, pollAttempts = 30) => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-restate-cleanup-'))
   temporaryDirectories.push(directory)
   const bin = join(directory, 'bin')
   mkdirSync(bin)
   const restatePath = join(bin, 'restate')
+  const sleepPath = join(bin, 'sleep')
   const statePath = join(directory, 'state.json')
   const callsPath = join(directory, 'calls.jsonl')
   writeFileSync(restatePath, fakeRestateSource)
+  writeFileSync(sleepPath, '#!/bin/sh\nexit 0\n')
   chmodSync(restatePath, 0o755)
+  chmodSync(sleepPath, 0o755)
   writeState(statePath, initialState)
   writeFileSync(callsPath, '')
 
+  const executableScript = cleanupScript.replace('poll_attempts=30', `poll_attempts=${pollAttempts}`)
   const run = () =>
-    spawnSync('/bin/sh', ['-eu', '-c', cleanupScript], {
+    spawnSync('/bin/sh', ['-eu', '-c', executableScript], {
       encoding: 'utf8',
       env: {
         ...process.env,
@@ -255,8 +388,8 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { force: true, recursive: true })
 })
 
-describe('Bayn legacy Restate registration cleanup', () => {
-  test('pins the reviewed CLI and exact one-shot isolation contract', () => {
+describe('Bayn legacy Restate registration final retirement', () => {
+  test('pins the reviewed CLI, network isolation, and one exact force target', () => {
     expect(job.metadata.annotations).toEqual({
       'argocd.argoproj.io/hook': 'PostSync',
       'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation',
@@ -267,12 +400,6 @@ describe('Bayn legacy Restate registration cleanup', () => {
     })
     expect(job.spec.template.spec.automountServiceAccountToken).toBeFalse()
     expect(job.spec.template.spec.serviceAccountName).toBeUndefined()
-    expect(job.spec.template.spec.securityContext).toMatchObject({
-      runAsNonRoot: true,
-      runAsUser: 65532,
-      runAsGroup: 65532,
-      seccompProfile: { type: 'RuntimeDefault' },
-    })
     expect(container.image).toBe(
       'docker.restate.dev/restatedev/restate-cli:1.7.2@sha256:6905cd107840658f8ef0338c95e3c691dba3da450e9e0fb12066d00fd57e69f9',
     )
@@ -281,43 +408,29 @@ describe('Bayn legacy Restate registration cleanup', () => {
       readOnlyRootFilesystem: true,
       capabilities: { drop: ['ALL'] },
     })
-    expect(container.env).toEqual([
-      { name: 'RESTATE_ADMIN_URL', value: 'http://restate.restate.svc.cluster.local:9070' },
-      { name: 'HOME', value: '/tmp' },
-      { name: 'RESTATE_CLI_CONFIG_HOME', value: '/tmp/restate-cli' },
-    ])
-    expect(networkPolicy.spec).toEqual({
-      podSelector: {
-        matchLabels: {
-          'app.kubernetes.io/name': 'bayn-lifecycle-register',
-          'bayn.proompteng.ai/task': 'restate-registration-cleanup',
-        },
+    expect(networkPolicy.spec.egress).toEqual([
+      {
+        to: [
+          {
+            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } },
+            podSelector: { matchLabels: { 'k8s-app': 'kube-dns' } },
+          },
+        ],
+        ports: [
+          { port: 53, protocol: 'UDP' },
+          { port: 53, protocol: 'TCP' },
+        ],
       },
-      policyTypes: ['Egress'],
-      egress: [
-        {
-          to: [
-            {
-              namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } },
-              podSelector: { matchLabels: { 'k8s-app': 'kube-dns' } },
-            },
-          ],
-          ports: [
-            { port: 53, protocol: 'UDP' },
-            { port: 53, protocol: 'TCP' },
-          ],
-        },
-        {
-          to: [
-            {
-              namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'restate' } },
-              podSelector: { matchLabels: { app: 'restate' } },
-            },
-          ],
-          ports: [{ port: 9070, protocol: 'TCP' }],
-        },
-      ],
-    })
+      {
+        to: [
+          {
+            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'restate' } },
+            podSelector: { matchLabels: { app: 'restate' } },
+          },
+        ],
+        ports: [{ port: 9070, protocol: 'TCP' }],
+      },
+    ])
 
     const embeddedAllowlist = [...cleanupScript.matchAll(/^(dp_[^|]+)\|([^|]+)\|([0-9a-f]{40})$/gm)].map((match) => [
       match[1],
@@ -325,114 +438,91 @@ describe('Bayn legacy Restate registration cleanup', () => {
       match[3],
     ])
     expect(embeddedAllowlist).toEqual(expected)
-    expect(cleanupScript.match(/restate deployments remove -y "\$id"/g)).toHaveLength(1)
-    expect(cleanupScript).not.toContain('--force')
+    expect(cleanupScript.match(/restate deployments remove --force -y "\$final_id"/g)).toHaveLength(1)
+    expect(cleanupScript).toContain(`final_id='${finalId}'`)
+    expect(cleanupScript).toContain(`native_id='${nativeId}'`)
+    expect(cleanupScript).toContain(`native_endpoint='${nativeEndpoint}'`)
+    expect(cleanupScript).toContain('poll_attempts=30')
+    expect(cleanupScript).toContain('poll_interval_seconds=2')
+    expect(cleanupScript).not.toMatch(/restate deployments remove (?!--force -y "\$final_id")/)
     expect(cleanupScript).not.toContain('curl')
     expect(cleanupScript).not.toContain('DELETE')
     expect(cleanupScript).not.toMatch(/restate\s+services\s+(delete|remove)/)
-    expect(cleanupScript).not.toMatch(/restate\s+deployments\s+delete/)
     expect(cleanupScript).not.toMatch(/invocations?\s+(kill|cancel|purge)/)
-    expect(cleanupScript).not.toContain('BaynExecution')
-    expect(cleanupScript).not.toContain('Greeter')
-    expect(cleanupScript).not.toContain('restate-example')
-    expect(cleanupReadme).toContain('final deployment `dp_14g38iazTnn3gWZzr8Ze0i5`')
-    expect(cleanupReadme).toContain('terminal `HOLD`')
-    expect(cleanupReadme).toContain('Any other nonzero partial subset')
-    expect(cleanupReadme).toContain('submit a narrowly reviewed\nGitOps correction')
-    expect(cleanupReadme).toContain('Never use `--force`')
+    expect(cleanupReadme).toContain('one exact force removal')
+    expect(cleanupReadme).toContain(finalId)
+    expect(cleanupReadme).toContain(nativeId)
+    expect(cleanupReadme).toContain('empty-set reruns')
   })
 
-  test('removes the 17 drained revisions oldest to newest and holds the final active revision', () => {
+  test('force-removes only the exact final deployment and reaches the empty retired state', () => {
     const harness = runCleanup(makeState())
     const result = harness.run()
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain(`HOLD: final Bayn lifecycle deployment ${expected[17][0]}`)
-    expect(removalCalls(harness.calls())).toEqual(
-      expected.slice(0, -1).map(([id]) => ['deployments', 'remove', '-y', id]),
-    )
-    expect(readState(harness.statePath).deployments).toEqual([
-      lifecycleDeployment(expected[17]),
-      ...unrelatedDeployments(),
-    ])
-  }, 15_000)
+    expect(result.stdout).toContain(`Force-removing the exact final Bayn lifecycle Restate deployment ${finalId}`)
+    expect(result.stdout).toContain('retirement completed')
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
+    const state = readState(harness.statePath)
+    expect(state.removalCount).toBe(1)
+    expect(state.deployments.map(({ id }) => id)).toEqual([nativeId, 'dp_greeter'])
+    expect(state.legacyServices).toEqual([])
+    expect(state.nativeServices).toEqual(nativeBindings())
+  })
 
-  test('fails closed on a non-final strict subset instead of resuming mutation', () => {
+  test('waits through bounded asynchronous deployment and service disappearance', () => {
     const state = makeState()
-    state.abortSqlAfterRemovalCount = 5
-    state.abortSqlEnabled = true
-    const harness = runCleanup(state)
-
-    const firstRun = harness.run()
-    expect(firstRun.status).not.toBe(0)
-    expect(readState(harness.statePath).deployments.filter(({ id }) => id.startsWith('dp_1'))).toHaveLength(13)
-
-    const retryState = readState(harness.statePath)
-    retryState.abortSqlEnabled = false
-    writeState(harness.statePath, retryState)
-    const retry = harness.run()
-
-    expect(retry.status).not.toBe(0)
-    expect(retry.stderr).toContain('unexpected non-final remaining subset (13 of 18); refusing mutation')
-    expect(removalCalls(harness.calls())).toEqual(
-      expected.slice(0, 5).map(([id]) => ['deployments', 'remove', '-y', id]),
-    )
-    expect(readState(harness.statePath).removalCount).toBe(5)
-  }, 15_000)
-
-  test('holds the exact live 17-removed final active revision without mutation', () => {
-    const harness = runCleanup(makeState([lifecycleDeployment(expected[17])]))
+    state.deploymentDisappearAfterPolls = 2
+    state.serviceDisappearAfterPolls = 3
+    const harness = runCleanup(state, 3)
     const result = harness.run()
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain(`HOLD: final Bayn lifecycle deployment ${expected[17][0]}`)
-    expect(result.stdout).toContain('non-force removal is intentionally not attempted')
-    expect(removalCalls(harness.calls())).toEqual([])
-    expect(readState(harness.statePath).deployments).toEqual([
-      lifecycleDeployment(expected[17]),
-      ...unrelatedDeployments(),
-    ])
-  })
+    expect(readState(harness.statePath).pollCount).toBeGreaterThanOrEqual(3)
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
+  }, 10_000)
 
-  test('replays the exact terminal HOLD idempotently', () => {
-    const harness = runCleanup(makeState([lifecycleDeployment(expected[17])]))
-
-    const first = harness.run()
-    const second = harness.run()
-
-    expect(first.status).toBe(0)
-    expect(second.status).toBe(0)
-    expect(first.stdout).toContain('HOLD: final Bayn lifecycle deployment')
-    expect(second.stdout).toContain('HOLD: final Bayn lifecycle deployment')
-    expect(removalCalls(harness.calls())).toEqual([])
-    expect(readState(harness.statePath).removalCount).toBe(0)
-  })
-
-  test('fails closed when the final deployment is no longer Active', () => {
-    const finalDeployment = lifecycleDeployment(expected[17])
-    finalDeployment.status = 'Drained'
-    const harness = runCleanup(makeState([finalDeployment]))
+  test('times out if the asynchronous deployment deletion never completes', () => {
+    const state = makeState()
+    state.deploymentDisappearAfterPolls = 999
+    state.serviceDisappearAfterPolls = 999
+    const harness = runCleanup(state, 1)
     const result = harness.run()
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('terminal HOLD requires the final deployment to remain Active')
-    expect(removalCalls(harness.calls())).toEqual([])
+    expect(result.stderr).toContain('timed out waiting for exact final deployment and lifecycle services to disappear')
+    expect(readState(harness.statePath).pollCount).toBe(1)
+    expect(removalCalls(harness.calls())).toHaveLength(1)
   })
 
-  test('fails closed when the final deployment is no longer the latest revision', () => {
-    const finalDeployment = lifecycleDeployment(expected[17])
-    finalDeployment.latest = false
-    const harness = runCleanup(makeState([finalDeployment]))
+  test('fails closed on service residue after the deployment disappears', () => {
+    const state = makeState()
+    state.deploymentDisappearAfterPolls = 1
+    state.serviceDisappearAfterPolls = 999
+    const harness = runCleanup(state, 1)
     const result = harness.run()
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('terminal HOLD requires both lifecycle services to remain revision 18 [Latest]')
-    expect(removalCalls(harness.calls())).toEqual([])
+    expect(result.stderr).toContain('timed out waiting for exact final deployment and lifecycle services to disappear')
+    expect(readState(harness.statePath).legacyServices).toHaveLength(2)
   })
 
-  test('fails closed on final-state lifecycle or pinned invocations', () => {
-    const state = makeState([lifecycleDeployment(expected[17])])
-    state.nonterminalInvocations = 1
+  test('fails immediately on the unexpected inverse partial deletion state', () => {
+    const state = makeState()
+    state.deploymentDisappearAfterPolls = 999
+    state.serviceDisappearAfterPolls = 1
+    const harness = runCleanup(state)
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(
+      'unexpected asynchronous retirement state: 1 deployment(s), 0 lifecycle service row(s)',
+    )
+  })
+
+  test('fails closed if a legacy or final-pinned invocation exists before mutation', () => {
+    const state = makeState()
+    state.legacyNonterminalInvocations = 1
     const harness = runCleanup(state)
     const result = harness.run()
 
@@ -441,31 +531,67 @@ describe('Bayn legacy Restate registration cleanup', () => {
     expect(removalCalls(harness.calls())).toEqual([])
   })
 
-  test('fails closed on an allowlisted singleton that is not the final deployment', () => {
-    const singleton = lifecycleDeployment(expected[16])
-    singleton.status = 'Active'
-    singleton.latest = true
-    const harness = runCleanup(makeState([singleton]))
+  test('fails closed on a zombie legacy invocation injected after force acceptance', () => {
+    const state = makeState()
+    state.injectLegacyInvocationAfterRemove = true
+    const harness = runCleanup(state)
     const result = harness.run()
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('terminal HOLD requires the exact final allowlisted deployment')
-    expect(removalCalls(harness.calls())).toEqual([])
+    expect(result.stderr).toContain('lifecycle or pinned nonterminal invocations exist (1)')
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
   })
 
-  test('treats zero remaining deployments as a successful no-op', () => {
-    const harness = runCleanup(makeState([]))
+  test('rejects lifecycle metadata drift before force removal', () => {
+    const state = makeState()
+    state.deployments[0]!.sourceRevision = '0'.repeat(40)
+    const harness = runCleanup(state)
     const result = harness.run()
 
-    expect(result.status).toBe(0)
-    expect(result.stdout).toContain('already absent; nothing to remove')
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('changed source_revision metadata')
     expect(removalCalls(harness.calls())).toEqual([])
-    expect(readState(harness.statePath).deployments).toEqual(unrelatedDeployments())
   })
 
-  test('rejects an unknown lifecycle deployment before mutation', () => {
+  test('rejects changed final service revision or Latest status before force removal', () => {
     const state = makeState()
-    state.deployments.push({
+    state.legacyServices[0]!.revision = 19
+    const harness = runCleanup(state)
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('final lifecycle service bindings changed')
+    expect(removalCalls(harness.calls())).toEqual([])
+
+    const latestState = makeState()
+    latestState.deployments[0]!.latest = false
+    const latestHarness = runCleanup(latestState)
+    const latestResult = latestHarness.run()
+    expect(latestResult.status).not.toBe(0)
+    expect(latestResult.stderr).toContain('both lifecycle services to remain revision 18 [Latest]')
+    expect(removalCalls(latestHarness.calls())).toEqual([])
+  })
+
+  test('rejects a wrong allowlisted singleton ID and any larger remaining subset', () => {
+    const wrongSingleton = lifecycleDeployment(expected[16])
+    wrongSingleton.status = 'Active'
+    wrongSingleton.latest = true
+    const wrongHarness = runCleanup(makeState([wrongSingleton]))
+    const wrongResult = wrongHarness.run()
+    expect(wrongResult.status).not.toBe(0)
+    expect(wrongResult.stderr).toContain('final retirement requires the exact final allowlisted deployment')
+    expect(removalCalls(wrongHarness.calls())).toEqual([])
+
+    const partialHarness = runCleanup(makeState([lifecycleDeployment(expected[16]), lifecycleDeployment(expected[17])]))
+    const partialResult = partialHarness.run()
+    expect(partialResult.status).not.toBe(0)
+    expect(partialResult.stderr).toContain('unexpected non-final remaining subset (2 of 18); refusing final retirement')
+    expect(removalCalls(partialHarness.calls())).toEqual([])
+  })
+
+  test('rejects an unknown lifecycle classifier member before mutation', () => {
+    const state = makeState()
+    state.deployments.unshift({
       ...lifecycleDeployment(expected[0]),
       id: 'dp_unknown',
       endpoint: 'http://bayn-lifecycle-unknown.bayn.svc.cluster.local:9080/',
@@ -478,60 +604,90 @@ describe('Bayn legacy Restate registration cleanup', () => {
     expect(removalCalls(harness.calls())).toEqual([])
   })
 
-  test('rejects wrong lifecycle service membership before mutation', () => {
-    const state = makeState()
-    state.deployments[0]!.services = ['BaynLifecycle', 'Greeter']
-    const harness = runCleanup(state)
-    const result = harness.run()
+  test('rejects native deployment, service, tick, or pin drift before mutation', () => {
+    const cases: Array<[string, (state: FakeState) => void, string]> = [
+      [
+        'deployment',
+        (state) => {
+          state.deployments.find(({ id }) => id === nativeId)!.endpoint =
+            'http://wrong-native.bayn.svc.cluster.local:9080/'
+        },
+        'current native execution deployment binding changed',
+      ],
+      [
+        'service',
+        (state) => {
+          state.nativeServices[0]!.revision = 12
+        },
+        'native execution service bindings changed',
+      ],
+      [
+        'completed ticks',
+        (state) => {
+          state.nativeCompletedTicks = 1
+        },
+        'native execution tick continuity is stale',
+      ],
+      [
+        'nonterminal ticks',
+        (state) => {
+          state.nativeNonterminalTicks = 0
+        },
+        'native execution tick continuity is unexpected',
+      ],
+      [
+        'wrong pin',
+        (state) => {
+          state.nativeWrongPinnedNonterminalTicks = 1
+        },
+        'native execution has nonterminal ticks pinned to another deployment',
+      ],
+    ]
 
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('unexpected lifecycle deployment classifier state')
-    expect(removalCalls(harness.calls())).toEqual([])
+    for (const [, mutate, message] of cases) {
+      const state = makeState()
+      mutate(state)
+      const harness = runCleanup(state)
+      const result = harness.run()
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain(message)
+      expect(removalCalls(harness.calls())).toEqual([])
+    }
   })
 
-  test('rejects lifecycle metadata drift before mutation', () => {
+  test('detects native collateral immediately after the exact force removal', () => {
     const state = makeState()
-    state.deployments[0]!.managedBy = 'manual'
+    state.mutateNativeAfterRemove = true
     const harness = runCleanup(state)
     const result = harness.run()
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('changed managed_by metadata')
-    expect(removalCalls(harness.calls())).toEqual([])
+    expect(result.stderr).toContain('native execution service bindings changed')
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
   })
 
-  test('rejects lifecycle or pinned invocation drift before mutation', () => {
+  test('fails closed when the exact force command itself is refused', () => {
     const state = makeState()
-    state.nonterminalInvocations = 1
+    state.failRemove = true
     const harness = runCleanup(state)
     const result = harness.run()
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('lifecycle or pinned nonterminal invocations exist (1)')
-    expect(removalCalls(harness.calls())).toEqual([])
-  })
-
-  test('rechecks invocation drift during the removal loop', () => {
-    const state = makeState()
-    state.injectInvocationAfterRemovalCount = 1
-    const harness = runCleanup(state)
-    const result = harness.run()
-
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('lifecycle or pinned nonterminal invocations exist (1)')
-    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '-y', expected[0][0]]])
-    expect(readState(harness.statePath).removalCount).toBe(1)
-  })
-
-  test('fails closed when non-force deployment removal refuses', () => {
-    const state = makeState()
-    state.failRemoveId = expected[0][0]
-    const harness = runCleanup(state)
-    const result = harness.run()
-
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain(`non-force removal refused for ${expected[0][0]}`)
-    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '-y', expected[0][0]]])
+    expect(result.stderr).toContain(`force removal refused for exact final deployment ${finalId}`)
+    expect(removalCalls(harness.calls())).toEqual([['deployments', 'remove', '--force', '-y', finalId]])
     expect(readState(harness.statePath).removalCount).toBe(0)
+  })
+
+  test('treats the fully retired empty set as an idempotent no-op without force calls', () => {
+    const harness = runCleanup(makeState([]))
+    const first = harness.run()
+    const second = harness.run()
+
+    expect(first.status).toBe(0)
+    expect(second.status).toBe(0)
+    expect(first.stdout).toContain('retirement already complete; empty-set rerun is safe')
+    expect(second.stdout).toContain('retirement already complete; empty-set rerun is safe')
+    expect(removalCalls(harness.calls())).toEqual([])
+    expect(readState(harness.statePath).deployments.map(({ id }) => id)).toEqual([nativeId, 'dp_greeter'])
   })
 })

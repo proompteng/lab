@@ -121,6 +121,11 @@ spec:
               final_id='dp_14g38iazTnn3gWZzr8Ze0i5'
               final_endpoint='http://bayn-lifecycle-2e6a1cbf1dce.bayn.svc.cluster.local:9080/'
               final_source_revision='2e6a1cbf1dce6737f6c96e25c097d214366af48d'
+              native_id='dp_14MYpEXKeHNXBkzJQMMIHSx'
+              native_endpoint='http://bayn-execution-controller-686554d857.bayn.svc.cluster.local:9080/'
+              native_revision='11'
+              poll_attempts=30
+              poll_interval_seconds=2
               while IFS='|' read -r id endpoint source_revision; do
                 [ -n "$id" ] || continue
                 if [ -n "$expected_values" ]; then
@@ -164,7 +169,7 @@ spec:
                 [ "$(field service "$details")" = 'bayn-lifecycle' ] || fail "deployment $id changed service metadata"
               }
 
-              validate_global() {
+              validate_lifecycle_global() {
                 violations="$(sql_count "
                   WITH expected(id, endpoint) AS (VALUES $expected_values),
                   classified AS (
@@ -196,18 +201,6 @@ spec:
                     )
                 ")"
                 [ "$invocations" -eq 0 ] || fail "lifecycle or pinned nonterminal invocations exist ($invocations)"
-
-              }
-
-              validate_remaining_metadata() {
-                while IFS='|' read -r id endpoint source_revision; do
-                  [ -n "$id" ] || continue
-                  if deployment_present "$id"; then
-                    validate_target "$id" "$endpoint" "$source_revision"
-                  fi
-                done <<EOF
-              $(allowlist)
-              EOF
               }
 
               remaining_count() {
@@ -219,62 +212,186 @@ spec:
                 "
               }
 
-              hold_final_active_revision() {
-                validate_global
-                current_remaining="$(remaining_count)"
-                [ "$current_remaining" -eq 1 ] || fail "terminal HOLD requires exactly one remaining allowlisted deployment, observed $current_remaining"
-                deployment_present "$final_id" || fail 'terminal HOLD requires the exact final allowlisted deployment'
-                validate_target "$final_id" "$final_endpoint" "$final_source_revision"
-                details="$(restate deployments describe "$final_id" --extra)" || fail "cannot describe $final_id"
-                [ "$(field Status "$details")" = 'Active' ] || fail 'terminal HOLD requires the final deployment to remain Active'
-                latest_revision_count="$(printf '%s\n' "$details" | sed -n 's/^[[:space:]]*Revision:[[:space:]]*18 \[Latest\][[:space:]]*$/latest/p' | wc -l | tr -d ' ')"
-                [ "$latest_revision_count" -eq 2 ] || fail 'terminal HOLD requires both lifecycle services to remain revision 18 [Latest]'
-                echo "HOLD: final Bayn lifecycle deployment $final_id remains the latest Active revision with zero nonterminal invocations; non-force removal is intentionally not attempted."
+              lifecycle_service_count() {
+                sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_service
+                  WHERE name IN ('BaynLifecycle', 'BaynLifecycleBootstrap')
+                    OR deployment_id IN ($expected_ids)
+                "
               }
 
-              validate_global
-              validate_remaining_metadata
+              validate_final_service_bindings() {
+                service_count="$(lifecycle_service_count)"
+                [ "$service_count" -eq 2 ] || fail "final lifecycle service binding count changed ($service_count)"
+                exact_count="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_service
+                  WHERE
+                    (name = 'BaynLifecycle'
+                      AND revision = 18
+                      AND public = false
+                      AND ty = 'virtual_object'
+                      AND deployment_id = '$final_id')
+                    OR
+                    (name = 'BaynLifecycleBootstrap'
+                      AND revision = 18
+                      AND public = true
+                      AND ty = 'service'
+                      AND deployment_id = '$final_id')
+                ")"
+                [ "$exact_count" -eq 2 ] || fail "final lifecycle service bindings changed ($exact_count exact rows)"
+              }
+
+              validate_no_lifecycle_services() {
+                service_count="$(lifecycle_service_count)"
+                [ "$service_count" -eq 0 ] || fail "legacy lifecycle service residue remains ($service_count rows)"
+              }
+
+              validate_final_active_revision() {
+                current_remaining="$(remaining_count)"
+                [ "$current_remaining" -eq 1 ] || fail "final retirement requires exactly one remaining allowlisted deployment, observed $current_remaining"
+                deployment_present "$final_id" || fail 'final retirement requires the exact final allowlisted deployment'
+                validate_target "$final_id" "$final_endpoint" "$final_source_revision"
+                details="$(restate deployments describe "$final_id" --extra)" || fail "cannot describe $final_id"
+                [ "$(field Status "$details")" = 'Active' ] || fail 'final retirement requires the final deployment to remain Active'
+                latest_revision_count="$(printf '%s\n' "$details" | sed -n 's/^[[:space:]]*Revision:[[:space:]]*18 \[Latest\][[:space:]]*$/latest/p' | wc -l | tr -d ' ')"
+                [ "$latest_revision_count" -eq 2 ] || fail 'final retirement requires both lifecycle services to remain revision 18 [Latest]'
+                validate_final_service_bindings
+              }
+
+              validate_native_binding() {
+                native_deployment_count="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_deployment
+                  WHERE id = '$native_id'
+                    AND endpoint = '$native_endpoint'
+                    AND array_length(services) = 2
+                    AND array_has(services, 'BaynExecutionController')
+                    AND array_has(services, 'BaynExecutionBootstrap')
+                ")"
+                [ "$native_deployment_count" -eq 1 ] || fail 'current native execution deployment binding changed'
+
+                native_service_count="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_service
+                  WHERE name IN ('BaynExecutionController', 'BaynExecutionBootstrap')
+                ")"
+                [ "$native_service_count" -eq 2 ] || fail "native execution service binding count changed ($native_service_count)"
+
+                native_exact_count="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_service
+                  WHERE
+                    (name = 'BaynExecutionController'
+                      AND revision = $native_revision
+                      AND public = false
+                      AND ty = 'virtual_object'
+                      AND deployment_id = '$native_id')
+                    OR
+                    (name = 'BaynExecutionBootstrap'
+                      AND revision = $native_revision
+                      AND public = true
+                      AND ty = 'service'
+                      AND deployment_id = '$native_id')
+                ")"
+                [ "$native_exact_count" -eq 2 ] || fail "native execution service bindings changed ($native_exact_count exact rows)"
+              }
+
+              validate_native_tick_continuity() {
+                completed_ticks="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_invocation
+                  WHERE target_service_name = 'BaynExecutionController'
+                    AND target_handler_name = 'tick'
+                    AND status = 'completed'
+                    AND pinned_deployment_id = '$native_id'
+                    AND completed_at >= now() - interval '5 minutes'
+                ")"
+                [ "$completed_ticks" -ge 2 ] || fail "native execution tick continuity is stale ($completed_ticks recent completed ticks)"
+
+                nonterminal_ticks="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_invocation
+                  WHERE target_service_name = 'BaynExecutionController'
+                    AND target_handler_name = 'tick'
+                    AND status <> 'completed'
+                ")"
+                [ "$nonterminal_ticks" -ge 1 ] && [ "$nonterminal_ticks" -le 2 ] ||
+                  fail "native execution tick continuity is unexpected ($nonterminal_ticks nonterminal ticks)"
+
+                wrong_pinned_ticks="$(sql_count "
+                  SELECT COUNT(*) AS count
+                  FROM sys_invocation
+                  WHERE target_service_name = 'BaynExecutionController'
+                    AND target_handler_name = 'tick'
+                    AND status <> 'completed'
+                    AND pinned_deployment_id IS NOT NULL
+                    AND pinned_deployment_id <> '$native_id'
+                ")"
+                [ "$wrong_pinned_ticks" -eq 0 ] || fail "native execution has nonterminal ticks pinned to another deployment ($wrong_pinned_ticks)"
+              }
+
+              validate_pre_remove() {
+                validate_lifecycle_global
+                validate_final_active_revision
+                validate_native_binding
+                validate_native_tick_continuity
+              }
+
+              validate_empty_state() {
+                validate_lifecycle_global
+                [ "$(remaining_count)" -eq 0 ] || fail 'legacy deployment reappeared after retirement'
+                validate_no_lifecycle_services
+                validate_native_binding
+                validate_native_tick_continuity
+              }
+
+              validate_lifecycle_global
               remaining="$(remaining_count)"
               [ "$remaining" -le 18 ] || fail "remaining deployment count exceeds immutable allowlist: $remaining"
               if [ "$remaining" -eq 0 ]; then
-                echo 'Bayn legacy Restate registrations already absent; nothing to remove.'
+                validate_empty_state
+                echo 'Bayn legacy Restate registration retirement already complete; empty-set rerun is safe.'
                 exit 0
               fi
-              if [ "$remaining" -eq 1 ]; then
-                hold_final_active_revision
-                exit 0
+              [ "$remaining" -eq 1 ] || fail "unexpected non-final remaining subset ($remaining of 18); refusing final retirement"
+
+              validate_pre_remove
+              echo "Validated exact final Bayn lifecycle deployment $final_id and current native execution continuity."
+
+              # Recheck the complete mutation contract immediately before the single force removal.
+              validate_pre_remove
+              echo "Force-removing the exact final Bayn lifecycle Restate deployment $final_id"
+              if ! restate deployments remove --force -y "$final_id"; then
+                fail "force removal refused for exact final deployment $final_id"
               fi
-              [ "$remaining" -eq 18 ] || fail "unexpected non-final remaining subset ($remaining of 18); refusing mutation"
-              echo "Validated $remaining remaining Bayn lifecycle deployment(s) from the immutable 18-deployment allowlist."
 
-              # The allowlist is ordered by the verified Restate created_at sequence, oldest first.
-              expected_remaining=18
-              while IFS='|' read -r id endpoint source_revision; do
-                [ -n "$id" ] || continue
-                validate_global
-                current_remaining="$(remaining_count)"
-                [ "$current_remaining" -eq "$expected_remaining" ] ||
-                  fail "remaining lifecycle subset changed during cleanup: expected $expected_remaining, observed $current_remaining"
-                deployment_present "$id" || fail "expected next allowlisted deployment $id is missing"
-                if [ "$id" = "$final_id" ]; then
-                  [ "$current_remaining" -eq 1 ] || fail 'final deployment reached before all older allowlisted deployments were removed'
-                  hold_final_active_revision
-                  exit 0
-                fi
-                validate_target "$id" "$endpoint" "$source_revision"
-                echo "Removing drained Bayn lifecycle Restate deployment $id"
-                if ! restate deployments remove -y "$id"; then
-                  fail "non-force removal refused for $id"
-                fi
-                expected_remaining=$((expected_remaining - 1))
-              done <<EOF
-              $(allowlist)
-              EOF
+              attempt=1
+              while [ "$attempt" -le "$poll_attempts" ]; do
+                validate_lifecycle_global
+                validate_native_binding
+                validate_native_tick_continuity
+                remaining="$(remaining_count)"
+                service_count="$(lifecycle_service_count)"
+                case "$remaining:$service_count" in
+                  0:0)
+                    validate_empty_state
+                    echo 'Bayn legacy Restate registration retirement completed.'
+                    exit 0
+                    ;;
+                  1:2|0:2)
+                    validate_final_service_bindings
+                    ;;
+                  *)
+                    fail "unexpected asynchronous retirement state: $remaining deployment(s), $service_count lifecycle service row(s)"
+                    ;;
+                esac
+                attempt=$((attempt + 1))
+                sleep "$poll_interval_seconds"
+              done
 
-              validate_global
-              remaining="$(remaining_count)"
-              [ "$remaining" -eq 0 ] || fail "cleanup ended with $remaining allowlisted deployments still registered"
-              echo 'Bayn legacy Restate registration cleanup completed.'
+              fail "timed out waiting for exact final deployment and lifecycle services to disappear after $poll_attempts polls"
           env:
             - name: RESTATE_ADMIN_URL
               value: http://restate.restate.svc.cluster.local:9070
