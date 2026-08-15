@@ -65,7 +65,7 @@ const probe = (
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservationId?: string | null,
   qualificationEvidenceRequired = true,
 ) =>
   testHealthDependencies.pipe(
@@ -1137,6 +1137,52 @@ describe('Bayn continuous health', () => {
         cycle: { condition: CycleOperationsCondition.Waiting, unfinishedCycleCount: 0 },
       })
       expect(isReady(observed)).toBe(true)
+    }).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
+  test('does not fall back to retained evidence when the caller marks cycle observation unavailable', async () => {
+    const checkedAt = '2026-07-20T00:00:00.000Z'
+    const observedBindings: string[] = []
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(checkedAt))
+      const state = yield* Ref.make(readyState())
+      yield* probe(config, state, undefined, undefined, null).pipe(
+        Effect.provideService(MarketData, {
+          check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
+          inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          inspectCyclePublications: Effect.die(
+            new Error('health probes must not inspect cycle publication candidates'),
+          ),
+          inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+          inspectSnapshotPublication: () =>
+            Effect.die(new Error('health probes must not inspect bound cycle publications')),
+          loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
+          load: Effect.die(new Error('health probes must not load bars')),
+        }),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, recoveringStore(readyState())),
+        Effect.provideService(
+          CycleObservability,
+          cycleObservability((bindingId) =>
+            Effect.sync(() => {
+              observedBindings.push(bindingId)
+              return emptyCycleProjection()
+            }),
+          ),
+        ),
+      )
+
+      expect(observedBindings).toEqual([])
+      expect(yield* Ref.get(state)).toMatchObject({
+        status: 'DEGRADED',
+        health: { dependencies: { cycle: { status: 'UNAVAILABLE' } } },
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+        },
+      })
     }).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)

@@ -809,7 +809,7 @@ describe('Bayn capital startup recovery boundary', () => {
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
-    expect(result).toBeUndefined()
+    expect(result).toBeNull()
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
@@ -835,7 +835,7 @@ describe('Bayn capital startup recovery boundary', () => {
       }),
     )
 
-    expect(cycleObservationId).toBeUndefined()
+    expect(cycleObservationId).toBeNull()
     expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), pinnedEvaluation.runId, true)).toBe(true)
   })
 
