@@ -67,7 +67,7 @@ const configuredTelemetry = (options: TelemetryRuntimeOptions, endpoint: string)
   return {
     hooks: [
       openTelemetryHook({
-        tracer: provider.getTracer('bayn-restate-lifecycle', options.serviceVersion),
+        tracer: provider.getTracer('bayn-restate', options.serviceVersion),
         runSpans: true,
         suppressSpanEventsDuringReplay: true,
         additionalAttemptAttributes: { 'service.namespace': 'bayn' },

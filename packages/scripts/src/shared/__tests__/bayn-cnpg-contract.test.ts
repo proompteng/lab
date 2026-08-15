@@ -319,13 +319,9 @@ test('the native Restate cutover binds one read-only controller before the statu
   )
   expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
   expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')?.value).toBe('primary')
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')?.value).toBe(
-    '74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d',
-  )
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')?.value).toBe(
-    '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
-  )
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
     '457d0b36483c0b6f952cf81dd85ff7774e37cc91c4e01e054a37479e63822c53',
   )
@@ -342,20 +338,15 @@ test('the native Restate cutover binds one read-only controller before the statu
     expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
   }
   expect(kustomization.resources).toContain('execution-activation.yaml')
-  expect(kustomization.patches).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        target: expect.objectContaining({
-          kind: 'Job',
-          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
-        }),
-      }),
-      expect.objectContaining({
-        target: expect.objectContaining({
-          kind: 'NetworkPolicy',
-          labelSelector: 'app.kubernetes.io/name=bayn-lifecycle-register',
-        }),
-      }),
-    ]),
-  )
+  expect(kustomization.resources).not.toContain('lifecycle-current.yaml')
+  expect(kustomization.resources).not.toContain('lifecycle-previous.yaml')
+  expect(kustomization.patches ?? []).toEqual([])
+
+  const deploymentPorts = deployment.spec.template.spec.containers[0]?.ports ?? []
+  expect(deploymentPorts.map((port: { readonly name?: string }) => port.name)).toEqual(['http'])
+  expect(
+    deployment.spec.template.spec.volumes?.some(
+      (volume: { readonly name?: string }) => volume.name === 'bayn-lifecycle-reviewer',
+    ) ?? false,
+  ).toBe(false)
 })

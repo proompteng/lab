@@ -3,17 +3,7 @@
 import { inflateRawSync } from 'node:zlib'
 import process from 'node:process'
 
-import {
-  baynLifecycleCurrentPath,
-  baynLifecyclePreviousPath,
-  parseBaynLifecycleCurrent,
-  parseBaynLifecyclePrevious,
-  validateBaynLifecycleActivation,
-  validateBaynLifecycleCommandPort,
-  validateBaynLifecyclePromotion,
-  validateBaynServiceLinksDisabled,
-  type BaynLifecycleImagePin,
-} from './lifecycle-manifests'
+import { parse } from 'yaml'
 
 const githubApiVersion = '2022-11-28'
 const githubGraphqlUrl = 'https://api.github.com/graphql'
@@ -40,18 +30,14 @@ export const baynPromotionManifestPaths = [
   'argocd/applications/bayn/deployment.yaml',
   'argocd/applications/bayn/kustomization.yaml',
   'argocd/applicationsets/product.yaml',
-  baynLifecycleCurrentPath,
-  baynLifecyclePreviousPath,
 ] as const
 
 const deploymentPath = baynPromotionManifestPaths[0]
 const kustomizationPath = baynPromotionManifestPaths[1]
 const applicationSetPath = baynPromotionManifestPaths[2]
-const lifecycleCurrentPath = baynPromotionManifestPaths[3]
 const promotionPathSet = new Set<string>(baynPromotionManifestPaths)
 
 const exactBaynBuildInputPaths = new Set([
-  'packages/scripts/src/bayn/lifecycle-manifests.ts',
   'packages/scripts/src/bayn/update-manifests.ts',
   'nix/images/bayn.nix',
   'nix/images/bayn-runtime-root.nix',
@@ -85,7 +71,6 @@ export const isBaynPromotionSourceAffectingPath = (path: string): boolean =>
 
 const mutableDeploymentEnvironmentNames = [
   'BAYN_CODE_REVISION',
-  'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION',
   'BAYN_IMAGE_DIGEST',
   'BAYN_STRATEGY_BEHAVIOR_HASH',
   'BAYN_STRATEGY_PARAMETER_HASH',
@@ -162,8 +147,6 @@ export interface BaynPromotionManifestContents {
   readonly deployment: string
   readonly kustomization: string
   readonly applicationSet: string
-  readonly lifecycleCurrent: string
-  readonly lifecyclePrevious: string
 }
 
 export interface BaynReleaseContract {
@@ -336,7 +319,6 @@ export class GitHubPromotionEligibilityError extends Error {
 
 interface BaynPromotionPins {
   readonly sourceSha: string
-  readonly lifecyclePreviousSourceRevision: string
   readonly tag: string
   readonly digest: string
   readonly deploymentRepository: string
@@ -344,7 +326,6 @@ interface BaynPromotionPins {
   readonly kustomizationNewName: string
   readonly rolloutTimestamp: string
   readonly applicationEnabled: boolean
-  readonly lifecycleCurrent: BaynLifecycleImagePin
 }
 
 const shortSha = (sha: string): string => sha.slice(0, 12)
@@ -563,16 +544,23 @@ const applicationEnabled = (applicationSet: string): boolean => {
   return matches[0]?.[2] === 'true'
 }
 
+const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+const validateBaynServiceLinksDisabled = (deployment: string): void => {
+  const manifest: unknown = parse(deployment)
+  const spec = record(manifest) && record(manifest.spec) ? manifest.spec : undefined
+  const template = spec !== undefined && record(spec.template) ? spec.template : undefined
+  const podSpec = template !== undefined && record(template.spec) ? template.spec : undefined
+  if (podSpec?.enableServiceLinks !== false) {
+    throw new Error('Bayn deployment must disable Kubernetes service-link environment injection')
+  }
+}
+
 export const parseBaynPromotionPins = (manifests: BaynPromotionManifestContents): BaynPromotionPins => {
-  validateBaynLifecycleCommandPort(manifests.deployment)
   validateBaynServiceLinksDisabled(manifests.deployment)
-  validateBaynLifecycleActivation(manifests.deployment, manifests.kustomization)
   const image = kustomizationImage(manifests.kustomization)
-  const lifecycleCurrent = parseBaynLifecycleCurrent(manifests.lifecycleCurrent)
-  parseBaynLifecyclePrevious(manifests.lifecyclePrevious)
   return {
     sourceSha: environmentValue(manifests.deployment, 'BAYN_CODE_REVISION'),
-    lifecyclePreviousSourceRevision: environmentValue(manifests.deployment, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'),
     tag: image.tag,
     digest: environmentValue(manifests.deployment, 'BAYN_IMAGE_DIGEST'),
     deploymentRepository: environmentValue(manifests.deployment, 'BAYN_IMAGE_REPOSITORY'),
@@ -580,7 +568,6 @@ export const parseBaynPromotionPins = (manifests: BaynPromotionManifestContents)
     kustomizationNewName: image.newName,
     rolloutTimestamp: rolloutTimestamp(manifests.deployment),
     applicationEnabled: applicationEnabled(manifests.applicationSet),
-    lifecycleCurrent,
   }
 }
 
@@ -643,9 +630,6 @@ const validateManifestShape = (
 
 const validatePins = (pins: BaynPromotionPins, requireApplicationEnabled: boolean): string | null => {
   if (!/^[0-9a-f]{40}$/.test(pins.sourceSha)) return `invalid source revision ${pins.sourceSha}`
-  if (!/^[0-9a-f]{40}$/.test(pins.lifecyclePreviousSourceRevision)) {
-    return `invalid previous lifecycle source revision ${pins.lifecyclePreviousSourceRevision}`
-  }
   if (pins.tag !== `sha-${pins.sourceSha}`) {
     return `image tag ${pins.tag} does not bind source revision ${shortSha(pins.sourceSha)}`
   }
@@ -658,13 +642,6 @@ const validatePins = (pins: BaynPromotionPins, requireApplicationEnabled: boolea
     return 'Bayn image repository is not internally consistent'
   }
   if (!Number.isFinite(Date.parse(pins.rolloutTimestamp))) return 'Bayn rollout timestamp is invalid'
-  if (
-    pins.lifecycleCurrent.sourceSha !== pins.sourceSha ||
-    pins.lifecycleCurrent.tag !== pins.tag ||
-    pins.lifecycleCurrent.digest !== pins.digest
-  ) {
-    return 'Bayn lifecycle current endpoint does not bind the promoted source and image'
-  }
   if (requireApplicationEnabled && !pins.applicationEnabled) {
     return 'Bayn ApplicationSet entry must be enabled after promotion'
   }
@@ -728,14 +705,10 @@ export const evaluateBaynPromotionEligibility = (input: {
     )
   }
   const changedPaths = new Set(pullRequest.files.map((file) => file.path))
-  if (
-    !changedPaths.has(deploymentPath) ||
-    !changedPaths.has(kustomizationPath) ||
-    !changedPaths.has(lifecycleCurrentPath)
-  ) {
+  if (!changedPaths.has(deploymentPath) || !changedPaths.has(kustomizationPath)) {
     return hold(
       'promotion-paths-not-permitted',
-      `promotion PR #${pullRequest.number} must change ${deploymentPath}, ${kustomizationPath}, and ${lifecycleCurrentPath}`,
+      `promotion PR #${pullRequest.number} must change ${deploymentPath} and ${kustomizationPath}`,
       false,
     )
   }
@@ -764,28 +737,6 @@ export const evaluateBaynPromotionEligibility = (input: {
   const headPinFailure = validatePins(headPins, true)
   if (headPinFailure !== null) {
     return hold('promotion-pin-inconsistent', `head manifests are inconsistent: ${headPinFailure}`, false)
-  }
-  const lifecycleFailure = validateBaynLifecyclePromotion({
-    base: {
-      current: input.snapshot.baseManifests.lifecycleCurrent,
-      previous: input.snapshot.baseManifests.lifecyclePrevious,
-    },
-    head: {
-      current: input.snapshot.headManifests.lifecycleCurrent,
-      previous: input.snapshot.headManifests.lifecyclePrevious,
-    },
-    baseKustomization: input.snapshot.baseManifests.kustomization,
-    next: { sourceSha: headPins.sourceSha, tag: headPins.tag, digest: headPins.digest },
-  })
-  if (lifecycleFailure !== null) {
-    return hold('promotion-manifest-shape-mismatch', lifecycleFailure, false)
-  }
-  if (headPins.lifecyclePreviousSourceRevision !== basePins.sourceSha) {
-    return hold(
-      'promotion-pin-inconsistent',
-      'Bayn command boundary does not retain exactly the prior lifecycle source revision',
-      false,
-    )
   }
   if (
     basePins.sourceSha === headPins.sourceSha ||
@@ -918,9 +869,7 @@ export const evaluateBaynPromotionEligibility = (input: {
 const manifestsEqual = (left: BaynPromotionManifestContents, right: BaynPromotionManifestContents): boolean =>
   left.deployment === right.deployment &&
   left.kustomization === right.kustomization &&
-  left.applicationSet === right.applicationSet &&
-  left.lifecycleCurrent === right.lifecycleCurrent &&
-  left.lifecyclePrevious === right.lifecyclePrevious
+  left.applicationSet === right.applicationSet
 
 export const evaluateBaynPromotionCurrentBaseRefresh = (input: {
   readonly expectedRepository: string
@@ -1346,10 +1295,10 @@ const fetchFileContent = async (
 const fetchManifests = async (
   options: GitHubRequestOptions & { readonly repository: string; readonly ref: string },
 ): Promise<BaynPromotionManifestContents> => {
-  const [deployment, kustomization, applicationSet, lifecycleCurrent, lifecyclePrevious] = await Promise.all(
+  const [deployment, kustomization, applicationSet] = await Promise.all(
     baynPromotionManifestPaths.map((path) => fetchFileContent({ ...options, path })),
   )
-  return { deployment, kustomization, applicationSet, lifecycleCurrent, lifecyclePrevious }
+  return { deployment, kustomization, applicationSet }
 }
 
 const fetchSourceFreshness = async (
@@ -2578,15 +2527,11 @@ export const createGitHubPromotionEligibilityLoader = (options: {
           deployment: '',
           kustomization: '',
           applicationSet: '',
-          lifecycleCurrent: '',
-          lifecyclePrevious: '',
         },
         headManifests: {
           deployment: '',
           kustomization: '',
           applicationSet: '',
-          lifecycleCurrent: '',
-          lifecyclePrevious: '',
         },
         sourceFreshness: { status: 'stale', reason: 'exact promotion head changed before verification' },
         sourceSha: null,
@@ -2600,15 +2545,11 @@ export const createGitHubPromotionEligibilityLoader = (options: {
           deployment: '',
           kustomization: '',
           applicationSet: '',
-          lifecycleCurrent: '',
-          lifecyclePrevious: '',
         },
         headManifests: {
           deployment: '',
           kustomization: '',
           applicationSet: '',
-          lifecycleCurrent: '',
-          lifecyclePrevious: '',
         },
         sourceFreshness: { status: 'fresh' },
         sourceSha: null,

@@ -2,11 +2,9 @@ import { describe, expect, test } from 'bun:test'
 
 import { PgClient } from '@effect/sql-pg'
 import {
-  Cause,
   Context,
   Deferred,
   Effect,
-  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -45,7 +43,6 @@ import {
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
   finalizeExecutionEpisode,
-  observeCycleGenerationHash,
   capitalReceiptFinalizationWindowOpen,
   prepareOrRecoverQualifiedCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
@@ -54,7 +51,6 @@ import {
   refreshResearchCapitalActivationReconciliation,
   restrictExpiredCapitalActivation,
   runExecutionLifecycleMaintenance,
-  runRestateLifecycleWithReconciliationGuardian,
 } from './composition'
 import { makeApplicationPlan, type ApplicationPlanFor } from './app'
 import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
@@ -82,6 +78,7 @@ import {
   type AuthorityState,
 } from './execution/contracts'
 import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
+import { executionRuntimeBinding, resolveExecutionCycleObservationId } from './execution/runtime-binding'
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
@@ -93,7 +90,6 @@ import {
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
 } from './composition/read-only-status'
-import { capitalActivationRequiresQualificationEvidence } from './composition/autonomous-runtime'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
@@ -243,9 +239,6 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
-      lifecycleOwner: config.lifecycleOwner ?? 'Process',
-      lifecycleCommandPort: config.lifecycleCommandPort ?? 8081,
-      lifecycleControllerKey: config.lifecycleControllerKey ?? 'primary',
       cyclePollIntervalMs: 30_000,
       execution: {
         brokerIdentity: continuationBrokerIdentity,
@@ -431,56 +424,6 @@ describe('Bayn application platform', () => {
       ),
     )
     expect(mismatch.message).toBe('qualified capital authority does not match the prepared generation')
-  })
-
-  test('owns the Restate reconciliation guardian for exactly the service scope', async () => {
-    let interrupted = false
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
-          yield* runRestateLifecycleWithReconciliationGuardian(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
-            ),
-            30_000,
-            Effect.never,
-          ).pipe(Effect.forkScoped)
-          yield* Deferred.await(started)
-        }),
-      ),
-    )
-
-    expect(interrupted).toBe(true)
-  })
-
-  test('propagates a reconciliation guardian defect to the owning Restate lifecycle', async () => {
-    const defect = new Error('guardian invariant defect')
-
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        const lifecycleStarted = yield* Deferred.make<void>()
-        const lifecycleInterrupted = yield* Deferred.make<void>()
-        const result = yield* runRestateLifecycleWithReconciliationGuardian(
-          Deferred.await(lifecycleStarted).pipe(Effect.andThen(Effect.die(defect))),
-          30_000,
-          Deferred.succeed(lifecycleStarted, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.onInterrupt(() => Deferred.succeed(lifecycleInterrupted, undefined)),
-          ),
-        ).pipe(Effect.exit)
-        yield* Deferred.await(lifecycleInterrupted)
-        return result
-      }),
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) {
-      expect(Cause.hasDies(exit.cause)).toBe(true)
-      expect(Cause.pretty(exit.cause)).toContain(defect.message)
-    }
   })
 })
 
@@ -681,8 +624,8 @@ describe('Bayn PAPER receipt retry boundary', () => {
 
 describe('Bayn capital startup recovery boundary', () => {
   test('does not require qualification evidence for plain OBSERVE or research execution', () => {
-    expect(capitalActivationRequiresQualificationEvidence(null)).toBe(false)
-    expect(capitalActivationRequiresQualificationEvidence(researchRequest)).toBe(false)
+    expect(executionRuntimeBinding(null).requiresQualificationEvidence).toBe(false)
+    expect(executionRuntimeBinding(researchRequest).requiresQualificationEvidence).toBe(false)
   })
 
   test('recovers a configured pinned qualification without requiring a capital activation request', async () => {
@@ -753,8 +696,24 @@ describe('Bayn capital startup recovery boundary', () => {
       buildContinuation: researchBuildContinuation,
     })
 
-    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId)).toBe(continuationRequest.grant.planHash)
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
+    expect(Result.getOrThrow(readOnlyCycleObservationId(configured, undefined))).toBe(
+      continuationRequest.grant.planHash,
+    )
+    const observeAuthority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: hash('a'),
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    }
+    expect(Result.getOrThrow(readOnlyCycleObservationId(Result.succeed(null), observeAuthority))).toBe(
+      observeAuthority.generationHash,
+    )
+    expect(readOnlyCycleObservationId(Result.fail('invalid activation'), observeAuthority)).toEqual(
+      Result.fail('invalid activation'),
+    )
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
@@ -923,15 +882,17 @@ describe('Bayn capital startup recovery boundary', () => {
       updatedAt: '2026-08-11T13:00:00.000Z',
     }
 
-    expect(observeCycleGenerationHash(observeAuthority)).toEqual(Result.succeed(successorGenerationHash))
+    expect(resolveExecutionCycleObservationId(executionRuntimeBinding(null), observeAuthority)).toEqual(
+      Result.succeed(successorGenerationHash),
+    )
     expect(
-      observeCycleGenerationHash({
+      resolveExecutionCycleObservationId(executionRuntimeBinding(null), {
         ...observeAuthority,
         generationHash: hash('34'),
         maximum: Authority.Execution,
         effective: Authority.Execution,
       }),
-    ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+    ).toEqual(Result.fail('OBSERVE execution binding requires current effective OBSERVE authority'))
   })
 
   test('recovers a committed qualified generation before rerunning candidate discovery', async () => {

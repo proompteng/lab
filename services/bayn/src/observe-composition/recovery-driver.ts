@@ -415,7 +415,7 @@ const makeRecoveryFirstCycleDriver = (
       (input.lifecycleMaintenance?.beforeReconciliation ?? Effect.void).pipe(
         Effect.andThen(reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)),
         Effect.catch((error) =>
-          // Reconciliation persistence owns guardian readiness; do not replace Restate lifecycle progress.
+          // Reconciliation persistence owns guardian readiness; do not replace Restate execution progress.
           Effect.logError('Bayn Restate reconciliation guardian failed', error).pipe(
             Effect.annotateLogs({
               operation: error.operation,

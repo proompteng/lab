@@ -166,8 +166,8 @@ const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRunt
   runtime._tag === 'Brokerless' || runtime.requiresQualificationEvidence !== false
 
 const initialRuntimeState = <StartupR, LoopR>(
-  config: RuntimeConfig,
   runtime: ApplicationRuntime<StartupR, LoopR>,
+  autonomousCycleLoopOwner: 'Process' | 'Restate' = 'Process',
 ): RuntimeState =>
   runtime._tag === 'Brokerless'
     ? initialState({})
@@ -175,7 +175,7 @@ const initialRuntimeState = <StartupR, LoopR>(
         qualificationEvidenceRequired: qualificationEvidenceRequired(runtime),
         broker: runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
         autonomousCycleLoopConfigured: true,
-        autonomousCycleLoopOwner: config.lifecycleOwner ?? 'Process',
+        autonomousCycleLoopOwner,
       })
 
 const resolveRuntimeAfterStartup = <StartupR, LoopR>(
@@ -259,7 +259,7 @@ export const prepareAutonomousApplication = <StartupR, LoopR>(
   runtime: AutonomousRuntime<StartupR, LoopR>,
 ): Effect.Effect<PreparedAutonomousApplication<StartupR, LoopR>, OperationalError, StartupR | LoopR | Scope.Scope> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialRuntimeState(config, runtime))
+    const state = yield* Ref.make(initialRuntimeState(runtime, 'Restate'))
     if (qualificationEvidenceRequired(runtime)) {
       yield* runStartup(config, state, strategy, dependencies)
     }
@@ -289,7 +289,7 @@ const runApplicationDataFirst = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
 ): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make(initialRuntimeState(config, runtime))
+    const state = yield* Ref.make(initialRuntimeState(runtime))
     yield* serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read)
     if (qualificationEvidenceRequired(runtime)) {
       yield* runStartup(config, state, strategy, dependencies)
