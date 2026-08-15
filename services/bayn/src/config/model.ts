@@ -29,10 +29,6 @@ export interface RuntimeConfig {
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
-  readonly lifecycleOwner?: 'Process' | 'Restate'
-  readonly lifecycleCommandPort?: number
-  readonly lifecycleControllerKey?: string
-  readonly lifecyclePreviousSourceRevision?: string | undefined
   readonly expectedExecutionControllerPlanHash?: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
@@ -72,21 +68,7 @@ export type RuntimeOperation = 'ExecutionCandidateDiscovery' | 'ExecutionPrepare
 
 export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
 
-type LoadedRuntimeConfigBase = Omit<
-  RuntimeConfig,
-  | 'alpaca'
-  | 'qualificationRunId'
-  | 'lifecycleOwner'
-  | 'lifecycleCommandPort'
-  | 'lifecycleControllerKey'
-  | 'lifecyclePreviousSourceRevision'
-> &
-  AutonomousCycleRuntimeConfig & {
-    readonly lifecycleOwner: 'Process' | 'Restate'
-    readonly lifecycleCommandPort: number
-    readonly lifecycleControllerKey: string
-    readonly lifecyclePreviousSourceRevision?: string | undefined
-  }
+type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca' | 'qualificationRunId'> & AutonomousCycleRuntimeConfig
 
 export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
   (
@@ -152,10 +134,6 @@ export interface ParsedRuntimeConfig {
   readonly provenanceMode: 'production' | 'development'
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
-  readonly lifecycleOwner: 'Process' | 'Restate'
-  readonly lifecycleCommandPort: number
-  readonly lifecycleControllerKey: string
-  readonly lifecyclePreviousSourceRevision: string | undefined
   readonly expectedExecutionControllerPlanHash?: string | undefined
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
@@ -198,14 +176,6 @@ export type RuntimeConfigResolutionFailure =
       readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
       readonly cyclePollIntervalMs: number
       readonly cycleStallThresholdMs: number
-    }
-  | {
-      readonly _tag: 'LifecycleCommandPortConflict'
-      readonly httpPort: number
-      readonly lifecycleCommandPort: number
-    }
-  | {
-      readonly _tag: 'RestateLifecycleRequiresAutonomousService'
     }
   | {
       readonly _tag: 'ExecutionReconciliationCadenceNotWithinStaleThreshold'

@@ -246,9 +246,6 @@ const continuationApplicationPlan: ApplicationPlanFor<'AutonomousService'> = (()
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
-      lifecycleOwner: config.lifecycleOwner ?? 'Process',
-      lifecycleCommandPort: config.lifecycleCommandPort ?? 8081,
-      lifecycleControllerKey: config.lifecycleControllerKey ?? 'primary',
       cyclePollIntervalMs: 30_000,
       execution: {
         brokerIdentity: continuationBrokerIdentity,
