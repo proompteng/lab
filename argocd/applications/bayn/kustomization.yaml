@@ -17,7 +17,6 @@ resources:
   - execution-controller.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
-  - restate-retirement-hook-gc.yaml
   - service.yaml
   - networkpolicy.yaml
 configMapGenerator:
