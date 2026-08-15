@@ -275,6 +275,7 @@ describe('native execution runtime', () => {
           const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
             managed,
             executionResources,
+            ScopedRef.getUnsafe(managed),
             hostRunner,
             controllerPlanHash,
           )
@@ -293,6 +294,89 @@ describe('native execution runtime', () => {
     expect(released).toBe(1)
     if (publishedSlot === undefined) throw new Error('production driver layer did not publish its slot')
     expect(await Effect.runPromise(Ref.get(publishedSlot.state))).toEqual({ _tag: 'Pending' })
+  })
+
+  test('projects deactivation without initializing execution resources', async () => {
+    let executionAcquired = 0
+    let projected: ExecutionControllerStatus | undefined
+    const executionResources = Layer.merge(
+      Layer.effect(
+        PublishedExecutionCycleDriver,
+        Effect.sync(() => {
+          executionAcquired += 1
+          throw new Error('writer fence is still owned by the draining worker')
+        }),
+      ),
+      Layer.succeed(
+        ExecutionControllerStatusStore,
+        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+      ),
+    )
+    const projectionResources = Layer.succeed(
+      ExecutionControllerStatusStore,
+      statusStore((candidate) => {
+        projected = candidate
+        return { _tag: 'Applied', status: candidate }
+      }),
+    )
+    const hostRunner = {
+      runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
+        Effect.runPromise(effect, options),
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const managed = yield* ScopedRef.fromAcquire(
+            Effect.acquireRelease(
+              Effect.succeed(ManagedRuntime.make(executionResources)),
+              (runtime) => runtime.disposeEffect,
+            ),
+          )
+          const projectionManaged = yield* Effect.acquireRelease(
+            Effect.succeed(ManagedRuntime.make(projectionResources)),
+            (runtime) => runtime.disposeEffect,
+          )
+          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+            managed,
+            executionResources,
+            projectionManaged,
+            hostRunner,
+            controllerPlanHash,
+          )
+
+          yield* Effect.promise(() =>
+            runtime.projectState(
+              command.controllerKey,
+              {
+                schemaVersion: 1,
+                active: false,
+                epoch: command.epoch + 1,
+                planHash: controllerPlanHash,
+                sourceRevision,
+                initialSequence: command.sequence,
+                nextSequence: command.sequence + 1,
+                lastCompletion: {
+                  sequence: command.sequence,
+                  outcome: ExecutionControllerOutcome.Blocked,
+                  receiptHash: hash('2'),
+                  completedAt,
+                },
+              },
+              new AbortController().signal,
+            ),
+          )
+        }),
+      ),
+    )
+
+    expect(executionAcquired).toBe(0)
+    expect(projected).toMatchObject({
+      active: false,
+      controllerKey: command.controllerKey,
+      epoch: command.epoch + 1,
+      planHash: controllerPlanHash,
+    })
   })
 
   test('managed runtime resolves the current driver after a restricted generation rebind', async () => {
@@ -398,6 +482,7 @@ describe('native execution runtime', () => {
           const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
             managed,
             executionResources,
+            ScopedRef.getUnsafe(managed),
             hostRunner,
             controllerPlanHash,
           )

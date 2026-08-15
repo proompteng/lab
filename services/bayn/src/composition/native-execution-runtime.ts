@@ -404,6 +404,7 @@ export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'Auto
 type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
 
 type NativeExecutionManagedRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | NativeExecutionManagedServices, E>
+type ControllerStatusManagedRuntime<R, E> = ManagedRuntime.ManagedRuntime<R | ExecutionControllerStatusStore, E>
 
 const runManagedNativeExecutionAdvance = <R, E>(
   executionRunner: NativeExecutionManagedRuntime<R, E>,
@@ -423,7 +424,7 @@ const runManagedNativeExecutionAdvance = <R, E>(
   )
 
 const runManagedControllerStateProjection = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  executionRunner: ControllerStatusManagedRuntime<R, E>,
   controllerKey: string,
   state: ExecutionControllerState,
   signal: AbortSignal,
@@ -451,9 +452,10 @@ const ownManagedRuntime = <R, E>(
 ): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
   Effect.acquireRelease(Effect.succeed(managed), (runtime) => runtime.disposeEffect)
 
-export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E>(
+export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
+  projectionRunner: ManagedRuntime.ManagedRuntime<ProjectionR | ExecutionControllerStatusStore, ProjectionE>,
   hostRunner: ExecutionEffectRunner,
   planHash: string,
 ): NativeExecutionRuntime => {
@@ -484,7 +486,7 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E>(
     },
     log: (level, message, annotations) => hostRunner.runPromise(logEffect(level, message, annotations)),
     projectState: (controllerKey, state, signal) =>
-      runManagedControllerStateProjection(ScopedRef.getUnsafe(executionRuntimes), controllerKey, state, signal),
+      runManagedControllerStateProjection(projectionRunner, controllerKey, state, signal),
   }
 }
 
@@ -503,6 +505,9 @@ export const acquireNativeExecutionRuntime = (
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
+    const projectionManaged = yield* ownManagedRuntime(
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
+    )
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )
@@ -511,6 +516,7 @@ export const acquireNativeExecutionRuntime = (
       runtime: makeRecoveringManagedNativeExecutionRuntimeAdapter(
         managed,
         executionResources,
+        projectionManaged,
         logManaged,
         config.planHash,
       ),
