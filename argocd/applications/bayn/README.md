@@ -56,3 +56,17 @@ Rollback is another serialized ownership transfer, not pruning an active worker.
 deactivate the native controller and prove its writer fence is clear before activating a compatible legacy or replacement
 controller. Do not delete Restate registrations, CRDs, PVCs, durable state, or controller pods by hand. Confirm exact
 reconciliation, zero unresolved mutations, and no broker-ledger advance before and after the handoff.
+
+## Legacy Restate registration retirement
+
+`restate-registration-cleanup.yaml` is a temporary PostSync hook that retires only the 18 reviewed legacy
+`BaynLifecycle`/`BaynLifecycleBootstrap` registrations left behind by the native execution cutover. The immutable
+allowlist binds every Restate deployment ID to its exact endpoint and source-revision metadata. Each run accepts the
+full original set, any safe remaining subset from a partially successful prior attempt, or the empty set. Unknown IDs,
+service-set changes, metadata drift, and lifecycle or allowlist-pinned nonterminal invocations fail closed.
+
+The hook revalidates global state and the exact target before every non-force `restate deployments remove -y <id>` and
+walks the verified Restate creation order from oldest to newest. It intentionally has no service-account token,
+credentials, broker access, or Restate ingress access. Egress is limited to cluster DNS and Restate admin TCP 9070. Its
+pod keeps the historical `app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin
+ingress policy authorizes this cross-Application cleanup without requiring Restate Application ordering in this layer.
