@@ -1,0 +1,177 @@
+name: bayn-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/bayn/**'
+      - 'argocd/applicationsets/product.yaml'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in the Bayn Argo application
+        required: false
+        type: string
+
+concurrency:
+  group: bayn-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if kubectl config current-context >/dev/null 2>&1; then
+            exit 0
+          fi
+          test -n "${KUBERNETES_SERVICE_HOST:-}"
+          test -n "${KUBERNETES_SERVICE_PORT:-}"
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/token
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=bayn \
+            --kubeconfig="${KUBECONFIG_PATH}"
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Verify exact Bayn Argo revision and health
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+          EXPECTED_REVISION="${GITHUB_SHA}"
+          if [ "${EVENT_NAME}" = 'workflow_dispatch' ] && [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
+          fi
+          if ! [[ "${EXPECTED_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Expected revision must be a full commit SHA: ${EXPECTED_REVISION}" >&2
+            exit 1
+          fi
+          git fetch --no-tags --depth=300 origin main
+
+          revision_safe() {
+            local actual="$1"
+            if [ "${actual}" = "${EXPECTED_REVISION}" ]; then
+              return 0
+            fi
+            git cat-file -e "${actual}^{commit}" >/dev/null 2>&1 || git fetch --no-tags --depth=300 origin main
+            git merge-base --is-ancestor "${EXPECTED_REVISION}" "${actual}" || return 1
+            git diff --quiet "${EXPECTED_REVISION}..${actual}" -- \
+              argocd/applications/bayn \
+              argocd/applicationsets/product.yaml
+          }
+
+          ARGO_ATTEMPTS=180
+          ARGO_INTERVAL_SECONDS=5
+          for attempt in $(seq 1 "${ARGO_ATTEMPTS}"); do
+            ARGO_FACTS="$(kubectl get application bayn -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}')"
+            SYNC_STATUS="$(printf '%s' "${ARGO_FACTS}" | awk '{print $1}')"
+            HEALTH_STATUS="$(printf '%s' "${ARGO_FACTS}" | awk '{print $2}')"
+            ARGO_REVISION="$(printf '%s' "${ARGO_FACTS}" | awk '{print $3}')"
+            if [ "${SYNC_STATUS}" = 'Synced' ] && [ "${HEALTH_STATUS}" = 'Healthy' ] && revision_safe "${ARGO_REVISION}"; then
+              echo "Bayn Argo converged: revision=${ARGO_REVISION} sync=${SYNC_STATUS} health=${HEALTH_STATUS}"
+              echo "BAYN_POST_DEPLOY_ARGO_REVISION=${ARGO_REVISION}" >> "${GITHUB_ENV}"
+              break
+            fi
+            if [ "${attempt}" -eq "${ARGO_ATTEMPTS}" ]; then
+              echo "Bayn did not converge to Synced/Healthy at the expected safe revision" >&2
+              kubectl get application bayn -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.message}{"\n"}' || true
+              exit 1
+            fi
+            echo "Attempt ${attempt}/${ARGO_ATTEMPTS}: sync=${SYNC_STATUS:-unset} health=${HEALTH_STATUS:-unset} revision=${ARGO_REVISION:-unset}"
+            sleep "${ARGO_INTERVAL_SECONDS}"
+          done
+
+      - name: Verify Bayn deployment rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/bayn -n bayn --timeout=10m
+
+      - name: Capture and verify Bayn runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="${RUNNER_TEMP}/bayn-post-deploy"
+          mkdir -p "${EVIDENCE_DIR}"
+          export BAYN_POST_DEPLOY_DEPLOYMENT_MANIFEST="${GITHUB_WORKSPACE}/argocd/applications/bayn/deployment.yaml"
+          export BAYN_POST_DEPLOY_KUSTOMIZATION="${GITHUB_WORKSPACE}/argocd/applications/bayn/kustomization.yaml"
+          export BAYN_POST_DEPLOY_DEPLOYMENT_JSON="${EVIDENCE_DIR}/deployment.json"
+          export BAYN_POST_DEPLOY_PODS_JSON="${EVIDENCE_DIR}/pods.json"
+          export BAYN_POST_DEPLOY_READYZ_JSON="${EVIDENCE_DIR}/readyz.json"
+          export BAYN_POST_DEPLOY_STATUS_JSON="${EVIDENCE_DIR}/status.json"
+
+          CONTRACT_ATTEMPTS=24
+          CONTRACT_INTERVAL_SECONDS=5
+          for attempt in $(seq 1 "${CONTRACT_ATTEMPTS}"); do
+            kubectl get deployment bayn -n bayn -o json > "${BAYN_POST_DEPLOY_DEPLOYMENT_JSON}"
+            kubectl get pods -n bayn -l app.kubernetes.io/name=bayn -o json > "${BAYN_POST_DEPLOY_PODS_JSON}"
+            export BAYN_POST_DEPLOY_READYZ_HTTP_STATUS="$(
+              curl -sS --connect-timeout 3 --max-time 10 \
+                -o "${BAYN_POST_DEPLOY_READYZ_JSON}" -w '%{http_code}' \
+                http://bayn.bayn.svc.cluster.local/readyz || true
+            )"
+            export BAYN_POST_DEPLOY_STATUS_HTTP_STATUS="$(
+              curl -sS --connect-timeout 3 --max-time 10 \
+                -o "${BAYN_POST_DEPLOY_STATUS_JSON}" -w '%{http_code}' \
+                http://bayn.bayn.svc.cluster.local/v1/status || true
+            )"
+
+            if bun run packages/scripts/src/bayn/post-deploy-evidence.ts; then
+              echo "Bayn post-deploy runtime contract converged on attempt ${attempt}"
+              exit 0
+            fi
+            if [ "${attempt}" -eq "${CONTRACT_ATTEMPTS}" ]; then
+              echo "Bayn post-deploy runtime contract did not converge" >&2
+              kubectl get deployment bayn -n bayn -o wide || true
+              kubectl get pods -n bayn -l app.kubernetes.io/name=bayn -o wide || true
+              exit 1
+            fi
+            sleep "${CONTRACT_INTERVAL_SECONDS}"
+          done
+
+      - name: Upload Bayn post-deploy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-post-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bayn-post-deploy/*.json
+          if-no-files-found: ignore
