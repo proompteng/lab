@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - runner-rbac-cluster.yaml
   - runner-rbac.yaml
+  - bayn-post-deploy-rbac.yaml
