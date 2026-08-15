@@ -211,3 +211,59 @@ test('Restate admin exposure remains tailnet-restricted', () => {
   expect(ingress).toContain('name: admin')
   expect(service).toContain('port: 9070')
 })
+
+test('Restate resilience telemetry scrapes every node and audits exact operational state', () => {
+  const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const rules = readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')
+  const rulesConfig = YAML.parse(rules) as { data: Record<string, string> }
+  const ruleGroups = YAML.parse(rulesConfig.data['graf-rules.yaml']) as {
+    groups: Array<{ name: string; rules: Array<{ alert: string; expr: string; for?: string }> }>
+  }
+  const restateRules = ruleGroups.groups.find((group) => group.name === 'restate-control-plane.rules')?.rules ?? []
+  const auditStale = restateRules.find((rule) => rule.alert === 'RestateControlPlaneAuditStale')
+  const restoreNeverSucceeded = restateRules.find((rule) => rule.alert === 'RestateSnapshotRestoreDrillNeverSucceeded')
+  const audit = readRepoFile('argocd/applications/restate/control-plane-audit-cronjob.yaml')
+  const scripts = readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')
+
+  for (const ordinal of [0, 1, 2]) {
+    expect(alloy).toContain(`restate-${ordinal}.restate-cluster.restate.svc.cluster.local:5122`)
+  }
+  expect(rules).toContain('sum(up{job="restate-server", namespace="restate", service="restate"}) < 3')
+  expect(rules).toContain('restate_partition_snapshot_age_seconds')
+  expect(rules).toContain('restate_partition_store_snapshots_upload_failed_total')
+  expect(rules).toContain('restate_partition_applied_lsn_lag')
+  expect(rules).toContain('RestateControlPlaneAuditStale')
+  expect(auditStale?.expr).toContain('absent(kube_cronjob_created')
+  expect(auditStale?.expr).toContain('kube_cronjob_created')
+  expect(auditStale?.expr).toContain('< time() - 600')
+  expect(auditStale?.expr).toContain('> 600')
+  expect(auditStale?.for).toBe('1m')
+  expect(restoreNeverSucceeded?.expr).toContain('absent(kube_cronjob_created')
+  expect(audit).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(scripts).toContain("status = 'paused'")
+  expect(scripts).toContain("status = 'killed'")
+  expect(scripts).toContain('i.pinned_deployment_id <> s.deployment_id')
+  expect(scripts).toContain('expected_set[expected_ids[i]] = 1')
+  expect(scripts).toContain('if (!(actual[i] in expected_set)) bad += 1')
+})
+
+test('Restate recovery proof opens all snapshots offline without exposing OBC credentials', () => {
+  const proof = readRepoFile('argocd/applications/restate/snapshot-restore-proof-job.yaml')
+  const drill = readRepoFile('argocd/applications/restate/snapshot-restore-drill-cronjob.yaml')
+  const scripts = readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')
+  const kustomization = readRepoFile('argocd/applications/restate/kustomization.yaml')
+  const toolsDigest =
+    'ghcr.io/restatedev/restate-tools@sha256:db618f42dbad37a79d8d4c543968f32d8d07aaa71cbcc8736f700f6c5f517209'
+
+  expect(proof).toContain(toolsDigest)
+  expect(drill).toContain(toolsDigest)
+  expect(proof).toContain('secretKeyRef:')
+  expect(proof).not.toContain('--aws-access-key-id')
+  expect(proof).not.toContain('--aws-secret-access-key')
+  expect(scripts).toContain('restate-doctor snapshot s3://restate-snapshots/partitions')
+  expect(scripts).toContain("grep -Fq 'Found 24 partition(s):'")
+  expect(proof).toContain('emptyDir: {}')
+  expect(drill).toContain('schedule: "17 6 * * *"')
+  expect(kustomization).toContain('- snapshot-restore-proof-job.yaml')
+  expect(kustomization).toContain('- snapshot-restore-drill-cronjob.yaml')
+})
