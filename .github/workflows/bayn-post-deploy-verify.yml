@@ -132,12 +132,17 @@ jobs:
           set -euo pipefail
           EVIDENCE_DIR="${RUNNER_TEMP}/bayn-post-deploy"
           mkdir -p "${EVIDENCE_DIR}"
-          export BAYN_POST_DEPLOY_DEPLOYMENT_MANIFEST="${GITHUB_WORKSPACE}/argocd/applications/bayn/deployment.yaml"
-          export BAYN_POST_DEPLOY_KUSTOMIZATION="${GITHUB_WORKSPACE}/argocd/applications/bayn/kustomization.yaml"
+          export BAYN_POST_DEPLOY_DEPLOYMENT_MANIFEST="${EVIDENCE_DIR}/deployment.yaml"
+          export BAYN_POST_DEPLOY_KUSTOMIZATION="${EVIDENCE_DIR}/kustomization.yaml"
           export BAYN_POST_DEPLOY_DEPLOYMENT_JSON="${EVIDENCE_DIR}/deployment.json"
           export BAYN_POST_DEPLOY_PODS_JSON="${EVIDENCE_DIR}/pods.json"
           export BAYN_POST_DEPLOY_READYZ_JSON="${EVIDENCE_DIR}/readyz.json"
           export BAYN_POST_DEPLOY_STATUS_JSON="${EVIDENCE_DIR}/status.json"
+
+          git show "${BAYN_POST_DEPLOY_ARGO_REVISION}:argocd/applications/bayn/deployment.yaml" \
+            > "${BAYN_POST_DEPLOY_DEPLOYMENT_MANIFEST}"
+          git show "${BAYN_POST_DEPLOY_ARGO_REVISION}:argocd/applications/bayn/kustomization.yaml" \
+            > "${BAYN_POST_DEPLOY_KUSTOMIZATION}"
 
           CONTRACT_ATTEMPTS=24
           CONTRACT_INTERVAL_SECONDS=5
