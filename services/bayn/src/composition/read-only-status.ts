@@ -7,7 +7,7 @@ import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability } from '../cycle/store'
 import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
 import { EvidenceStore } from '../db/evidence-store'
-import type { AuthorityGenerationStoreShape } from '../db/execution-store'
+import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
@@ -204,12 +204,32 @@ export const refreshReadOnlyQualification = (
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   qualificationRunId: string | undefined,
-  observeGenerationHash: string,
 ): string | undefined => {
   if (Result.isFailure(configured)) return qualificationRunId
-  if (configured.success === null) return qualificationRunId ?? observeGenerationHash
+  if (configured.success === null) return qualificationRunId
   const request = configured.success.request
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
+}
+
+export const resolveReadOnlyCycleObservationId = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  qualificationRunId: string | undefined,
+  authority: AuthorityGenerationStoreShape,
+): Effect.Effect<string | undefined, ExecutionStoreError> => {
+  const configuredId = readOnlyCycleObservationId(configured, qualificationRunId)
+  if (configuredId !== undefined || Result.isFailure(configured) || configured.success !== null) {
+    return Effect.succeed(configuredId)
+  }
+  const readAuthorityState = authority.readAuthorityState
+  return readAuthorityState === undefined
+    ? Effect.fail(
+        new ExecutionStoreError({
+          operation: 'authority',
+          failure: 'invariant',
+          message: 'read-only status authority projection is unavailable',
+        }),
+      )
+    : readAuthorityState.pipe(Effect.map((current) => current.generationHash))
 }
 
 export const readOnlyQualificationEvidenceRequired = (
@@ -271,21 +291,26 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
       Effect.andThen(Ref.get(state)),
       Effect.flatMap((current) =>
-        checkHealth(
-          observePlan.config,
-          state,
-          dependencies,
-          runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
-          undefined,
-          readOnlyCycleObservationId(
-            configured,
-            observePlan.config.qualificationRunId,
-            observePlan.config.alpaca.authorityGenerationHash,
+        resolveReadOnlyCycleObservationId(
+          configured,
+          observePlan.config.qualificationRunId,
+          activationStore.authority,
+        ).pipe(
+          Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(undefined))),
+          Effect.flatMap((cycleObservationId) =>
+            checkHealth(
+              observePlan.config,
+              state,
+              dependencies,
+              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              undefined,
+              cycleObservationId,
+              qualificationEvidenceRequired,
+              controller === undefined
+                ? undefined
+                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+            ),
           ),
-          qualificationEvidenceRequired,
-          controller === undefined
-            ? undefined
-            : { controllerKey: controller.controllerKey, read: controllerStatus.read },
         ),
       ),
     )
