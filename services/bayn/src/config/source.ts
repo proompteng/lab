@@ -6,6 +6,7 @@ import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contract
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
 import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
+import { LifecycleControllerKeySchema } from '../lifecycle-command-contract'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -33,6 +34,7 @@ const RuntimeOperationTokenSchema = Schema.Literals([
   'PAPER_CANDIDATE_DISCOVERY',
   'EXECUTION_PREPARE',
 ])
+const LifecycleOwnerSchema = Schema.Literals(['PROCESS', 'RESTATE'])
 
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -123,6 +125,14 @@ export const runtimeConfigSource = Config.all({
   persistedCapitalGrantHash,
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  lifecycleOwner: Config.schema(LifecycleOwnerSchema, 'BAYN_LIFECYCLE_OWNER').pipe(Config.withDefault('PROCESS')),
+  lifecycleCommandPort: Config.port('BAYN_LIFECYCLE_COMMAND_PORT').pipe(Config.withDefault(8081)),
+  lifecycleControllerKey: Config.schema(LifecycleControllerKeySchema, 'BAYN_LIFECYCLE_CONTROLLER_KEY').pipe(
+    Config.withDefault('primary'),
+  ),
+  lifecyclePreviousSourceRevision: Config.option(
+    Config.schema(SourceRevision, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'),
+  ),
   expectedExecutionControllerPlanHash: Config.option(
     Config.schema(Sha256Schema, 'BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH'),
   ),
@@ -188,6 +198,10 @@ export const runtimeConfigSource = Config.all({
       provenanceMode: config.provenanceMode,
       healthIntervalMs: config.healthIntervalMs,
       operationTimeoutMs: config.operationTimeoutMs,
+      lifecycleOwner: config.lifecycleOwner === 'RESTATE' ? 'Restate' : 'Process',
+      lifecycleCommandPort: config.lifecycleCommandPort,
+      lifecycleControllerKey: config.lifecycleControllerKey,
+      lifecyclePreviousSourceRevision: Option.getOrUndefined(config.lifecyclePreviousSourceRevision),
       expectedExecutionControllerPlanHash: Option.getOrUndefined(config.expectedExecutionControllerPlanHash),
       cycleStallThresholdMs: config.cycleStallThresholdMs,
       reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,

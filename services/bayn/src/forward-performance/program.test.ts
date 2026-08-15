@@ -33,6 +33,9 @@ const config: LoadedRuntimeConfig = {
   runtimeMode: 'AutonomousService',
   host: '127.0.0.1',
   port: 8080,
+  lifecycleOwner: 'Process',
+  lifecycleCommandPort: 8081,
+  lifecycleControllerKey: 'primary',
   execution: {
     brokerIdentity: identityResult.success,
     brokerAccess: BrokerAccess.ReadOnly,

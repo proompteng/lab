@@ -13,7 +13,6 @@ import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-a
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
 import { isResearchCapitalActivationRequest } from '../execution/configuration'
-import { executionRuntimeBinding, resolveExecutionCycleObservationId } from '../execution/runtime-binding'
 import { checkHealth } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
@@ -201,11 +200,12 @@ export const refreshReadOnlyQualification = (
 
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
-  authority: import('../execution/contracts').AuthorityState | undefined,
-): Result.Result<string, string> =>
-  Result.flatMap(configured, (activation) =>
-    resolveExecutionCycleObservationId(executionRuntimeBinding(activation?.request ?? null), authority),
-  )
+  qualificationRunId: string | undefined,
+): string | undefined => {
+  if (Result.isFailure(configured) || configured.success === null) return qualificationRunId
+  const request = configured.success.request
+  return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
+}
 
 export const readOnlyExecutionControllerBinding = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -231,7 +231,10 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const runtimeBinding = Result.map(configured, (activation) => executionRuntimeBinding(activation?.request ?? null))
+    const researchActivation =
+      Result.isSuccess(configured) &&
+      configured.success !== null &&
+      isResearchCapitalActivationRequest(configured.success.request)
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
@@ -256,39 +259,18 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       evidenceStore.read,
     )
 
-    const cycleObservationId = Result.isFailure(runtimeBinding)
-      ? Effect.succeed(Option.none<string>())
-      : runtimeBinding.success.cycleObservation._tag === 'ObserveAuthority'
-        ? activationStore.authority.readAuthorityState === undefined
-          ? Effect.succeed(Option.none<string>())
-          : activationStore.authority.readAuthorityState.pipe(
-              Effect.flatMap((authority) => Effect.fromResult(readOnlyCycleObservationId(configured, authority))),
-              Effect.map(Option.some),
-              Effect.catch((cause) =>
-                Effect.logWarning('Bayn read-only OBSERVE authority binding is unavailable').pipe(
-                  Effect.annotateLogs({
-                    service: 'bayn',
-                    component: 'execution-status',
-                    reason: cause instanceof Error ? cause.message : String(cause),
-                  }),
-                  Effect.as(Option.none<string>()),
-                ),
-              ),
-            )
-        : Effect.succeed(Option.some(runtimeBinding.success.cycleObservation.cycleObservationId))
-
     const healthPass = refreshReadOnlyQualification(observePlan, configured, state, dependencies).pipe(
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
-      Effect.andThen(Effect.all({ current: Ref.get(state), cycleObservationId })),
-      Effect.flatMap(({ current, cycleObservationId }) =>
+      Effect.andThen(Ref.get(state)),
+      Effect.flatMap((current) =>
         checkHealth(
           observePlan.config,
           state,
           dependencies,
           runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
           undefined,
-          Option.getOrUndefined(cycleObservationId),
-          Result.isSuccess(runtimeBinding) && runtimeBinding.success.requiresQualificationEvidence,
+          readOnlyCycleObservationId(configured, observePlan.config.qualificationRunId),
+          !researchActivation,
           controller === undefined
             ? undefined
             : { controllerKey: controller.controllerKey, read: controllerStatus.read },

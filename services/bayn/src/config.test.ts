@@ -87,6 +87,10 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   provenanceMode: 'production',
   healthIntervalMs: 30_000,
   operationTimeoutMs: 30_000,
+  lifecycleOwner: 'Process',
+  lifecycleCommandPort: 8081,
+  lifecycleControllerKey: 'primary',
+  lifecyclePreviousSourceRevision: undefined,
   expectedExecutionControllerPlanHash,
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
@@ -597,6 +601,18 @@ describe('pure runtime configuration resolution', () => {
       },
     )
     expectFailure(
+      {
+        lifecycleOwner: 'Restate',
+        lifecycleCommandPort: 8080,
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+      },
+      { _tag: 'LifecycleCommandPortConflict', httpPort: 8080, lifecycleCommandPort: 8080 },
+    )
+    expectFailure(
+      { lifecycleOwner: 'Restate', authorityGenerationHash: undefined },
+      { _tag: 'RestateLifecycleRequiresAutonomousService' },
+    )
+    expectFailure(
       { postgres: { ...baseParsedConfig.postgres, tls: false } },
       { _tag: 'ProductionPostgresRequiresTls', postgresTls: false },
     )
@@ -816,15 +832,22 @@ describe('runtime configuration loading', () => {
     })
   })
 
-  test('loads the expected native execution-controller plan binding for the autonomous service', async () => {
+  test('loads one Restate owner and one bounded prior rollout source for the autonomous service', async () => {
     const environment = new Map(runtimeEnvironment)
     environment.delete('BAYN_OPERATION')
+    environment.set('BAYN_LIFECYCLE_OWNER', 'RESTATE')
+    environment.set('BAYN_LIFECYCLE_COMMAND_PORT', '8081')
+    environment.set('BAYN_LIFECYCLE_CONTROLLER_KEY', 'primary')
+    environment.set('BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION', 'e'.repeat(40))
 
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
 
     expect(config).toMatchObject({
       runtimeMode: 'AutonomousService',
-      expectedExecutionControllerPlanHash,
+      lifecycleOwner: 'Restate',
+      lifecycleCommandPort: 8081,
+      lifecycleControllerKey: 'primary',
+      lifecyclePreviousSourceRevision: 'e'.repeat(40),
     })
   })
 

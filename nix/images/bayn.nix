@@ -21,14 +21,14 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after retiring the legacy lifecycle package inputs.
-    x86_64-linux = "sha256-N7yGdRZidHpFmI0UOFS9yiKC1usiGVbQVNHXI2FVnJI=";
-    aarch64-linux = "sha256-oGONg7EoXC9qhcaD7aJ9OmdNpv20ye0jEqyRfZzlgIs=";
+    # Refreshed from the two authoritative Linux image builders after packaging native execution activation.
+    x86_64-linux = "sha256-Jqzdd+6DKpjTskHKk/CHb1ch3IVuFChkYo35UrncBXY=";
+    aarch64-linux = "sha256-JvmAEBrbOSZQlf+J0dkcMPiIPzIwrzcqo35o2zs/aJc=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate-lifecycle-server.ts src/restate-lifecycle-register.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -41,6 +41,8 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-lifecycle-server.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-lifecycle-register.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -50,6 +52,8 @@ let
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/restate-lifecycle-server.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/restate-lifecycle-register.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"

@@ -41,12 +41,10 @@ test('keeps the existing Bayn PR gate aggregation', () => {
   expect(baynCiWorkflow).not.toContain('verify-release-review')
 })
 
-test('holds release when the manifest renderer changed after the built source', () => {
+test('holds release when the lifecycle manifest renderer changed after the built source', () => {
   expect(releaseWorkflow).toContain('git diff --quiet "$source_sha..HEAD" --')
-  expect(releaseWorkflow).toContain('packages/scripts/src/bayn/update-manifests.ts \\')
-  expect(releaseWorkflow).not.toContain('packages/scripts/src/bayn/lifecycle-manifests.ts')
-  expect(releaseWorkflow).not.toContain('argocd/applications/bayn/lifecycle-current.yaml')
-  expect(releaseWorkflow).not.toContain('argocd/applications/bayn/lifecycle-previous.yaml')
+  expect(releaseWorkflow).toContain('packages/scripts/src/bayn/lifecycle-manifests.ts \\')
+  expect(releaseWorkflow.split('packages/scripts/src/bayn/lifecycle-manifests.ts').length - 1).toBe(1)
 })
 
 test('installs locked manifest renderer dependencies before executing the release renderer', () => {

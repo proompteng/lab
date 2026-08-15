@@ -14,6 +14,7 @@ import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '..
 import { makeEvidenceStore } from '../db/evidence-store/postgres'
 import { ForwardPerformanceReceiptStoreLive } from '../db/forward-performance-receipt-postgres'
 import { ExecutionStoreLive } from '../db/execution-store'
+import { LifecycleCommandStoreLive } from '../db/lifecycle-command-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { BlockedCycleIntentStoreLive, IntentStoreLive } from '../execution/intents'
 import { MutationStoreLive } from '../execution/mutations'
@@ -135,6 +136,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     ExecutionCycleClosureStorePostgresLive,
     ForwardPerformanceReceiptStoreLive,
     ExecutionControllerStatusStoreLive,
+    LifecycleCommandStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
     BrokerSessionResourceLive(plan.config),
