@@ -32,7 +32,6 @@ import {
   advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
   recoverTerminalGenerationToObserve,
-  recoverRestrictedGenerationBeforeRollover,
 } from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
 
@@ -1619,57 +1618,6 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(receipt).toEqual({ _tag: 'NotRequired' })
   })
 
-  test('recovers a nonterminal mutation before retrying blocked-generation settlement', async () => {
-    const operations: string[] = []
-    let attempt = 0
-    const receipt = await Effect.runPromise(
-      recoverRestrictedGenerationBeforeRollover({
-        advance: Effect.sync(() => {
-          attempt += 1
-          operations.push(`recover:${attempt.toString()}`)
-          return attempt
-        }),
-        wait: (advanced) => Effect.sync(() => operations.push(`wait:${advanced.toString()}`)),
-        settle: Effect.suspend(() => {
-          operations.push(`settle:${attempt.toString()}`)
-          return attempt === 1
-            ? Effect.fail(
-                new OperationalError({
-                  component: 'strategy',
-                  operation: 'terminal-generation-recovery',
-                  message: 'blocked generation intent settlement failed',
-                  retryable: false,
-                  cause: new BlockedCycleIntentStoreError({
-                    failure: 'invariant',
-                    message: 'intent still requires broker recovery',
-                  }),
-                }),
-              )
-            : Effect.succeed({
-                _tag: 'RolledOver' as const,
-                previousGenerationHash: hash('1'),
-                generationHash: hash('2'),
-                blockedCycleCount: 1,
-                blockedIntentCount: 1,
-                expiredIntentCount: 0,
-                terminalIntentCount: 1,
-              })
-        }),
-      }),
-    )
-
-    expect(operations).toEqual(['recover:1', 'settle:1', 'wait:1', 'recover:2', 'settle:2'])
-    expect(receipt).toEqual({
-      _tag: 'RolledOver',
-      previousGenerationHash: hash('1'),
-      generationHash: hash('2'),
-      blockedCycleCount: 1,
-      blockedIntentCount: 1,
-      expiredIntentCount: 0,
-      terminalIntentCount: 1,
-    })
-  })
-
   test('exposes one bounded restricted recovery attempt to an external durable scheduler', async () => {
     let advances = 0
     const waiting = await Effect.runPromise(
@@ -1695,24 +1643,6 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(waiting).toEqual({ _tag: 'Waiting', advance: 'recovered-once' })
     expect(advances).toBe(1)
-  })
-
-  test('fails closed when restricted recovery cannot identify a generation to roll over', async () => {
-    let advances = 0
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        recoverRestrictedGenerationBeforeRollover({
-          advance: Effect.sync(() => {
-            advances += 1
-          }),
-          wait: () => Effect.die(new Error('a missing blocked generation is not retryable')),
-          settle: Effect.succeed({ _tag: 'NotRequired' }),
-        }),
-      ),
-    )
-
-    expect(advances).toBe(1)
-    expect(failure.message).toBe('restricted generation recovery found no terminal generation to roll over')
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {

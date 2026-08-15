@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Result } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
@@ -136,7 +136,7 @@ const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpre
   const run = (): ReturnType<RecoveryFirstCycleDriverInterpreter> =>
     Effect.suspend(() =>
       driver.advance.pipe(
-        Effect.flatMap(driver.wait),
+        Effect.andThen(Effect.sleep(Duration.millis(driver.nextDelayMs))),
         Effect.catch((restrictionError) => Effect.die(restrictionError)),
         Effect.andThen(run()),
       ),
@@ -144,19 +144,17 @@ const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpre
   return run()
 }
 
-const makeObserveAutonomousCycleStartup = (input: ObserveAutonomousCycleInput) =>
-  makeObserveAutonomousCycleStartupProduction(
-    input,
-    input.interpretCycleDriver ?? interpretRecoveryFirstCycleInTestProcess,
-  )
+const makeObserveAutonomousCycleStartup = (
+  input: ObserveAutonomousCycleInput,
+  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter = interpretRecoveryFirstCycleInTestProcess,
+) => makeObserveAutonomousCycleStartupProduction(input, interpretCycleDriver)
 
-const makeMutationAutonomousCycleStartup = (input: MutationAutonomousCycleInput) =>
-  makeMutationAutonomousCycleStartupProduction(
-    input,
-    input.interpretCycleDriver ?? interpretRecoveryFirstCycleInTestProcess,
-  )
+const makeMutationAutonomousCycleStartup = (
+  input: MutationAutonomousCycleInput,
+  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter = interpretRecoveryFirstCycleInTestProcess,
+) => makeMutationAutonomousCycleStartupProduction(input, interpretCycleDriver)
 
-test('external lifecycle ownership never schedules past the reconciliation cadence', () => {
+test('Restate scheduling never waits past the reconciliation cadence', () => {
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 15_000, reconciliationIntervalMs: 30_000 })).toBe(15_000)
 })
@@ -508,6 +506,83 @@ const provideDecisionServices = <A, E>(
     Effect.provideService(BrokerRead, decisionBrokerRead(marketCalendar)),
     Effect.provideService(MarketData, marketDataService),
   )
+
+const makeExactReconciliationServices = () => {
+  const exact = reconciliationResult()
+  const authority = exact.riskContext.authority
+  if (authority === null) throw new Error('exact reconciliation fixture requires durable authority')
+  const evidence = (identity: string): ReadEvidence => ({
+    requestId: `exact-reconciliation-${identity}`,
+    status: 200,
+    contentHash: canonicalHashV1({ identity }),
+    observedAt: reconciledAt,
+  })
+  const brokerAccount: BrokerAccount = {
+    id: accountId,
+    status: BrokerAccountStatus.Active,
+    currency: 'USD',
+    cashMicros: account.cashMicros,
+    equityMicros: account.equityMicros,
+    lastEquityMicros: account.equityMicros,
+    buyingPowerMicros: account.buyingPowerMicros,
+    accountBlocked: false,
+    tradingBlocked: false,
+    tradeSuspendedByUser: false,
+    observedAt: reconciledAt,
+  }
+  const unusedRead = Effect.die(new Error('exact reconciliation used an unrelated broker capability'))
+  const brokerRead: BrokerReadShape = {
+    account: Effect.succeed({ value: brokerAccount, evidence: evidence('account') }),
+    accountConfiguration: unusedRead,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
+    orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
+    orderById: () => unusedRead,
+    orderByClientId: () => unusedRead,
+    fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),
+    marketCalendar: () => unusedRead,
+  }
+  const persisted: ReconciliationWriteResult = {
+    reconciliation: exact.report.reconciliation,
+    metrics: exact.report.metrics,
+    accountingHash: exact.brokerState.accountingHash,
+    riskContext: exact.riskContext,
+  }
+  const unusedAccounting = Effect.die(new Error('empty exact reconciliation must not account a fill'))
+  const executionStore = {
+    ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
+    ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
+    account: () => unusedAccounting,
+    value: () =>
+      Effect.succeed({
+        schemaVersion: 'bayn.paper-valuation.v1' as const,
+        valuationId: '3'.repeat(64),
+        accountId,
+        sourceHash: '4'.repeat(64),
+        cashMicros: account.cashMicros,
+        longMarketValueMicros: '0',
+        shortMarketValueMicros: '0',
+        equityMicros: account.equityMicros,
+        asOf: reconciledAt,
+      }),
+    hasAccountBaseline: () => Effect.succeed(true),
+    bindings: () => Effect.succeed([]),
+    reconcile: () => Effect.succeed(persisted),
+    ensureAuthorityGeneration: () => Effect.succeed(authority),
+    restrictAuthority: () => Effect.die(new Error('exact reconciliation unexpectedly restricted authority')),
+  } satisfies BrokerEventStoreShape &
+    FillAccountingStoreShape &
+    ValuationStoreShape &
+    ReconciliationStoreShape &
+    AuthorityGenerationStoreShape &
+    AuthorityRestrictionStoreShape
+  const writerFence: WriterFenceService = {
+    backendPid: 1,
+    check: Effect.void,
+    transaction: (effect) => effect,
+  }
+  return { brokerRead, executionStore, writerFence }
+}
 
 const sandboxExecutionProgram = (
   authorityGenerationHash = generationHash,
@@ -3674,15 +3749,17 @@ describe('OBSERVE runtime composition', () => {
       transaction: (effect) => effect,
     }
     const capturedDriver = Effect.runSync(Deferred.make<RecoveryFirstCycleDriver>())
-    const startup = makeObserveAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
-      reconciliationIntervalMs: 30_000,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureRuntime,
-      interpretCycleDriver: (driver) => Deferred.succeed(capturedDriver, driver).pipe(Effect.andThen(Effect.never)),
-    })
+    const startup = makeObserveAutonomousCycleStartup(
+      {
+        accountId,
+        authorityGenerationHash: generationHash,
+        pollIntervalMs: 30_000,
+        reconciliationIntervalMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy: fixtureRuntime,
+      },
+      (driver) => Deferred.succeed(capturedDriver, driver).pipe(Effect.andThen(Effect.never)),
+    )
 
     await Effect.runPromise(
       Effect.scoped(
@@ -3732,7 +3809,7 @@ describe('OBSERVE runtime composition', () => {
     )
   })
 
-  test('persists writer-fenced NOT_DUE reconciliation in OBSERVE and mutation/PAPER without broker mutations', async () => {
+  test('one Restate advance runs reconciliation and lifecycle work without a background scheduler or broker mutation', async () => {
     const signalSessionDate: IsoDate = '2020-04-29'
     const calendarMaterial = {
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
@@ -3784,8 +3861,6 @@ describe('OBSERVE runtime composition', () => {
     let mutationCalendarReads = 0
     let mutationReconciliations = 0
     let nextReconciliationFailure: ExecutionStoreError | undefined
-    let reconciliationEntered: Deferred.Deferred<void> | undefined
-    let reconciliationGate: Deferred.Deferred<void> | undefined
     let secondMutationCalendarRead: Deferred.Deferred<void> | undefined
     const mutationEvents: string[] = []
     const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
@@ -3911,24 +3986,14 @@ describe('OBSERVE runtime composition', () => {
             mutationEvents.push('reconcile-failed')
             return Effect.fail(failure)
           }
-          const entered = reconciliationEntered
-          const gate = reconciliationGate
-          return (
-            entered === undefined || gate === undefined
-              ? Effect.void
-              : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(gate)))
-          ).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                reconciledSnapshots.push(brokerSnapshot)
-                if (mutationPhase) {
-                  mutationReconciliations += 1
-                  mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
-                }
-                return persisted
-              }),
-            ),
-          )
+          return Effect.sync(() => {
+            reconciledSnapshots.push(brokerSnapshot)
+            if (mutationPhase) {
+              mutationReconciliations += 1
+              mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
+            }
+            return persisted
+          })
         }),
       ensureAuthorityGeneration: () => {
         const authority = exact.riskContext.authority
@@ -4081,7 +4146,7 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
     expect(mutationObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('calendar:2'))
-    expect(mutationEvents.indexOf('observe:2')).toBeLessThan(mutationEvents.indexOf('calendar:2'))
+    expect(mutationEvents.indexOf('calendar:2')).toBeLessThan(mutationEvents.indexOf('observe:2'))
     expect(mutationCalendarReads).toBe(2)
     expect(mutationReconciliations).toBe(2)
     expect(acquisitions).toBe(0)
@@ -4172,8 +4237,10 @@ describe('OBSERVE runtime composition', () => {
     expect(nonIdleObservations).toHaveLength(2)
     expect(nonIdleObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(nonIdleObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(mutationEvents.indexOf('observe:1')).toBeLessThan(mutationEvents.indexOf('reconcile:1'))
+    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
+    expect(mutationEvents.indexOf('publication:1')).toBeLessThan(mutationEvents.indexOf('observe:1'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
+    expect(mutationEvents.indexOf('publication:2')).toBeLessThan(mutationEvents.indexOf('observe:2'))
     expect(publicationReads).toBe(2)
     expect(mutationReconciliations).toBe(2)
     expect(calendarReads).toBe(calendarReadsBeforeNonIdle)
@@ -4186,51 +4253,50 @@ describe('OBSERVE runtime composition', () => {
     let lifecycleMaintenanceRuns = 0
     let lifecycleFinalizationRuns = 0
     let externalNextDelayMs: number | undefined
-    const externalStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 100,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-      lifecycleMaintenance: {
-        beforeReconciliation: Effect.sync(() => {
-          lifecycleMaintenanceRuns += 1
-          mutationEvents.push(`maintenance:${lifecycleMaintenanceRuns.toString()}`)
-        }),
-        afterReconciliation: Effect.sync(() => {
-          lifecycleFinalizationRuns += 1
-          mutationEvents.push(`finalize:${lifecycleFinalizationRuns.toString()}`)
-          return lifecycleFinalizationRuns === 3 ? ('COMPLETED' as const) : ('CONTINUE' as const)
-        }),
+    const externalStartup = makeMutationAutonomousCycleStartup(
+      {
+        accountId,
+        authorityGenerationHash: generationHash,
+        pollIntervalMs: 100,
+        reconciliationIntervalMs: 100,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy: fixtureRuntime,
+        executionProgram: sandboxExecutionProgram(),
+        lifecycleMaintenance: {
+          beforeReconciliation: Effect.sync(() => {
+            lifecycleMaintenanceRuns += 1
+            mutationEvents.push(`maintenance:${lifecycleMaintenanceRuns.toString()}`)
+          }),
+          afterReconciliation: Effect.sync(() => {
+            lifecycleFinalizationRuns += 1
+            mutationEvents.push(`finalize:${lifecycleFinalizationRuns.toString()}`)
+            return lifecycleFinalizationRuns === 3 ? ('COMPLETED' as const) : ('CONTINUE' as const)
+          }),
+        },
       },
-      interpretCycleDriver: (driver) =>
+      (driver) =>
         Effect.gen(function* () {
           externalNextDelayMs = driver.nextDelayMs
           yield* driver.advance.pipe(Effect.orDie)
           yield* TestClock.adjust(100)
           yield* driver.advance.pipe(Effect.orDie)
-          const entered = yield* Deferred.make<void>()
-          const gate = yield* Deferred.make<void>()
-          reconciliationEntered = entered
-          reconciliationGate = gate
-          yield* TestClock.adjust(100)
-          const guardian = yield* driver.maintainReconciliation.pipe(Effect.forkChild({ startImmediately: true }))
-          yield* Deferred.await(entered)
-          const overlappingAdvance = yield* driver.advance.pipe(
-            Effect.orDie,
-            Effect.forkChild({ startImmediately: true }),
-          )
+          const beforeIdle = {
+            lifecycleMaintenanceRuns,
+            lifecycleFinalizationRuns,
+            mutationReconciliations,
+            publicationReads,
+          }
+          yield* TestClock.adjust(driver.nextDelayMs * 5)
           yield* Effect.yieldNow
-          expect(publicationReads).toBe(2)
-          yield* Deferred.succeed(gate, undefined)
-          yield* Fiber.join(guardian)
-          yield* Fiber.join(overlappingAdvance)
-          reconciliationEntered = undefined
-          reconciliationGate = undefined
+          expect({
+            lifecycleMaintenanceRuns,
+            lifecycleFinalizationRuns,
+            mutationReconciliations,
+            publicationReads,
+          }).toEqual(beforeIdle)
+          yield* driver.advance.pipe(Effect.orDie)
         }),
-    })
+    )
     mutationPhase = true
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -4266,48 +4332,63 @@ describe('OBSERVE runtime composition', () => {
     expect(externalObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(externalObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(externalObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
-    expect(lifecycleMaintenanceRuns).toBe(4)
+    expect(lifecycleMaintenanceRuns).toBe(3)
     expect(lifecycleFinalizationRuns).toBe(3)
-    expect(mutationReconciliations).toBe(4)
+    expect(mutationReconciliations).toBe(3)
     expect(mutationEvents.indexOf('maintenance:1')).toBeLessThan(mutationEvents.indexOf('reconcile:1'))
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('finalize:1'))
     expect(mutationEvents.indexOf('maintenance:2')).toBeLessThan(mutationEvents.indexOf('reconcile:2'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('finalize:2'))
     expect(mutationEvents.indexOf('maintenance:3')).toBeLessThan(mutationEvents.indexOf('reconcile:3'))
-    expect(mutationEvents.indexOf('reconcile:3')).toBeLessThan(mutationEvents.indexOf('maintenance:4'))
-    expect(mutationEvents.indexOf('maintenance:4')).toBeLessThan(mutationEvents.indexOf('reconcile:4'))
-    expect(mutationEvents.indexOf('reconcile:4')).toBeLessThan(mutationEvents.indexOf('finalize:3'))
+    expect(mutationEvents.indexOf('reconcile:3')).toBeLessThan(mutationEvents.indexOf('finalize:3'))
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
     expect(mutationEvents).not.toContain('publication:3')
     expect(mutationEvents.filter((event) => event.startsWith('publication:'))).toHaveLength(2)
 
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
     const externalTimeoutObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    let timeoutMaintenanceRuns = 0
+    let timeoutFinalizationRuns = 0
     mutationPhase = true
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(reconciledAt))
         const maintenanceEntered = yield* Deferred.make<void>()
-        const externalTimeoutStartup = makeMutationAutonomousCycleStartup({
-          accountId,
-          authorityGenerationHash: generationHash,
-          pollIntervalMs: 100,
-          reconciliationIntervalMs: 100,
-          reconciliationPassTimeoutMs: 50,
-          strategy: fixtureRuntime,
-          executionProgram: sandboxExecutionProgram(),
-          lifecycleMaintenance: {
-            beforeReconciliation: Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never)),
-            afterReconciliation: Effect.succeed('CONTINUE'),
+        const externalTimeoutStartup = makeMutationAutonomousCycleStartup(
+          {
+            accountId,
+            authorityGenerationHash: generationHash,
+            pollIntervalMs: 100,
+            reconciliationIntervalMs: 100,
+            reconciliationPassTimeoutMs: 50,
+            strategy: fixtureRuntime,
+            executionProgram: sandboxExecutionProgram(),
+            lifecycleMaintenance: {
+              beforeReconciliation: Effect.suspend(() => {
+                timeoutMaintenanceRuns += 1
+                return timeoutMaintenanceRuns === 1
+                  ? Deferred.succeed(maintenanceEntered, undefined).pipe(Effect.andThen(Effect.never))
+                  : Effect.void
+              }),
+              afterReconciliation: Effect.sync(() => {
+                timeoutFinalizationRuns += 1
+                return 'CONTINUE' as const
+              }),
+            },
           },
-          interpretCycleDriver: (driver) =>
+          (driver) =>
             Effect.gen(function* () {
               const advance = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
               yield* Deferred.await(maintenanceEntered)
               yield* TestClock.adjust(50)
               yield* Fiber.join(advance).pipe(Effect.orDie)
+              yield* TestClock.adjust(driver.nextDelayMs)
+              yield* driver.advance.pipe(Effect.orDie)
             }),
-        })
+        )
         const loop = yield* externalTimeoutStartup({
           qualificationRunId: 'c'.repeat(64),
           recordPass: (observation) =>
@@ -4340,7 +4421,12 @@ describe('OBSERVE runtime composition', () => {
         failure: 'operational',
         message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
       }),
+      expect.objectContaining({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' }),
     ])
+    expect(timeoutMaintenanceRuns).toBe(2)
+    expect(timeoutFinalizationRuns).toBe(1)
+    expect(mutationReconciliations).toBe(1)
+    expect(publicationReads).toBe(1)
     expect(authorityRestrictions).toBe(1)
     authorityRestrictions = 0
 
@@ -4350,24 +4436,26 @@ describe('OBSERVE runtime composition', () => {
     nextReconciliationFailure = new ExecutionStoreError({
       operation: 'reconciliation',
       failure: 'query',
-      message: 'external lifecycle reconciliation persistence failed',
+      message: 'Restate advance reconciliation persistence failed',
     })
     const externalFailureObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
-    const externalFailureStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 100,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-      interpretCycleDriver: (driver) =>
+    const externalFailureStartup = makeMutationAutonomousCycleStartup(
+      {
+        accountId,
+        authorityGenerationHash: generationHash,
+        pollIntervalMs: 100,
+        reconciliationIntervalMs: 100,
+        reconciliationPassTimeoutMs: 30_000,
+        strategy: fixtureRuntime,
+        executionProgram: sandboxExecutionProgram(),
+      },
+      (driver) =>
         Effect.gen(function* () {
           yield* driver.advance.pipe(Effect.orDie)
           yield* TestClock.adjust(100)
           yield* driver.advance.pipe(Effect.orDie)
         }),
-    })
+    )
     mutationPhase = true
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -4402,7 +4490,7 @@ describe('OBSERVE runtime composition', () => {
     expect(externalFailureObservations[0]).toMatchObject({
       result: 'FAILURE',
       operation: 'reconcile-not-due',
-      message: 'same-pass reconciliation store operation failed: external lifecycle reconciliation persistence failed',
+      message: 'same-pass reconciliation store operation failed: Restate advance reconciliation persistence failed',
     })
     expect(externalFailureObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(publicationReads).toBe(1)
@@ -4413,327 +4501,6 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('publication:1'))
     expect(authorityRestrictions).toBe(1)
     authorityRestrictions = 0
-
-    mutationEvents.length = 0
-    mutationReconciliations = 0
-    publicationReads = 0
-    const guardianRecoveryObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
-    const guardianRecoveryLogs: unknown[] = []
-    const guardianRecoveryLogger = Logger.make<unknown, void>((entry) => {
-      guardianRecoveryLogs.push(entry.message)
-    })
-    const guardianRecoveryStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 100,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-      interpretCycleDriver: (driver) =>
-        Effect.gen(function* () {
-          yield* driver.advance.pipe(Effect.orDie)
-          nextReconciliationFailure = new ExecutionStoreError({
-            operation: 'reconciliation',
-            failure: 'query',
-            message: 'guardian reconciliation persistence failed',
-          })
-          yield* TestClock.adjust(100)
-          yield* driver.maintainReconciliation
-          yield* TestClock.adjust(100)
-          yield* driver.maintainReconciliation
-        }),
-    })
-    mutationPhase = true
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(reconciledAt))
-        const loop = yield* guardianRecoveryStartup({
-          qualificationRunId: 'd'.repeat(64),
-          recordPass: (observation) =>
-            Effect.sync(() => {
-              guardianRecoveryObservations.push(observation)
-              mutationEvents.push(`guardian-recovery-observe:${guardianRecoveryObservations.length.toString()}`)
-            }),
-        })
-        yield* loop.pipe(
-          Effect.provideService(BrokerRead, brokerRead),
-          Effect.provideService(CycleStore, cycleStore),
-          Effect.provideService(MarketData, missingPublicationMarketData),
-          Effect.provideService(BrokerEventStore, executionStore),
-          Effect.provideService(FillAccountingStore, executionStore),
-          Effect.provideService(ValuationStore, executionStore),
-          Effect.provideService(ReconciliationStore, executionStore),
-          Effect.provideService(AuthorityGenerationStore, executionStore),
-          Effect.provideService(AuthorityRestrictionStore, executionStore),
-          Effect.provideService(WriterFence, writerFence),
-          Effect.provideService(IntentStore, intentStore),
-          Effect.provideService(MutationStore, mutationStore),
-        )
-      }).pipe(Effect.provide(Layer.merge(Logger.layer([guardianRecoveryLogger]), TestClock.layer()))),
-    )
-    mutationPhase = false
-
-    expect(guardianRecoveryObservations).toEqual([
-      expect.objectContaining({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' }),
-    ])
-    expect(mutationEvents).toContain('reconcile-failed')
-    expect(mutationEvents.indexOf('reconcile-failed')).toBeGreaterThan(
-      mutationEvents.indexOf('guardian-recovery-observe:1'),
-    )
-    expect(mutationEvents.indexOf('reconcile:2')).toBeGreaterThan(mutationEvents.indexOf('reconcile-failed'))
-    expect(publicationReads).toBe(1)
-    expect(mutationReconciliations).toBe(2)
-    expect(authorityRestrictions).toBe(1)
-    expect(guardianRecoveryLogs).toContainEqual([
-      'Bayn Restate reconciliation guardian failed',
-      expect.objectContaining({
-        _tag: 'CycleRunnerError',
-        operation: 'reconcile-not-due',
-        cause: expect.objectContaining({
-          _tag: 'CycleNotDueReconciliationError',
-          cause: expect.objectContaining({
-            _tag: 'OperationalError',
-            cause: expect.objectContaining({
-              _tag: 'ExecutionStoreError',
-              operation: 'reconciliation',
-              failure: 'query',
-            }),
-          }),
-        }),
-      }),
-    ])
-    authorityRestrictions = 0
-
-    mutationEvents.length = 0
-    mutationReconciliations = 0
-    publicationReads = 0
-    nextReconciliationFailure = new ExecutionStoreError({
-      operation: 'reconciliation',
-      failure: 'query',
-      message: 'mutation cadence reconciliation persistence failed',
-    })
-    const failureStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 5,
-      reconciliationIntervalMs: 10,
-      reconciliationPassTimeoutMs: 2,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-    })
-    const failureObservations: Parameters<Parameters<typeof failureStartup>[0]['recordPass']>[0][] = []
-    mutationPhase = true
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(reconciledAt))
-          const first = yield* Deferred.make<void>()
-          const second = yield* Deferred.make<void>()
-          const completions = [first, second]
-          const loop = yield* failureStartup({
-            qualificationRunId: 'c'.repeat(64),
-            recordPass: (observation) =>
-              Effect.sync(() => {
-                failureObservations.push(observation)
-                mutationEvents.push(`failure-observe:${failureObservations.length.toString()}`)
-                return completions[failureObservations.length - 1]
-              }).pipe(
-                Effect.flatMap((completion) =>
-                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
-                ),
-              ),
-          })
-          const fiber = yield* loop.pipe(
-            Effect.provideService(BrokerRead, brokerRead),
-            Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, missingPublicationMarketData),
-            Effect.provideService(BrokerEventStore, executionStore),
-            Effect.provideService(FillAccountingStore, executionStore),
-            Effect.provideService(ValuationStore, executionStore),
-            Effect.provideService(ReconciliationStore, executionStore),
-            Effect.provideService(AuthorityGenerationStore, executionStore),
-            Effect.provideService(AuthorityRestrictionStore, executionStore),
-            Effect.provideService(WriterFence, writerFence),
-            Effect.provideService(IntentStore, intentStore),
-            Effect.provideService(MutationStore, mutationStore),
-            Effect.forkScoped({ startImmediately: true }),
-          )
-          yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
-          yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
-          for (let elapsed = 0; elapsed < 15; elapsed += 1) {
-            yield* TestClock.withLive(Effect.sleep(1))
-            yield* TestClock.adjust(1)
-          }
-          yield* Fiber.interrupt(fiber)
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-    )
-    mutationPhase = false
-
-    expect(failureObservations).toHaveLength(5)
-    expect(failureObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(failureObservations[1]).toMatchObject({
-      result: 'FAILURE',
-      operation: 'reconcile-not-due',
-      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
-    })
-    expect(failureObservations[2]).toMatchObject({
-      result: 'FAILURE',
-      operation: 'reconcile-not-due',
-      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
-    })
-    expect(failureObservations[3]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(failureObservations[4]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(publicationReads).toBe(3)
-    expect(mutationReconciliations).toBe(1)
-    expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('failure-observe:2'))
-    expect(authorityRestrictions).toBe(1)
-
-    mutationEvents.length = 0
-    mutationReconciliations = 0
-    publicationReads = 0
-    nextReconciliationFailure = new ExecutionStoreError({
-      operation: 'reconciliation',
-      failure: 'query',
-      message: 'slow-poll mutation reconciliation persistence failed',
-    })
-    const recoveryStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 250,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-    })
-    const recoveryObservations: Parameters<Parameters<typeof recoveryStartup>[0]['recordPass']>[0][] = []
-    mutationPhase = true
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(reconciledAt))
-          const initial = yield* Deferred.make<void>()
-          const failed = yield* Deferred.make<void>()
-          const recovered = yield* Deferred.make<void>()
-          const completions = [initial, failed, recovered]
-          const loop = yield* recoveryStartup({
-            qualificationRunId: 'c'.repeat(64),
-            recordPass: (observation) =>
-              Effect.sync(() => {
-                recoveryObservations.push(observation)
-                mutationEvents.push(`recovery-observe:${recoveryObservations.length.toString()}`)
-                return completions[recoveryObservations.length - 1]
-              }).pipe(
-                Effect.flatMap((completion) =>
-                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
-                ),
-              ),
-          })
-          const fiber = yield* loop.pipe(
-            Effect.provideService(BrokerRead, brokerRead),
-            Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, missingPublicationMarketData),
-            Effect.provideService(BrokerEventStore, executionStore),
-            Effect.provideService(FillAccountingStore, executionStore),
-            Effect.provideService(ValuationStore, executionStore),
-            Effect.provideService(ReconciliationStore, executionStore),
-            Effect.provideService(AuthorityGenerationStore, executionStore),
-            Effect.provideService(AuthorityRestrictionStore, executionStore),
-            Effect.provideService(WriterFence, writerFence),
-            Effect.provideService(IntentStore, intentStore),
-            Effect.provideService(MutationStore, mutationStore),
-            Effect.forkScoped({ startImmediately: true }),
-          )
-          yield* Deferred.await(initial).pipe(Effect.timeout('1 second'))
-          yield* Deferred.await(failed).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(100)
-          yield* Deferred.await(recovered).pipe(Effect.timeout('1 second'))
-          yield* Fiber.interrupt(fiber)
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-    )
-    mutationPhase = false
-
-    expect(recoveryObservations).toHaveLength(3)
-    expect(recoveryObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(recoveryObservations[1]).toMatchObject({
-      result: 'FAILURE',
-      operation: 'reconcile-not-due',
-      message: 'same-pass reconciliation store operation failed: slow-poll mutation reconciliation persistence failed',
-    })
-    expect(recoveryObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(publicationReads).toBe(1)
-    expect(mutationReconciliations).toBe(1)
-    expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('recovery-observe:2'))
-    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('recovery-observe:3'))
-    expect(authorityRestrictions).toBe(2)
-
-    mutationEvents.length = 0
-    mutationReconciliations = 0
-    publicationReads = 0
-    const nearBoundaryStartup = makeMutationAutonomousCycleStartup({
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 99,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 100,
-      strategy: fixtureRuntime,
-      executionProgram: sandboxExecutionProgram(),
-    })
-    mutationPhase = true
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(reconciledAt))
-          const firstPass = yield* Deferred.make<void>()
-          secondPublicationRead = yield* Deferred.make<void>()
-          let observations = 0
-          const loop = yield* nearBoundaryStartup({
-            qualificationRunId: 'c'.repeat(64),
-            recordPass: () =>
-              Effect.sync(() => {
-                observations += 1
-                mutationEvents.push(`near-observe:${observations.toString()}`)
-                return observations
-              }).pipe(
-                Effect.flatMap((count) =>
-                  count === 1 ? Deferred.succeed(firstPass, undefined).pipe(Effect.asVoid) : Effect.void,
-                ),
-              ),
-          })
-          const fiber = yield* loop.pipe(
-            Effect.provideService(BrokerRead, brokerRead),
-            Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, missingPublicationMarketData),
-            Effect.provideService(BrokerEventStore, executionStore),
-            Effect.provideService(FillAccountingStore, executionStore),
-            Effect.provideService(ValuationStore, executionStore),
-            Effect.provideService(ReconciliationStore, executionStore),
-            Effect.provideService(AuthorityGenerationStore, executionStore),
-            Effect.provideService(AuthorityRestrictionStore, executionStore),
-            Effect.provideService(WriterFence, writerFence),
-            Effect.provideService(IntentStore, intentStore),
-            Effect.provideService(MutationStore, mutationStore),
-            Effect.forkScoped({ startImmediately: true }),
-          )
-          yield* Deferred.await(firstPass).pipe(Effect.timeout('1 second'))
-          yield* TestClock.withLive(Effect.sleep(5))
-          yield* TestClock.adjust(99)
-          expect(publicationReads).toBe(1)
-          expect(mutationReconciliations).toBe(1)
-          yield* TestClock.adjust(1)
-          yield* Deferred.await(secondPublicationRead).pipe(Effect.timeout('1 second'))
-          yield* Fiber.interrupt(fiber)
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-    )
-    mutationPhase = false
-
-    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
-    expect(publicationReads).toBe(2)
-    expect(mutationReconciliations).toBe(2)
-    expect(authorityRestrictions).toBe(2)
 
     const paperResult = reconciliationResult(generationHash, Authority.Execution)
     const paperAuthority = paperResult.riskContext.authority
@@ -4769,126 +4536,6 @@ describe('OBSERVE runtime composition', () => {
         updatedAt: evaluatedAt,
       }),
     )
-    const postReconcileObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
-    const postReconcileEvents: string[] = []
-    let postReconcilePasses = 0
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(evaluatedAt))
-          const storeReadStarted = yield* Deferred.make<void>()
-          const storeReadInterrupted = yield* Deferred.make<void>()
-          const passFailed = yield* Deferred.make<void>()
-          const cadenceContinued = yield* Deferred.make<void>()
-          const unusedPostReconcile = Effect.die(new Error('post-reconcile fixture used an unrelated operation'))
-          const postReconcileCycleStore: CycleStoreShape = {
-            acquire: () => unusedPostReconcile,
-            read: () => unusedPostReconcile,
-            readAuthoritySlot: () => unusedPostReconcile,
-            readDecisionDocument: () => Effect.succeed(Option.some(postReconcileDocument)),
-            readOldestUnfinished: () => Effect.succeed(Option.some(postReconcileCycle)),
-            bindSnapshot: () => unusedPostReconcile,
-            activate: () => unusedPostReconcile,
-            bindDecision: () => unusedPostReconcile,
-            finish: () => unusedPostReconcile,
-            block: () => unusedPostReconcile,
-          }
-          const postReconcileExecutionStore = {
-            ...executionStore,
-            reconcile: () =>
-              Effect.sync(() => {
-                postReconcilePasses += 1
-                postReconcileEvents.push(`reconcile:${postReconcilePasses.toString()}`)
-                return postReconcilePasses
-              }).pipe(
-                Effect.flatMap((count) =>
-                  count === 1
-                    ? Deferred.succeed(cadenceContinued, undefined).pipe(Effect.as(paperPersisted))
-                    : Effect.succeed(paperPersisted),
-                ),
-              ),
-            ensureAuthorityGeneration: () => Effect.succeed(paperAuthority),
-          } satisfies BrokerEventStoreShape &
-            FillAccountingStoreShape &
-            ValuationStoreShape &
-            ReconciliationStoreShape &
-            AuthorityGenerationStoreShape &
-            AuthorityRestrictionStoreShape
-          const postReconcileIntentStore: IntentStoreService = {
-            commit: () => unusedPostReconcile,
-            read: () =>
-              Deferred.succeed(storeReadStarted, undefined).pipe(
-                Effect.andThen(
-                  Effect.never.pipe(
-                    Effect.onInterrupt(() =>
-                      Effect.sync(() => postReconcileEvents.push('store-read-interrupted')).pipe(
-                        Effect.andThen(Deferred.succeed(storeReadInterrupted, undefined)),
-                        Effect.asVoid,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          }
-          const postReconcileStartup = makeMutationAutonomousCycleStartup({
-            accountId,
-            authorityGenerationHash: generationHash,
-            pollIntervalMs: 10_000,
-            reconciliationIntervalMs: 100,
-            reconciliationPassTimeoutMs: 50,
-            strategy: fixtureRuntime,
-            executionProgram: sandboxExecutionProgram(),
-          })
-          const loop = yield* postReconcileStartup({
-            qualificationRunId: 'c'.repeat(64),
-            recordPass: (observation) =>
-              Effect.sync(() => {
-                postReconcileObservations.push(observation)
-                postReconcileEvents.push(`observe:${postReconcileObservations.length.toString()}`)
-              }).pipe(Effect.andThen(Deferred.succeed(passFailed, undefined)), Effect.asVoid),
-          })
-          const fiber = yield* loop.pipe(
-            Effect.provideService(BrokerRead, { ...brokerRead, marketCalendar: calendarRead([]) }),
-            Effect.provideService(CycleStore, postReconcileCycleStore),
-            Effect.provideService(MarketData, marketData([])),
-            Effect.provideService(BrokerEventStore, postReconcileExecutionStore),
-            Effect.provideService(FillAccountingStore, postReconcileExecutionStore),
-            Effect.provideService(ValuationStore, postReconcileExecutionStore),
-            Effect.provideService(ReconciliationStore, postReconcileExecutionStore),
-            Effect.provideService(AuthorityGenerationStore, postReconcileExecutionStore),
-            Effect.provideService(AuthorityRestrictionStore, postReconcileExecutionStore),
-            Effect.provideService(WriterFence, writerFence),
-            Effect.provideService(IntentStore, postReconcileIntentStore),
-            Effect.provideService(MutationStore, {} as MutationStoreShape),
-            Effect.forkScoped({ startImmediately: true }),
-          )
-          yield* Deferred.await(storeReadStarted).pipe(Effect.timeout('1 second'))
-          expect(postReconcilePasses).toBe(0)
-          postReconcileEvents.push('store-read-started')
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(passFailed).pipe(Effect.timeout('1 second'))
-          yield* Deferred.await(storeReadInterrupted).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(51)
-          yield* Deferred.await(cadenceContinued).pipe(Effect.timeout('1 second'))
-          yield* Fiber.interrupt(fiber)
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-    )
-
-    expect(postReconcileObservations).toHaveLength(1)
-    expect(postReconcileObservations[0]).toMatchObject({
-      result: 'FAILURE',
-      operation: 'run-cycle-pass',
-      failure: 'operational',
-      message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
-    })
-    expect(postReconcilePasses).toBe(1)
-    expect(authorityRestrictions).toBe(3)
-    expect(postReconcileEvents.indexOf('store-read-interrupted')).toBeLessThan(
-      postReconcileEvents.indexOf('reconcile:1'),
-    )
-
     const boundaryTarget = postReconcileDocument.targetPlan.intentTargets[0]
     const boundaryRisk = postReconcileDocument.deltaRisk[0]
     if (boundaryTarget === undefined || boundaryRisk === undefined) {
@@ -4929,7 +4576,6 @@ describe('OBSERVE runtime composition', () => {
           const intentReadStarted = yield* Deferred.make<void>()
           const mutationSettled = yield* Deferred.make<void>()
           const preMutationReconciled = yield* Deferred.make<void>()
-          const postMutationReconciled = yield* Deferred.make<void>()
           const pass =
             yield* Deferred.make<
               Parameters<Parameters<ReturnType<typeof makeMutationAutonomousCycleStartup>>[0]['recordPass']>[0]
@@ -4942,11 +4588,7 @@ describe('OBSERVE runtime composition', () => {
                 return boundaryReconciliations
               }).pipe(
                 Effect.tap((count) =>
-                  count === 1
-                    ? Deferred.succeed(preMutationReconciled, undefined).pipe(Effect.asVoid)
-                    : count === 2
-                      ? Deferred.succeed(postMutationReconciled, undefined).pipe(Effect.asVoid)
-                      : Effect.void,
+                  count === 1 ? Deferred.succeed(preMutationReconciled, undefined).pipe(Effect.asVoid) : Effect.void,
                 ),
                 Effect.as(paperPersisted),
               ),
@@ -5050,35 +4692,27 @@ describe('OBSERVE runtime composition', () => {
             ),
           )
           yield* Effect.yieldNow
-          expect(boundaryReconciliations).toBe(1)
+          expect(boundaryReconciliations).toBe(2)
           yield* TestClock.adjust(1)
-          yield* Effect.yieldNow
-          expect(Option.isNone(yield* Deferred.poll(pass))).toBe(true)
-          expect(authorityRestrictions).toBe(3)
-          yield* TestClock.adjust(1_000)
-          yield* TestClock.withLive(
-            Deferred.await(postMutationReconciled).pipe(
-              Effect.timeout('1 second'),
-              Effect.mapError(() => new Error('timed out waiting for post-mutation reconciliation')),
-            ),
-          )
           const observation = yield* TestClock.withLive(
             Deferred.await(pass).pipe(
               Effect.timeout('1 second'),
-              Effect.mapError(() => new Error('timed out waiting for post-mutation cycle observation')),
+              Effect.mapError(() => new Error('timed out waiting for aggregate timeout observation')),
             ),
           )
           expect(observation).toMatchObject({
-            result: 'SUCCESS',
-            outcome: 'RECOVERED',
+            result: 'FAILURE',
+            operation: 'run-cycle-pass',
+            message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
           })
+          expect(authorityRestrictions).toBe(1)
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
 
     expect(boundaryReconciliations).toBe(2)
-    expect(authorityRestrictions).toBe(3)
+    expect(authorityRestrictions).toBe(1)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {
@@ -5313,25 +4947,10 @@ describe('OBSERVE runtime composition', () => {
           return { cycle: terminalCycle, changed: true }
         }),
     }
-    const brokerRead = {
-      account: forbidden('broker account read'),
-      accountConfiguration: forbidden('broker account-configuration read'),
-      assetBySymbol: () => forbidden('broker asset read'),
-      positions: forbidden('broker positions read'),
-      orders: () => forbidden('broker orders read'),
-      orderById: () => forbidden('broker order lookup'),
-      orderByClientId: () => forbidden('broker client-order lookup'),
-      fillActivities: () => forbidden('broker fill read'),
-      marketCalendar: () => forbidden('broker calendar read'),
-    } satisfies BrokerReadShape
+    const reconciliationServices = makeExactReconciliationServices()
+    const brokerRead = reconciliationServices.brokerRead
     const executionStore = {
-      ingest: () => forbidden('broker-event persistence'),
-      ingestPositions: () => forbidden('position persistence'),
-      account: () => forbidden('accounting read'),
-      value: () => forbidden('valuation persistence'),
-      hasAccountBaseline: () => forbidden('account baseline read'),
-      bindings: () => forbidden('accounting binding read'),
-      reconcile: () => forbidden('reconciliation persistence'),
+      ...reconciliationServices.executionStore,
       ensureAuthorityGeneration: () => forbidden('authority initialization'),
       restrictAuthority: () => forbidden('authority restriction'),
     } satisfies BrokerEventStoreShape &
@@ -5349,11 +4968,7 @@ describe('OBSERVE runtime composition', () => {
       loadSnapshotPublication: () => forbidden('snapshot publication load'),
       load: forbidden('market-data load'),
     }
-    const writerFence: WriterFenceService = {
-      backendPid: 1,
-      check: forbidden('writer-fence check'),
-      transaction: () => forbidden('writer-fence transaction'),
-    }
+    const writerFence = reconciliationServices.writerFence
     const startup = makeMutationAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
@@ -5471,25 +5086,10 @@ describe('OBSERVE runtime composition', () => {
         }),
       block: () => forbidden('cycle blocking'),
     }
-    const brokerRead = {
-      account: forbidden('broker account read'),
-      accountConfiguration: forbidden('broker account-configuration read'),
-      assetBySymbol: () => forbidden('broker asset read'),
-      positions: forbidden('broker positions read'),
-      orders: () => forbidden('broker orders read'),
-      orderById: () => forbidden('broker order lookup'),
-      orderByClientId: () => forbidden('broker client-order lookup'),
-      fillActivities: () => forbidden('broker fill read'),
-      marketCalendar: () => forbidden('broker calendar read'),
-    } satisfies BrokerReadShape
+    const reconciliationServices = makeExactReconciliationServices()
+    const brokerRead = reconciliationServices.brokerRead
     const executionStore = {
-      ingest: () => forbidden('broker-event persistence'),
-      ingestPositions: () => forbidden('position persistence'),
-      account: () => forbidden('accounting read'),
-      value: () => forbidden('valuation persistence'),
-      hasAccountBaseline: () => forbidden('account baseline read'),
-      bindings: () => forbidden('accounting binding read'),
-      reconcile: () => forbidden('reconciliation persistence'),
+      ...reconciliationServices.executionStore,
       ensureAuthorityGeneration: () => forbidden('authority initialization'),
       restrictAuthority: () => forbidden('authority restriction'),
     } satisfies BrokerEventStoreShape &
@@ -5507,11 +5107,7 @@ describe('OBSERVE runtime composition', () => {
       loadSnapshotPublication: () => forbidden('snapshot publication load'),
       load: forbidden('market-data load'),
     }
-    const writerFence: WriterFenceService = {
-      backendPid: 1,
-      check: forbidden('writer-fence check'),
-      transaction: () => forbidden('writer-fence transaction'),
-    }
+    const writerFence = reconciliationServices.writerFence
     const startup = makeMutationAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
@@ -5563,14 +5159,9 @@ describe('OBSERVE runtime composition', () => {
   test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {
     const unused = Effect.die(new Error('missing-publication mutation loop must not use this capability'))
     let authorityInitializations = 0
+    const reconciliationServices = makeExactReconciliationServices()
     const executionStore = {
-      ingest: () => unused,
-      ingestPositions: () => unused,
-      account: () => unused,
-      value: () => unused,
-      hasAccountBaseline: () => unused,
-      bindings: () => unused,
-      reconcile: () => unused,
+      ...reconciliationServices.executionStore,
       ensureAuthorityGeneration: () =>
         Effect.sync(() => {
           authorityInitializations += 1
@@ -5595,17 +5186,7 @@ describe('OBSERVE runtime composition', () => {
       finish: () => unused,
       block: () => unused,
     }
-    const brokerRead: BrokerReadShape = {
-      account: unused,
-      accountConfiguration: unused,
-      assetBySymbol: unusedAssetBySymbol,
-      positions: unused,
-      orders: () => unused,
-      orderById: () => unused,
-      orderByClientId: () => unused,
-      fillActivities: () => unused,
-      marketCalendar: () => unused,
-    }
+    const brokerRead = reconciliationServices.brokerRead
     const marketDataService: MarketDataService = {
       ...marketData([]),
       inspectCyclePublications: Effect.succeed({
@@ -5613,11 +5194,7 @@ describe('OBSERVE runtime composition', () => {
         observedAt: '2026-01-30T21:20:00.000Z',
       }),
     }
-    const writerFence: WriterFenceService = {
-      backendPid: 1,
-      check: unused,
-      transaction: (effect) => effect,
-    }
+    const writerFence = reconciliationServices.writerFence
     const intentStore = {} as IntentStoreService
     const mutationStore = {} as MutationStoreShape
     const startup = makeMutationAutonomousCycleStartup({

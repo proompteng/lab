@@ -73,11 +73,8 @@ export type RecoveryFirstCycleAdvance = {
 
 export type RecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
-  /** Keeps broker/accounting truth fresh while an external lifecycle owner is delayed between commands. */
-  readonly maintainReconciliation: Effect.Effect<void, never, RecoveryFirstRuntime>
-  /** The external owner must not delay the next command beyond either the cycle or reconciliation cadence. */
+  /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
-  readonly wait: (advance: RecoveryFirstCycleAdvance) => Effect.Effect<void, never, RecoveryFirstRuntime>
 }
 
 export type RecoveryFirstCycleDriverInterpreter = (
@@ -101,7 +98,6 @@ export type ObserveAutonomousCycleInput = {
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
   /** Runs phased lifecycle maintenance inside the same serialized command as reconciliation and the cycle pass. */
   readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance
-  readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
 
 export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {

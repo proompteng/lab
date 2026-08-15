@@ -58,9 +58,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
-  readonly maintainReconciliation: Effect.Effect<void>
   readonly nextDelayMs: number
-  readonly wait: (advance: RecoveryFirstCycleAdvance) => Effect.Effect<void>
 }
 
 export class PublishedExecutionCycleDriver extends Context.Service<
@@ -141,9 +139,7 @@ const bindRecoveryFirstCycleDriver = (
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
       advance: Effect.provideContext(driver.advance, context),
-      maintainReconciliation: Effect.provideContext(driver.maintainReconciliation, context),
       nextDelayMs: driver.nextDelayMs,
-      wait: (advance) => Effect.provideContext(driver.wait(advance), context),
     })),
   )
 
