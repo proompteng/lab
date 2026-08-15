@@ -813,13 +813,15 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null))).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), BrokerAccess.ReadOnly)).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), BrokerAccess.Mutation)).toBe(true)
     expect(
       readOnlyQualificationEvidenceRequired(
         Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation }),
+        BrokerAccess.Mutation,
       ),
     ).toBe(false)
-    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'))).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), BrokerAccess.ReadOnly)).toBe(true)
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
