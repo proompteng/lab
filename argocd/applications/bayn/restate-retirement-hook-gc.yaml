@@ -1,0 +1,68 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-restate-retirement-hook-gc
+  labels:
+    app.kubernetes.io/name: bayn-retirement-hook-gc
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-retirement-hook-gc
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-restate-registration-final-retirement
+  labels:
+    app.kubernetes.io/name: bayn-retirement-hook-gc
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  activeDeadlineSeconds: 60
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-retirement-hook-gc
+        app.kubernetes.io/part-of: bayn
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: garbage-collect-failed-hook
+          image: docker.restate.dev/restatedev/restate-cli:1.7.2@sha256:6905cd107840658f8ef0338c95e3c691dba3da450e9e0fb12066d00fd57e69f9
+          command:
+            - /bin/sh
+            - -eu
+            - -c
+          args:
+            - exit 0
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
