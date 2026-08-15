@@ -56,7 +56,7 @@ export const executionControllerCommandRetryPolicy = {
   maxInterval: 10_000,
   exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
-export const executionControllerInitialTickDelayMs = 5 * 60_000
+export const executionControllerInitialTickDelayMs = 0
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string

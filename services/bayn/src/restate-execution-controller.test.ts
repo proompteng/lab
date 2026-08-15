@@ -68,6 +68,7 @@ type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState
 
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
+    expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts).toBe(3)
     expect(executionControllerTickRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'pause' })
@@ -86,9 +87,10 @@ describe('native Restate execution controller', () => {
     )
   })
 
-  test('serializes activation, one durable advance, scheduling, stale delivery, and deactivation', async () => {
+  test('serializes null activation into one immediate first pass and one normal successor', async () => {
     let state: ExecutionControllerState | null = null
     const deliveries: Delivery[] = []
+    const events: string[] = []
     const calls: Array<{
       readonly command: Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]
       readonly signal: AbortSignal
@@ -98,6 +100,7 @@ describe('native Restate execution controller', () => {
     const runtime = {
       advance: async (command: (typeof calls)[number]['command'], signal: AbortSignal) => {
         calls.push({ command, signal })
+        events.push('advance-completed')
         return {
           completedAt: '2026-08-13T18:00:01.000Z',
           outcome: {
@@ -110,15 +113,20 @@ describe('native Restate execution controller', () => {
       log: () => Promise.reject(new Error('telemetry unavailable')),
       projectState: async (_key: string, next: ExecutionControllerState) => {
         projectedStates.push(next)
+        events.push(next.active ? 'activation-projected' : 'deactivation-projected')
       },
     }
     const context = {
       key: controllerKey,
       get: async () => state,
       set: (_key: string, next: ExecutionControllerState) => {
+        events.push('state-committed')
         state = next
       },
       genericSend: (delivery: Delivery) => {
+        events.push(
+          delivery.delay === executionControllerInitialTickDelayMs ? 'first-pass-scheduled' : 'successor-scheduled',
+        )
         deliveries.push(delivery)
       },
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
@@ -131,8 +139,9 @@ describe('native Restate execution controller', () => {
     expect(projectedStates).toHaveLength(1)
     expect(projectedStates[0]).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(deliveries).toHaveLength(1)
+    expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled'])
     expect(deliveries[0]).toMatchObject({
-      delay: executionControllerInitialTickDelayMs,
+      delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 0),
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
     })
@@ -141,6 +150,7 @@ describe('native Restate execution controller', () => {
     expect(projectedStates).toHaveLength(2)
     expect(projectedStates[1]).toEqual(projectedStates[0])
     expect(deliveries).toHaveLength(1)
+    expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled', 'activation-projected'])
 
     const firstTick = deliveries.shift()
     if (firstTick === undefined) throw new Error('activation did not schedule the first tick')
@@ -169,6 +179,7 @@ describe('native Restate execution controller', () => {
       idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0),
       parameter: { epoch: 1, sequence: 5, attempt: 0 },
     })
+    expect(events.slice(-3)).toEqual(['advance-completed', 'state-committed', 'successor-scheduled'])
 
     await object.tick(context, firstTick.parameter)
     expect(calls).toHaveLength(1)
@@ -509,7 +520,7 @@ describe('native Restate execution controller', () => {
     expect(genericCalls).toBe(0)
   })
 
-  test('rotates only the exact previous native binding and replays without a second deactivation', async () => {
+  test('rotates the exact previous binding into one immediate pass and ignores its stale tick', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
     const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
@@ -523,12 +534,48 @@ describe('native Restate execution controller', () => {
       nextSequence: 12,
     }
     const events: string[] = []
+    const deliveries: Delivery[] = []
+    const calls: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
+    const projectedStates: ExecutionControllerState[] = []
     let genericCalls = 0
+    const attempt = new AbortController()
     const controller = makeBaynExecutionController(rotationConfig, {
-      advance: () => Promise.reject(new Error('must not advance')),
+      advance: async (command) => {
+        calls.push(command)
+        events.push('advance-completed')
+        return {
+          completedAt: '2026-08-13T18:00:01.000Z',
+          outcome: {
+            _tag: ExecutionControllerOutcome.Blocked,
+            receiptHash: 'f'.repeat(64),
+            nextDelayMs: 30_000,
+          },
+        }
+      },
       log: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
+      projectState: async (_key, next) => {
+        projectedStates.push(next)
+        events.push(next.active ? 'activation-projected' : 'deactivation-projected')
+      },
     })
+    const object = handlers(controller)
+    const controllerContext = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+        events.push('state-committed')
+      },
+      genericSend: (delivery: Delivery) => {
+        deliveries.push(delivery)
+        events.push(
+          delivery.delay === executionControllerInitialTickDelayMs ? 'first-pass-scheduled' : 'successor-scheduled',
+        )
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      request: () => ({ id: 'rotation-controller', attemptCompletedSignal: attempt.signal }),
+    } as unknown as TestContext
     const start = bootstrapHandlers(makeBaynExecutionBootstrap(rotationConfig, controller, authorizationHash)).start
     const context = {
       request: () => ({
@@ -538,36 +585,8 @@ describe('native Restate execution controller', () => {
       }),
       objectClient: () => ({
         status: async () => state,
-        deactivate: async (request: unknown) => {
-          events.push('deactivate')
-          expect(request).toEqual({
-            schemaVersion: 'bayn.execution-controller-deactivation.v1',
-            controllerKey,
-            epoch: 4,
-            ...previousBinding,
-          })
-          state = { ...state, active: false, epoch: 5 }
-          return state
-        },
-        activate: async (request: unknown) => {
-          events.push('activate')
-          expect(request).toEqual({
-            schemaVersion: 'bayn.execution-controller-activation.v1',
-            controllerKey,
-            epoch: 5,
-            firstSequence: 12,
-            planHash,
-            sourceRevision,
-          })
-          state = {
-            ...state,
-            active: true,
-            planHash,
-            sourceRevision,
-            initialSequence: 12,
-          }
-          return state
-        },
+        deactivate: (request: unknown) => object.deactivate(controllerContext, request),
+        activate: (request: unknown) => object.activate(controllerContext, request),
       }),
       genericCall: () => {
         genericCalls += 1
@@ -583,12 +602,65 @@ describe('native Restate execution controller', () => {
     }
 
     expect(await start(context, request)).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision })
-    expect(events).toEqual(['deactivate', 'activate'])
+    expect(projectedStates).toHaveLength(2)
+    expect(projectedStates[0]).toMatchObject({ active: false, epoch: 5, ...previousBinding })
+    expect(projectedStates[1]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
+    expect(events).toEqual([
+      'deactivation-projected',
+      'state-committed',
+      'activation-projected',
+      'state-committed',
+      'first-pass-scheduled',
+    ])
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]).toMatchObject({
+      delay: 0,
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 12, 0),
+      parameter: { epoch: 5, sequence: 12, attempt: 0 },
+    })
     expect(genericCalls).toBe(0)
 
     await start(context, request)
-    expect(events).toEqual(['deactivate', 'activate', 'activate'])
+    expect(projectedStates).toHaveLength(3)
+    expect(projectedStates[2]).toEqual(projectedStates[1])
+    expect(deliveries).toHaveLength(1)
     expect(genericCalls).toBe(0)
+
+    await object.tick(controllerContext, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 4,
+      sequence: 12,
+      attempt: 0,
+    })
+    expect(calls).toHaveLength(0)
+    expect(deliveries).toHaveLength(1)
+
+    const firstTick = deliveries.shift()
+    if (firstTick === undefined) throw new Error('rotation did not schedule the new binding first pass')
+    await object.tick(controllerContext, firstTick.parameter)
+    expect(calls).toEqual([
+      {
+        controllerKey,
+        epoch: 5,
+        sequence: 12,
+        issuedAt: '2026-08-13T18:00:00.000Z',
+        sourceRevision,
+      },
+    ])
+    expect(state).toMatchObject({
+      active: true,
+      epoch: 5,
+      nextSequence: 13,
+      lastCompletion: { sequence: 12, outcome: 'Blocked' },
+      nextDueAt: '2026-08-13T18:00:31.000Z',
+    })
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]).toMatchObject({
+      delay: 30_000,
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
+      parameter: { epoch: 5, sequence: 13, attempt: 0 },
+    })
+    expect(events.slice(-3)).toEqual(['advance-completed', 'state-committed', 'successor-scheduled'])
   })
 
   test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {
