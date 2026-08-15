@@ -118,6 +118,9 @@ spec:
 
               expected_values=''
               expected_ids=''
+              final_id='dp_14g38iazTnn3gWZzr8Ze0i5'
+              final_endpoint='http://bayn-lifecycle-2e6a1cbf1dce.bayn.svc.cluster.local:9080/'
+              final_source_revision='2e6a1cbf1dce6737f6c96e25c097d214366af48d'
               while IFS='|' read -r id endpoint source_revision; do
                 [ -n "$id" ] || continue
                 if [ -n "$expected_values" ]; then
@@ -216,6 +219,19 @@ spec:
                 "
               }
 
+              hold_final_active_revision() {
+                validate_global
+                current_remaining="$(remaining_count)"
+                [ "$current_remaining" -eq 1 ] || fail "terminal HOLD requires exactly one remaining allowlisted deployment, observed $current_remaining"
+                deployment_present "$final_id" || fail 'terminal HOLD requires the exact final allowlisted deployment'
+                validate_target "$final_id" "$final_endpoint" "$final_source_revision"
+                details="$(restate deployments describe "$final_id" --extra)" || fail "cannot describe $final_id"
+                [ "$(field Status "$details")" = 'Active' ] || fail 'terminal HOLD requires the final deployment to remain Active'
+                latest_revision_count="$(printf '%s\n' "$details" | sed -n 's/^[[:space:]]*Revision:[[:space:]]*18 \[Latest\][[:space:]]*$/latest/p' | wc -l | tr -d ' ')"
+                [ "$latest_revision_count" -eq 2 ] || fail 'terminal HOLD requires both lifecycle services to remain revision 18 [Latest]'
+                echo "HOLD: final Bayn lifecycle deployment $final_id remains the latest Active revision with zero nonterminal invocations; non-force removal is intentionally not attempted."
+              }
+
               validate_global
               validate_remaining_metadata
               remaining="$(remaining_count)"
@@ -224,20 +240,33 @@ spec:
                 echo 'Bayn legacy Restate registrations already absent; nothing to remove.'
                 exit 0
               fi
+              if [ "$remaining" -eq 1 ]; then
+                hold_final_active_revision
+                exit 0
+              fi
+              [ "$remaining" -eq 18 ] || fail "unexpected non-final remaining subset ($remaining of 18); refusing mutation"
               echo "Validated $remaining remaining Bayn lifecycle deployment(s) from the immutable 18-deployment allowlist."
 
               # The allowlist is ordered by the verified Restate created_at sequence, oldest first.
+              expected_remaining=18
               while IFS='|' read -r id endpoint source_revision; do
                 [ -n "$id" ] || continue
                 validate_global
-                if ! deployment_present "$id"; then
-                  continue
+                current_remaining="$(remaining_count)"
+                [ "$current_remaining" -eq "$expected_remaining" ] ||
+                  fail "remaining lifecycle subset changed during cleanup: expected $expected_remaining, observed $current_remaining"
+                deployment_present "$id" || fail "expected next allowlisted deployment $id is missing"
+                if [ "$id" = "$final_id" ]; then
+                  [ "$current_remaining" -eq 1 ] || fail 'final deployment reached before all older allowlisted deployments were removed'
+                  hold_final_active_revision
+                  exit 0
                 fi
                 validate_target "$id" "$endpoint" "$source_revision"
                 echo "Removing drained Bayn lifecycle Restate deployment $id"
                 if ! restate deployments remove -y "$id"; then
                   fail "non-force removal refused for $id"
                 fi
+                expected_remaining=$((expected_remaining - 1))
               done <<EOF
               $(allowlist)
               EOF

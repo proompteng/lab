@@ -12,6 +12,9 @@ type Deployment = {
   services: string[]
   managedBy: string
   serviceMetadata: string
+  status: 'Active' | 'Drained'
+  revision: number
+  latest: boolean
 }
 
 type FakeState = {
@@ -50,6 +53,7 @@ const cleanupManifest = readFileSync(
   new URL('../../../../argocd/applications/bayn/restate-registration-cleanup.yaml', import.meta.url),
   'utf8',
 )
+const cleanupReadme = readFileSync(new URL('../../../../argocd/applications/bayn/README.md', import.meta.url), 'utf8')
 const documents = YAML.parseAllDocuments(cleanupManifest).map((document) => document.toJSON() as Record<string, any>)
 const networkPolicy = documents.find((document) => document.kind === 'NetworkPolicy')!
 const job = documents.find((document) => document.kind === 'Job')!
@@ -57,14 +61,20 @@ const container = job.spec.template.spec.containers[0]
 const cleanupScript = container.args[0] as string
 const temporaryDirectories: string[] = []
 
-const lifecycleDeployment = ([id, version, sourceRevision]: (typeof expected)[number]): Deployment => ({
-  id,
-  endpoint: `http://bayn-lifecycle-${version}.bayn.svc.cluster.local:9080/`,
-  sourceRevision,
-  services: ['BaynLifecycle', 'BaynLifecycleBootstrap'],
-  managedBy: 'argocd',
-  serviceMetadata: 'bayn-lifecycle',
-})
+const lifecycleDeployment = ([id, version, sourceRevision]: (typeof expected)[number]): Deployment => {
+  const revision = expected.findIndex(([expectedId]) => expectedId === id) + 1
+  return {
+    id,
+    endpoint: `http://bayn-lifecycle-${version}.bayn.svc.cluster.local:9080/`,
+    sourceRevision,
+    services: ['BaynLifecycle', 'BaynLifecycleBootstrap'],
+    managedBy: 'argocd',
+    serviceMetadata: 'bayn-lifecycle',
+    status: revision === 18 ? 'Active' : 'Drained',
+    revision,
+    latest: revision === 18,
+  }
+}
 
 const unrelatedDeployments = (): Deployment[] => [
   {
@@ -74,6 +84,9 @@ const unrelatedDeployments = (): Deployment[] => [
     services: ['BaynExecutionController', 'BaynExecutionBootstrap'],
     managedBy: 'restate-operator',
     serviceMetadata: 'bayn-execution-controller',
+    status: 'Active',
+    revision: 10,
+    latest: true,
   },
   {
     id: 'dp_greeter',
@@ -82,6 +95,9 @@ const unrelatedDeployments = (): Deployment[] => [
     services: ['Greeter'],
     managedBy: 'example',
     serviceMetadata: 'restate-example',
+    status: 'Active',
+    revision: 3,
+    latest: true,
   },
 ]
 
@@ -159,6 +175,12 @@ if (args[0] === 'deployments' && args[1] === 'describe') {
       ' managed_by: ' + deployment.managedBy,
       ' source_revision: ' + deployment.sourceRevision,
       ' service: ' + deployment.serviceMetadata,
+      ' Status: ' + deployment.status,
+      ' Services:',
+      ...deployment.services.flatMap((service) => [
+        '  - ' + service,
+        '    Revision: ' + deployment.revision + (deployment.latest ? ' [Latest]' : ''),
+      ]),
     ].join('\n'),
   )
   process.exit(0)
@@ -170,6 +192,7 @@ if (args[0] === 'deployments' && args[1] === 'remove') {
   if (state.failRemoveId === id) process.exit(95)
   const index = state.deployments.findIndex((deployment) => deployment.id === id)
   if (index < 0) process.exit(96)
+  if (state.deployments[index].status === 'Active') process.exit(98)
   state.deployments.splice(index, 1)
   state.removalCount += 1
   if (
@@ -306,22 +329,35 @@ describe('Bayn legacy Restate registration cleanup', () => {
     expect(cleanupScript).not.toContain('--force')
     expect(cleanupScript).not.toContain('curl')
     expect(cleanupScript).not.toContain('DELETE')
+    expect(cleanupScript).not.toMatch(/restate\s+services\s+(delete|remove)/)
+    expect(cleanupScript).not.toMatch(/restate\s+deployments\s+delete/)
     expect(cleanupScript).not.toMatch(/invocations?\s+(kill|cancel|purge)/)
     expect(cleanupScript).not.toContain('BaynExecution')
     expect(cleanupScript).not.toContain('Greeter')
     expect(cleanupScript).not.toContain('restate-example')
+    expect(cleanupReadme).toContain('final deployment `dp_14g38iazTnn3gWZzr8Ze0i5`')
+    expect(cleanupReadme).toContain('terminal `HOLD`')
+    expect(cleanupReadme).toContain('Any other nonzero partial subset')
+    expect(cleanupReadme).toContain('submit a narrowly reviewed\nGitOps correction')
+    expect(cleanupReadme).toContain('Never use `--force`')
   })
 
-  test('removes the full reviewed set oldest to newest without touching unrelated deployments', () => {
+  test('removes the 17 drained revisions oldest to newest and holds the final active revision', () => {
     const harness = runCleanup(makeState())
     const result = harness.run()
 
     expect(result.status).toBe(0)
-    expect(removalCalls(harness.calls())).toEqual(expected.map(([id]) => ['deployments', 'remove', '-y', id]))
-    expect(readState(harness.statePath).deployments).toEqual(unrelatedDeployments())
-  })
+    expect(result.stdout).toContain(`HOLD: final Bayn lifecycle deployment ${expected[17][0]}`)
+    expect(removalCalls(harness.calls())).toEqual(
+      expected.slice(0, -1).map(([id]) => ['deployments', 'remove', '-y', id]),
+    )
+    expect(readState(harness.statePath).deployments).toEqual([
+      lifecycleDeployment(expected[17]),
+      ...unrelatedDeployments(),
+    ])
+  }, 15_000)
 
-  test('safely resumes after a partially successful run', () => {
+  test('fails closed on a non-final strict subset instead of resuming mutation', () => {
     const state = makeState()
     state.abortSqlAfterRemovalCount = 5
     state.abortSqlEnabled = true
@@ -336,10 +372,86 @@ describe('Bayn legacy Restate registration cleanup', () => {
     writeState(harness.statePath, retryState)
     const retry = harness.run()
 
-    expect(retry.status).toBe(0)
-    expect(removalCalls(harness.calls())).toEqual(expected.map(([id]) => ['deployments', 'remove', '-y', id]))
-    expect(readState(harness.statePath).deployments).toEqual(unrelatedDeployments())
+    expect(retry.status).not.toBe(0)
+    expect(retry.stderr).toContain('unexpected non-final remaining subset (13 of 18); refusing mutation')
+    expect(removalCalls(harness.calls())).toEqual(
+      expected.slice(0, 5).map(([id]) => ['deployments', 'remove', '-y', id]),
+    )
+    expect(readState(harness.statePath).removalCount).toBe(5)
   }, 15_000)
+
+  test('holds the exact live 17-removed final active revision without mutation', () => {
+    const harness = runCleanup(makeState([lifecycleDeployment(expected[17])]))
+    const result = harness.run()
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain(`HOLD: final Bayn lifecycle deployment ${expected[17][0]}`)
+    expect(result.stdout).toContain('non-force removal is intentionally not attempted')
+    expect(removalCalls(harness.calls())).toEqual([])
+    expect(readState(harness.statePath).deployments).toEqual([
+      lifecycleDeployment(expected[17]),
+      ...unrelatedDeployments(),
+    ])
+  })
+
+  test('replays the exact terminal HOLD idempotently', () => {
+    const harness = runCleanup(makeState([lifecycleDeployment(expected[17])]))
+
+    const first = harness.run()
+    const second = harness.run()
+
+    expect(first.status).toBe(0)
+    expect(second.status).toBe(0)
+    expect(first.stdout).toContain('HOLD: final Bayn lifecycle deployment')
+    expect(second.stdout).toContain('HOLD: final Bayn lifecycle deployment')
+    expect(removalCalls(harness.calls())).toEqual([])
+    expect(readState(harness.statePath).removalCount).toBe(0)
+  })
+
+  test('fails closed when the final deployment is no longer Active', () => {
+    const finalDeployment = lifecycleDeployment(expected[17])
+    finalDeployment.status = 'Drained'
+    const harness = runCleanup(makeState([finalDeployment]))
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('terminal HOLD requires the final deployment to remain Active')
+    expect(removalCalls(harness.calls())).toEqual([])
+  })
+
+  test('fails closed when the final deployment is no longer the latest revision', () => {
+    const finalDeployment = lifecycleDeployment(expected[17])
+    finalDeployment.latest = false
+    const harness = runCleanup(makeState([finalDeployment]))
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('terminal HOLD requires both lifecycle services to remain revision 18 [Latest]')
+    expect(removalCalls(harness.calls())).toEqual([])
+  })
+
+  test('fails closed on final-state lifecycle or pinned invocations', () => {
+    const state = makeState([lifecycleDeployment(expected[17])])
+    state.nonterminalInvocations = 1
+    const harness = runCleanup(state)
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('lifecycle or pinned nonterminal invocations exist (1)')
+    expect(removalCalls(harness.calls())).toEqual([])
+  })
+
+  test('fails closed on an allowlisted singleton that is not the final deployment', () => {
+    const singleton = lifecycleDeployment(expected[16])
+    singleton.status = 'Active'
+    singleton.latest = true
+    const harness = runCleanup(makeState([singleton]))
+    const result = harness.run()
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('terminal HOLD requires the exact final allowlisted deployment')
+    expect(removalCalls(harness.calls())).toEqual([])
+  })
 
   test('treats zero remaining deployments as a successful no-op', () => {
     const harness = runCleanup(makeState([]))
