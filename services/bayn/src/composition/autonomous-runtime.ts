@@ -37,6 +37,7 @@ import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState } from '../execution/contracts'
 import {
+  capitalActivationRequiresQualificationEvidence,
   isResearchCapitalActivationRequest,
   type CapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
@@ -99,9 +100,6 @@ import {
 export interface AutonomousServiceRuntimeOptions {
   readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
-
-export const capitalActivationRequiresQualificationEvidence = (request: CapitalActivationRequest | null): boolean =>
-  request !== null && !isResearchCapitalActivationRequest(request)
 
 export const makeAutonomousServiceRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,

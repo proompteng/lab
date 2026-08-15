@@ -69,6 +69,7 @@ import {
 } from './db/execution-store'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import {
+  capitalActivationRequiresQualificationEvidence,
   makeResearchCapitalActivationRequest,
   makeCapitalActivationRequest,
   makeResearchCapitalBuildContinuation,
@@ -90,10 +91,10 @@ import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
   readOnlyCycleObservationId,
+  readOnlyQualificationEvidenceRequired,
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
 } from './composition/read-only-status'
-import { capitalActivationRequiresQualificationEvidence } from './composition/autonomous-runtime'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
@@ -753,8 +754,23 @@ describe('Bayn capital startup recovery boundary', () => {
       buildContinuation: researchBuildContinuation,
     })
 
-    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId)).toBe(continuationRequest.grant.planHash)
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
+    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId, hash('8'))).toBe(
+      continuationRequest.grant.planHash,
+    )
+    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, hash('8'))).toBe(
+      pinnedEvaluation.runId,
+    )
+    expect(readOnlyCycleObservationId(Result.succeed(null), undefined, hash('8'))).toBe(hash('8'))
+  })
+
+  test('requires qualification evidence only for valid qualification-bound status configuration', () => {
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null))).toBe(false)
+    expect(
+      readOnlyQualificationEvidenceRequired(
+        Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation }),
+      ),
+    ).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'))).toBe(true)
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
