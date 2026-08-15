@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_revision="${GITHUB_SHA}"
+          expected_revision="$(git rev-parse HEAD)"
           if [ "${EVENT_NAME}" = 'schedule' ]; then
             expected_revision="$(git log -1 --format=%H origin/main -- argocd/applications/bayn)"
           fi

@@ -22,6 +22,11 @@ describe('Bayn post-deploy workflow', () => {
     expect(workflow).toContain('git log -1 --format=%H origin/main -- argocd/applications/bayn')
   })
 
+  test('defaults manual dispatch to the main commit that was actually checked out', () => {
+    expect(workflow).toContain('expected_revision="$(git rev-parse HEAD)"')
+    expect(workflow).not.toContain('expected_revision="${GITHUB_SHA}"')
+  })
+
   test('uses the low-authority amd64 runner and does not mutate GitHub or Argo', () => {
     expect(workflow).toContain('runs-on: arc-amd64')
     expect(workflow).toContain('contents: read')
