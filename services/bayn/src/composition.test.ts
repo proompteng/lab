@@ -95,6 +95,7 @@ import {
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
   resolveReadOnlyCycleObservationId,
+  resolveReadOnlyCycleObservationIdForHealth,
 } from './composition/read-only-status'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
@@ -779,6 +780,36 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(cycleObservationId).toBe(currentGenerationHash)
+  })
+
+  test('interrupts a stalled durable authority read before a later health pass can retain stale READY', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const interrupted = yield* Deferred.make<void>()
+        const resolution = resolveReadOnlyCycleObservationIdForHealth(
+          Result.succeed(null),
+          undefined,
+          {
+            ensureAuthorityGeneration: () =>
+              Effect.die(new Error('request-free read-only status must not mutate authority')),
+            readAuthorityState: Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            ),
+          },
+          10,
+        )
+        const fiber = yield* resolution.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(10)
+        const resolved = yield* Fiber.join(fiber)
+        yield* Deferred.await(interrupted)
+        return resolved
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(result).toBeUndefined()
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {

@@ -232,6 +232,20 @@ export const resolveReadOnlyCycleObservationId = (
     : readAuthorityState.pipe(Effect.map((current) => current.generationHash))
 }
 
+export const resolveReadOnlyCycleObservationIdForHealth = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  qualificationRunId: string | undefined,
+  authority: AuthorityGenerationStoreShape,
+  operationTimeoutMs: number,
+): Effect.Effect<string | undefined> =>
+  resolveReadOnlyCycleObservationId(configured, qualificationRunId, authority).pipe(
+    Effect.timeoutOrElse({
+      duration: operationTimeoutMs,
+      orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(undefined)),
+    }),
+    Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(undefined))),
+  )
+
 export const readOnlyQualificationEvidenceRequired = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
 ): boolean =>
@@ -291,12 +305,12 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
       Effect.andThen(Ref.get(state)),
       Effect.flatMap((current) =>
-        resolveReadOnlyCycleObservationId(
+        resolveReadOnlyCycleObservationIdForHealth(
           configured,
           observePlan.config.qualificationRunId,
           activationStore.authority,
+          observePlan.config.operationTimeoutMs,
         ).pipe(
-          Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(undefined))),
           Effect.flatMap((cycleObservationId) =>
             checkHealth(
               observePlan.config,
