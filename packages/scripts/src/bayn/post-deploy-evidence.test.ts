@@ -144,9 +144,20 @@ describe('Bayn post-deploy evidence', () => {
       sourceRevision,
       imageDigest,
       podName: 'bayn-abc',
+      podRestartCount: 0,
       probeSequence: 8,
       cycleCondition: 'WAITING',
       controllerEpoch: 7,
+    })
+  })
+
+  test('records historical pod restarts without rejecting a currently healthy deployment', () => {
+    const input = evidence()
+    input.pods.items[0]!.status.containerStatuses[0]!.restartCount = 3
+
+    expect(validateBaynPostDeployEvidence(input)).toMatchObject({
+      podName: 'bayn-abc',
+      podRestartCount: 3,
     })
   })
 
