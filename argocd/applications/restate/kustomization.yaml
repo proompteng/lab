@@ -9,6 +9,7 @@ resources:
   - service.yaml
   - admin-tailscale-ingress.yaml
   - statefulset.yaml
+  - poddisruptionbudget.yaml
   - networkpolicy.yaml
-  - singleton-rollback-guard.yaml
   - snapshot-bootstrap-job.yaml
+  - replication-migration-job.yaml
