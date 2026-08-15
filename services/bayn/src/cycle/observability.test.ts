@@ -562,6 +562,30 @@ describe('autonomous cycle operations classification', () => {
       Authority.Observe,
       thresholds,
     )
+    const executionWithoutSuccessor = deriveCycleOperationsStatus(
+      projection({
+        last: blocked,
+        authority: {
+          generationHash: '5'.repeat(64),
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+          reason: null,
+          updatedAt: now,
+        },
+        reconciliation: {
+          accountId: 'paper-account-1',
+          reconciliationId: '6'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt: now,
+          coversLatestMutation: true,
+        },
+      }),
+      Date.parse(now),
+      Authority.Execution,
+      thresholds,
+    )
     const recovering = deriveCycleOperationsStatus(
       recoveringProjection,
       Date.parse('2026-07-21T14:00:00.000Z'),
@@ -599,9 +623,16 @@ describe('autonomous cycle operations classification', () => {
     )
 
     expect(withoutSuccessor).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.LastCycleBlocked,
+      last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.DataStale },
+      alerts: { cycleFailed: false },
+    })
+    expect(executionWithoutSuccessor).toMatchObject({
       condition: CycleOperationsCondition.Failed,
       reason: CycleOperationsReason.LastCycleBlocked,
-      alerts: { cycleFailed: true },
+      last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.DataStale },
+      alerts: { cycleFailed: true, reconciliationBlocked: false, authorityIncoherent: false },
     })
     expect(recovering).toMatchObject({
       current: { phase: CycleState.Active, cycleId: '4'.repeat(64) },
@@ -756,21 +787,33 @@ describe('autonomous cycle operations classification', () => {
       },
       {
         name: 'stale data',
-        maximum: Authority.Observe,
+        maximum: Authority.Execution,
         injected: projection({
           last: snapshot(CycleState.Blocked, { terminalReason: CycleTerminalReason.DataStale }),
+          authority: capitalGrant,
+          reconciliation: exactReconciliation,
         }),
-        cleared: projection({ last: snapshot(CycleState.Completed) }),
+        cleared: projection({
+          last: snapshot(CycleState.Completed),
+          authority: capitalGrant,
+          reconciliation: exactReconciliation,
+        }),
         reason: CycleOperationsReason.LastCycleBlocked,
         terminalReason: CycleTerminalReason.DataStale,
       },
       {
         name: 'provenance mismatch',
-        maximum: Authority.Observe,
+        maximum: Authority.Execution,
         injected: projection({
           last: snapshot(CycleState.Blocked, { terminalReason: CycleTerminalReason.ProvenanceMismatch }),
+          authority: capitalGrant,
+          reconciliation: exactReconciliation,
         }),
-        cleared: projection({ last: snapshot(CycleState.Completed) }),
+        cleared: projection({
+          last: snapshot(CycleState.Completed),
+          authority: capitalGrant,
+          reconciliation: exactReconciliation,
+        }),
         reason: CycleOperationsReason.LastCycleBlocked,
         terminalReason: CycleTerminalReason.ProvenanceMismatch,
       },
