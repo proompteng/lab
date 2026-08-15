@@ -25,6 +25,8 @@ spec:
       app.kubernetes.io/name: bayn-execution-controller
   template:
     metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-08-15T08:32:00Z"
       labels:
         app.kubernetes.io/name: bayn-execution-controller
         app.kubernetes.io/part-of: bayn
