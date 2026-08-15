@@ -10,6 +10,7 @@ import type { RuntimeConfig } from '../config'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
   type ExecutionControllerStatusProjection,
   ExecutionControllerStatusStoreError,
@@ -113,6 +114,7 @@ const status = (overrides: Partial<ExecutionControllerStatus> = {}): ExecutionCo
   planHash: controllerPlanHash,
   active: true,
   epoch: command.epoch,
+  nextSequence: command.sequence + 1,
   lastSequence: command.sequence,
   lastOutcome: ExecutionControllerOutcome.Blocked,
   lastReceiptHash: hash('2'),
@@ -501,13 +503,48 @@ describe('native execution runtime', () => {
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
       epoch: command.epoch,
+      nextSequence: command.sequence + 1,
       lastSequence: command.sequence,
       lastOutcome: 'Blocked',
       lastReceiptHash: result.outcome.receiptHash,
     })
-    expect(projected?.nextDueAt).toBe(
+    if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
+      throw new Error('completed execution did not project completion evidence')
+    }
+    expect(projected.nextDueAt).toBe(
       new Date(Date.parse(result.completedAt) + result.outcome.nextDelayMs).toISOString(),
     )
+  })
+
+  test('projects active controller state before its first completion without inventing evidence', async () => {
+    let projected: ExecutionControllerStatus | undefined
+    await Effect.runPromise(
+      projectExecutionControllerState(
+        command.controllerKey,
+        {
+          schemaVersion: 1,
+          active: true,
+          epoch: command.epoch,
+          planHash: controllerPlanHash,
+          sourceRevision,
+          initialSequence: command.sequence,
+          nextSequence: command.sequence,
+        },
+        statusStore((candidate) => {
+          projected = candidate
+          return { _tag: 'Applied', status: candidate }
+        }),
+      ),
+    )
+
+    expect(projected).toEqual({
+      schemaVersion: 1,
+      controllerKey: command.controllerKey,
+      planHash: controllerPlanHash,
+      active: true,
+      epoch: command.epoch,
+      nextSequence: command.sequence,
+    })
   })
 
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
@@ -543,6 +580,7 @@ describe('native execution runtime', () => {
       planHash: hash('3'),
       active: false,
       epoch: command.epoch + 1,
+      nextSequence: command.sequence + 1,
       lastSequence: command.sequence,
       lastOutcome: ExecutionControllerOutcome.Blocked,
       lastReceiptHash: hash('2'),
@@ -617,6 +655,9 @@ describe('native execution runtime', () => {
     expect(projectCount).toBe(1)
     const committed = persistence.current
     if (committed === null) throw new Error('ambiguous projection did not persist its status')
+    if (!executionControllerStatusHasCompletion(committed)) {
+      throw new Error('ambiguous completion projection lost its completion evidence')
+    }
     expect(replay).toEqual({
       completedAt: committed.completedAt,
       outcome: {
@@ -625,6 +666,84 @@ describe('native execution runtime', () => {
         nextDelayMs: 30_000,
       },
     })
+  })
+
+  test('binds the reserved legacy plan on the first not-ahead post-migration advance', async () => {
+    let advanceCount = 0
+    let projected: ExecutionControllerStatus | undefined
+    const legacyStatus: ExecutionControllerStatus = {
+      schemaVersion: 1,
+      controllerKey: command.controllerKey,
+      planHash: hash('0'),
+      active: true,
+      epoch: command.epoch,
+      nextSequence: command.sequence,
+      lastSequence: command.sequence - 1,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: hash('1'),
+      completedAt: '2026-08-13T17:59:30.000Z',
+      nextDueAt: completedAt,
+    }
+    const result = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        {
+          ...driver,
+          advance: Effect.sync(() => {
+            advanceCount += 1
+            return {
+              observation: {
+                result: 'SUCCESS' as const,
+                observedAt: completedAt,
+                outcome: 'NOT_DUE' as const,
+              },
+            }
+          }),
+        },
+        {
+          read: () => Effect.succeed(legacyStatus),
+          project: (candidate) =>
+            Effect.sync(() => {
+              projected = candidate
+              return { _tag: 'Applied' as const, status: candidate }
+            }),
+        },
+        controllerPlanHash,
+      ),
+    )
+
+    expect(advanceCount).toBe(1)
+    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Blocked)
+    expect(projected).toMatchObject({
+      planHash: controllerPlanHash,
+      epoch: command.epoch,
+      nextSequence: command.sequence + 1,
+      lastSequence: command.sequence,
+    })
+  })
+
+  test('does not attribute an ahead reserved-legacy completion to the current plan', async () => {
+    let advanceCount = 0
+    const failure = await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        {
+          ...driver,
+          advance: Effect.sync(() => {
+            advanceCount += 1
+            return driver.advance
+          }).pipe(Effect.flatten),
+        },
+        {
+          read: () => Effect.succeed(status({ planHash: hash('0') })),
+          project: () => Effect.die('must not project'),
+        },
+        controllerPlanHash,
+      ).pipe(Effect.flip),
+    )
+
+    expect(failure).toBeInstanceOf(TransientExecutionFailure)
+    expect(advanceCount).toBe(0)
   })
 
   test('rejects a same-epoch projection from a different deployment plan without advancing execution', async () => {

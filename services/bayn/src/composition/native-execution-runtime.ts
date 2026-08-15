@@ -4,6 +4,7 @@ import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
+  executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
@@ -181,6 +182,8 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
 const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
   outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
 
+const legacyUnboundControllerPlanHash = '0'.repeat(64)
+
 const persistControllerStatus = (
   statusStore: ExecutionControllerStatusStoreShape,
   status: ExecutionControllerStatus,
@@ -200,18 +203,22 @@ export const projectExecutionControllerState = (
   statusStore: ExecutionControllerStatusStoreShape,
 ): Effect.Effect<void, TransientExecutionFailure> => {
   const completion = state.lastCompletion
-  if (completion === undefined) return Effect.void
   return persistControllerStatus(statusStore, {
     schemaVersion: 1,
     controllerKey,
     planHash: state.planHash,
     active: state.active,
     epoch: state.epoch,
-    lastSequence: completion.sequence,
-    lastOutcome: completion.outcome,
-    lastReceiptHash: completion.receiptHash,
-    completedAt: completion.completedAt,
-    ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+    nextSequence: state.nextSequence,
+    ...(completion === undefined
+      ? {}
+      : {
+          lastSequence: completion.sequence,
+          lastOutcome: completion.outcome,
+          lastReceiptHash: completion.receiptHash,
+          completedAt: completion.completedAt,
+          ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+        }),
   })
 }
 
@@ -220,17 +227,20 @@ const replayProjectedAdvance = (
   status: ExecutionControllerStatus | null,
   planHash: string,
 ): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
-  if (
-    status === null ||
-    status.epoch < command.epoch ||
-    (status.epoch === command.epoch && status.lastSequence < command.sequence)
-  ) {
-    return Result.succeed(null)
-  }
+  if (status === null || status.epoch < command.epoch) return Result.succeed(null)
+  const legacyPlanCanBind =
+    status.planHash === legacyUnboundControllerPlanHash && status.nextSequence <= command.sequence
   if (
     status.controllerKey !== command.controllerKey ||
-    status.planHash !== planHash ||
-    status.epoch !== command.epoch ||
+    (status.planHash !== planHash && !legacyPlanCanBind) ||
+    status.epoch !== command.epoch
+  ) {
+    return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
+  }
+  if (status.nextSequence <= command.sequence) return Result.succeed(null)
+  if (
+    status.nextSequence !== command.sequence + 1 ||
+    !executionControllerStatusHasCompletion(status) ||
     status.lastSequence !== command.sequence
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
@@ -279,6 +289,7 @@ const advanceAndProject = (
           planHash,
           active: true,
           epoch: command.epoch,
+          nextSequence: command.sequence + 1,
           lastSequence: command.sequence,
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,

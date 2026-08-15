@@ -21,6 +21,7 @@ import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
+import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './execution/contracts'
 import { makeQualificationDiagnosis } from './qualification-diagnosis'
@@ -206,7 +207,9 @@ const publicExecutionController = (state: RuntimeState) => {
       ? 'EXECUTION_CONTROLLER_STATUS_UNAVAILABLE'
       : controller.status === null
         ? 'EXECUTION_CONTROLLER_STATUS_NOT_PROJECTED'
-        : null
+        : executionControllerStatusHasCompletion(controller.status)
+          ? null
+          : 'EXECUTION_CONTROLLER_FIRST_PASS_PENDING'
   return {
     configured: true,
     controllerKeyHash: controller.controllerKey,
@@ -215,16 +218,27 @@ const publicExecutionController = (state: RuntimeState) => {
     status:
       controller.status === null
         ? null
-        : {
-            active: controller.status.active,
-            planHash: controller.status.planHash,
-            epoch: controller.status.epoch,
-            lastSequence: controller.status.lastSequence,
-            lastOutcome: controller.status.lastOutcome,
-            lastReceiptHash: controller.status.lastReceiptHash,
-            completedAt: controller.status.completedAt,
-            nextDueAt: controller.status.nextDueAt ?? null,
-          },
+        : executionControllerStatusHasCompletion(controller.status)
+          ? {
+              active: controller.status.active,
+              planHash: controller.status.planHash,
+              epoch: controller.status.epoch,
+              lastSequence: controller.status.lastSequence,
+              lastOutcome: controller.status.lastOutcome,
+              lastReceiptHash: controller.status.lastReceiptHash,
+              completedAt: controller.status.completedAt,
+              nextDueAt: controller.status.nextDueAt ?? null,
+            }
+          : {
+              active: controller.status.active,
+              planHash: controller.status.planHash,
+              epoch: controller.status.epoch,
+              lastSequence: null,
+              lastOutcome: null,
+              lastReceiptHash: null,
+              completedAt: null,
+              nextDueAt: null,
+            },
     reasonCode,
   } as const
 }
@@ -600,7 +614,14 @@ const renderPrometheusMetricsDataFirst = (
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const executionController = state.executionController
   const executionControllerOutcomes = ['unknown', 'completed', 'blocked'] as const
-  const executionControllerOutcome = executionController?.status?.lastOutcome.toLowerCase() ?? 'unknown'
+  const executionControllerStatus = executionController?.status
+  const executionControllerCompletion =
+    executionControllerStatus !== null &&
+    executionControllerStatus !== undefined &&
+    executionControllerStatusHasCompletion(executionControllerStatus)
+      ? executionControllerStatus
+      : undefined
+  const executionControllerOutcome = executionControllerCompletion?.lastOutcome.toLowerCase() ?? 'unknown'
   const effectiveAuthority =
     state.cycle.authority === null ? 'unknown' : publicAuthority(state.cycle.authority.effective)
   const capitalActivationRecoveryOnly =
@@ -680,21 +701,25 @@ const renderPrometheusMetricsDataFirst = (
       (outcome) =>
         `bayn_execution_controller_last_outcome{outcome="${outcome}"} ${executionControllerOutcome === outcome ? 1 : 0}`,
     ),
-    ...(executionController?.status === null || executionController?.status === undefined
+    ...(executionControllerStatus === null || executionControllerStatus === undefined
       ? []
       : [
           '# HELP bayn_execution_controller_epoch Active durable controller epoch.',
           '# TYPE bayn_execution_controller_epoch gauge',
-          `bayn_execution_controller_epoch ${executionController.status.epoch}`,
+          `bayn_execution_controller_epoch ${executionControllerStatus.epoch}`,
+        ]),
+    ...(executionControllerCompletion === undefined
+      ? []
+      : [
           '# HELP bayn_execution_controller_last_sequence Latest completed controller sequence.',
           '# TYPE bayn_execution_controller_last_sequence gauge',
-          `bayn_execution_controller_last_sequence ${executionController.status.lastSequence}`,
+          `bayn_execution_controller_last_sequence ${executionControllerCompletion.lastSequence}`,
           '# HELP bayn_execution_controller_last_completion_timestamp_seconds Latest durable controller completion time.',
           '# TYPE bayn_execution_controller_last_completion_timestamp_seconds gauge',
-          `bayn_execution_controller_last_completion_timestamp_seconds ${prometheusNumber(epochSeconds(executionController.status.completedAt))}`,
+          `bayn_execution_controller_last_completion_timestamp_seconds ${prometheusNumber(epochSeconds(executionControllerCompletion.completedAt))}`,
           '# HELP bayn_execution_controller_next_due_timestamp_seconds Next durable controller due time.',
           '# TYPE bayn_execution_controller_next_due_timestamp_seconds gauge',
-          `bayn_execution_controller_next_due_timestamp_seconds ${prometheusNumber(epochSeconds(executionController.status.nextDueAt))}`,
+          `bayn_execution_controller_next_due_timestamp_seconds ${prometheusNumber(epochSeconds(executionControllerCompletion.nextDueAt))}`,
         ]),
     '# HELP bayn_autonomous_cycle_loop_last_pass Latest bounded autonomous cycle pass result.',
     '# TYPE bayn_autonomous_cycle_loop_last_pass gauge',

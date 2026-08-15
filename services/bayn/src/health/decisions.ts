@@ -14,6 +14,7 @@ import {
 import { CycleState, CycleTerminalReason } from '../cycle'
 import { CycleNotDueReason, type CycleRunResult } from '../cycle/runner/model'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { executionControllerStatusHasCompletion } from '../execution/controller-status'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'
 import type {
@@ -293,6 +294,9 @@ const cycleLoopHealth = (
       return unavailable('Restate execution-controller projection plan differs from the configured controller')
     }
     if (!status.active) return unavailable('Restate execution controller is durably inactive')
+    if (!executionControllerStatusHasCompletion(status)) {
+      return unavailable('Restate lifecycle has not completed its first durable pass')
+    }
     const completedAtMs = Date.parse(status.completedAt)
     const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
     if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
