@@ -2779,17 +2779,6 @@ data:
               summary: Restate metadata Raft apply state is lagging
               description: At least one metadata member has not applied its committed Raft LSN for five minutes.
               runbook_url: argocd/applications/restate/README.md
-          - alert: RestatePartitionBacklog
-            expr: max(restate_partition_applied_lsn_lag{job="restate-server"}) > 0
-            for: 10m
-            labels:
-              severity: warning
-              service: restate
-              notify: email
-            annotations:
-              summary: Restate partition processing is persistently behind its log
-              description: A partition has had non-zero applied-LSN lag for ten minutes.
-              runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotMissing
             expr: absent(restate_partition_snapshot_age_seconds{job="restate-server"})
             for: 15m
@@ -2852,7 +2841,7 @@ data:
               notify: email
             annotations:
               summary: Restate exact control-plane audit has stopped succeeding
-              description: The audit checks three-member metadata quorum, replication two, paused or recently killed invocations, and active invocations pinned to an old deployment.
+              description: The audit checks three-member metadata quorum, replication two, paused or recently killed invocations, persistent vqueue inbox backlog, and active invocations pinned to an old deployment.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotRestoreDrillStale
             expr: |

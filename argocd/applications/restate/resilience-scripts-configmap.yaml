@@ -7,7 +7,7 @@ data:
     #!/bin/bash
     set -euo pipefail
 
-    address=http://restate-0.restate-cluster:5122
+    address=http://restate-0.restate-cluster:5122,http://restate-1.restate-cluster:5122,http://restate-2.restate-cluster:5122
     failed=0
 
     nodes="$(restatectl --address "$address" nodes list --extra)"
@@ -82,6 +82,8 @@ data:
       "SELECT COUNT(*) AS count FROM sys_invocation WHERE status = 'paused'"
     audit_zero recently_killed_invocations \
       "SELECT COUNT(*) AS count FROM sys_vqueue_entry_status WHERE status = 'killed' AND transitioned_at >= NOW() - INTERVAL '10 minutes'"
+    audit_zero persistent_vqueue_backlog \
+      "SELECT COUNT(*) AS count FROM sys_vqueue_entry_status WHERE stage = 'inbox' AND transitioned_at < NOW() - INTERVAL '5 minutes'"
     audit_zero undrained_deployment_invocations \
       "SELECT COUNT(*) AS count FROM sys_invocation i JOIN sys_service s ON i.target_service_name = s.name WHERE i.pinned_deployment_id IS NOT NULL AND i.pinned_deployment_id <> s.deployment_id AND i.status <> 'completed'"
 

@@ -409,7 +409,7 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   expect(rules).toContain('sum(up{job="restate-server", namespace="restate", service="restate"}) < 3')
   expect(rules).toContain('restate_partition_snapshot_age_seconds')
   expect(rules).toContain('restate_partition_store_snapshots_upload_failed_total')
-  expect(rules).toContain('restate_partition_applied_lsn_lag')
+  expect(rules).not.toContain('RestatePartitionBacklog')
   expect(rules).toContain('RestateControlPlaneAuditStale')
   expect(auditStale?.expr).toContain('absent(kube_cronjob_created')
   expect(auditStale?.expr).toContain('kube_cronjob_created')
@@ -418,8 +418,12 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   expect(auditStale?.for).toBe('1m')
   expect(restoreNeverSucceeded?.expr).toContain('absent(kube_cronjob_created')
   expect(audit).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(scripts).toContain(
+    'address=http://restate-0.restate-cluster:5122,http://restate-1.restate-cluster:5122,http://restate-2.restate-cluster:5122',
+  )
   expect(scripts).toContain("status = 'paused'")
   expect(scripts).toContain("status = 'killed'")
+  expect(scripts).toContain("stage = 'inbox' AND transitioned_at < NOW() - INTERVAL '5 minutes'")
   expect(scripts).toContain('i.pinned_deployment_id <> s.deployment_id')
   expect(scripts).toContain('expected_set[expected_ids[i]] = 1')
   expect(scripts).toContain('if (!(actual[i] in expected_set)) bad += 1')

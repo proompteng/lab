@@ -106,10 +106,15 @@ default is only used when a cluster is initially provisioned and does not migrat
 
 ## Recovery proof and control-plane telemetry
 
-All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, lag, snapshots, and audit/drill
-freshness. The five-minute SQL audit requires replication two plus zero paused, recently killed, or active old-deployment
-invocations. The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs
+All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, snapshots, and audit/drill
+freshness. The five-minute SQL audit connects through all three stable NodeCtl addresses and requires replication two
+plus zero paused, recently killed, persistent five-minute vqueue inbox backlog, or active old-deployment invocations.
+The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs
 read-only SQL without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
+
+Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.2 it is a per-processor
+replay-target gauge and replicated followers can retain non-zero values while the live partition table is fully caught
+up. Persistent workload backlog is instead checked from `sys_vqueue_entry_status.stage = 'inbox'` after five minutes.
 
 Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
 snapshot open keeps the Restate Application from completing rather than bypassing recovery proof; while snapshot upload
