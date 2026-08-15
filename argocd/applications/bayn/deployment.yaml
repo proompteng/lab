@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-14T06:44:58Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-15T08:12:00Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -53,7 +53,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: f0769cb31805bfb869d0af0bbac4fdbf6120aab8
+              value: 672a905311f5999302ec87f943d66c9d577301b0
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -69,11 +69,11 @@ spec:
             # execution worker. A cutover must update this binding atomically
             # with the worker image and activation generation.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
-              value: "5b16569ed3b0824e589ab3fb2c2cdbe9a6216e77506732c52a6e145d06327ab7"
+              value: "0b1da2d658560a09707ed7d22b81247b20cb7892133b3ac48fd6b7034f0d6f62"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:aaace9a798c4d2332c1d46d1f43976fe2e4edb9376824554b343083a5e531526
+              value: sha256:b2637d040fb217102baed47019f0b4177b70ad4b2b4d36144010d51cdbf8e337
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
