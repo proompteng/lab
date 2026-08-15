@@ -9,8 +9,8 @@ import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
   executionControllerBootstrapHandlerTimeouts,
+  executionControllerBootstrapRotationBoundMs,
   executionControllerCommandRetryPolicy,
-  executionControllerCutoverAwaitTimeoutMs,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
   executionControllerTickIdempotencyKey,
@@ -76,9 +76,9 @@ describe('native Restate execution controller', () => {
       inactivityTimeout: 450_000,
       abortTimeout: 30_000,
     })
-    expect(executionControllerCutoverAwaitTimeoutMs(30_000)).toBe(651_000)
+    expect(executionControllerBootstrapRotationBoundMs(30_000)).toBe(480_000)
     expect(executionControllerBootstrapHandlerTimeouts(30_000, true)).toEqual({
-      inactivityTimeout: 651_000,
+      inactivityTimeout: 480_000,
       abortTimeout: 30_000,
     })
     expect(executionControllerBootstrapHandlerTimeouts(30_000, false)).toEqual(
@@ -465,6 +465,7 @@ describe('native Restate execution controller', () => {
       nextSequence: 17,
     }
     let forwarded: unknown
+    let genericCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
@@ -484,6 +485,10 @@ describe('native Restate execution controller', () => {
           return state
         },
       }),
+      genericCall: () => {
+        genericCalls += 1
+        return Promise.reject(new Error('bootstrap must not call a legacy service'))
+      },
     } as unknown as Context
 
     await start(context, {
@@ -501,6 +506,7 @@ describe('native Restate execution controller', () => {
       planHash,
       sourceRevision,
     })
+    expect(genericCalls).toBe(0)
   })
 
   test('rotates only the exact previous native binding and replays without a second deactivation', async () => {
@@ -517,6 +523,7 @@ describe('native Restate execution controller', () => {
       nextSequence: 12,
     }
     const events: string[] = []
+    let genericCalls = 0
     const controller = makeBaynExecutionController(rotationConfig, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
@@ -562,6 +569,10 @@ describe('native Restate execution controller', () => {
           return state
         },
       }),
+      genericCall: () => {
+        genericCalls += 1
+        return Promise.reject(new Error('bootstrap must not call a legacy service'))
+      },
     } as unknown as Context
     const request = {
       schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
@@ -573,9 +584,11 @@ describe('native Restate execution controller', () => {
 
     expect(await start(context, request)).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision })
     expect(events).toEqual(['deactivate', 'activate'])
+    expect(genericCalls).toBe(0)
 
     await start(context, request)
     expect(events).toEqual(['deactivate', 'activate', 'activate'])
+    expect(genericCalls).toBe(0)
   })
 
   test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {
@@ -624,49 +637,27 @@ describe('native Restate execution controller', () => {
     expect(objectCalls).toBe(0)
   })
 
-  test('deactivates and verifies the exact legacy owner before first native activation', async () => {
+  test('activates null native state without calling any legacy service', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
     const events: string[] = []
+    let genericCalls = 0
     let forwarded: unknown
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
-    const legacy = {
-      controllerKey: 'primary',
-      deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1' as const,
-      planHash: 'd'.repeat(64),
-      sourceRevision: 'e'.repeat(40),
-    }
-    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash, [], legacy)).start
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash)).start
     const context = {
       request: () => ({
-        id: 'bootstrap-cutover',
+        id: 'bootstrap-null-native-state',
         headers: new Map([['authorization', `Bearer ${token}`]]),
         attemptCompletedSignal: new AbortController().signal,
       }),
-      genericCall: async (call: { readonly service: string; readonly method: string; readonly key?: string }) => {
-        events.push('legacy-deactivate')
-        expect(call).toMatchObject({
-          service: 'BaynLifecycle',
-          method: 'deactivate',
-          key: 'primary',
-          parameter: {
-            schemaVersion: 'bayn.restate-lifecycle-activation.v1',
-            controllerKey: 'primary',
-          },
-        })
-        return {
-          schemaVersion: 'bayn.restate-lifecycle-state.v1',
-          active: false,
-          epoch: 11,
-          planHash: legacy.planHash,
-          sourceRevision: legacy.sourceRevision,
-          cursor: { _tag: 'Next', sequence: 5511 },
-          lastCompletion: null,
-        }
+      genericCall: () => {
+        genericCalls += 1
+        return Promise.reject(new Error('bootstrap must not call a legacy service'))
       },
       objectClient: () => ({
         status: async () => {
@@ -696,125 +687,9 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
 
-    expect(events).toEqual(['native-status', 'legacy-deactivate', 'native-activate'])
+    expect(events).toEqual(['native-status', 'native-activate'])
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
-  })
-
-  test('uses the provenance-rich legacy deactivation wire when explicitly configured', async () => {
-    const token = Buffer.alloc(32, 7).toString('base64url')
-    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
-    const legacy = {
-      controllerKey: 'primary',
-      deactivationSchemaVersion: 'bayn.restate-lifecycle-deactivation.v1' as const,
-      planHash: 'd'.repeat(64),
-      sourceRevision: 'e'.repeat(40),
-    }
-    let parameter: unknown
-    const controller = makeBaynExecutionController(config, {
-      advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
-    })
-    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash, [], legacy)).start
-    const context = {
-      request: () => ({
-        id: 'bootstrap-cutover-v1',
-        headers: new Map([['authorization', `Bearer ${token}`]]),
-        attemptCompletedSignal: new AbortController().signal,
-      }),
-      genericCall: (call: { readonly parameter: unknown }) => {
-        parameter = call.parameter
-        return Promise.resolve({
-          schemaVersion: 'bayn.restate-lifecycle-state.v1',
-          active: false,
-          epoch: 11,
-          planHash: legacy.planHash,
-          sourceRevision: legacy.sourceRevision,
-          cursor: { _tag: 'Next', sequence: 5511 },
-          lastCompletion: null,
-        })
-      },
-      objectClient: () => ({
-        status: () => Promise.resolve(null),
-        activate: () =>
-          Promise.resolve({
-            schemaVersion: 1,
-            active: true,
-            epoch: 1,
-            planHash,
-            sourceRevision,
-            initialSequence: 0,
-            nextSequence: 0,
-          }),
-      }),
-    } as unknown as Context
-
-    await start(context, {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v2',
-      controllerKey,
-      planHash,
-      sourceRevision,
-    })
-
-    expect(parameter).toEqual({
-      schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
-      controllerKey: legacy.controllerKey,
-      planHash: legacy.planHash,
-      sourceRevision: legacy.sourceRevision,
-    })
-  })
-
-  test('does not activate when the legacy owner cannot be verified inactive', async () => {
-    const token = Buffer.alloc(32, 7).toString('base64url')
-    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
-    let activations = 0
-    const controller = makeBaynExecutionController(config, {
-      advance: () => Promise.reject(new Error('must not advance')),
-      log: () => Promise.resolve(),
-      projectState: () => Promise.resolve(),
-    })
-    const start = bootstrapHandlers(
-      makeBaynExecutionBootstrap(config, controller, authorizationHash, [], {
-        controllerKey: 'primary',
-        deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1',
-        planHash: 'd'.repeat(64),
-        sourceRevision: 'e'.repeat(40),
-      }),
-    ).start
-    const context = {
-      request: () => ({
-        id: 'bootstrap-cutover-rejected',
-        headers: new Map([['authorization', `Bearer ${token}`]]),
-        attemptCompletedSignal: new AbortController().signal,
-      }),
-      genericCall: () =>
-        Promise.resolve({
-          schemaVersion: 'bayn.restate-lifecycle-state.v1',
-          active: false,
-          epoch: 11,
-          planHash: 'f'.repeat(64),
-          sourceRevision: 'e'.repeat(40),
-          cursor: { _tag: 'Next', sequence: 5511 },
-          lastCompletion: null,
-        }),
-      objectClient: () => ({
-        status: () => Promise.resolve(null),
-        activate: () => {
-          activations += 1
-          return Promise.reject(new Error('must not activate'))
-        },
-      }),
-    } as unknown as Context
-
-    expect(
-      start(context, {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
-        controllerKey,
-        planHash,
-        sourceRevision,
-      }),
-    ).rejects.toThrow('legacy lifecycle deactivation did not prove the expected inactive owner')
-    expect(activations).toBe(0)
+    expect(genericCalls).toBe(0)
   })
 
   test('rejects unauthenticated bootstrap and caller-selected activation counters', async () => {
@@ -855,35 +730,24 @@ describe('native Restate execution controller', () => {
     expect(objectCalls).toBe(0)
   })
 
-  test('rejects a plan-drifted bootstrap before touching either lifecycle owner', async () => {
+  test('rejects a plan-drifted bootstrap before touching the native controller', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
-    let ownerCalls = 0
+    let controllerCalls = 0
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
       projectState: () => Promise.resolve(),
     })
-    const start = bootstrapHandlers(
-      makeBaynExecutionBootstrap(config, controller, authorizationHash, [], {
-        controllerKey: 'primary',
-        deactivationSchemaVersion: 'bayn.restate-lifecycle-activation.v1',
-        planHash: 'd'.repeat(64),
-        sourceRevision: 'e'.repeat(40),
-      }),
-    ).start
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash)).start
     const context = {
       request: () => ({
         id: 'bootstrap-plan-drift',
         headers: new Map([['authorization', `Bearer ${token}`]]),
         attemptCompletedSignal: new AbortController().signal,
       }),
-      genericCall: () => {
-        ownerCalls += 1
-        return Promise.reject(new Error('must not deactivate'))
-      },
       objectClient: () => {
-        ownerCalls += 1
+        controllerCalls += 1
         return { status: () => Promise.reject(new Error('must not read')) }
       },
     } as unknown as Context
@@ -896,7 +760,7 @@ describe('native Restate execution controller', () => {
         sourceRevision,
       }),
     ).rejects.toThrow('execution controller bootstrap does not match this immutable deployment')
-    expect(ownerCalls).toBe(0)
+    expect(controllerCalls).toBe(0)
   })
 
   test('retries the same command identity durably and pauses after the bounded budget', async () => {
