@@ -22,8 +22,7 @@ cleanup() {
 trap cleanup EXIT
 archive="${work}/archive"
 rootfs="${work}/rootfs"
-command_root="${work}/command-root"
-mkdir -p "${archive}" "${rootfs}" "${command_root}/bin" "${command_root}/app/services/bayn/dist"
+mkdir -p "${archive}" "${rootfs}"
 tar -xf "${image_tar}" -C "${archive}"
 
 mapfile -t layers < <(jq -er '.[0].Layers[]' "${archive}/manifest.json")
@@ -72,9 +71,28 @@ test -f "${forward_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
 
-ln -s "${image_node}" "${command_root}/bin/node"
-ln -s "${forward_command}" "${command_root}/app/services/bayn/dist/forward-performance-command.js"
-actual="$(NODE_ENV=production BAYN_IMAGE_ROOT="${command_root}" "${forward_wrapper}" --help)"
+image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
+  "${archive}/manifest.json")"
+if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+  echo 'Bayn image command verification requires an isolated Docker daemon.' >&2
+  exit 1
+fi
+docker load --input "${image_tar}" >/dev/null
+image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")"
+actual="$(
+  docker run --rm \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --pids-limit 64 \
+    --memory 512m \
+    --cpus 1 \
+    --env NODE_ENV=production \
+    --entrypoint /bin/bayn-forward-performance \
+    "${image_id}" \
+    --help
+)"
 expected='Usage: bayn-forward-performance [--help]'
 if [[ "${actual}" != "${expected}" ]]; then
   printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
