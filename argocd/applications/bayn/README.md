@@ -69,27 +69,16 @@ exception are no longer part of desired state. Any future `BaynLifecycle`, `Bayn
 `bayn-lifecycle-*` registration is unexpected drift. Do not recreate the destructive retired hook or mutate Restate
 registrations by hand; investigate the producer and correct desired state through a reviewed GitOps change.
 
-### Temporary failed-hook garbage collection
+### Failed-hook garbage collection completed
 
-After the destructive retirement path was removed, Argo retained the failed pre-retirement Job
-`bayn-restate-registration-final-retirement` and its failed pod because a removed hook is not pruned like an ordinary
-tracked resource. `restate-retirement-hook-gc.yaml` is a temporary one-sync tombstone for that residue. It deliberately
-reuses the failed Job name with `BeforeHookCreation,HookSucceeded`: on the next normal Bayn auto-sync, Argo deletes the
-old failed hook before creating a replacement that performs only `exit 0`, then deletes that successful replacement.
-The tombstone pod has no service-account token and a deny-all ingress/egress policy, so it cannot contact Restate, the
-broker, PostgreSQL, or the Kubernetes API.
+Argo once retained the failed pre-retirement Job `bayn-restate-registration-final-retirement` and its failed pod after
+the destructive retirement path left desired state. A reviewed one-sync tombstone reused that Job name with
+`BeforeHookCreation,HookSucceeded`, had no service-account token, and was isolated by a deny-all ingress/egress policy.
+Natural Bayn auto-sync deleted the historical failed hook, ran the inert replacement, and removed the replacement Job
+and pod successfully.
 
-Do not trigger a manual sync or delete the failed Job directly. After the exact tombstone commit converges naturally,
-verify all of the following before advancing the stack:
-
-- the Bayn Application is `Synced` and `Healthy` at the exact merged revision and its sync operation succeeded;
-- `bayn-restate-registration-final-retirement` and the historical failed pod are both absent;
-- Restate still reports zero `BaynLifecycle`/`BaynLifecycleBootstrap` deployments, services, and lifecycle/pinned
-  nonterminal invocations;
-- the native `BaynExecutionController`/`BaynExecutionBootstrap` deployment remains current and its scheduled tick
-  sequence continues to advance; and
-- unrelated Restate services such as `Greeter` remain untouched.
-
-This bridge must not remain desired state. Immediately after that live proof, the next reviewed GitOps cleanup removes
-`restate-retirement-hook-gc.yaml` from `kustomization.yaml` and deletes the file, which naturally prunes its deny-all
-NetworkPolicy. That teardown changes no Restate registration or execution state.
+The one-sync tombstone and its deny-all NetworkPolicy are no longer desired state. The completed live proof preserved
+zero `BaynLifecycle`/`BaynLifecycleBootstrap` deployments, services, and nonterminal invocations; kept the native
+`BaynExecutionController`/`BaynExecutionBootstrap` revision current with its scheduled tick; and left unrelated Restate
+services such as `Greeter` untouched. Do not recreate the tombstone or delete hook residue by hand. Any future retired
+lifecycle hook or legacy registration is unexpected drift and must be corrected through reviewed GitOps.
