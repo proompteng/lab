@@ -43,17 +43,6 @@ spec:
                 sleep 5
               done
 
-              snapshot_output="$(restatectl --address "$address" snapshots create 2>&1)"
-              printf '%s\n' "$snapshot_output"
-              printf '%s\n' "$snapshot_output" | awk '
-                $1 == "Snapshot" && $2 == "created" && $3 == "for" && $4 == "partition" && $5 ~ /^[0-9]+:$/ {
-                  partition = $5
-                  sub(/:$/, "", partition)
-                  seen[partition] = 1
-                }
-                END { for (i = 0; i < 24; i += 1) if (!(i in seen)) exit 1 }
-              ' || { echo "Snapshot bootstrap did not create all 24 partition snapshots" >&2; exit 1; }
-
               while [ "$SECONDS" -lt 840 ]; do
                 if ! partitions="$(restatectl --address "$address" partitions list 2>&1)"; then
                   echo "Transient failure reading partition snapshot status; retrying" >&2
@@ -64,7 +53,7 @@ spec:
                 if printf '%s\n' "$partitions" | awk '
                   $1 ~ /^[0-9]+$/ {
                     seen[$1] = 1
-                    if ($8 != "-" && $8 != "") archived[$1] = 1
+                    if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
                   }
                   END {
                     for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) exit 1
@@ -73,6 +62,21 @@ spec:
                   echo "All 24 partitions have an archived snapshot LSN"
                   exit 0
                 fi
+
+                missing="$(printf '%s\n' "$partitions" | awk '
+                  $1 ~ /^[0-9]+$/ {
+                    seen[$1] = 1
+                    if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
+                  }
+                  END {
+                    for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) print i
+                  }
+                ')"
+                while IFS= read -r partition; do
+                  [ -n "$partition" ] || continue
+                  snapshot_output="$(restatectl --address "$address" snapshots create "$partition" 2>&1)" || true
+                  printf '%s\n' "$snapshot_output"
+                done <<< "$missing"
                 sleep 5
               done
 

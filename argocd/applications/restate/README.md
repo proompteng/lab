@@ -67,7 +67,9 @@ admin API after the revert before resuming the Bayn worker layer.
 Restate stays pinned at 1.7.2. `restate-0` and its retained RBD PVC seed the existing cluster; all nodes use
 `RESTATE_AUTO_PROVISION=false` and stable StatefulSet addresses so scaling cannot create a second cluster.
 Migration order is strict: protect the Rook `restate-snapshots` OBC, enable 30-minute snapshots with retention two,
-and require all 24 partitions archived before three PVCs. RGW stores snapshots only; metadata/Raft and logs stay on
+and require all 24 partitions archived before replication changes. In Restate 1.7.2, `ARCHIVED=0` is the invalid-LSN
+sentinel and must be treated as no snapshot; the bootstrap retries only missing/invalid partitions until every partition
+has a positive archived LSN. RGW stores snapshots only; metadata/Raft and logs stay on
 RBD. Host anti-affinity/`DoNotSchedule`, `minAvailable: 3`, and 60s/90s shutdown windows bound disruption; the PDB
 therefore permits zero voluntary evictions until a separately reviewed post-rollout relaxation.
 `restate-replication-migration` requires three ready nodes, one identical three-member Raft set, and archived snapshots
@@ -109,7 +111,8 @@ invocations. The digest-pinned `restate-tools` drill opens all 24 RGW snapshots 
 read-only SQL without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 
 Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
-snapshot open keeps the Restate Application from completing rather than bypassing recovery proof. The proof and daily
+snapshot open keeps the Restate Application from completing rather than bypassing recovery proof; while snapshot upload
+is still converging, the proof retries the isolated repository open until all 24 partitions are present. The proof and daily
 drill each request 100m CPU/768Mi memory and are capped at 2 CPU/1536Mi while downloading the latest 24 snapshots into
 ephemeral storage; expect bounded RGW/network reads but no object-store writes. The Alloy configuration hash change
 restarts the single cluster-metrics collector, so require its rollout plus all pre-existing scrape jobs and all three

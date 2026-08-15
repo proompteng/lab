@@ -67,7 +67,7 @@ spec:
                     if printf '%s\n' "$partitions" | awk '
                       $1 ~ /^[0-9]+$/ {
                         seen[$1] = 1
-                        if ($8 != "-" && $8 != "") archived[$1] = 1
+                        if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
                       }
                       END {
                         for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) exit 1

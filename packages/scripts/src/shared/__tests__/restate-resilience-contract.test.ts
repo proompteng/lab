@@ -52,10 +52,75 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
   expect(migration).toContain('nodes set-worker-state --nodes "$id" --worker-state active')
   expect(migration).toContain('metadata-server add-node "$id"')
+  expect(migration).toContain('$8 !~ /^[1-9][0-9]*$/')
   expect(migration).not.toContain('kubectl')
   expect(kustomization).toContain('- poddisruptionbudget.yaml')
   expect(kustomization).toContain('- replication-migration-job.yaml')
   expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
+})
+
+test('Restate replication migration treats archived LSN zero as no snapshot and never mutates replication', () => {
+  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = migration.spec.template.spec.containers[0].command[2] as string
+  const tempDir = mkdtempSync('/tmp/restate-invalid-archive-')
+  const mutationMarker = `${tempDir}/replication-mutated`
+  const restatectl = `${tempDir}/restatectl`
+  const sleep = `${tempDir}/sleep`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" nodes list --extra "*)
+    cat <<'OUT'
+N1 6 restate-0 http://restate-0 roles read-write active x Alive Ready Ready Ready Member
+N2 1 restate-2 http://restate-2 roles read-write active x Alive Ready Ready Ready Member
+N3 1 restate-1 http://restate-1 roles read-write active x Alive Ready Ready Ready Member
+OUT
+    ;;
+  *" metadata-server add-node "*) exit 0 ;;
+  *" metadata-server list "*)
+    cat <<'OUT'
+N1 Member v3 N1 [N1,N2,N3] 10 10 1 1 1 1
+N2 Member v3 N1 [N1,N2,N3] 10 10 1 1 1 1
+N3 Member v3 N1 [N1,N2,N3] 10 10 1 1 1 1
+OUT
+    ;;
+  *" partitions list "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      archived=100
+      [ "$i" -ne 0 ] || archived=0
+      echo "$i N1:6 Leader Active e6 100 100 $archived 0 1 v62 - journal_v2 now"
+      i=$((i + 1))
+    done
+    ;;
+  *" config set --replication 2 "*) touch "${mutationMarker}" ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
+    expect(Bun.file(mutationMarker).size).toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate replication migration refuses to mutate when any one node is not fully ready', () => {
@@ -181,12 +246,12 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(obc.spec.bucketName).toBe('restate-snapshots')
   expect(obc.spec.storageClassName).toBe('rook-ceph-bucket')
   expect(bootstrap).toContain('argocd.argoproj.io/hook: PostSync')
-  expect(bootstrap.match(/restatectl --address "\$address" snapshots create/g)).toHaveLength(1)
+  expect(bootstrap).toContain('snapshots create "$partition"')
   expect(bootstrap).toContain('backoffLimit: 0')
   expect(bootstrap).toContain('while [ "$SECONDS" -lt 840 ]')
+  expect(bootstrap).toContain('$8 ~ /^[1-9][0-9]*$/')
   expect(bootstrap).toContain('if (!(i in seen) || !(i in archived)) exit 1')
   expect(bootstrap).toContain('Transient failure reading partition snapshot status; retrying')
-  expect(bootstrap).toContain('Snapshot bootstrap did not create all 24 partition snapshots')
   expect(bootstrap).toContain('docker.restate.dev/restatedev/restate:1.7.2')
   expect(rollback).toContain('argocd.argoproj.io/hook: PreSync')
   expect(rollback).toContain('config set --replication 1')
@@ -194,10 +259,63 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(rollback).toContain('set-worker-state --nodes "$remove_ids" --worker-state draining')
   expect(rollback).toContain('metadata-server remove-node "$remove_ids"')
   expect(rollback).toContain('create_all_partition_snapshots --trim-log')
+  expect(rollback).toContain('$8 ~ /^[1-9][0-9]*$/')
   expect(rollback).toContain('Refusing rollback before all safety snapshots are archived')
   expect(kustomization).toContain('- objectbucketclaim.yaml')
   expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
   expect(kustomization).toContain('- snapshot-bootstrap-job.yaml')
+})
+
+test('Restate snapshot bootstrap retries only partitions whose repository status is missing or invalid', () => {
+  const bootstrap = YAML.parse(readRepoFile('argocd/applications/restate/snapshot-bootstrap-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = bootstrap.spec.template.spec.containers[0].command[2] as string
+  const tempDir = mkdtempSync('/tmp/restate-snapshot-retry-')
+  const restatectl = `${tempDir}/restatectl`
+  const sleep = `${tempDir}/sleep`
+  const calls = `${tempDir}/calls`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" status "*) exit 0 ;;
+  *" partitions list "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      archived=100
+      if { [ "$i" -eq 0 ] && [ ! -f "${tempDir}/p0" ]; } || { [ "$i" -eq 1 ] && [ ! -f "${tempDir}/p1" ]; }; then archived=0; fi
+      echo "$i N1:6 Leader Active e6 100 100 $archived 0 1 v62 - journal_v2 now"
+      i=$((i + 1))
+    done
+    ;;
+  *" snapshots create 0 "*) echo 0 >>"${calls}"; touch "${tempDir}/p0"; echo 'Snapshot created for partition 0: snap (log 0 @ LSN >= 100)' ;;
+  *" snapshots create 1 "*) echo 1 >>"${calls}"; touch "${tempDir}/p1"; echo 'Snapshot created for partition 1: snap (log 1 @ LSN >= 100)' ;;
+  *" snapshots create "*) echo "unexpected healthy partition snapshot request: $*" >&2; exit 91 ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.toString()).toContain('All 24 partitions have an archived snapshot LSN')
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate admin exposure remains tailnet-restricted', () => {
@@ -262,8 +380,53 @@ test('Restate recovery proof opens all snapshots offline without exposing OBC cr
   expect(proof).not.toContain('--aws-secret-access-key')
   expect(scripts).toContain('restate-doctor snapshot s3://restate-snapshots/partitions')
   expect(scripts).toContain("grep -Fq 'Found 24 partition(s):'")
+  expect(scripts).toContain('while [ "$SECONDS" -lt 1680 ]')
+  expect(scripts).toContain('Snapshot repository is not complete yet; retrying isolated restore proof')
   expect(proof).toContain('emptyDir: {}')
   expect(drill).toContain('schedule: "17 6 * * *"')
   expect(kustomization).toContain('- snapshot-restore-proof-job.yaml')
   expect(kustomization).toContain('- snapshot-restore-drill-cronjob.yaml')
+})
+
+test('Restate recovery proof never accepts success markers from a failed doctor command', () => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')) as {
+    data: Record<string, string>
+  }
+  const script = configMap.data['snapshot-restore.sh']
+  const tempDir = mkdtempSync('/tmp/restate-restore-status-')
+  const doctor = `${tempDir}/restate-doctor`
+  const sleep = `${tempDir}/sleep`
+  const attempts = `${tempDir}/attempts`
+
+  try {
+    writeFileSync(
+      doctor,
+      `#!/bin/sh
+set -eu
+n=$(cat "${attempts}" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" >"${attempts}"
+echo 'Found 24 partition(s): 0-23'
+echo 'invocation_rows'
+[ "$n" -gt 1 ] || exit 17
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(doctor, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: { ...process.env, AWS_REGION: 'us-east-1', PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    expect(result.exitCode).toBe(0)
+    expect(readFileSync(attempts, 'utf8').trim()).toBe('2')
+    expect(result.stderr.toString()).toContain(
+      'Snapshot repository is not complete yet; retrying isolated restore proof',
+    )
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
