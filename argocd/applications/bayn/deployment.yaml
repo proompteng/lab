@@ -50,7 +50,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 0df47ceec972e14548040ccdca3f6df43fe97bd8
+              value: 5f366810884463ee593b417e21bc76bf2176de36
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -62,11 +62,11 @@ spec:
             # execution worker. A cutover must update this binding atomically
             # with the worker image and activation generation.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
-              value: "3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784"
+              value: "76e6102a8182366da1e4db93d50397bc153d3882d1c19c18f7c9f323e1102269"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:8b850c6c2b1cf99f34efc80921142a4ff62fae01cf8df85c986322fcc7f5a590
+              value: sha256:576f4d30cd878c1eb49036c562b6e149e2dc3a4dd8c1a89a74c91acc511ed005
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH

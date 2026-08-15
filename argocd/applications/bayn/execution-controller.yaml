@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn:sha-0df47ceec972e14548040ccdca3f6df43fe97bd8@sha256:8b850c6c2b1cf99f34efc80921142a4ff62fae01cf8df85c986322fcc7f5a590
+          image: registry.ide-newton.ts.net/lab/bayn:sha-5f366810884463ee593b417e21bc76bf2176de36@sha256:576f4d30cd878c1eb49036c562b6e149e2dc3a4dd8c1a89a74c91acc511ed005
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -55,15 +55,18 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 0df47ceec972e14548040ccdca3f6df43fe97bd8
+              value: 5f366810884463ee593b417e21bc76bf2176de36
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:8b850c6c2b1cf99f34efc80921142a4ff62fae01cf8df85c986322fcc7f5a590
+              value: sha256:576f4d30cd878c1eb49036c562b6e149e2dc3a4dd8c1a89a74c91acc511ed005
+            # Bind the replacement to the exact immutable execution generation
+            # currently owned by the active controller. Activation remains an
+            # authenticated, serialized Restate rotation and grants no capital.
             - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "1c6f80f63d53f31c914639bbe071e0304a2cc2705356b48d4ba796a9b7341ef5"
+              value: "3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784"
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: df6bc515e2579f4ee0f9256e45da0eb3e92104f4
+              value: 0df47ceec972e14548040ccdca3f6df43fe97bd8
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -72,15 +75,6 @@ spec:
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
-            - name: BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY
-              value: primary
-            - name: BAYN_LEGACY_LIFECYCLE_PLAN_HASH
-              value: "74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d"
-            - name: BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION
-              value: 2e6a1cbf1dce6737f6c96e25c097d214366af48d
-            # Bind the inactive controller plan to the same immutable execution
-            # generation as the current owner. This does not grant capital or
-            # schedule a tick; activation remains an authenticated Restate call.
             - name: BAYN_AUTHORITY_GENERATION_HASH
               value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
             - name: BAYN_BROKER_PROVIDER
