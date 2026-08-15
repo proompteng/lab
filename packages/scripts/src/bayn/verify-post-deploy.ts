@@ -321,7 +321,23 @@ const validateArgo = (value: unknown): void => {
 const validateRestateArgoApplications = (value: unknown): void => {
   const list = record(value, 'restateApplications')
   const items = array(list.items, 'restateApplications.items')
-  const expectedNames = ['restate', 'restate-operator', 'restate-operator-crds'] as const
+  const expectedApplications = {
+    restate: {
+      repoURL: 'https://github.com/proompteng/lab.git',
+      targetRevision: 'main',
+      path: 'argocd/applications/restate',
+    },
+    'restate-operator': {
+      repoURL: 'ghcr.io/restatedev',
+      targetRevision: '3.0.0',
+      chart: 'restate-operator-helm',
+    },
+    'restate-operator-crds': {
+      repoURL: 'ghcr.io/restatedev',
+      targetRevision: '3.0.0',
+      chart: 'restate-operator-crds',
+    },
+  } as const
   const byName = new Map(
     items.map((candidate) => {
       const application = record(candidate, 'restateApplications.items[]')
@@ -332,19 +348,46 @@ const validateRestateArgoApplications = (value: unknown): void => {
       return [name, application] as const
     }),
   )
-  for (const name of expectedNames) {
+  for (const [name, expected] of Object.entries(expectedApplications)) {
     const application = byName.get(name)
     if (application === undefined) {
       fail('ARGO_NOT_CONVERGED', `required Restate Argo application ${name} is missing`, true)
     }
-    const status = record(application.status, `restateApplications.${name}.status`)
+    const source = record(
+      record(application.spec, `restateApplications.${name}.spec`).source,
+      `restateApplications.${name}.spec.source`,
+    )
+    equal(source.repoURL, expected.repoURL, `restateApplications.${name} source repository`, 'ARGO_NOT_CONVERGED', true)
     equal(
-      record(status.sync, `restateApplications.${name}.status.sync`).status,
-      'Synced',
-      `restateApplications.${name} sync status`,
+      source.targetRevision,
+      expected.targetRevision,
+      `restateApplications.${name} source revision`,
       'ARGO_NOT_CONVERGED',
       true,
     )
+    if ('path' in expected) {
+      equal(source.path, expected.path, `restateApplications.${name} source path`, 'ARGO_NOT_CONVERGED', true)
+    }
+    if ('chart' in expected) {
+      equal(source.chart, expected.chart, `restateApplications.${name} source chart`, 'ARGO_NOT_CONVERGED', true)
+    }
+    const status = record(application.status, `restateApplications.${name}.status`)
+    const sync = record(status.sync, `restateApplications.${name}.status.sync`)
+    equal(sync.status, 'Synced', `restateApplications.${name} sync status`, 'ARGO_NOT_CONVERGED', true)
+    const revision = string(sync.revision, `restateApplications.${name}.status.sync.revision`)
+    if (name === 'restate') {
+      if (!sourcePattern.test(revision)) {
+        fail('ARGO_NOT_CONVERGED', 'restate Argo sync revision is not a full SHA', true)
+      }
+    } else {
+      equal(
+        revision,
+        expected.targetRevision,
+        `restateApplications.${name} synced revision`,
+        'ARGO_NOT_CONVERGED',
+        true,
+      )
+    }
     equal(
       record(status.health, `restateApplications.${name}.status.health`).status,
       'Healthy',
@@ -353,6 +396,26 @@ const validateRestateArgoApplications = (value: unknown): void => {
       true,
     )
   }
+}
+
+export const readRestateArgoRevision = (value: unknown): string => {
+  const items = array(record(value, 'restateApplications').items, 'restateApplications.items')
+  const restate = items.find((candidate) => {
+    const application = record(candidate, 'restateApplications.items[]')
+    return record(application.metadata, 'restateApplication.metadata').name === 'restate'
+  })
+  if (restate === undefined)
+    return fail('ARGO_NOT_CONVERGED', 'required Restate Argo application restate is missing', true)
+  const revision = string(
+    record(
+      record(record(restate, 'restateApplications.restate').status, 'restateApplications.restate.status').sync,
+      'restateApplications.restate.status.sync',
+    ).revision,
+    'restateApplications.restate.status.sync.revision',
+  )
+  if (!sourcePattern.test(revision))
+    return fail('ARGO_NOT_CONVERGED', 'restate Argo sync revision is not a full SHA', true)
+  return revision
 }
 
 export const readArgoRevision = (value: unknown): string => {
@@ -930,10 +993,12 @@ const gitCheck = async (
   return fail('READ_UNAVAILABLE', 'Git revision verification failed', true)
 }
 
-export const verifyBaynRevisionLineage = async (
+const verifyGitOpsRevisionLineage = async (
   run: RunCommand,
   expectedRevision: string,
   reconciledRevision: string,
+  manifestPath: string,
+  label: string,
 ): Promise<void> => {
   if (!sourcePattern.test(expectedRevision) || !sourcePattern.test(reconciledRevision)) {
     return fail('INVALID_MANIFEST', 'revision lineage requires full commit SHAs', false)
@@ -944,14 +1009,14 @@ export const verifyBaynRevisionLineage = async (
     run,
     ['merge-base', '--is-ancestor', expectedRevision, reconciledRevision],
     'REVISION_NOT_CONVERGED',
-    'Argo has not reconciled the triggering main revision',
+    `${label} Argo has not reconciled the triggering main revision`,
     true,
   )
   await gitCheck(
     run,
     ['merge-base', '--is-ancestor', reconciledRevision, 'origin/main'],
     'PRODUCTION_CONTRACT_VIOLATION',
-    'Argo revision is not on current main',
+    `${label} Argo revision is not on current main`,
     false,
   )
   const manifestDiff = await run([
@@ -960,17 +1025,31 @@ export const verifyBaynRevisionLineage = async (
     '--quiet',
     `${expectedRevision}..${reconciledRevision}`,
     '--',
-    'argocd/applications/bayn',
+    manifestPath,
   ])
   if (manifestDiff.exitCode === 1) {
     return fail(
       'REVISION_NOT_CONVERGED',
-      'a later main revision superseded the triggering Bayn production manifests',
+      `a later main revision superseded the triggering ${label} production manifests`,
       false,
     )
   }
-  if (manifestDiff.exitCode !== 0) return fail('READ_UNAVAILABLE', 'Bayn manifest lineage diff failed', true)
+  if (manifestDiff.exitCode !== 0) return fail('READ_UNAVAILABLE', `${label} manifest lineage diff failed`, true)
 }
+
+export const verifyBaynRevisionLineage = (
+  run: RunCommand,
+  expectedRevision: string,
+  reconciledRevision: string,
+): Promise<void> =>
+  verifyGitOpsRevisionLineage(run, expectedRevision, reconciledRevision, 'argocd/applications/bayn', 'Bayn')
+
+export const verifyRestateRevisionLineage = (
+  run: RunCommand,
+  expectedRevision: string,
+  reconciledRevision: string,
+): Promise<void> =>
+  verifyGitOpsRevisionLineage(run, expectedRevision, reconciledRevision, 'argocd/applications/restate', 'Restate')
 
 export const verifyReadOnlyBaynIdentity = async (run: RunCommand): Promise<void> => {
   const deniedChecks: readonly (readonly string[])[] = [
@@ -1093,7 +1172,9 @@ const main = async (): Promise<void> => {
       await verifyReadOnlyBaynIdentity(runCommand)
       const snapshot = await fetchBaynPostDeploySnapshot(runCommand)
       const reconciledRevision = readArgoRevision(snapshot.application)
+      const restateRevision = readRestateArgoRevision(snapshot.restateApplications)
       await verifyBaynRevisionLineage(runCommand, options.expectedRevision, reconciledRevision)
+      await verifyRestateRevisionLineage(runCommand, options.expectedRevision, restateRevision)
       validateBaynPostDeploySnapshot(snapshot, expected, Date.now(), options.maximumEvidenceAgeSeconds * 1_000)
     },
     { deadlineMs: options.deadlineSeconds * 1_000, intervalMs: options.intervalSeconds * 1_000 },

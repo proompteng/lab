@@ -5,10 +5,12 @@ import {
   BaynPostDeployFailure,
   fetchBaynPostDeploySnapshot,
   parseExpectedBaynProduction,
+  readRestateArgoRevision,
   retryBaynPostDeployVerification,
   validateBaynPostDeploySnapshot,
   verifyReadOnlyBaynIdentity,
   verifyBaynRevisionLineage,
+  verifyRestateRevisionLineage,
 } from './verify-post-deploy'
 
 const root = new URL('../../../../', import.meta.url)
@@ -232,10 +234,41 @@ const snapshot = () => ({
     },
   },
   restateApplications: {
-    items: ['restate', 'restate-operator', 'restate-operator-crds'].map((name) => ({
-      metadata: { name },
-      status: { sync: { status: 'Synced' }, health: { status: 'Healthy' } },
-    })),
+    items: [
+      {
+        metadata: { name: 'restate' },
+        spec: {
+          source: {
+            repoURL: 'https://github.com/proompteng/lab.git',
+            path: 'argocd/applications/restate',
+            targetRevision: 'main',
+          },
+        },
+        status: { sync: { status: 'Synced', revision: 'c'.repeat(40) }, health: { status: 'Healthy' } },
+      },
+      {
+        metadata: { name: 'restate-operator' },
+        spec: {
+          source: {
+            repoURL: 'ghcr.io/restatedev',
+            chart: 'restate-operator-helm',
+            targetRevision: '3.0.0',
+          },
+        },
+        status: { sync: { status: 'Synced', revision: '3.0.0' }, health: { status: 'Healthy' } },
+      },
+      {
+        metadata: { name: 'restate-operator-crds' },
+        spec: {
+          source: {
+            repoURL: 'ghcr.io/restatedev',
+            chart: 'restate-operator-crds',
+            targetRevision: '3.0.0',
+          },
+        },
+        status: { sync: { status: 'Synced', revision: '3.0.0' }, health: { status: 'Healthy' } },
+      },
+    ],
   },
   deployment: deployment(),
   executionController: controller(),
@@ -342,6 +375,31 @@ describe('Bayn production post-deploy contract', () => {
       code: 'ARGO_NOT_CONVERGED',
       retryable: true,
     })
+  })
+
+  test('binds Restate Argo applications to their expected sources and synced revisions', () => {
+    const sourceDrift = snapshot()
+    ;(sourceDrift.restateApplications.items[0] as any).spec.source.path = 'argocd/applications/other'
+    expect(failure(() => validateBaynPostDeploySnapshot(sourceDrift, expected, now))).toMatchObject({
+      code: 'ARGO_NOT_CONVERGED',
+      retryable: true,
+    })
+
+    const operatorDrift = snapshot()
+    ;(operatorDrift.restateApplications.items[1] as any).spec.source.targetRevision = '3.1.0'
+    expect(failure(() => validateBaynPostDeploySnapshot(operatorDrift, expected, now))).toMatchObject({
+      code: 'ARGO_NOT_CONVERGED',
+      retryable: true,
+    })
+
+    const operatorRevisionDrift = snapshot()
+    ;(operatorRevisionDrift.restateApplications.items[2] as any).status.sync.revision = '2.9.0'
+    expect(failure(() => validateBaynPostDeploySnapshot(operatorRevisionDrift, expected, now))).toMatchObject({
+      code: 'ARGO_NOT_CONVERGED',
+      retryable: true,
+    })
+
+    expect(readRestateArgoRevision(snapshot().restateApplications)).toBe('c'.repeat(40))
   })
 
   test('rejects an unhealthy Restate-owned cadence while allowing no process-local pass record', () => {
@@ -514,6 +572,21 @@ describe('Bayn production post-deploy contract', () => {
     await verifyBaynRevisionLineage(run, expectedRevision, reconciledRevision)
     expect(commands).toContain(
       `git diff --quiet ${expectedRevision}..${reconciledRevision} -- argocd/applications/bayn`,
+    )
+  })
+
+  test('requires the main-tracking Restate application to reconcile the triggering revision lineage', async () => {
+    const expectedRevision = '1'.repeat(40)
+    const reconciledRevision = '2'.repeat(40)
+    const commands: string[] = []
+    const run = async (command: readonly string[]) => {
+      commands.push(command.join(' '))
+      return { stdout: '', stderr: '', exitCode: 0 }
+    }
+
+    await verifyRestateRevisionLineage(run, expectedRevision, reconciledRevision)
+    expect(commands).toContain(
+      `git diff --quiet ${expectedRevision}..${reconciledRevision} -- argocd/applications/restate`,
     )
   })
 
