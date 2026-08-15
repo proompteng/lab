@@ -15,12 +15,12 @@ import {
 } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
-  executionEpisodeCompletedRestrictionReason,
-  executionEpisodeFailureRestrictionPrefix,
+  executionMandateCompletedRestrictionReason,
+  executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
-  legacyExecutionEpisodeCompletedRestrictionReason,
-  legacyExecutionEpisodeFailureRestrictionPrefix,
-} from '../../execution/episode'
+  legacyExecutionMandateFailureRestrictionPrefix,
+  legacyV1CompletedRestrictionReason,
+} from '../../execution/mandate'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -248,13 +248,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
             state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
             AND (
-              state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
-              OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
+              state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
+              OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR (
                 state.reason IN (
-                  ${executionEpisodeCompletedRestrictionReason},
+                  ${executionMandateCompletedRestrictionReason},
                   ${executionActivationExpiredRestrictionReason},
-                  ${legacyExecutionEpisodeCompletedRestrictionReason},
+                  ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
@@ -372,13 +372,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                 state.effective = 'OBSERVE'
                 AND state.kill_state = 'ACTIVE'
                 AND (
-                  state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
-                  OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
+                  state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
+                  OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR (
                     state.reason IN (
-                      ${executionEpisodeCompletedRestrictionReason},
+                      ${executionMandateCompletedRestrictionReason},
                       ${executionActivationExpiredRestrictionReason},
-                      ${legacyExecutionEpisodeCompletedRestrictionReason},
+                      ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
                     AND EXISTS (

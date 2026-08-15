@@ -15,7 +15,7 @@ import {
 } from '../schemas'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
 import { Authority, type ResearchCapitalGrantGeneration, type ResearchCapitalGrantProofBinding } from './contracts'
-import { ResearchCapitalGrantSchema } from './episode'
+import { ResearchCapitalGrantSchema } from './mandate'
 
 export enum CapitalAuthoritySelection {
   None = 'none',

@@ -3,7 +3,7 @@ import { Effect, Option, Result } from 'effect'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
-import { executionCycleRestrictionSubject } from '../execution/episode'
+import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import {
   Authority,
@@ -54,8 +54,8 @@ export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
-  readonly executionEpisodeCutoffAt?: string
-  readonly executionEpisodeExpiresAt?: string
+  readonly executionMandateCutoffAt?: string
+  readonly executionMandateExpiresAt?: string
 }
 
 export type MutationPreparation = {
@@ -142,9 +142,9 @@ const boundExecutionSubmissionCutoff = (
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
-      input.executionEpisodeExpiresAt === undefined ||
-      document.submissionCutoffAt !== input.executionEpisodeExpiresAt ||
-      document.expiresAt !== input.executionEpisodeExpiresAt
+      input.executionMandateExpiresAt === undefined ||
+      document.submissionCutoffAt !== input.executionMandateExpiresAt ||
+      document.expiresAt !== input.executionMandateExpiresAt
     ) {
       return Result.fail(
         mutationRunnerError({
@@ -154,7 +154,7 @@ const boundExecutionSubmissionCutoff = (
         }),
       )
     }
-    return Result.succeed(input.executionEpisodeExpiresAt)
+    return Result.succeed(input.executionMandateExpiresAt)
   }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -672,7 +672,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     if (unsuccessfulIntentFound) {
       const recoveryDeadline =
-        input.mutationPhase === 'CLOSE' ? input.executionEpisodeExpiresAt : input.executionEpisodeCutoffAt
+        input.mutationPhase === 'CLOSE' ? input.executionMandateExpiresAt : input.executionMandateCutoffAt
       if (
         (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
         recoveryDeadline !== undefined &&

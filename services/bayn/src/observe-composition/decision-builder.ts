@@ -19,7 +19,7 @@ import { makeFillTerms, MICROS } from '../execution-model'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { MarketData, type MarketDataService } from '../market-data'
-import { executionEpisodeAllocationCapitalMicros } from '../execution/episode'
+import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
 import type { CausalProtocol } from '../protocol'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
@@ -144,7 +144,7 @@ type ObserveDecisionCompositionFailure = {
     | 'compiled-decision-hash'
     | 'cycle-binding'
     | 'observe-authority'
-    | 'execution-episode-allocation'
+    | 'execution-mandate-allocation'
     | 'reconciled-state-hash'
     | 'reference-prices'
     | 'risk-policy-hash'
@@ -665,7 +665,7 @@ function buildCycleDecision<R>(
     const allocationCapitalMicros =
       authorityRequirement === Authority.Execution
         ? yield* Effect.fromResult(
-            executionEpisodeAllocationCapitalMicros({
+            executionMandateAllocationCapitalMicros({
               accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
               dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
               maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
@@ -678,7 +678,7 @@ function buildCycleDecision<R>(
           ).pipe(
             Effect.mapError((cause) =>
               compositionFailure(
-                'execution-episode-allocation',
+                'execution-mandate-allocation',
                 'execution entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
                 cause,
               ),

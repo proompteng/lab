@@ -16,10 +16,10 @@ import { IntentStore, type BlockedCycleIntentStoreShape } from '../execution/int
 import { MutationStore } from '../execution/mutations'
 import { OperationalError, operationalError } from '../errors'
 import {
-  decideExecutionEpisodeCycleTerminalization,
+  decideExecutionMandateCycleTerminalization,
   executionCycleRestrictionSubject,
-  executionEpisodeFailureRestrictionPrefix,
-} from '../execution/episode'
+  executionMandateFailureRestrictionPrefix,
+} from '../execution/mandate'
 import { IntentState, TerminalOutcome } from '../execution/contracts'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -73,15 +73,15 @@ export const isPostMutationReconciliation = (
 export const executionMutationSubmissionAllowed = (input: {
   readonly capability: ExecutionCapability['_tag']
   readonly closeOnly: boolean
-  readonly executionEpisodeCutoffAt?: string
-  readonly executionEpisodeCloseSubmitCutoffAt?: string
+  readonly executionMandateCutoffAt?: string
+  readonly executionMandateCloseSubmitCutoffAt?: string
   readonly observedAt: string
 }): boolean =>
   input.capability === 'Mutation' &&
   (input.closeOnly
-    ? input.executionEpisodeCloseSubmitCutoffAt === undefined ||
-      input.observedAt < input.executionEpisodeCloseSubmitCutoffAt
-    : input.executionEpisodeCutoffAt === undefined || input.observedAt < input.executionEpisodeCutoffAt)
+    ? input.executionMandateCloseSubmitCutoffAt === undefined ||
+      input.observedAt < input.executionMandateCloseSubmitCutoffAt
+    : input.executionMandateCutoffAt === undefined || input.observedAt < input.executionMandateCutoffAt)
 
 const configuredMutationGeneration = (input: MutationAutonomousCycleInput): string | undefined => {
   return input.executionProgram.authority.capitalAuthority.authorityGenerationHash
@@ -203,8 +203,8 @@ const ensureExecutionCycleClosure = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<ExecutionDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    const cutoffAt = input.executionEpisodeCutoffAt
-    const closeExpiresAt = input.executionEpisodeExpiresAt
+    const cutoffAt = input.executionMandateCutoffAt
+    const closeExpiresAt = input.executionMandateExpiresAt
     const store = input.executionCycleClosureStore
     if (cutoffAt === undefined || closeExpiresAt === undefined || store === undefined) return undefined
     const observedAt = yield* currentUtcInstant
@@ -460,25 +460,25 @@ const executeBoundExecutionCycle = (
       allowSubmit: executionMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
-        ...(input.executionEpisodeCutoffAt === undefined
+        ...(input.executionMandateCutoffAt === undefined
           ? {}
-          : { executionEpisodeCutoffAt: input.executionEpisodeCutoffAt }),
-        ...(input.executionEpisodeCloseSubmitCutoffAt === undefined
+          : { executionMandateCutoffAt: input.executionMandateCutoffAt }),
+        ...(input.executionMandateCloseSubmitCutoffAt === undefined
           ? {}
-          : { executionEpisodeCloseSubmitCutoffAt: input.executionEpisodeCloseSubmitCutoffAt }),
+          : { executionMandateCloseSubmitCutoffAt: input.executionMandateCloseSubmitCutoffAt }),
         observedAt,
       }),
     })
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryHasUnsuccessfulIntent =
-        closeOnly || (input.executionEpisodeCutoffAt !== undefined && observedAt >= input.executionEpisodeCutoffAt)
+        closeOnly || (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt)
           ? yield* entryExecutionCycleHasUnsuccessfulIntent(document)
           : false
-      const terminalization = decideExecutionEpisodeCycleTerminalization({
+      const terminalization = decideExecutionMandateCycleTerminalization({
         closeOnly,
         observedAt,
-        ...(input.executionEpisodeCutoffAt === undefined ? {} : { entryCutoffAt: input.executionEpisodeCutoffAt }),
+        ...(input.executionMandateCutoffAt === undefined ? {} : { entryCutoffAt: input.executionMandateCutoffAt }),
         entryHasUnsuccessfulIntent,
       })
       switch (terminalization._tag) {
@@ -624,7 +624,7 @@ const terminalizeBlockedExecutionCycleDataFirst = (
         ),
         Effect.tap(() =>
           restrictionStore
-            .restrictAuthority(`${executionEpisodeFailureRestrictionPrefix} ${restrictionReason}`, outcome.observedAt)
+            .restrictAuthority(`${executionMandateFailureRestrictionPrefix} ${restrictionReason}`, outcome.observedAt)
             .pipe(
               Effect.mapError((cause) =>
                 mutationRunnerError({
@@ -775,13 +775,13 @@ export const runRecoveryFirstCyclePass = (
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
           if (
-            input.executionEpisodeCutoffAt !== undefined &&
-            observedAt >= input.executionEpisodeCutoffAt &&
+            input.executionMandateCutoffAt !== undefined &&
+            observedAt >= input.executionMandateCutoffAt &&
             unfinished !== undefined
           ) {
             return terminalizeUnboundMutationCycleAtCutoff(unfinished, observedAt)
           }
-          if (input.executionEpisodeCutoffAt !== undefined && observedAt >= input.executionEpisodeCutoffAt) {
+          if (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt) {
             return Effect.succeed({ outcome: 'NO_PUBLICATION' as const, observedAt })
           }
           return runAutonomousCyclePass(context).pipe(

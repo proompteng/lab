@@ -76,9 +76,10 @@ import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
 import {
   executionActivationExpiredRestrictionReason,
-  executionEpisodeCompletedRestrictionReason,
-  executionEpisodeFailureRestrictionPrefix,
-} from '../execution/episode'
+  executionMandateCompletedRestrictionReason,
+  executionMandateFailureRestrictionPrefix,
+  legacyV1CompletedRestrictionReason,
+} from '../execution/mandate'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreLive,
@@ -1844,7 +1845,7 @@ describePostgres('paper accounting persistence', () => {
     const sourceGenerationHash = hash('terminal-restriction-source-generation')
     const activationReconciliation = exactReconciliation('terminal-restriction-activation')
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
-    const terminalReason = `${executionEpisodeFailureRestrictionPrefix} build-decision failed`
+    const terminalReason = `${executionMandateFailureRestrictionPrefix} build-decision failed`
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
     try {
       const result = await runtime.runPromise(
@@ -1926,7 +1927,7 @@ describePostgres('paper accounting persistence', () => {
     const activationReconciliation = exactReconciliation('promoted-terminal-restriction-activation')
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
     const discrepancyReason = `reconciliation discrepancy ${hash('earlier-reconciliation-discrepancy')}`
-    const terminalReason = `${executionEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`
+    const terminalReason = `${executionMandateFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
     try {
       const result = await runtime.runPromise(
@@ -2319,7 +2320,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${executionEpisodeFailureRestrictionPrefix} build-decision failed`,
+            `${executionMandateFailureRestrictionPrefix} build-decision failed`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2603,7 +2604,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${executionEpisodeFailureRestrictionPrefix} qualified v2 recovery`,
+            `${executionMandateFailureRestrictionPrefix} qualified v2 recovery`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2689,7 +2690,7 @@ describePostgres('paper accounting persistence', () => {
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
           yield* store.restrictAuthority(
-            `${executionEpisodeFailureRestrictionPrefix} blocked rollover regression`,
+            `${executionMandateFailureRestrictionPrefix} blocked rollover regression`,
             restrictionTime.updated_at.toISOString(),
           )
 
@@ -2833,7 +2834,8 @@ describePostgres('paper accounting persistence', () => {
   }, 15_000)
 
   test.each([
-    ['completed', executionEpisodeCompletedRestrictionReason],
+    ['completed', executionMandateCompletedRestrictionReason],
+    ['legacy v1 completed', legacyV1CompletedRestrictionReason],
     ['expired', executionActivationExpiredRestrictionReason],
   ] as const)(
     'rolls a receipt-finalized %s execution generation to clear OBSERVE only after durable receipt evidence',

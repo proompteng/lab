@@ -10,7 +10,7 @@ import { isResearchCapitalActivationRequest, type CapitalActivationRequest } fro
 import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
 import { operationalError } from '../errors'
 import {
-  executionEpisodeCloseExpiresAt,
+  executionMandateCloseExpiresAt,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   type LifecycleAdvanceDisposition,
@@ -144,7 +144,7 @@ export const observeCycle = (
 export const mutationCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   executionProgram: ExecutionProgram,
-  executionEpisode: CapitalActivationRequest,
+  executionMandate: CapitalActivationRequest,
   executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
   blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
@@ -162,14 +162,14 @@ export const mutationCycle = (
       reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
       reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
       strategy: plan.strategy,
-      ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
+      ...(isResearchCapitalActivationRequest(executionMandate) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
       executionProgram,
       executionCycleClosureStore,
       blockedCycleIntentStore,
       onClosedCycle,
-      executionEpisodeCutoffAt: executionEpisode.cutoffAt,
-      executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
-      executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
+      executionMandateCutoffAt: executionMandate.cutoffAt,
+      executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
+      executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
       ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
       interpretCycleDriver,
     },

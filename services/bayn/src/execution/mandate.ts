@@ -19,7 +19,7 @@ export const ResearchCapitalGrantSchema = Schema.TaggedStruct('Research', {
 export const CapitalGrantSchema = Schema.Union([QualifiedCapitalGrantSchema, ResearchCapitalGrantSchema])
 export type CapitalGrant = typeof CapitalGrantSchema.Type
 
-export interface ExecutionEpisodeAllocationFacts {
+export interface ExecutionMandateAllocationFacts {
   readonly accountEquityMicros: bigint
   readonly dailyTradedNotionalMicros: bigint
   readonly maxGrossExposureMicros: bigint
@@ -33,7 +33,7 @@ export interface ExecutionEpisodeAllocationFacts {
   readonly referencePriceMicros: Readonly<Record<string, string>>
 }
 
-export type ExecutionEpisodeAllocationFailure =
+export type ExecutionMandateAllocationFailure =
   | {
       readonly _tag: 'CurrentExposureExceedsRemainingTurnover'
       readonly currentReferenceGrossExposureMicros: bigint
@@ -47,9 +47,9 @@ const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const BASIS_POINTS = 10_000n
 
 const currentReferenceGrossExposureMicros = (
-  facts: ExecutionEpisodeAllocationFacts,
-): Result.Result<bigint, ExecutionEpisodeAllocationFailure> =>
-  facts.positions.reduce<Result.Result<bigint, ExecutionEpisodeAllocationFailure>>(
+  facts: ExecutionMandateAllocationFacts,
+): Result.Result<bigint, ExecutionMandateAllocationFailure> =>
+  facts.positions.reduce<Result.Result<bigint, ExecutionMandateAllocationFailure>>(
     (total, position) =>
       Result.flatMap(total, (current) => {
         const price = facts.referencePriceMicros[position.symbol]
@@ -61,7 +61,7 @@ const currentReferenceGrossExposureMicros = (
             notionalMicros(absolute(BigInt(position.quantityMicros)), BigInt(price)),
             (notional) => current + notional,
           ),
-          (cause): ExecutionEpisodeAllocationFailure => ({
+          (cause): ExecutionMandateAllocationFailure => ({
             _tag: 'InvalidPositionReferenceNotional',
             cause,
             symbol: position.symbol,
@@ -76,9 +76,9 @@ const currentReferenceGrossExposureMicros = (
  * target gross capital bounds every absolute target delta, including rotations; an infeasible current portfolio is
  * rejected before target planning instead of producing a risk-blocked authority transition.
  */
-export const executionEpisodeAllocationCapitalMicros = (
-  facts: ExecutionEpisodeAllocationFacts,
-): Result.Result<bigint, ExecutionEpisodeAllocationFailure> => {
+export const executionMandateAllocationCapitalMicros = (
+  facts: ExecutionMandateAllocationFacts,
+): Result.Result<bigint, ExecutionMandateAllocationFailure> => {
   const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
   const remainingReferenceTurnover =
     (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
@@ -119,7 +119,7 @@ export type LegacyCapitalGrantGenerationBinding =
       readonly grant: Extract<CapitalGrant, { readonly _tag: 'Research' }>
     }
 
-/** Projects legacy qualification-bound history into the episode grant without rewriting durable rows. */
+/** Projects legacy qualification-bound history into the mandate grant without rewriting durable rows. */
 export const capitalGrantFromLegacyGeneration = (generation: LegacyCapitalGrantGenerationBinding): CapitalGrant =>
   generation.schemaVersion === 'bayn.paper-authority-generation.v3'
     ? generation.grant
@@ -132,17 +132,17 @@ export const capitalGrantFromLegacyGeneration = (generation: LegacyCapitalGrantG
         },
       }
 
-export type ExecutionEpisodeFailure =
+export type ExecutionMandateFailure =
   | { readonly _tag: 'IdentityDrift' }
   | { readonly _tag: 'InvalidCloseWindow'; readonly reason: string }
 
-export interface ExecutionEpisodeMarketSession {
+export interface ExecutionMandateMarketSession {
   readonly date: string
   readonly openAt: string
   readonly closeAt: string
 }
 
-export interface ExecutionEpisodeAuthorityFacts {
+export interface ExecutionMandateAuthorityFacts {
   readonly generationHash: string
   readonly sourceGenerationHash: string
   readonly currentGenerationMatchesRequest: boolean
@@ -153,37 +153,39 @@ export interface ExecutionEpisodeAuthorityFacts {
 }
 
 export const executionCycleRestrictionSubject = 'execution cycle loop'
-export const executionEpisodeRestrictionSubject = 'execution episode'
 export const executionActivationRestrictionSubject = 'execution activation lease'
-export const executionEpisodeFailureRestrictionPrefix = `${executionCycleRestrictionSubject} restricted effective authority:`
-export const legacyExecutionEpisodeFailureRestrictionPrefix =
+/** Persistence-only subject retained for the durable completion reason consumed by migrated database predicates. */
+export const executionMandateCompletionPersistenceSubject = 'execution episode'
+export const executionMandateFailureRestrictionPrefix = `${executionCycleRestrictionSubject} restricted effective authority:`
+export const legacyExecutionMandateFailureRestrictionPrefix =
   'PAPER autonomous cycle loop restricted effective authority:'
-export const legacyExecutionEpisodeFailureRestrictionPattern =
+export const legacyExecutionMandateFailureRestrictionPattern =
   '^bound PAPER cycle [0-9a-f]{64} restricted effective authority: intent [0-9a-f]{64} (submit settled (denied|rejected)|ended (BLOCKED|CANCELED|EXPIRED|REJECTED|without outcome))$'
-const legacyExecutionEpisodeFailureRestriction = new RegExp(legacyExecutionEpisodeFailureRestrictionPattern)
+const legacyExecutionMandateFailureRestriction = new RegExp(legacyExecutionMandateFailureRestrictionPattern)
 
 /** Accepts only system-authored failure restrictions; operator kills and malformed legacy reasons stay fail-closed. */
-export const isExecutionEpisodeFailureRestriction = (reason: string | undefined): boolean =>
-  reason?.startsWith(executionEpisodeFailureRestrictionPrefix) === true ||
-  reason?.startsWith(legacyExecutionEpisodeFailureRestrictionPrefix) === true ||
-  (reason !== undefined && legacyExecutionEpisodeFailureRestriction.test(reason))
+export const isExecutionMandateFailureRestriction = (reason: string | undefined): boolean =>
+  reason?.startsWith(executionMandateFailureRestrictionPrefix) === true ||
+  reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
+  (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
 
-export const executionEpisodeCompletedRestrictionReason = `${executionEpisodeRestrictionSubject} restricted effective authority: flat exact receipt finalized`
-export const legacyExecutionEpisodeCompletedRestrictionReason =
+/** Durable persisted reason retained byte-for-byte so existing database rearm predicates keep accepting new mandates. */
+export const executionMandateCompletedRestrictionReason = `${executionMandateCompletionPersistenceSubject} restricted effective authority: flat exact receipt finalized`
+export const legacyV1CompletedRestrictionReason =
   'PAPER episode restricted effective authority: flat exact receipt finalized'
 export const executionActivationExpiredRestrictionReason = `${executionActivationRestrictionSubject} restricted effective authority: immutable activation request expired`
 export const legacyExecutionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
 
-export type ExecutionEpisodeAuthorityDecision =
+export type ExecutionMandateAuthorityDecision =
   | { readonly _tag: 'Activate' }
   | { readonly _tag: 'Rearm' }
   | { readonly _tag: 'Resume' }
   | { readonly _tag: 'ResumeRestricted' }
 
-export const decideExecutionEpisodeAuthority = (
-  facts: ExecutionEpisodeAuthorityFacts,
-): Result.Result<ExecutionEpisodeAuthorityDecision, ExecutionEpisodeFailure> => {
+export const decideExecutionMandateAuthority = (
+  facts: ExecutionMandateAuthorityFacts,
+): Result.Result<ExecutionMandateAuthorityDecision, ExecutionMandateFailure> => {
   if (
     facts.maximum === 'OBSERVE' &&
     facts.effective === 'OBSERVE' &&
@@ -214,19 +216,19 @@ export const decideExecutionEpisodeAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash &&
-    isExecutionEpisodeFailureRestriction(facts.reason)
+    isExecutionMandateFailureRestriction(facts.reason)
   ) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })
 }
 
-export const validateExecutionEpisodeCloseWindow = (input: {
+export const validateExecutionMandateCloseWindow = (input: {
   readonly cutoffAt: string
   readonly expiresAt: string
   readonly maximumCloseSessions: number
-  readonly sessions: readonly ExecutionEpisodeMarketSession[]
-}): Result.Result<readonly ExecutionEpisodeMarketSession[], ExecutionEpisodeFailure> => {
+  readonly sessions: readonly ExecutionMandateMarketSession[]
+}): Result.Result<readonly ExecutionMandateMarketSession[], ExecutionMandateFailure> => {
   if (!Number.isSafeInteger(input.maximumCloseSessions) || input.maximumCloseSessions < 1) {
     return Result.fail({ _tag: 'InvalidCloseWindow', reason: 'maximum close sessions must be positive' })
   }
@@ -262,17 +264,17 @@ export const validateExecutionEpisodeCloseWindow = (input: {
   return Result.succeed(closeSessions)
 }
 
-export type ExecutionEpisodeCycleTerminalizationDecision =
+export type ExecutionMandateCycleTerminalizationDecision =
   | { readonly _tag: 'WaitForClose' }
   | { readonly _tag: 'Block' }
   | { readonly _tag: 'Complete' }
 
-export const decideExecutionEpisodeCycleTerminalization = (input: {
+export const decideExecutionMandateCycleTerminalization = (input: {
   readonly closeOnly: boolean
   readonly observedAt: string
   readonly entryCutoffAt?: string
   readonly entryHasUnsuccessfulIntent: boolean
-}): ExecutionEpisodeCycleTerminalizationDecision => {
+}): ExecutionMandateCycleTerminalizationDecision => {
   if (!input.closeOnly && input.entryCutoffAt !== undefined && input.observedAt < input.entryCutoffAt) {
     return { _tag: 'WaitForClose' }
   }

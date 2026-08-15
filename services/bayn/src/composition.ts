@@ -15,7 +15,7 @@ export {
   capitalReceiptFinalizationWindowOpen,
   closedCycleReceiptEmissionAllowed,
   decideExecutionLifecycleMaintenance,
-  finalizeExecutionEpisode,
+  finalizeExecutionMandate,
   prepareOrRecoverQualifiedCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
   readCompletedExecutionLifecycle,

@@ -61,7 +61,7 @@ export interface StrategyApplication<
   readonly definition: StrategyDefinition<TMarket, TFailure, TTarget>
   /** Candidate applications carry the exact reviewed module identity they execute. */
   readonly reviewedSource?: ReviewedStrategySource
-  /** Deterministic flat target used for the terminal close of an evaluation or runtime episode. */
+  /** Deterministic flat target used for the terminal close of an evaluation or execution mandate. */
   readonly closeTarget: (target: TTarget) => TTarget
   readonly contextAtSignal: (
     sessions: readonly AlignedSession[],
