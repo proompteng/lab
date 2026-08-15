@@ -94,6 +94,7 @@ import {
   readOnlyQualificationEvidenceRequired,
   refreshReadOnlyCapitalActivation,
   refreshReadOnlyQualification,
+  resolveReadOnlyCycleObservationId,
 } from './composition/read-only-status'
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
@@ -754,13 +755,30 @@ describe('Bayn capital startup recovery boundary', () => {
       buildContinuation: researchBuildContinuation,
     })
 
-    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId, hash('8'))).toBe(
-      continuationRequest.grant.planHash,
+    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId)).toBe(continuationRequest.grant.planHash)
+    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId)).toBe(pinnedEvaluation.runId)
+    expect(readOnlyCycleObservationId(Result.succeed(null), undefined)).toBeUndefined()
+  })
+
+  test('binds request-free status to the current durable OBSERVE generation after rotation', async () => {
+    const currentGenerationHash = hash('current-durable-observe-generation')
+    const cycleObservationId = await Effect.runPromise(
+      resolveReadOnlyCycleObservationId(Result.succeed(null), undefined, {
+        ensureAuthorityGeneration: () =>
+          Effect.die(new Error('request-free read-only status must not mutate authority')),
+        readAuthorityState: Effect.succeed({
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: currentGenerationHash,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Clear,
+          version: 2,
+          updatedAt: '2026-08-15T07:00:00.000Z',
+        }),
+      }),
     )
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, hash('8'))).toBe(
-      pinnedEvaluation.runId,
-    )
-    expect(readOnlyCycleObservationId(Result.succeed(null), undefined, hash('8'))).toBe(hash('8'))
+
+    expect(cycleObservationId).toBe(currentGenerationHash)
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
