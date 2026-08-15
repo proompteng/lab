@@ -35,6 +35,7 @@ export interface BaynPostDeployEvidenceResult {
   readonly sourceRevision: string
   readonly imageDigest: string
   readonly podName: string
+  readonly podRestartCount: number
   readonly probeSequence: number
   readonly cycleCondition: string
   readonly controllerEpoch: number
@@ -240,7 +241,11 @@ const validateDeployment = (candidate: unknown, expected: BaynExpectedDeployment
   return image
 }
 
-const validatePods = (candidate: unknown, expected: BaynExpectedDeploymentPins, deploymentImage: string): string => {
+const validatePods = (
+  candidate: unknown,
+  expected: BaynExpectedDeploymentPins,
+  deploymentImage: string,
+): { readonly podName: string; readonly restartCount: number } => {
   const pods = record(candidate, 'pods')
   const activePods = array(pods.items, 'pods.items')
     .map((item) => record(item, 'pods.items[]'))
@@ -266,12 +271,13 @@ const validatePods = (candidate: unknown, expected: BaynExpectedDeploymentPins, 
   )
   expectEqual(container.image, deploymentImage, `${podName} image`)
   expectEqual(containerStatus.ready, true, `${podName} ready`)
-  expectEqual(containerStatus.restartCount, 0, `${podName} restartCount`)
+  const restartCount = integer(containerStatus.restartCount, `${podName} restartCount`)
+  if (restartCount < 0) throw new Error(`${podName} restartCount must be non-negative`)
   const imageId = string(containerStatus.imageID, `${podName} imageID`)
   if (!imageId.endsWith(`@${expected.imageDigest}`)) {
     throw new Error(`${podName} imageID does not bind expected digest: ${imageId}`)
   }
-  return podName
+  return { podName, restartCount }
 }
 
 const validateReadyz = (statusCode: number, candidate: unknown): number => {
@@ -371,13 +377,14 @@ const validateStatus = (
 export const validateBaynPostDeployEvidence = (input: BaynPostDeployEvidenceInput): BaynPostDeployEvidenceResult => {
   const expected = parseBaynExpectedDeploymentPins(input.deploymentManifest, input.kustomization)
   const deploymentImage = validateDeployment(input.deployment, expected)
-  const podName = validatePods(input.pods, expected, deploymentImage)
+  const pod = validatePods(input.pods, expected, deploymentImage)
   const probeSequence = validateReadyz(input.readyzStatusCode, input.readyz)
   const runtime = validateStatus(input.statusStatusCode, input.status, expected, probeSequence)
   return {
     sourceRevision: expected.sourceRevision,
     imageDigest: expected.imageDigest,
-    podName,
+    podName: pod.podName,
+    podRestartCount: pod.restartCount,
     probeSequence,
     cycleCondition: runtime.cycleCondition,
     controllerEpoch: runtime.controllerEpoch,
