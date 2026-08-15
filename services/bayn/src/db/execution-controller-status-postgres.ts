@@ -12,11 +12,11 @@ import {
   type ExecutionControllerStatusProjection,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
-import { LifecycleControllerKeySchema } from '../lifecycle-command-contract'
+import { ExecutionControllerKeySchema } from '../execution/controller-key'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const StatusRow = Schema.Struct({
-  controller_key: LifecycleControllerKeySchema,
+  controller_key: ExecutionControllerKeySchema,
   plan_hash: Sha256Schema,
   active: Schema.Boolean,
   epoch: Schema.BigIntFromString,
@@ -120,7 +120,7 @@ const read = (
   candidate: string,
 ): Effect.Effect<ExecutionControllerStatus | null, ExecutionControllerStatusStoreError> =>
   Schema.decodeUnknownEffect(
-    LifecycleControllerKeySchema,
+    ExecutionControllerKeySchema,
     strictParseOptions,
   )(candidate).pipe(
     Effect.flatMap((controllerKey) => selectStatus(sql, controllerKey)),

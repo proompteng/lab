@@ -1,7 +1,7 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
-import { LifecycleControllerKeySchema } from '../lifecycle-command-contract'
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { ExecutionControllerKeySchema } from './controller-key'
 
 const ControllerCounterSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 
@@ -12,7 +12,7 @@ export enum ExecutionControllerOutcome {
 
 const ExecutionControllerStatusBase = {
   schemaVersion: Schema.Literal(1),
-  controllerKey: LifecycleControllerKeySchema,
+  controllerKey: ExecutionControllerKeySchema,
   planHash: Sha256Schema,
   active: Schema.Boolean,
   epoch: ControllerCounterSchema,
