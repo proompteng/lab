@@ -238,8 +238,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = '5f366810884463ee593b417e21bc76bf2176de36'
-  const imageDigest = 'sha256:576f4d30cd878c1eb49036c562b6e149e2dc3a4dd8c1a89a74c91acc511ed005'
+  const sourceRevision = '7bc61449a217f268e81510e3818d5b5ebc379553'
+  const imageDigest = 'sha256:229640c18a50fd5b69036e402c7967ba404825a5c0b73b04385fedf480c505b5'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -318,11 +318,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '76e6102a8182366da1e4db93d50397bc153d3882d1c19c18f7c9f323e1102269',
+    'c495a02718b19f4ed41801efeb936a7f3130c2affeb105a27a2966c056d7bdd3',
   )
   const previousBinding = {
-    planHash: '3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784',
-    sourceRevision: '0df47ceec972e14548040ccdca3f6df43fe97bd8',
+    planHash: '76e6102a8182366da1e4db93d50397bc153d3882d1c19c18f7c9f323e1102269',
+    sourceRevision: '5f366810884463ee593b417e21bc76bf2176de36',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
@@ -341,7 +341,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'd43fcbf1f7009fcac0c3b7e48c0faae2a2530b6f7c03504e0cfd599f84818c42',
+    'e6d48365cbc43b2995c8efd40df065b2d75a0d7bef413023afa7d5b7ecfe3186',
   )
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
