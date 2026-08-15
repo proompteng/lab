@@ -11,7 +11,6 @@ import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtim
 import { operationalError } from '../errors'
 import {
   executionEpisodeCloseExpiresAt,
-  interpretRecoveryFirstCycleInProcess,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   type LifecycleAdvanceDisposition,
@@ -36,24 +35,12 @@ export const runtimeBroker = (
   executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
 })
 
-export const runRestateLifecycleWithReconciliationGuardian = <A, E, R, GuardianR>(
-  maintainReconciliation: Effect.Effect<void, never, R>,
-  intervalMs: number,
-  lifecycle: Effect.Effect<A, E, GuardianR>,
-): Effect.Effect<A, E, R | GuardianR> =>
-  Effect.zipWith(
-    Effect.forever(maintainReconciliation.pipe(Effect.andThen(Effect.sleep(Duration.millis(intervalMs))))),
-    lifecycle,
-    (_guardian, result) => result,
-    { concurrent: true },
-  )
-
 export const lifecycleMaintenanceCycle =
   (
     plan: ApplicationPlanFor<'AutonomousService'>,
     maintainReconciliation: Effect.Effect<void, ReconciliationPassError>,
     maintainLifecycle: LifecycleAdvanceMaintenance,
-    interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
+    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
   ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
   (startup) =>
     Semaphore.make(1).pipe(
@@ -107,7 +94,7 @@ export const lifecycleMaintenanceCycle =
           nextDelayMs,
           wait: () => Effect.sleep(Duration.millis(nextDelayMs)),
         }
-        return (interpretCycleDriverOverride ?? interpretRecoveryFirstCycleInProcess)(driver)
+        return interpretCycleDriver(driver)
       }),
     )
 
@@ -138,17 +125,20 @@ export const observeCycleGenerationHash = (authority: AuthorityState): Result.Re
 export const observeCycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   authorityGenerationHash: string,
-  interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
+  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
 ) => {
-  return makeObserveAutonomousCycleStartup({
-    accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash,
-    pollIntervalMs: plan.config.cyclePollIntervalMs,
-    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-    strategy: plan.strategy,
-    ...(interpretCycleDriverOverride === undefined ? {} : { interpretCycleDriver: interpretCycleDriverOverride }),
-  })
+  return makeObserveAutonomousCycleStartup(
+    {
+      accountId: plan.config.alpaca.expectedAccountId,
+      authorityGenerationHash,
+      pollIntervalMs: plan.config.cyclePollIntervalMs,
+      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+      strategy: plan.strategy,
+      interpretCycleDriver,
+    },
+    interpretCycleDriver,
+  )
 }
 
 export const mutationCycle = (
@@ -158,30 +148,33 @@ export const mutationCycle = (
   executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
   blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
-  lifecycleMaintenance?: LifecycleAdvanceMaintenance,
-  interpretCycleDriverOverride?: RecoveryFirstCycleDriverInterpreter,
+  lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
+  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
 ) => {
-  return makeMutationAutonomousCycleStartup({
-    accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash:
-      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
-        ? plan.config.execution.capitalAuthority.authorityGenerationHash
-        : plan.config.alpaca.authorityGenerationHash,
-    pollIntervalMs: plan.config.cyclePollIntervalMs,
-    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-    strategy: plan.strategy,
-    ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
-    executionProgram,
-    executionCycleClosureStore,
-    blockedCycleIntentStore,
-    onClosedCycle,
-    executionEpisodeCutoffAt: executionEpisode.cutoffAt,
-    executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
-    executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
-    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
-    ...(interpretCycleDriverOverride === undefined ? {} : { interpretCycleDriver: interpretCycleDriverOverride }),
-  })
+  return makeMutationAutonomousCycleStartup(
+    {
+      accountId: plan.config.alpaca.expectedAccountId,
+      authorityGenerationHash:
+        plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
+          ? plan.config.execution.capitalAuthority.authorityGenerationHash
+          : plan.config.alpaca.authorityGenerationHash,
+      pollIntervalMs: plan.config.cyclePollIntervalMs,
+      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+      strategy: plan.strategy,
+      ...(isResearchCapitalActivationRequest(executionEpisode) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
+      executionProgram,
+      executionCycleClosureStore,
+      blockedCycleIntentStore,
+      onClosedCycle,
+      executionEpisodeCutoffAt: executionEpisode.cutoffAt,
+      executionEpisodeCloseSubmitCutoffAt: executionEpisode.expiresAt,
+      executionEpisodeExpiresAt: executionEpisodeCloseExpiresAt(executionEpisode.expiresAt),
+      ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
+      interpretCycleDriver,
+    },
+    interpretCycleDriver,
+  )
 }
 
 export const executionProgramError = (

@@ -10,6 +10,7 @@ import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
+  RecoveryFirstCycleDriverInterpreter,
   RecoveryFirstRuntime,
 } from './model'
 import { loadObserveRiskPolicy } from './decision-builder'
@@ -84,7 +85,10 @@ const initializeObserveAuthority = (
   )
 
 export const makeObserveAutonomousCycleStartup =
-  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<AuthorityGenerationStore, RecoveryFirstRuntime> =>
+  (
+    input: ObserveAutonomousCycleInput,
+    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
+  ): AutonomousCycleStartup<AuthorityGenerationStore, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -111,12 +115,16 @@ export const makeObserveAutonomousCycleStartup =
           { _tag: 'RecoveryOnly' },
           observeDecisionBuilder(input, preparation, policy),
           'autonomous cycle loop',
+          interpretCycleDriver,
         ),
       )
     })
 
 export const makeMutationAutonomousCycleStartup =
-  (input: MutationAutonomousCycleInput): AutonomousCycleStartup<never, RecoveryFirstRuntime> =>
+  (
+    input: MutationAutonomousCycleInput,
+    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
+  ): AutonomousCycleStartup<never, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -143,6 +151,7 @@ export const makeMutationAutonomousCycleStartup =
           { _tag: 'Mutation', executionProgram: input.executionProgram },
           mutationDecisionBuilder(input, preparation, policy),
           'mutation autonomous cycle loop',
+          interpretCycleDriver,
         ),
       )
     })

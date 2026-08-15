@@ -86,11 +86,15 @@ import {
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
-  makeMutationAutonomousCycleStartup,
-  makeObserveAutonomousCycleStartup,
+  makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
+  makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
   recoveryFirstCycleNextDelayMs,
   terminalizeBlockedExecutionCycle,
+  type MutationAutonomousCycleInput,
+  type ObserveAutonomousCycleInput,
+  type RecoveryFirstCycleDriver,
+  type RecoveryFirstCycleDriverInterpreter,
 } from './observe-composition'
 import {
   AccountStatus,
@@ -127,6 +131,30 @@ const generationHash = 'a'.repeat(64)
 const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:45:01.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
+
+const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
+  const run = (): ReturnType<RecoveryFirstCycleDriverInterpreter> =>
+    Effect.suspend(() =>
+      driver.advance.pipe(
+        Effect.flatMap(driver.wait),
+        Effect.catch((restrictionError) => Effect.die(restrictionError)),
+        Effect.andThen(run()),
+      ),
+    )
+  return run()
+}
+
+const makeObserveAutonomousCycleStartup = (input: ObserveAutonomousCycleInput) =>
+  makeObserveAutonomousCycleStartupProduction(
+    input,
+    input.interpretCycleDriver ?? interpretRecoveryFirstCycleInTestProcess,
+  )
+
+const makeMutationAutonomousCycleStartup = (input: MutationAutonomousCycleInput) =>
+  makeMutationAutonomousCycleStartupProduction(
+    input,
+    input.interpretCycleDriver ?? interpretRecoveryFirstCycleInTestProcess,
+  )
 
 test('external lifecycle ownership never schedules past the reconciliation cadence', () => {
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)
@@ -3589,7 +3617,7 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('keeps startup and long-lived loop requirements explicit at separate composition boundaries', async () => {
+  test('keeps startup and one externally driven pass explicit at separate composition boundaries', async () => {
     const unused = Effect.die(new Error('missing-publication loop must not use this capability'))
     const authority = reconciliationResult().riskContext.authority
     if (authority === null) return expect.unreachable('fixture authority is required')
@@ -3645,6 +3673,7 @@ describe('OBSERVE runtime composition', () => {
       check: unused,
       transaction: (effect) => effect,
     }
+    const capturedDriver = Effect.runSync(Deferred.make<RecoveryFirstCycleDriver>())
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
@@ -3652,12 +3681,12 @@ describe('OBSERVE runtime composition', () => {
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureRuntime,
+      interpretCycleDriver: (driver) => Deferred.succeed(capturedDriver, driver).pipe(Effect.andThen(Effect.never)),
     })
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
           const acquireLoop: Effect.Effect<
             AutonomousCycleLoop<
               | BrokerRead
@@ -3677,7 +3706,7 @@ describe('OBSERVE runtime composition', () => {
             AuthorityGenerationStore
           > = startup({
             qualificationRunId: 'c'.repeat(64),
-            recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
+            recordPass: () => Effect.die('driver publication must not execute a cycle pass'),
           })
           const loop = yield* acquireLoop.pipe(Effect.provideService(AuthorityGenerationStore, executionStore))
           const fiber = yield* loop.pipe(
@@ -3695,11 +3724,8 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped,
           )
-          const observation = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
-          expect(observation).toMatchObject({
-            result: 'SUCCESS',
-            outcome: 'NO_PUBLICATION',
-          })
+          const driver = yield* Deferred.await(capturedDriver).pipe(Effect.timeout('1 second'))
+          expect(driver.nextDelayMs).toBe(30_000)
           yield* Fiber.interrupt(fiber)
         }),
       ),
