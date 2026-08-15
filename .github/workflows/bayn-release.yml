@@ -70,7 +70,6 @@ jobs:
           git merge-base --is-ancestor "$source_sha" HEAD
           git diff --quiet "$source_sha..HEAD" -- \
             services/bayn \
-            packages/scripts/src/bayn/lifecycle-manifests.ts \
             packages/scripts/src/bayn/update-manifests.ts \
             nix/images/bayn.nix \
             nix/images/bayn-runtime-root.nix \
@@ -177,8 +176,6 @@ jobs:
           git diff --exit-code -- \
             argocd/applications/bayn/kustomization.yaml \
             argocd/applications/bayn/deployment.yaml \
-            argocd/applications/bayn/lifecycle-current.yaml \
-            argocd/applications/bayn/lifecycle-previous.yaml \
             argocd/applicationsets/product.yaml
           {
             echo '## Bayn candidate image held'
@@ -202,8 +199,6 @@ jobs:
           add-paths: |
             argocd/applications/bayn/kustomization.yaml
             argocd/applications/bayn/deployment.yaml
-            argocd/applications/bayn/lifecycle-current.yaml
-            argocd/applications/bayn/lifecycle-previous.yaml
             argocd/applicationsets/product.yaml
           body: |
             ## Summary

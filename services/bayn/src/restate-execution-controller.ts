@@ -25,8 +25,6 @@ import {
   type ExecutionControllerTick,
 } from './execution/controller'
 import { sha256 } from './hash'
-import { decodeRestateLifecycleState } from './restate-lifecycle'
-import { lifecycleActivationAwaitTimeoutMs } from './restate-lifecycle-controller'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -41,36 +39,6 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   required: ['schemaVersion', 'epoch', 'sequence'],
   additionalProperties: false,
 })
-const legacyLifecycleActivationSerde = restate.serde.json.schema<{
-  readonly schemaVersion: 'bayn.restate-lifecycle-activation.v1'
-  readonly controllerKey: string
-}>({
-  type: 'object',
-  properties: {
-    schemaVersion: { const: 'bayn.restate-lifecycle-activation.v1' },
-    controllerKey: { type: 'string' },
-  },
-  required: ['schemaVersion', 'controllerKey'],
-  additionalProperties: false,
-})
-const verifiedLegacyLifecycleDeactivationSerde = restate.serde.json.schema<{
-  readonly schemaVersion: 'bayn.restate-lifecycle-deactivation.v1'
-  readonly controllerKey: string
-  readonly planHash: string
-  readonly sourceRevision: string
-}>({
-  type: 'object',
-  properties: {
-    schemaVersion: { const: 'bayn.restate-lifecycle-deactivation.v1' },
-    controllerKey: { type: 'string' },
-    planHash: { type: 'string' },
-    sourceRevision: { type: 'string' },
-  },
-  required: ['schemaVersion', 'controllerKey', 'planHash', 'sourceRevision'],
-  additionalProperties: false,
-})
-const legacyLifecycleStateSerde = restate.serde.json.schema<unknown>({ type: 'object' })
-
 export const executionControllerFinalizationHeadroomMs = 30_000
 export const executionControllerActivationRetentionMs = 10 * 60_000
 export const executionControllerAdvanceRunOptions = {
@@ -95,20 +63,6 @@ export interface ExecutionControllerConfig {
   readonly operationTimeoutMs: number
   readonly planHash: string
   readonly previousBinding?: ExecutionControllerBinding
-  readonly sourceRevision: string
-}
-
-export const legacyLifecycleDeactivationSchemaVersions = [
-  'bayn.restate-lifecycle-activation.v1',
-  'bayn.restate-lifecycle-deactivation.v1',
-] as const
-
-export type LegacyLifecycleDeactivationSchemaVersion = (typeof legacyLifecycleDeactivationSchemaVersions)[number]
-
-export interface LegacyLifecycleCutoverBinding {
-  readonly controllerKey: string
-  readonly deactivationSchemaVersion: LegacyLifecycleDeactivationSchemaVersion
-  readonly planHash: string
   readonly sourceRevision: string
 }
 
@@ -256,64 +210,6 @@ const authorizeBootstrap = (expectedHash: string, authorization: string | undefi
   }
 }
 
-const legacyLifecycleDeactivationIdempotencyKey = (
-  config: ExecutionControllerConfig,
-  binding: LegacyLifecycleCutoverBinding,
-): string =>
-  `bayn-native-cutover-${sha256(
-    ['bayn.native-cutover.v2', config.sourceRevision, binding.controllerKey, binding.deactivationSchemaVersion].join(
-      '\u0000',
-    ),
-  )}`
-
-const callLegacyLifecycleDeactivate = (
-  ctx: restate.Context,
-  config: ExecutionControllerConfig,
-  binding: LegacyLifecycleCutoverBinding,
-): Promise<unknown> => {
-  const common = {
-    service: 'BaynLifecycle',
-    method: 'deactivate',
-    key: binding.controllerKey,
-    outputSerde: legacyLifecycleStateSerde,
-    idempotencyKey: legacyLifecycleDeactivationIdempotencyKey(config, binding),
-  } as const
-  return binding.deactivationSchemaVersion === 'bayn.restate-lifecycle-activation.v1'
-    ? ctx.genericCall({
-        ...common,
-        parameter: {
-          schemaVersion: 'bayn.restate-lifecycle-activation.v1',
-          controllerKey: binding.controllerKey,
-        },
-        inputSerde: legacyLifecycleActivationSerde,
-      })
-    : ctx.genericCall({
-        ...common,
-        parameter: {
-          schemaVersion: 'bayn.restate-lifecycle-deactivation.v1',
-          controllerKey: binding.controllerKey,
-          planHash: binding.planHash,
-          sourceRevision: binding.sourceRevision,
-        },
-        inputSerde: verifiedLegacyLifecycleDeactivationSerde,
-      })
-}
-
-const deactivateLegacyLifecycle = async (
-  ctx: restate.Context,
-  config: ExecutionControllerConfig,
-  binding: LegacyLifecycleCutoverBinding,
-): Promise<void> => {
-  const candidate = await callLegacyLifecycleDeactivate(ctx, config, binding)
-  const state = decodeOrTerminal(
-    decodeRestateLifecycleState(candidate),
-    'legacy lifecycle deactivation returned invalid state',
-  )
-  if (state.active || state.planHash !== binding.planHash || state.sourceRevision !== binding.sourceRevision) {
-    throw terminal('legacy lifecycle deactivation did not prove the expected inactive owner')
-  }
-}
-
 export const bindBootstrapActivation = (
   state: ExecutionControllerState | null,
   request: ExecutionControllerBootstrap,
@@ -371,7 +267,7 @@ export const executionControllerHandlerTimeouts = (
 })
 
 export const executionControllerCutoverAwaitTimeoutMs = (operationTimeoutMs: number): number =>
-  lifecycleActivationAwaitTimeoutMs(operationTimeoutMs) + executionControllerFinalizationHeadroomMs
+  executionControllerHandlerTimeouts(operationTimeoutMs).inactivityTimeout + executionControllerFinalizationHeadroomMs
 
 export const executionControllerBootstrapHandlerTimeouts = (
   operationTimeoutMs: number,
@@ -536,7 +432,6 @@ export const makeBaynExecutionBootstrap = (
   controller: ReturnType<typeof makeBaynExecutionController>,
   authorizationHash: string,
   hooks: readonly restate.HooksProvider[] = [],
-  legacyCutover?: LegacyLifecycleCutoverBinding,
 ) =>
   restate.service({
     name: 'BaynExecutionBootstrap',
@@ -569,18 +464,12 @@ export const makeBaynExecutionBootstrap = (
             }
             activationState = deactivated
           }
-          if (legacyCutover !== undefined && (state === null || !state.active)) {
-            await deactivateLegacyLifecycle(ctx, config, legacyCutover)
-          }
           return client.activate(bindBootstrapActivation(activationState ?? null, request, config))
         },
       ),
     },
     options: {
       hooks: [...hooks],
-      ...executionControllerBootstrapHandlerTimeouts(
-        config.operationTimeoutMs,
-        legacyCutover !== undefined || config.previousBinding !== undefined,
-      ),
+      ...executionControllerBootstrapHandlerTimeouts(config.operationTimeoutMs, config.previousBinding !== undefined),
     },
   })

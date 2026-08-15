@@ -21,7 +21,6 @@ import { AlpacaHttpClient } from '../broker/alpaca/http'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleStore } from '../cycle/store'
-import { LifecycleCommandStore } from '../db/lifecycle-command'
 import { ForwardPerformanceReceiptStore } from '../db/forward-performance-receipt'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import {
@@ -43,6 +42,7 @@ import {
 } from '../execution/configuration'
 import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
+import { executionRuntimeBinding, resolveExecutionCycleObservationId } from '../execution/runtime-binding'
 import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { WriterFence } from '../execution/writer-fence'
@@ -68,7 +68,6 @@ import {
   lifecycleMaintenanceCycle,
   mutationCycle,
   observeCycle,
-  observeCycleGenerationHash,
   runtimeBroker,
 } from './lifecycle'
 import {
@@ -100,9 +99,6 @@ export interface AutonomousServiceRuntimeOptions {
   readonly interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter
 }
 
-export const capitalActivationRequiresQualificationEvidence = (request: CapitalActivationRequest | null): boolean =>
-  request !== null && !isResearchCapitalActivationRequest(request)
-
 export const makeAutonomousServiceRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   options: AutonomousServiceRuntimeOptions = {},
@@ -125,8 +121,7 @@ export const makeAutonomousServiceRuntime = (
       serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serializedRequest)
     const requiresQualificationEvidence =
       Result.isSuccess(decodedActivation) &&
-      decodedActivation.success !== null &&
-      capitalActivationRequiresQualificationEvidence(decodedActivation.success.request)
+      executionRuntimeBinding(decodedActivation.success?.request ?? null).requiresQualificationEvidence
     const noCycle = (
       _startup: AutonomousCycleStartupInput,
     ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
@@ -200,7 +195,6 @@ export const makeAutonomousServiceRuntime = (
                       persistedCapitalGrants: PersistedCapitalGrantStore,
                       intentStore: IntentStore,
                       blockedCycleIntentStore: BlockedCycleIntentStore,
-                      lifecycleCommandStore: LifecycleCommandStore,
                       mutationStore: MutationStore,
                       writerFence: WriterFence,
                       cycleStore: CycleStore,
@@ -243,12 +237,10 @@ export const makeAutonomousServiceRuntime = (
                               ),
                             )
                             const authorityGenerationHash = yield* Effect.fromResult(
-                              observeCycleGenerationHash(authority),
+                              resolveExecutionCycleObservationId(executionRuntimeBinding(null), authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* observeCycle(
                               observePlan,
-                              runtimeServices.lifecycleCommandStore,
-                              runtimeServices.writerFence,
                               authorityGenerationHash,
                               options.interpretCycleDriver,
                             )(startup)
@@ -262,12 +254,16 @@ export const makeAutonomousServiceRuntime = (
                               ),
                             ),
                           )
+                        const requestBinding = executionRuntimeBinding(request)
                         const readRuntime = () => ({
                           _tag: 'AutonomousRead' as const,
-                          requiresQualificationEvidence: capitalActivationRequiresQualificationEvidence(request),
+                          requiresQualificationEvidence: requestBinding.requiresQualificationEvidence,
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
-                          ...(request !== null && isResearchCapitalActivationRequest(request)
-                            ? { cycleBindingId: null, cycleObservationId: request.grant.planHash }
+                          ...(requestBinding.cycleObservation._tag === 'ResearchGrant'
+                            ? {
+                                cycleBindingId: null,
+                                cycleObservationId: requestBinding.cycleObservation.cycleObservationId,
+                              }
                             : {}),
                           startCycle: readStartCycle,
                         })
@@ -295,9 +291,9 @@ export const makeAutonomousServiceRuntime = (
                                 ),
                               ),
                               Effect.flatMap((authority) =>
-                                Effect.fromResult(observeCycleGenerationHash(authority)).pipe(
-                                  Effect.mapError((message) => capitalActivationOperationalError(message)),
-                                ),
+                                Effect.fromResult(
+                                  resolveExecutionCycleObservationId(executionRuntimeBinding(null), authority),
+                                ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message))),
                               ),
                               Effect.map((cycleBindingId) => ({
                                 ...readRuntime(),
@@ -528,8 +524,6 @@ export const makeAutonomousServiceRuntime = (
                             const startCycle: AutonomousCycleStartup = (startup) =>
                               lifecycleMaintenanceCycle(
                                 observePlan,
-                                runtimeServices.lifecycleCommandStore,
-                                runtimeServices.writerFence,
                                 maintainReconciliation,
                                 maintainLifecycle,
                                 options.interpretCycleDriver,
@@ -703,8 +697,6 @@ export const makeAutonomousServiceRuntime = (
                                           request,
                                           runtimeServices.executionCycleClosureStore,
                                           runtimeServices.blockedCycleIntentStore,
-                                          runtimeServices.lifecycleCommandStore,
-                                          runtimeServices.writerFence,
                                           onClosedCycle,
                                           maintainExecutionLifecycle,
                                           interpretCycleDriver ?? options.interpretCycleDriver,
@@ -720,8 +712,7 @@ export const makeAutonomousServiceRuntime = (
                                         )
                                       const runtime = {
                                         _tag: 'AutonomousMutation' as const,
-                                        requiresQualificationEvidence:
-                                          capitalActivationRequiresQualificationEvidence(request),
+                                        requiresQualificationEvidence: requestBinding.requiresQualificationEvidence,
                                         broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                         cycleBindingId,
                                         cycleObservationId: cycleBindingId,

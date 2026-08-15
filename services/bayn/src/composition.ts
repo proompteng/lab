@@ -32,7 +32,6 @@ export {
   runExecutionPreparePlan,
   validateExecutionPreparePlan,
 } from './composition/execution-prepare'
-export { observeCycleGenerationHash, runRestateLifecycleWithReconciliationGuardian } from './composition/lifecycle'
 export {
   ApplicationPlatformLive,
   AutonomousApplicationResourcesLive,

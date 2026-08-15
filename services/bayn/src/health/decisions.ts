@@ -279,13 +279,13 @@ const cycleLoopHealth = (
   }
   if (loop.owner === 'Restate') {
     if (controller === undefined || controllerResult === null || controllerResult === undefined) {
-      return unavailable('Restate lifecycle has no configured execution-controller projection')
+      return unavailable('Restate execution controller has no configured status projection')
     }
     if (controllerResult._tag === 'Unavailable') {
       return unavailable(controllerResult.error)
     }
     const status = controllerResult.value
-    if (status === null) return unavailable('Restate lifecycle has not completed its first durable pass')
+    if (status === null) return unavailable('Restate execution controller has not completed its first durable pass')
     if (status.controllerKey !== controller.controllerKey) {
       return unavailable('Restate execution-controller projection identity differs from the configured controller')
     }

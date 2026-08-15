@@ -73,7 +73,7 @@ export type RecoveryFirstCycleAdvance = {
 
 export type RecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
-  /** Keeps broker/accounting truth fresh while an external lifecycle owner is delayed between commands. */
+  /** Keeps broker/accounting truth fresh while the external execution controller is delayed between commands. */
   readonly maintainReconciliation: Effect.Effect<void, never, RecoveryFirstRuntime>
   /** The external owner must not delay the next command beyond either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
