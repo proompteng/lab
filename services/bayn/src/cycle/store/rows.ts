@@ -85,8 +85,8 @@ const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schem
 const StoredDecisionDocumentRowsSchema = Schema.Array(
   Schema.Struct({
     document: CycleDecisionDocumentSchema,
-    paper_completion_evidence_matches: Schema.Boolean,
-    paper_generation_is_superseded: Schema.Boolean,
+    execution_completion_evidence_matches: Schema.Boolean,
+    execution_generation_is_superseded: Schema.Boolean,
   }),
 )
 

@@ -14,9 +14,10 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { Pipeable } from '../pipeable'
+import { legacyAccountingTransactionSchemaVersion } from '../execution/legacy-wire'
 
 export const AccountingTransactionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-accounting-transaction.v1'),
+  schemaVersion: Schema.Literal(legacyAccountingTransactionSchemaVersion),
   transactionId: Sha256,
   brokerEventId: Sha256,
   intentId: Schema.optionalKey(Sha256),

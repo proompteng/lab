@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { notionalMicros } from '../execution-model'
 import { Sha256Schema } from '../schemas'
+import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
   runId: Sha256Schema,
@@ -109,19 +110,19 @@ export const capitalGrantKey = (grant: CapitalGrant): string =>
 
 export type LegacyCapitalGrantGenerationBinding =
   | {
-      readonly schemaVersion: 'bayn.paper-authority-generation.v2'
+      readonly schemaVersion: typeof legacyAuthorityGenerationV2SchemaVersion
       readonly qualificationRunId: string
       readonly qualificationLockId: string
       readonly qualificationResultHash: string
     }
   | {
-      readonly schemaVersion: 'bayn.paper-authority-generation.v3'
+      readonly schemaVersion: typeof legacyAuthorityGenerationV3SchemaVersion
       readonly grant: Extract<CapitalGrant, { readonly _tag: 'Research' }>
     }
 
 /** Projects legacy qualification-bound history into the mandate grant without rewriting durable rows. */
 export const capitalGrantFromLegacyGeneration = (generation: LegacyCapitalGrantGenerationBinding): CapitalGrant =>
-  generation.schemaVersion === 'bayn.paper-authority-generation.v3'
+  generation.schemaVersion === legacyAuthorityGenerationV3SchemaVersion
     ? generation.grant
     : {
         _tag: 'Qualified',

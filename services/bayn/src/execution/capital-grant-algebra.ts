@@ -19,6 +19,7 @@ import {
   type ResearchCapitalGrantGenerationMaterial,
   type ResearchCapitalGrantProofBinding,
 } from './contracts'
+import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 import type { QualificationLock, QualificationResult } from '../qualification'
 import { Pipeable } from '../pipeable'
 
@@ -707,7 +708,7 @@ const readCapitalGrantGenerationMaterial = (input: {
 }): Result.Result<CapitalGrantGenerationMaterial, CapitalGrantAlgebraFailure> =>
   Result.try({
     try: () => ({
-      schemaVersion: 'bayn.paper-authority-generation.v2',
+      schemaVersion: legacyAuthorityGenerationV2SchemaVersion,
       maximum: Authority.Execution,
       previousGenerationHash: input.current.generationHash,
       qualificationRunId: input.evidence.result.runId,
@@ -800,7 +801,7 @@ const researchCapitalGrantGenerationMaterial = (input: {
   readonly proof: ResearchCapitalGrantProofBinding
   readonly reconciliation: ExactReconciliationFacts
 }): ResearchCapitalGrantGenerationMaterial => ({
-  schemaVersion: 'bayn.paper-authority-generation.v3',
+  schemaVersion: legacyAuthorityGenerationV3SchemaVersion,
   maximum: Authority.Execution,
   previousGenerationHash: input.current.generationHash,
   grant: input.proof.grant,

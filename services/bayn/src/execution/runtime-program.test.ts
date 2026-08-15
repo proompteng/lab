@@ -304,7 +304,7 @@ describe('same-code execution program composition', () => {
     )
   })
 
-  test('applies the same fresh broker-account safeguard to sandbox and live submissions', async () => {
+  test('produces the same final core safeguard decision for equal sandbox and live broker facts', async () => {
     const live = finalLiveFixture()
     const sandboxAuthority = Result.getOrThrow(
       makeExecutionAuthority({
@@ -319,6 +319,7 @@ describe('same-code execution program composition', () => {
       throw new Error('fixture requires sandbox mutation authority')
     }
 
+    const decisions: string[] = []
     for (const authority of [sandboxAuthority, live.authority]) {
       let posts = 0
       let accountReads = 0
@@ -359,10 +360,13 @@ describe('same-code execution program composition', () => {
         ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
       )
 
-      expect(finalAuthorizationFailureTag(exit)).toBe('BrokerAccountUnavailable')
+      const decision = finalAuthorizationFailureTag(exit)
+      expect(decision).toBe('BrokerAccountUnavailable')
+      if (decision !== undefined) decisions.push(decision)
       expect(accountReads).toBe(1)
       expect(posts).toBe(0)
     }
+    expect(decisions).toEqual(['BrokerAccountUnavailable', 'BrokerAccountUnavailable'])
   })
 
   test('revalidates a persisted capital grant after broker refresh and before transmission', async () => {

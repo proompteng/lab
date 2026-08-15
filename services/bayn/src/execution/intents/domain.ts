@@ -18,6 +18,15 @@ import {
   type ReferenceIntent,
   type RiskDecision,
 } from '../contracts'
+import {
+  legacyExecutionIntentSchemaVersion,
+  legacyIntentIdentityV1SchemaVersion,
+  legacyIntentIdentityV2SchemaVersion,
+  legacyIntentIdentityV3SchemaVersion,
+  legacyIntentPlanSchemaVersion,
+  legacyReferenceIntentSchemaVersion,
+  legacyRiskDecisionSchemaVersion,
+} from '../legacy-wire'
 import type { State } from '../../risk'
 import {
   Sha256Schema as Sha256,
@@ -30,7 +39,7 @@ import { WriterFenceError } from '../writer-fence'
 import { Pipeable } from '../../pipeable'
 
 export const IntentPlanSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-intent-plan.v1'),
+  schemaVersion: Schema.Literal(legacyIntentPlanSchemaVersion),
   strategyName: NonEmptyString,
   cycleId: Sha256,
   decisionHash: Sha256,
@@ -93,7 +102,7 @@ const canonicalHashResult = (
   )
 
 const referenceIdentityMaterial = (input: IntentPlan) => ({
-  schemaVersion: 'bayn.paper-intent-identity.v1',
+  schemaVersion: legacyIntentIdentityV1SchemaVersion,
   strategyName: input.strategyName,
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
@@ -108,7 +117,9 @@ const referenceIdentityMaterial = (input: IntentPlan) => ({
 
 const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
   schemaVersion:
-    input.replanGenerationHash === undefined ? 'bayn.paper-intent-identity.v2' : 'bayn.paper-intent-identity.v3',
+    input.replanGenerationHash === undefined
+      ? legacyIntentIdentityV2SchemaVersion
+      : legacyIntentIdentityV3SchemaVersion,
   authorityGenerationHash,
   strategyName: input.strategyName,
   cycleId: input.cycleId,
@@ -195,7 +206,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
       ReferenceIntentSchema,
       strictParseOptions,
     )({
-      schemaVersion: 'bayn.paper-intent.v2',
+      schemaVersion: legacyReferenceIntentSchemaVersion,
       intentId: intentId.success,
       strategyName: decoded.strategyName,
       cycleId: decoded.cycleId,
@@ -224,7 +235,7 @@ const makeExecutionIntentResult = (
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
     decodeIntentResult({
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: legacyExecutionIntentSchemaVersion,
       authorityGenerationHash,
       intentId: intentId.success,
       strategyName: decoded.strategyName,
@@ -342,7 +353,7 @@ export class IntentStore extends Context.Service<IntentStore, IntentStoreService
 ) {}
 
 const intentRowFields = {
-  schema_version: Schema.Literal('bayn.paper-intent.v3'),
+  schema_version: Schema.Literal(legacyExecutionIntentSchemaVersion),
   intent_id: Sha256,
   risk_decision_id: Schema.NullOr(Sha256),
   authority_generation_hash: Sha256,
@@ -453,7 +464,7 @@ const storedRowToRecord = (row: StoredRow): Result.Result<StoredIntent, StoredRo
     })
   }
   const decision = decodeRiskDecisionResult({
-    schemaVersion: 'bayn.paper-risk-decision.v1',
+    schemaVersion: legacyRiskDecisionSchemaVersion,
     decisionId: row.decision_id,
     inputHash: row.input_hash,
     intentId: row.intent_id,
@@ -502,7 +513,7 @@ export interface PreparedCommit {
 }
 
 const planFromIntent = (intent: Intent): IntentPlan => ({
-  schemaVersion: 'bayn.paper-intent-plan.v1',
+  schemaVersion: legacyIntentPlanSchemaVersion,
   strategyName: intent.strategyName,
   cycleId: intent.cycleId,
   decisionHash: intent.decisionHash,

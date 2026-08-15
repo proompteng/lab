@@ -4,6 +4,12 @@ import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/in
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
+import {
+  legacyCycleDecisionSchemaVersion,
+  legacyExecutionAuthorityToken,
+  legacyIntentPlanSchemaVersion,
+  legacyObserveAuthorityToken,
+} from './execution/legacy-wire'
 import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
@@ -32,7 +38,7 @@ export type DeltaRiskEvaluation = typeof DeltaRiskEvaluationSchema.Type
 
 const ObserveShadowDecisionMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.observe-shadow-decision.v1'),
-  mode: Schema.Literal('OBSERVE'),
+  mode: Schema.Literal(legacyObserveAuthorityToken),
   dispatchable: Schema.Literal(false),
   bindings: ShadowDecisionBindingsSchema,
   targetPlan: TargetPlanResultSchema,
@@ -74,7 +80,7 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
     const target = targets[index]
     if (target !== undefined) {
       const identity = intentIdForPlan({
-        schemaVersion: 'bayn.paper-intent-plan.v1',
+        schemaVersion: legacyIntentPlanSchemaVersion,
         ...target,
         notionalLimitMicros: risk.notionalLimitMicros,
       })
@@ -155,8 +161,8 @@ const ExecutionRiskBlockSchema = Schema.Struct({
 })
 
 const ExecutionDecisionMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-cycle-decision.v1'),
-  mode: Schema.Literal('PAPER'),
+  schemaVersion: Schema.Literal(legacyCycleDecisionSchemaVersion),
+  mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
@@ -224,7 +230,7 @@ const executionMaterialIssues = (
     const risk = document.deltaRisk[index]
     if (risk === undefined) continue
     const plan = {
-      schemaVersion: 'bayn.paper-intent-plan.v1',
+      schemaVersion: legacyIntentPlanSchemaVersion,
       ...target,
       notionalLimitMicros: risk.notionalLimitMicros,
       ...(document.replanGenerationHash === undefined ? {} : { replanGenerationHash: document.replanGenerationHash }),
