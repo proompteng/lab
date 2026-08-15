@@ -5,6 +5,10 @@ metadata:
   labels:
     app.kubernetes.io/name: bayn-lifecycle-register
     app.kubernetes.io/part-of: bayn
+  annotations:
+    # Hooks do not contribute to Application sync status. This tracked no-op metadata change makes the final
+    # retirement revision OutOfSync exactly once so automated sync executes the PostSync hook naturally.
+    bayn.proompteng.ai/retirement-sync: final-legacy-registration-v1
 spec:
   podSelector:
     matchLabels:
@@ -39,19 +43,21 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-restate-registration-cleanup
+  # Use a fresh fixed name for the final retirement transaction. The prior successful HOLD-era Job still exists
+  # under bayn-restate-registration-cleanup, and named Argo hooks are not recreated without BeforeHookCreation.
+  name: bayn-restate-registration-final-retirement
   labels:
     app.kubernetes.io/name: bayn-lifecycle-register
     app.kubernetes.io/part-of: bayn
     bayn.proompteng.ai/task: restate-registration-cleanup
   annotations:
     argocd.argoproj.io/hook: PostSync
-    # Keep the successful Job until its TTL expires so production evidence remains inspectable after Argo finishes.
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # Successful executions are removed so later legitimate empty-state syncs may rerun. Failed executions are
+    # intentionally retained under this fixed name, preventing an automatic retry from masking post-force failure.
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
 spec:
-  backoffLimit: 6
+  backoffLimit: 0
   activeDeadlineSeconds: 900
-  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -61,7 +67,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
-      restartPolicy: OnFailure
+      restartPolicy: Never
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -339,10 +345,14 @@ spec:
                 validate_native_tick_continuity
               }
 
-              validate_empty_state() {
+              validate_empty_legacy_state() {
                 validate_lifecycle_global
                 [ "$(remaining_count)" -eq 0 ] || fail 'legacy deployment reappeared after retirement'
                 validate_no_lifecycle_services
+              }
+
+              validate_retirement_completion() {
+                validate_empty_legacy_state
                 validate_native_binding
                 validate_native_tick_continuity
               }
@@ -351,7 +361,8 @@ spec:
               remaining="$(remaining_count)"
               [ "$remaining" -le 18 ] || fail "remaining deployment count exceeds immutable allowlist: $remaining"
               if [ "$remaining" -eq 0 ]; then
-                validate_empty_state
+                # A later idempotent rerun must not pin future native execution rollouts to the rev11 deployment.
+                validate_empty_legacy_state
                 echo 'Bayn legacy Restate registration retirement already complete; empty-set rerun is safe.'
                 exit 0
               fi
@@ -376,7 +387,8 @@ spec:
                 service_count="$(lifecycle_service_count)"
                 case "$remaining:$service_count" in
                   0:0)
-                    validate_empty_state
+                    # Completion of the force-removal transaction still requires the reviewed native rev11 continuity.
+                    validate_retirement_completion
                     echo 'Bayn legacy Restate registration retirement completed.'
                     exit 0
                     ;;
