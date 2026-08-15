@@ -214,40 +214,36 @@ export const resolveReadOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
   authority: AuthorityGenerationStoreShape,
-): Effect.Effect<string | undefined, ExecutionStoreError> => {
-  const configuredId = readOnlyCycleObservationId(configured)
-  if (
-    configuredId !== undefined ||
-    Result.isFailure(configured) ||
-    configured.success !== null ||
-    activationRequestRequired
-  ) {
-    return Effect.succeed(configuredId)
-  }
-  const readAuthorityState = authority.readAuthorityState
-  return readAuthorityState === undefined
-    ? Effect.fail(
-        new ExecutionStoreError({
-          operation: 'authority',
-          failure: 'invariant',
-          message: 'read-only status authority projection is unavailable',
-        }),
-      )
-    : readAuthorityState.pipe(Effect.map((current) => current.generationHash))
-}
+): Effect.Effect<string | null, ExecutionStoreError> =>
+  Effect.gen(function* () {
+    if (Result.isFailure(configured) || activationRequestRequired) return null
+    const configuredId = readOnlyCycleObservationId(configured)
+    if (configuredId !== undefined) return configuredId
+    if (configured.success !== null) return null
+    const readAuthorityState = authority.readAuthorityState
+    if (readAuthorityState === undefined) {
+      return yield* new ExecutionStoreError({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'read-only status authority projection is unavailable',
+      })
+    }
+    const current = yield* readAuthorityState
+    return current.generationHash
+  })
 
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
   authority: AuthorityGenerationStoreShape,
   operationTimeoutMs: number,
-): Effect.Effect<string | undefined> =>
+): Effect.Effect<string | null> =>
   resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(
     Effect.timeoutOrElse({
       duration: operationTimeoutMs,
-      orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(undefined)),
+      orElse: () => logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as(null)),
     }),
-    Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(undefined))),
+    Effect.catch(() => logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as(null))),
   )
 
 export const readOnlyQualificationEvidenceRequired = (
