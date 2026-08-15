@@ -78,10 +78,24 @@ Restate accepts deployment deletion asynchronously, so the hook polls a bounded 
 requires the final deployment and both legacy services to disappear, keeps checking zero lifecycle/pinned nonterminal
 invocations, and revalidates the native rev11 deployment, services, and tick continuity on every poll. Zombie legacy
 invocations, service residue, unexpected partial disappearance, native collateral, or timeout fails the hook. Once both
-the deployment and services are absent, empty-set reruns are idempotent and perform no mutation.
+the deployment and services are absent, that removal transaction completes only while native rev11 continuity still
+holds. Later already-empty reruns are idempotent and validate only that no allowlisted/classified legacy deployment,
+legacy service, or legacy/pinned nonterminal invocation has reappeared; they deliberately do not pin future legitimate
+native execution rollouts to deployment `dp_14MYpEXKeHNXBkzJQMMIHSx`, its endpoint, or revision 11.
 
 The hook has no service-account token, credentials, broker access, or Restate ingress access. Egress is limited to
 cluster DNS and Restate admin TCP 9070. Its pod keeps the historical
 `app.kubernetes.io/name=bayn-lifecycle-register` label so the already-live Restate admin ingress policy authorizes this
-cross-Application retirement without requiring Restate Application ordering. Do not terminate invocations, delete
-services generically, mutate Restate directly, or apply/sync cluster state by hand; failures remain GitOps-reviewed.
+cross-Application retirement without requiring Restate Application ordering. Because Argo hooks themselves do not
+contribute to Application sync status, the tracked cleanup NetworkPolicy carries the inert
+`bayn.proompteng.ai/retirement-sync=final-legacy-registration-v1` annotation. That one metadata delta makes the final
+revision OutOfSync so automated sync naturally runs the PostSync hook; it does not widen network access or alter the
+cleanup pod selector. Do not terminate invocations, delete services generically, mutate Restate directly, or apply/sync
+cluster state by hand; failures remain GitOps-reviewed.
+
+The final transaction uses the fresh fixed Job name `bayn-restate-registration-final-retirement`, because the previous
+successful HOLD-era Job still exists under `bayn-restate-registration-cleanup`. It has `backoffLimit: 0`,
+`restartPolicy: Never`, no finished-Job TTL, and Argo `HookSucceeded` deletion only. A successful transaction is removed
+so later already-empty syncs can rerun against future native revisions. A failed transaction remains under its fixed
+name; Argo cannot create another named instance and reinterpret a post-force failure as a clean empty rerun. Advancing
+after such a failure therefore requires a new reviewed GitOps correction rather than an automatic Job or sync retry.

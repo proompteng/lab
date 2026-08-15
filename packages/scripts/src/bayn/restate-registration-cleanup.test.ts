@@ -390,16 +390,29 @@ afterEach(() => {
 
 describe('Bayn legacy Restate registration final retirement', () => {
   test('pins the reviewed CLI, network isolation, and one exact force target', () => {
+    expect(networkPolicy.metadata.annotations).toEqual({
+      'bayn.proompteng.ai/retirement-sync': 'final-legacy-registration-v1',
+    })
+    expect(job.metadata.name).toBe('bayn-restate-registration-final-retirement')
     expect(job.metadata.annotations).toEqual({
       'argocd.argoproj.io/hook': 'PostSync',
-      'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation',
+      'argocd.argoproj.io/hook-delete-policy': 'HookSucceeded',
     })
+    expect(job.spec.backoffLimit).toBe(0)
+    expect(job.spec.ttlSecondsAfterFinished).toBeUndefined()
     expect(job.spec.template.metadata.labels).toMatchObject({
       'app.kubernetes.io/name': 'bayn-lifecycle-register',
       'bayn.proompteng.ai/task': 'restate-registration-cleanup',
     })
     expect(job.spec.template.spec.automountServiceAccountToken).toBeFalse()
     expect(job.spec.template.spec.serviceAccountName).toBeUndefined()
+    expect(job.spec.template.spec.restartPolicy).toBe('Never')
+    expect(job.spec.template.spec.securityContext).toMatchObject({
+      runAsNonRoot: true,
+      runAsUser: 65532,
+      runAsGroup: 65532,
+      seccompProfile: { type: 'RuntimeDefault' },
+    })
     expect(container.image).toBe(
       'docker.restate.dev/restatedev/restate-cli:1.7.2@sha256:6905cd107840658f8ef0338c95e3c691dba3da450e9e0fb12066d00fd57e69f9',
     )
@@ -408,6 +421,18 @@ describe('Bayn legacy Restate registration final retirement', () => {
       readOnlyRootFilesystem: true,
       capabilities: { drop: ['ALL'] },
     })
+    expect(container.env).toEqual([
+      { name: 'RESTATE_ADMIN_URL', value: 'http://restate.restate.svc.cluster.local:9070' },
+      { name: 'HOME', value: '/tmp' },
+      { name: 'RESTATE_CLI_CONFIG_HOME', value: '/tmp/restate-cli' },
+    ])
+    expect(networkPolicy.spec.podSelector).toEqual({
+      matchLabels: {
+        'app.kubernetes.io/name': 'bayn-lifecycle-register',
+        'bayn.proompteng.ai/task': 'restate-registration-cleanup',
+      },
+    })
+    expect(networkPolicy.spec.policyTypes).toEqual(['Egress'])
     expect(networkPolicy.spec.egress).toEqual([
       {
         to: [
@@ -452,7 +477,12 @@ describe('Bayn legacy Restate registration final retirement', () => {
     expect(cleanupReadme).toContain('one exact force removal')
     expect(cleanupReadme).toContain(finalId)
     expect(cleanupReadme).toContain(nativeId)
-    expect(cleanupReadme).toContain('empty-set reruns')
+    expect(cleanupReadme).toContain('already-empty reruns')
+    expect(cleanupReadme).toContain('bayn.proompteng.ai/retirement-sync=final-legacy-registration-v1')
+    expect(cleanupReadme).toContain('bayn-restate-registration-final-retirement')
+    expect(cleanupReadme).toContain('`backoffLimit: 0`')
+    expect(cleanupReadme).toContain('`restartPolicy: Never`')
+    expect(cleanupReadme).toContain('`HookSucceeded` deletion only')
   })
 
   test('force-removes only the exact final deployment and reaches the empty retired state', () => {
@@ -689,5 +719,27 @@ describe('Bayn legacy Restate registration final retirement', () => {
     expect(second.stdout).toContain('retirement already complete; empty-set rerun is safe')
     expect(removalCalls(harness.calls())).toEqual([])
     expect(readState(harness.statePath).deployments.map(({ id }) => id)).toEqual([nativeId, 'dp_greeter'])
+  })
+
+  test('keeps already-empty reruns independent of later legitimate native rollouts', () => {
+    const state = makeState([])
+    const native = state.deployments.find(({ id }) => id === nativeId)!
+    native.id = 'dp_native_next'
+    native.endpoint = 'http://bayn-execution-controller-next.bayn.svc.cluster.local:9080/'
+    state.nativeServices = state.nativeServices.map((service) => ({
+      ...service,
+      revision: 12,
+      deploymentId: 'dp_native_next',
+    }))
+    state.nativeCompletedTicks = 0
+    state.nativeNonterminalTicks = 0
+    state.nativeWrongPinnedNonterminalTicks = 1
+    const harness = runCleanup(state)
+    const result = harness.run()
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('retirement already complete; empty-set rerun is safe')
+    expect(removalCalls(harness.calls())).toEqual([])
+    expect(readState(harness.statePath).deployments.map(({ id }) => id)).toEqual(['dp_native_next', 'dp_greeter'])
   })
 })
