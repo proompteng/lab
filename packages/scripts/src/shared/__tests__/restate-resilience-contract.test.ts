@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
@@ -6,7 +6,7 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
-test('Restate snapshot foundation preserves the singleton while preparing safe cluster membership', () => {
+test('Restate cluster uses three stable 1.7.2 nodes with hard host separation', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -15,7 +15,7 @@ test('Restate snapshot foundation preserves the singleton while preparing safe c
     ]),
   )
 
-  expect(statefulSet.spec.replicas).toBe(1)
+  expect(statefulSet.spec.replicas).toBe(3)
   expect(statefulSet.spec.template.spec.containers[0].image).toBe('docker.restate.dev/restatedev/restate:1.7.2')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
@@ -31,6 +31,143 @@ test('Restate snapshot foundation preserves the singleton while preparing safe c
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__DESTINATION')).toBe('s3://restate-snapshots/partitions')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL')).toBe('30m')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED')).toBe('2')
+})
+
+test('Restate HA migration preserves quorum and changes existing replication only after membership converges', () => {
+  const pdb = readRepoFile('argocd/applications/restate/poddisruptionbudget.yaml')
+  const migration = readRepoFile('argocd/applications/restate/replication-migration-job.yaml')
+  const kustomization = readRepoFile('argocd/applications/restate/kustomization.yaml')
+
+  expect(pdb).toContain('minAvailable: 3')
+  expect(migration).toContain('metadata-server list')
+  expect(migration).toContain('rows == 3 && bad == 0')
+  expect(migration).toContain('expected_set[expected_ids[i]] = 1')
+  expect(migration).toContain('if (!(actual[i] in expected_set)) bad += 1')
+  expect(migration).toContain('config set --replication 2')
+  expect(migration).toContain('rows == 24 && bad == 0')
+  expect(migration).toContain('rows != 48')
+  expect(migration).toContain('if nodes_ready && \\')
+  expect(migration).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(migration).toContain('activeDeadlineSeconds: 1500')
+  expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
+  expect(migration).toContain('nodes set-worker-state --nodes "$id" --worker-state active')
+  expect(migration).toContain('metadata-server add-node "$id"')
+  expect(migration).not.toContain('kubectl')
+  expect(kustomization).toContain('- poddisruptionbudget.yaml')
+  expect(kustomization).toContain('- replication-migration-job.yaml')
+  expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
+})
+
+test('Restate replication migration refuses to mutate when any one node is not fully ready', () => {
+  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = migration.spec.template.spec.containers[0].command[2] as string
+  const tempDir = mkdtempSync('/tmp/restate-replication-readiness-')
+  const mutationMarker = `${tempDir}/replication-mutated`
+  const restatectl = `${tempDir}/restatectl`
+  const sleep = `${tempDir}/sleep`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" nodes list --extra "*)
+    cat <<'OUT'
+N1 5 restate-0 http://restate-0 Alive Ready Ready Ready Member
+N2 1 restate-1 http://restate-1 Alive Ready Ready Starting Member
+N3 1 restate-2 http://restate-2 Alive Ready Ready Ready Member
+OUT
+    ;;
+  *" config set --replication 2 "*)
+    touch "${mutationMarker}"
+    ;;
+  *)
+    echo "unexpected restatectl invocation: $*" >&2
+    exit 90
+    ;;
+esac
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr.toString()).toContain('Three-node Restate membership did not converge safely')
+    expect(Bun.file(mutationMarker).size).toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('Restate HA migration reactivates the exact retained nodes after singleton rollback', () => {
+  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = migration.spec.template.spec.containers[0].command[2] as string
+  const start = script.indexOf('reactivate_retained_nodes() {')
+  const end = script.indexOf('\n\nmetadata_quorum_ready() {')
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  const functionBody = script.slice(start, end)
+  const tempDir = mkdtempSync('/tmp/restate-retained-reactivation-')
+  const restatectl = `${tempDir}/restatectl`
+  const calls = `${tempDir}/calls`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" nodes list --extra "*)
+    cat <<'OUT'
+N1 5 restate-0 http://restate-0 roles read-write active Alive Ready Ready Ready Member
+N2 1 restate-1 http://restate-1 roles read-only draining Alive Ready Ready Ready Standby
+N3 1 restate-2 http://restate-2 roles read-only draining Alive Ready Ready Ready Standby
+OUT
+    ;;
+  *" nodes set-storage-state "*) printf 'storage:%s\n' "$*" >>"${calls}" ;;
+  *" nodes set-worker-state "*) printf 'worker:%s\n' "$*" >>"${calls}" ;;
+  *" metadata-server add-node "*) printf 'metadata:%s\n' "$*" >>"${calls}" ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    chmodSync(restatectl, 0o755)
+
+    const result = Bun.spawnSync(
+      ['/bin/bash', '-ceu', `address=http://restate-0\n${functionBody}\nreactivate_retained_nodes`],
+      {
+        env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
+      'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N2 --storage-state read-write',
+      'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N2 --worker-state active',
+      'metadata:--yes --address http://restate-0 metadata-server add-node N2',
+      'storage:--yes --address http://restate-0 nodes set-storage-state --nodes N3 --storage-state read-write',
+      'worker:--yes --address http://restate-0 nodes set-worker-state --nodes N3 --worker-state active',
+      'metadata:--yes --address http://restate-0 metadata-server add-node N3',
+    ])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate snapshots use the existing Rook OBC contract and block rollout until all partitions are archived', () => {
@@ -59,7 +196,7 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(rollback).toContain('create_all_partition_snapshots --trim-log')
   expect(rollback).toContain('Refusing rollback before all safety snapshots are archived')
   expect(kustomization).toContain('- objectbucketclaim.yaml')
-  expect(kustomization).toContain('- singleton-rollback-guard.yaml')
+  expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
   expect(kustomization).toContain('- snapshot-bootstrap-job.yaml')
 })
 

@@ -80,10 +80,28 @@ The singleton layer includes a fail-closed PreSync rollback guard. If a later HA
 was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
 StatefulSet downscale after replication is one, removable workers/log servers are drained, metadata is singleton, a
 snapshot has trimmed historic nodesets, and all 24 partitions/logs reference only `restate-0`.
+This HA layer omits that guard during normal operation; reverting this layer reintroduces the parent PreSync guard
+before Argo can apply the singleton StatefulSet.
 
 The `restate-snapshot-bootstrap` PostSync hook forces the first partition snapshot after the singleton restarts with
 the repository configured. It succeeds only when all 24 partition processors report an archived LSN. Do not increase
 replicas until that hook has succeeded and the snapshot objects are present in RGW.
+
+The next stack layer expands the unchanged StatefulSet pod template from one replica to three. Because the snapshot
+foundation is merged first, `restate-0` is not restarted by this scale change; `restate-1` and `restate-2` join the
+existing cluster with empty retained RBD PVCs and bootstrap worker state from the snapshot repository as needed. A PDB
+with `minAvailable: 3` blocks voluntary disruption during the replication migration; it must not be relaxed until
+replication two and healthy three-node quorum are proven live.
+
+`restate-replication-migration` is a PostSync hook and is the only component allowed to change the already-provisioned
+cluster replication setting. It first requires all three stable node names to be alive and ready, all three metadata
+servers to report the same three-member Raft configuration, and partition snapshots to remain archived. It then uses
+the Restate 1.7.2-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
+replication state and succeeds only after all 24 log tails report replication two and all 24 partitions have exactly
+two active processors. On roll-forward after singleton rollback it reactivates only the exact retained
+`restate-1`/`restate-2` node IDs (log storage read-write, worker active, metadata member) before readiness and rejects
+unexpected identities. This is intentionally different from setting `default-replication`: Restate documents that the
+default is only used when a cluster is initially provisioned and does not migrate existing logs or partitions.
 
 The placement contract is deliberately host-based. The current Kubernetes nodes do not carry zone labels, so the
 StatefulSet uses required pod anti-affinity and a `DoNotSchedule` topology spread on `kubernetes.io/hostname`; a zone

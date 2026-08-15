@@ -1,0 +1,186 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restate-replication-migration
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 1500
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: restate-replication-migration
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 3000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: replication-migration
+          image: docker.restate.dev/restatedev/restate:1.7.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ceu
+            - |
+              set -o pipefail
+              address=http://restate-0.restate-cluster:5122
+
+              nodes_ready() {
+                nodes="$(restatectl --address "$address" nodes list --extra)" || return 1
+                printf '%s\n' "$nodes"
+                for node in restate-0 restate-1 restate-2; do
+                  printf '%s\n' "$nodes" | grep -Eq "[[:space:]]${node}[[:space:]].*Alive[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Member" || return 1
+                done
+              }
+
+              reactivate_retained_nodes() {
+                nodes="$(restatectl --address "$address" nodes list --extra)" || return 1
+                unexpected="$(printf '%s\n' "$nodes" | awk '$1 ~ /^N[0-9]+$/ && $3 !~ /^restate-[0-2]$/ { print $3; exit }')"
+                [ -z "$unexpected" ] || { echo "Unexpected Restate node identity: $unexpected" >&2; return 1; }
+                for node in restate-1 restate-2; do
+                  line="$(printf '%s\n' "$nodes" | awk -v name="$node" '$1 ~ /^N[0-9]+$/ && $3 == name { if (seen++) exit 2; print }')" || return 1
+                  [ -n "$line" ] || return 1
+                  id="$(printf '%s\n' "$line" | awk '{print $1}')"
+                  if printf '%s\n' "$line" | grep -Fq 'read-only'; then
+                    restatectl --yes --address "$address" nodes set-storage-state --nodes "$id" --storage-state read-write || return 1
+                  elif ! printf '%s\n' "$line" | grep -Eq 'read-write|provisioning'; then
+                    echo "Unexpected Restate storage state for $node" >&2
+                    return 1
+                  fi
+                  if printf '%s\n' "$line" | grep -Eq 'draining|disabled'; then
+                    restatectl --yes --address "$address" nodes set-worker-state --nodes "$id" --worker-state active || return 1
+                  elif ! printf '%s\n' "$line" | grep -Eq 'active|provisioning'; then
+                    echo "Unexpected Restate worker state for $node" >&2
+                    return 1
+                  fi
+                  restatectl --yes --address "$address" metadata-server add-node "$id" || return 1
+                done
+              }
+
+              metadata_quorum_ready() {
+                metadata_nodes="$(restatectl --address "$address" nodes list --extra)" || return 1
+                expected_members="$(printf '%s\n' "$metadata_nodes" | awk '
+                  $3 ~ /^restate-[0-2]$/ {
+                    if (seen_name[$3]++ || seen_id[$1]++) duplicate = 1
+                    ids[++count] = $1
+                  }
+                  END {
+                    if (duplicate || count != 3) exit 1
+                    for (i = 1; i <= count; i += 1) printf "%s%s", i == 1 ? "" : ",", ids[i]
+                    print ""
+                  }
+                ')" || return 1
+                metadata="$(restatectl --address "$address" metadata-server list)" || return 1
+                printf '%s\n' "$metadata"
+                printf '%s\n' "$metadata" | awk -v expected="$expected_members" '
+                  BEGIN {
+                    expected_count = split(expected, expected_ids, ",")
+                    for (i = 1; i <= expected_count; i += 1) expected_set[expected_ids[i]] = 1
+                  }
+                  $1 ~ /^N[0-9]+$/ {
+                    rows += 1
+                    if ($2 != "Member") bad += 1
+                    members = $5
+                    gsub(/^\[/, "", members)
+                    gsub(/\]$/, "", members)
+                    actual_count = split(members, actual, ",")
+                    if (actual_count != expected_count) bad += 1
+                    for (i = 1; i <= actual_count; i += 1) if (!(actual[i] in expected_set)) bad += 1
+                    for (id in expected_set) {
+                      found = 0
+                      for (i = 1; i <= actual_count; i += 1) if (actual[i] == id) found = 1
+                      if (!found) bad += 1
+                    }
+                  }
+                  END { exit !(rows == 3 && bad == 0) }
+                ' || return 1
+              }
+
+              snapshots_ready() {
+                partitions="$(restatectl --address "$address" partitions list)" || return 1
+                printf '%s\n' "$partitions"
+                printf '%s\n' "$partitions" | awk '
+                  $1 ~ /^[0-9]+$/ {
+                    total += 1
+                    if ($8 == "-" || $8 == "") missing += 1
+                  }
+                  END { exit !(total >= 24 && missing == 0) }
+                '
+              }
+
+              for attempt in $(seq 1 60); do
+                if reactivate_retained_nodes && nodes_ready && metadata_quorum_ready && snapshots_ready; then
+                  break
+                fi
+                if [ "$attempt" -eq 60 ]; then
+                  echo "Three-node Restate membership did not converge safely" >&2
+                  exit 1
+                fi
+                sleep 10
+              done
+
+              config="$(restatectl --address "$address" config get)"
+              printf '%s\n' "$config"
+              if printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 1}' && \
+                printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 1}'; then
+                restatectl --yes --address "$address" config set --replication 2
+              elif ! printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 2}' || \
+                ! printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 2}'; then
+                echo "Refusing unexpected Restate replication configuration" >&2
+                exit 1
+              fi
+
+              for attempt in $(seq 1 60); do
+                config="$(restatectl --address "$address" config get)" || true
+                logs="$(restatectl --address "$address" logs list)" || true
+                partitions="$(restatectl --address "$address" partitions list)" || true
+                if nodes_ready && \
+                  printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 2}' && \
+                  printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 2}' && \
+                  printf '%s\n' "$logs" | awk '$1 ~ /^[0-9]+$/ { rows += 1; if ($0 !~ /\{node: 2\}/) bad += 1 } END { exit !(rows == 24 && bad == 0) }' && \
+                  ! printf '%s\n' "$partitions" | grep -Eq 'Catching Up|Starting|UNKNOWN|->' && \
+                  printf '%s\n' "$partitions" | awk '$1 ~ /^[0-9]+$/ { count[$1] += 1; rows += 1 } END { if (rows != 48) exit 1; for (i = 0; i < 24; i += 1) if (count[i] != 2) exit 1 }' && \
+                  metadata_quorum_ready; then
+                  printf '%s\n' "$config"
+                  printf '%s\n' "$logs"
+                  printf '%s\n' "$partitions"
+                  printf '%s\n' "$metadata"
+                  echo "Restate replication 2 is converged across three nodes"
+                  exit 0
+                fi
+                sleep 10
+              done
+
+              echo "Restate replication migration did not converge" >&2
+              exit 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 3000
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/version: "1.7.2"
 spec:
   serviceName: restate-cluster
-  replicas: 1
+  replicas: 3
   revisionHistoryLimit: 10
   podManagementPolicy: Parallel
   updateStrategy:
