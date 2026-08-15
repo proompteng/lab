@@ -395,6 +395,20 @@ const validateDeployment = (value: unknown, expected: ExpectedBaynProduction): v
     'WORKLOAD_NOT_CONVERGED',
     true,
   )
+  equal(
+    env.get('BAYN_BROKER_ACCESS'),
+    'read-only',
+    'deployment live broker access',
+    'PRODUCTION_CONTRACT_VIOLATION',
+    false,
+  )
+  equal(
+    env.get('BAYN_CAPITAL_AUTHORITY'),
+    'none',
+    'deployment live capital authority',
+    'PRODUCTION_CONTRACT_VIOLATION',
+    false,
+  )
   const status = record(deployment.status, 'deployment.status')
   equal(
     status.observedGeneration,
