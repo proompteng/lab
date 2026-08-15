@@ -425,11 +425,15 @@ const lifecycleCondition = (
   projection: CycleOperationsProjection,
   nowMs: number,
   cycleStallThresholdMs: number,
+  maximumAuthority: Authority,
 ): readonly [CycleOperationsCondition, CycleOperationsReason] => {
   const current = projection.current
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
-      return [CycleOperationsCondition.Failed, CycleOperationsReason.LastCycleBlocked]
+      return [
+        maximumAuthority === Authority.Execution ? CycleOperationsCondition.Failed : CycleOperationsCondition.Waiting,
+        CycleOperationsReason.LastCycleBlocked,
+      ]
     }
     if (projection.last?.phase === CycleState.Completed) {
       return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleCompleted]
@@ -483,6 +487,7 @@ const decideCycleOperationsCondition = (
   projection: CycleOperationsProjection,
   nowMs: number,
   cycleStallThresholdMs: number,
+  maximumAuthority: Authority,
   facts: CycleOperationsDecisionFacts,
 ): readonly [CycleOperationsCondition, CycleOperationsReason] => {
   if (projection.unfinishedCycleCount > 1) {
@@ -508,7 +513,7 @@ const decideCycleOperationsCondition = (
   if (facts.reconciliationStale) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.ReconciliationStale]
   }
-  return lifecycleCondition(projection, nowMs, cycleStallThresholdMs)
+  return lifecycleCondition(projection, nowMs, cycleStallThresholdMs, maximumAuthority)
 }
 
 const deriveCycleOperationsStatusWithCheckedAt = (
@@ -540,15 +545,21 @@ const deriveCycleOperationsStatusWithCheckedAt = (
     projection.mutations.unresolvedCount > 0 &&
     oldestUnresolvedMutationAgeMs !== null &&
     oldestUnresolvedMutationAgeMs >= thresholds.unknownMutationThresholdMs
-  const [condition, reason] = decideCycleOperationsCondition(projection, nowMs, thresholds.cycleStallThresholdMs, {
-    authorityMissing,
-    authorityMaximumMismatch,
-    killActive,
-    reconciliationMissing,
-    reconciliationDiscrepancy,
-    reconciliationPredatesMutation,
-    reconciliationStale,
-  })
+  const [condition, reason] = decideCycleOperationsCondition(
+    projection,
+    nowMs,
+    thresholds.cycleStallThresholdMs,
+    maximumAuthority,
+    {
+      authorityMissing,
+      authorityMaximumMismatch,
+      killActive,
+      reconciliationMissing,
+      reconciliationDiscrepancy,
+      reconciliationPredatesMutation,
+      reconciliationStale,
+    },
+  )
 
   return {
     schemaVersion: 'bayn.cycle-operations-status.v1',

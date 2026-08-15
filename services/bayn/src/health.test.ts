@@ -996,6 +996,67 @@ describe('Bayn continuous health', () => {
     expect(transition.next.cycle.alerts.killActive).toBe(false)
   })
 
+  test('keeps OBSERVE ready while retaining a historical blocked cycle', () => {
+    const checkedAt = '2026-08-15T16:00:00.000Z'
+    const terminalAt = '2026-08-03T20:00:00.000Z'
+    const transition = deriveHealthTransition(readyState(), {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            last: {
+              ...pendingCycle(terminalAt),
+              phase: CycleState.Blocked,
+              terminalReason: CycleTerminalReason.MissedPublication,
+              terminalAt,
+            },
+            authority: {
+              generationHash: 'b'.repeat(64),
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+            reconciliation: {
+              accountId: brokerAccountId,
+              reconciliationId: 'c'.repeat(64),
+              status: ReconciliationStatus.Exact,
+              discrepancyCount: 0,
+              reconciledAt: checkedAt,
+              coversLatestMutation: true,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'READY',
+        cycle: {
+          condition: CycleOperationsCondition.Waiting,
+          reason: CycleOperationsReason.LastCycleBlocked,
+          last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
+          alerts: { cycleFailed: false, reconciliationBlocked: false, authorityIncoherent: false },
+        },
+      },
+      failedDependencies: [],
+    })
+    expect(isReady(transition.next)).toBe(true)
+  })
+
   test('recovers readiness after an exact stale research bootstrap wait and preserves immutable failure evidence', () => {
     const checkedAt = '2026-08-11T17:30:00.000Z'
     const terminalAt = '2026-08-11T17:12:00.000Z'
