@@ -21,6 +21,20 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: arc
+          podSelector:
+            matchLabels:
+              actions-ephemeral-runner: "True"
+              actions.github.com/organization: proompteng
+              actions.github.com/repository: lab
+              actions.github.com/scale-set-name: arc-amd64
+              app.kubernetes.io/component: runner
+      ports:
+        - port: http
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: observability
           podSelector:
             matchLabels:
