@@ -98,20 +98,20 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
           cycle_id,
           decision_hash,
           clock_timestamp()
-        ) AS paper_completion_evidence_matches,
+        ) AS execution_completion_evidence_matches,
         paper_cycle_generation_is_superseded(
           cycle_id,
           decision_hash
-        ) AS paper_generation_is_superseded
+        ) AS execution_generation_is_superseded
       FROM autonomous_cycle_shadow_decisions
       WHERE cycle_id = ${cycleId}
     `.pipe(
       Effect.flatMap(decodeStoredDecisionDocumentRows),
       Effect.map((rows) =>
-        rows.map(({ document, paper_completion_evidence_matches, paper_generation_is_superseded }) =>
+        rows.map(({ document, execution_completion_evidence_matches, execution_generation_is_superseded }) =>
           attachCycleDecisionStoreEvidence(document, {
-            executionCompletionEvidenceMatches: paper_completion_evidence_matches,
-            executionGenerationIsSuperseded: paper_generation_is_superseded,
+            executionCompletionEvidenceMatches: execution_completion_evidence_matches,
+            executionGenerationIsSuperseded: execution_generation_is_superseded,
           }),
         ),
       ),
@@ -122,7 +122,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       WITH cycle_candidates AS (
         SELECT
           cycle.*,
-          decision.document IS NOT NULL AS is_planned_paper,
+          decision.document IS NOT NULL AS is_planned_execution,
           CASE
             WHEN decision.document IS NULL THEN false
             ELSE paper_cycle_generation_is_superseded(cycle.cycle_id, cycle.decision_hash)
@@ -200,7 +200,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         WHERE qualification_run_id = ${scope.qualificationRunId}
           OR (
             state = ${CycleState.Active}
-            AND is_planned_paper
+            AND is_planned_execution
             AND (has_mutation_work OR generation_is_superseded)
           )
       )
@@ -220,7 +220,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       ORDER BY
         CASE
           WHEN cycle.has_mutation_work THEN 0
-          WHEN cycle.is_planned_paper THEN 1
+          WHEN cycle.is_planned_execution THEN 1
           ELSE 2
         END ASC,
         cycle.signal_session_date ASC,

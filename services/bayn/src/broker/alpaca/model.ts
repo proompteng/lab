@@ -81,7 +81,7 @@ export enum AccountStatus {
   KycSubmitted = 'KYC_SUBMITTED',
   Limited = 'LIMITED',
   Onboarding = 'ONBOARDING',
-  PaperOnly = 'PAPER_ONLY',
+  SandboxOnly = 'PAPER_ONLY',
   ReapprovalPending = 'REAPPROVAL_PENDING',
   Rejected = 'REJECTED',
   Resubmitted = 'RESUBMITTED',

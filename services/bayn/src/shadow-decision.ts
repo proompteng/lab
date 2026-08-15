@@ -22,6 +22,14 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
+import {
+  legacyCycleDecisionSchemaVersion,
+  legacyExecutionAuthorityToken,
+  legacyExecutionIntentSchemaVersion,
+  legacyIntentPlanSchemaVersion,
+  legacyPositionSchemaVersion,
+  legacyReferenceIntentSchemaVersion,
+} from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
@@ -149,7 +157,7 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: 'bayn.paper-position.v1',
+    schemaVersion: legacyPositionSchemaVersion,
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityMicros: target.targetQuantityMicros,
@@ -375,7 +383,8 @@ const makeRiskIntent = (
       authorityGenerationHash === undefined ? ReferenceIntentSchema : IntentSchema,
       strictParseOptions,
     )({
-      schemaVersion: authorityGenerationHash === undefined ? 'bayn.paper-intent.v2' : 'bayn.paper-intent.v3',
+      schemaVersion:
+        authorityGenerationHash === undefined ? legacyReferenceIntentSchemaVersion : legacyExecutionIntentSchemaVersion,
       ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
       intentId: identity.success.intentId,
       strategyName: decoded.strategyName,
@@ -429,7 +438,7 @@ const reduceShadowDelta = (
   }
   const intent = makeRiskIntent(
     {
-      schemaVersion: 'bayn.paper-intent-plan.v1',
+      schemaVersion: legacyIntentPlanSchemaVersion,
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
       ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
@@ -741,8 +750,8 @@ const assembleExecutionDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   return Result.mapError(
     makeExecutionDecisionDocument({
-      schemaVersion: 'bayn.paper-cycle-decision.v1',
-      mode: 'PAPER',
+      schemaVersion: legacyCycleDecisionSchemaVersion,
+      mode: legacyExecutionAuthorityToken,
       dispatchable: reduction.riskBlock === undefined,
       bindings: {
         strategyName: input.plannerInput.strategyName,

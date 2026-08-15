@@ -12,6 +12,10 @@ import {
   type LedgerTransferRecord,
 } from '../ledger-plan'
 import { OrderSide, type Fill } from '../execution/contracts'
+import {
+  legacyAccountingTransactionIdSchemaVersion,
+  legacyAccountingTransactionSchemaVersion,
+} from '../execution/legacy-wire'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
@@ -415,7 +419,7 @@ const prepareAccountingDataFirst = (
     Result.flatMap((amounts) =>
       pipe(
         hashAccountingMaterial('transaction-id', {
-          schemaVersion: 'bayn.paper-accounting-transaction-id.v1',
+          schemaVersion: legacyAccountingTransactionIdSchemaVersion,
           brokerEventId,
         }),
         Result.flatMap((transactionId) => {
@@ -424,7 +428,7 @@ const prepareAccountingDataFirst = (
             hashAccountingLedgerPlan(ledgerPlan),
             Result.flatMap((ledgerPlanHash) => {
               const material = {
-                schemaVersion: 'bayn.paper-accounting-transaction.v1' as const,
+                schemaVersion: legacyAccountingTransactionSchemaVersion,
                 transactionId,
                 brokerEventId,
                 ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),

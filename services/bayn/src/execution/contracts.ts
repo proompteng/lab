@@ -13,6 +13,28 @@ import {
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
 import { Pipeable } from '../pipeable'
+import {
+  legacyAccountingReceiptSchemaVersion,
+  legacyAccountSnapshotSchemaVersion,
+  legacyAuthorityGenerationV2SchemaVersion,
+  legacyAuthorityGenerationV3SchemaVersion,
+  legacyAuthorityProofBindingSchemaVersion,
+  legacyAuthorityStateSchemaVersion,
+  legacyBrokerErrorSchemaVersion,
+  legacyBrokerEventSchemaVersion,
+  legacyExecutionIntentSchemaVersion,
+  legacyFillSchemaVersion,
+  legacyOrderV1SchemaVersion,
+  legacyOrderV2SchemaVersion,
+  legacyPositionSchemaVersion,
+  legacyRateLimitSchemaVersion,
+  legacyReconciliationSchemaVersion,
+  legacyReferenceIntentSchemaVersion,
+  legacyResearchGrantProofSchemaVersion,
+  legacyRiskDecisionSchemaVersion,
+  legacyRiskInputSchemaVersion,
+  legacyValuationSchemaVersion,
+} from './legacy-wire'
 
 const U32_MAX = 4_294_967_295
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -154,7 +176,7 @@ export enum KillState {
 }
 
 const AccountSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-account-snapshot.v1'),
+  schemaVersion: Schema.Literal(legacyAccountSnapshotSchemaVersion),
   accountId: NonEmptyString,
   status: Schema.Enum(AccountStatus),
   currency: Schema.Literal('USD'),
@@ -168,7 +190,7 @@ export const AccountSnapshotSchema = AccountSnapshotBase
 export type AccountSnapshot = typeof AccountSnapshotSchema.Type
 
 export const PositionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-position.v1'),
+  schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
   accountId: NonEmptyString,
   symbol: SymbolName,
   quantityMicros: SignedMicros,
@@ -181,7 +203,7 @@ export const PositionSchema = Schema.Struct({
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.paper-order.v1', 'bayn.paper-order.v2']),
+  schemaVersion: Schema.Literals([legacyOrderV1SchemaVersion, legacyOrderV2SchemaVersion]),
   accountId: NonEmptyString,
   brokerOrderId: NonEmptyString,
   clientOrderId: NonEmptyString,
@@ -203,10 +225,10 @@ export const OrderSchema = OrderBase.check(
     const issues: Schema.FilterIssue[] = []
     const hasQuantity = order.quantityMicros !== undefined
     const hasNotional = order.notionalMicros !== undefined
-    if (order.schemaVersion === 'bayn.paper-order.v1' && (!hasQuantity || hasNotional)) {
+    if (order.schemaVersion === legacyOrderV1SchemaVersion && (!hasQuantity || hasNotional)) {
       issues.push({ path: ['schemaVersion'], issue: 'v1 orders must contain quantityMicros only' })
     }
-    if (order.schemaVersion === 'bayn.paper-order.v2' && hasQuantity === hasNotional) {
+    if (order.schemaVersion === legacyOrderV2SchemaVersion && hasQuantity === hasNotional) {
       issues.push({
         path: ['quantityMicros'],
         issue: 'v2 orders must contain exactly one of quantityMicros or notionalMicros',
@@ -262,7 +284,7 @@ export const OrderSchema = OrderBase.check(
 export type Order = typeof OrderSchema.Type
 
 export const FillSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-fill.v1'),
+  schemaVersion: Schema.Literal(legacyFillSchemaVersion),
   accountId: NonEmptyString,
   fillId: NonEmptyString,
   brokerOrderId: NonEmptyString,
@@ -278,7 +300,7 @@ export const FillSchema = Schema.Struct({
 export type Fill = typeof FillSchema.Type
 
 export const BrokerErrorSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-broker-error.v1'),
+  schemaVersion: Schema.Literal(legacyBrokerErrorSchemaVersion),
   requestId: NonEmptyString,
   code: NonEmptyString,
   message: NonEmptyString,
@@ -289,7 +311,7 @@ export const BrokerErrorSchema = Schema.Struct({
 export type BrokerError = typeof BrokerErrorSchema.Type
 
 const RateLimitBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-rate-limit.v1'),
+  schemaVersion: Schema.Literal(legacyRateLimitSchemaVersion),
   limit: Sequence,
   remaining: Sequence,
   resetsAt: UtcInstant,
@@ -306,7 +328,7 @@ export const RateLimitSchema = RateLimitBase.check(
 export type RateLimit = typeof RateLimitSchema.Type
 
 const SourceFields = {
-  schemaVersion: Schema.Literal('bayn.paper-broker-event.v1'),
+  schemaVersion: Schema.Literal(legacyBrokerEventSchemaVersion),
   eventId: Sha256,
   contentHash: Sha256,
   broker: Schema.Enum(Broker),
@@ -401,12 +423,12 @@ const intentFields = {
 } as const
 
 const ReferenceIntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-intent.v2'),
+  schemaVersion: Schema.Literal(legacyReferenceIntentSchemaVersion),
   ...intentFields,
 })
 
 const IntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-intent.v3'),
+  schemaVersion: Schema.Literal(legacyExecutionIntentSchemaVersion),
   authorityGenerationHash: Sha256,
   ...intentFields,
 })
@@ -487,7 +509,7 @@ export const isIntentTransitionAllowed = (input: IntentTransitionInput): boolean
 }
 
 const RiskInputBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-input.v1'),
+  schemaVersion: Schema.Literal(legacyRiskInputSchemaVersion),
   inputHash: Sha256,
   intentId: Sha256,
   policyHash: Sha256,
@@ -507,7 +529,7 @@ export const RiskInputSchema = RiskInputBase.check(
 export type RiskInput = typeof RiskInputSchema.Type
 
 const RiskDecisionBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-decision.v1'),
+  schemaVersion: Schema.Literal(legacyRiskDecisionSchemaVersion),
   decisionId: Sha256,
   inputHash: Sha256,
   intentId: Sha256,
@@ -537,7 +559,7 @@ export const RiskDecisionSchema = RiskDecisionBase.check(
 export type RiskDecision = typeof RiskDecisionSchema.Type
 
 const AccountingReceiptBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-accounting-receipt.v1'),
+  schemaVersion: Schema.Literal(legacyAccountingReceiptSchemaVersion),
   receiptId: Sha256,
   intentId: Schema.optionalKey(Sha256),
   brokerEventId: Sha256,
@@ -559,7 +581,7 @@ export const AccountingReceiptSchema = AccountingReceiptBase.check(
 export type AccountingReceipt = typeof AccountingReceiptSchema.Type
 
 const ValuationBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-valuation.v1'),
+  schemaVersion: Schema.Literal(legacyValuationSchemaVersion),
   valuationId: Sha256,
   accountId: NonEmptyString,
   sourceHash: Sha256,
@@ -605,7 +627,7 @@ export const DiscrepancySchema = DiscrepancyBase.check(
 export type Discrepancy = typeof DiscrepancySchema.Type
 
 const ReconciliationBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-reconciliation.v1'),
+  schemaVersion: Schema.Literal(legacyReconciliationSchemaVersion),
   reconciliationId: Sha256,
   accountId: NonEmptyString,
   expectedHash: Sha256,
@@ -628,14 +650,14 @@ export const ReconciliationSchema = ReconciliationBase.check(
 export type Reconciliation = typeof ReconciliationSchema.Type
 
 export const CapitalGrantProofBindingSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-authority-proof-binding.v1'),
+  schemaVersion: Schema.Literal(legacyAuthorityProofBindingSchemaVersion),
   riskPolicyHash: Sha256,
   proofPlanHash: Sha256,
 })
 export type CapitalGrantProofBinding = typeof CapitalGrantProofBindingSchema.Type
 
 export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-paper-grant-proof.v1'),
+  schemaVersion: Schema.Literal(legacyResearchGrantProofSchemaVersion),
   grant: ResearchCapitalGrantSchema,
   activationSourceRevision: SourceRevision,
   activationImageRepository: NonEmptyString,
@@ -653,7 +675,7 @@ export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
 export type ResearchCapitalGrantProofBinding = typeof ResearchCapitalGrantProofBindingSchema.Type
 
 const CapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v2'),
+  schemaVersion: Schema.Literal(legacyAuthorityGenerationV2SchemaVersion),
   maximum: Schema.Literal(Authority.Execution),
   previousGenerationHash: Sha256,
   qualificationRunId: Sha256,
@@ -764,7 +786,7 @@ export const makeCapitalGrantGenerationResult = (
   )
 
 const ResearchCapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v3'),
+  schemaVersion: Schema.Literal(legacyAuthorityGenerationV3SchemaVersion),
   maximum: Schema.Literal(Authority.Execution),
   previousGenerationHash: Sha256,
   grant: ResearchCapitalGrantSchema,
@@ -873,7 +895,7 @@ export const makeResearchCapitalGrantGenerationResult = (
   )
 
 const AuthorityStateBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-authority.v1'),
+  schemaVersion: Schema.Literal(legacyAuthorityStateSchemaVersion),
   generationHash: Sha256,
   maximum: Schema.Enum(Authority),
   effective: Schema.Enum(Authority),

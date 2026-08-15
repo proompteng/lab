@@ -40,6 +40,17 @@ import {
 } from './schemas'
 import { Pipeable } from './pipeable'
 import { utcInstantFromEpochMillis } from './time'
+import {
+  legacyExecutionAuthorityToken,
+  legacyExecutionIntentSchemaVersion,
+  legacyObserveAuthorityToken,
+  legacyRiskPolicySchemaVersion,
+  legacyRiskDecisionSchemaVersion,
+  legacyRiskEvaluationInputV2SchemaVersion,
+  legacyRiskEvaluationInputV3SchemaVersion,
+  legacyRiskInputSchemaVersion,
+  legacyRiskStateSchemaVersion,
+} from './execution/legacy-wire'
 
 const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
 const MAX_AGE_MS = 86_400_000
@@ -193,7 +204,7 @@ const riskGateDefinitionByName: RiskGateDefinitionByName = {
 export const orderedRiskGateDefinitions: ReadonlyArray<RiskGateDefinition> = Object.values(riskGateDefinitionByName)
 
 export const PolicySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-policy.v2'),
+  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
   accountId: NonEmptyString,
   brokerMode: Schema.Literal(BrokerMode.Execution),
   allowedSymbols: Schema.Array(SymbolName).check(Schema.isMinLength(1), Schema.isUnique(), SortedUniqueStrings),
@@ -220,7 +231,7 @@ export const PolicySchema = Schema.Struct({
 export type Policy = typeof PolicySchema.Type
 
 const StateBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-state.v2'),
+  schemaVersion: Schema.Literal(legacyRiskStateSchemaVersion),
   brokerMode: Schema.Literal(BrokerMode.Execution),
   account: AccountSnapshotSchema,
   positions: Schema.Array(PositionSchema),
@@ -856,7 +867,9 @@ const buildAuthorityAndStateGates = (
       state.authority.maximum === Authority.Execution &&
         (closeOnly || state.authority.effective === Authority.Execution),
       `${state.authority.maximum}:${state.authority.effective}`,
-      closeOnly ? 'PAPER:(PAPER|OBSERVE)' : 'PAPER:PAPER',
+      closeOnly
+        ? `${legacyExecutionAuthorityToken}:(${legacyExecutionAuthorityToken}|${legacyObserveAuthorityToken})`
+        : `${legacyExecutionAuthorityToken}:${legacyExecutionAuthorityToken}`,
     ),
     makeGate(
       Gate.Kill,
@@ -1100,9 +1113,9 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
     Result.map(
       riskEvidenceHash(facts, {
         schemaVersion:
-          facts.intent.schemaVersion === 'bayn.paper-intent.v3'
-            ? 'bayn.paper-risk-evaluation-input.v3'
-            : 'bayn.paper-risk-evaluation-input.v2',
+          facts.intent.schemaVersion === legacyExecutionIntentSchemaVersion
+            ? legacyRiskEvaluationInputV3SchemaVersion
+            : legacyRiskEvaluationInputV2SchemaVersion,
         intent: facts.intent,
         policy: facts.policy,
         state: facts.state,
@@ -1129,7 +1142,7 @@ const makeRiskInput = (
 ): Result.Result<DecodedRiskInput, RiskEvaluationFailure> =>
   Result.mapError(
     decodeRiskInputResult({
-      schemaVersion: 'bayn.paper-risk-input.v1',
+      schemaVersion: legacyRiskInputSchemaVersion,
       inputHash: hashes.inputHash,
       intentId: facts.intent.intentId,
       policyHash: hashes.policyHash,
@@ -1153,7 +1166,7 @@ const makeRiskDecision = (
   expiresAt: string,
 ): Result.Result<DecodedRiskDecision, RiskEvaluationFailure> => {
   const material = {
-    schemaVersion: 'bayn.paper-risk-decision.v1',
+    schemaVersion: legacyRiskDecisionSchemaVersion,
     inputHash: input.inputHash,
     intentId: facts.intent.intentId,
     policyHash: hashes.policyHash,
@@ -1205,7 +1218,7 @@ const makeRiskEvaluation = (
   )
 
 const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Result<void, RiskEvaluationFailure> => {
-  if (intent.schemaVersion === 'bayn.paper-intent.v3') {
+  if (intent.schemaVersion === legacyExecutionIntentSchemaVersion) {
     if (state.authority.maximum !== Authority.Execution) {
       return Result.fail(
         bindRiskAuthorityFailure(

@@ -8,6 +8,7 @@ import {
 } from '../../broker/alpaca-mutations'
 import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
+import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -35,7 +36,7 @@ export const maximumConsistencyDelayMs = 300_000
 export const ConsistencyDelay = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: maximumConsistencyDelayMs }))
 export const BrokerOrderId = NonEmptyString.check(Schema.isMaxLength(256))
 export const MutationEventSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-mutation-event.v1'),
+  schemaVersion: Schema.Literal(legacyMutationEventSchemaVersion),
   eventId: Sha256,
   mutationId: Sha256,
   intentId: Sha256,

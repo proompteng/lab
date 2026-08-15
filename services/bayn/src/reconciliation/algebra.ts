@@ -33,6 +33,12 @@ import {
   type Valuation,
 } from '../execution/contracts'
 import {
+  legacyAccountingStateSchemaVersion,
+  legacyAuthorityStateSchemaVersion,
+  legacyReconciliationIdSchemaVersion,
+  legacyReconciliationSchemaVersion,
+} from '../execution/legacy-wire'
+import {
   compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
@@ -109,7 +115,7 @@ export interface AgedDiscrepancies {
 
 export interface RiskContextRow {
   readonly trading_date: IsoDate
-  readonly authority_schema_version: 'bayn.paper-authority.v1' | null
+  readonly authority_schema_version: typeof legacyAuthorityStateSchemaVersion | null
   readonly authority_generation_hash: string | null
   readonly authority_maximum: Authority | null
   readonly authority_effective: Authority | null
@@ -461,7 +467,7 @@ export const compareOpeningCash = (input: {
     }
     const expectedCashMicros = expectedCash.toString()
     const accountingHashValue = yield* accountingHash({
-      schemaVersion: 'bayn.paper-accounting-state.v1',
+      schemaVersion: legacyAccountingStateSchemaVersion,
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
@@ -551,7 +557,7 @@ export const makeReconciliationIdentity = (input: {
 }): Result.Result<Reconciliation, ReconciliationAlgebraFailure> =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+      schemaVersion: legacyReconciliationSchemaVersion,
       accountId: input.accountId,
       expectedHash: input.comparison.expectedHash,
       observedHash: input.comparison.observedHash,
@@ -561,7 +567,7 @@ export const makeReconciliationIdentity = (input: {
     }
     const reconciliationId = yield* Result.mapError(
       canonicalHashV1Result({
-        schemaVersion: 'bayn.paper-reconciliation-id.v1',
+        schemaVersion: legacyReconciliationIdSchemaVersion,
         material,
       }),
       (cause): ReconciliationAlgebraFailure => ({

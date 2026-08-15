@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 import { MutationOperation, type MutationEvidence, type PartialMutationEvidence } from '../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
+import { legacyMutationEventSchemaVersion, legacyMutationIdentitySchemaVersion } from '../legacy-wire'
 import { strictParseOptions } from '../../schemas'
 import {
   MutationEventType,
@@ -85,7 +86,7 @@ const mutationIdResultDataFirst = (
 ): Result.Result<string, MutationCanonicalizationFailure> =>
   canonicalHashResult(
     { _tag: 'MutationIdentity', intentId, operation },
-    { schemaVersion: 'bayn.paper-mutation.v1', intentId, operation },
+    { schemaVersion: legacyMutationIdentitySchemaVersion, intentId, operation },
   )
 
 export const mutationIdResult = Pipeable.dual(2, mutationIdResultDataFirst)
@@ -93,7 +94,7 @@ export const mutationIdResult = Pipeable.dual(2, mutationIdResultDataFirst)
 const mutationEventResult = (
   event: Omit<MutationEvent, 'eventId' | 'schemaVersion'>,
 ): Result.Result<MutationEvent, MutationCanonicalizationFailure> => {
-  const content = { schemaVersion: 'bayn.paper-mutation-event.v1' as const, ...event }
+  const content = { schemaVersion: legacyMutationEventSchemaVersion, ...event }
   return Result.map(
     canonicalHashResult(
       {

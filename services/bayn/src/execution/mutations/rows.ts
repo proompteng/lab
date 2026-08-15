@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../../broker/alpaca-mutations'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
+import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -25,7 +26,7 @@ import { Pipeable } from '../../pipeable'
 
 const StoredEventRows = Schema.Array(
   Schema.Struct({
-    schema_version: Schema.Literal('bayn.paper-mutation-event.v1'),
+    schema_version: Schema.Literal(legacyMutationEventSchemaVersion),
     event_id: Sha256,
     mutation_id: Sha256,
     intent_id: Sha256,
