@@ -68,6 +68,7 @@ type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState
 
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
+    expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts).toBe(3)
     expect(executionControllerTickRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'pause' })
@@ -140,7 +141,7 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toHaveLength(1)
     expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled'])
     expect(deliveries[0]).toMatchObject({
-      delay: executionControllerInitialTickDelayMs,
+      delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 0),
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
     })
@@ -613,7 +614,7 @@ describe('native Restate execution controller', () => {
     ])
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
-      delay: executionControllerInitialTickDelayMs,
+      delay: 0,
       idempotencyKey: executionControllerTickIdempotencyKey(5, 12, 0),
       parameter: { epoch: 5, sequence: 12, attempt: 0 },
     })
