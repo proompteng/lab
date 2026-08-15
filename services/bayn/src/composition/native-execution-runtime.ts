@@ -1,4 +1,18 @@
-import { Context, Data, Deferred, Effect, Fiber, Layer, ManagedRuntime, Ref, Result, Scope, ScopedRef } from 'effect'
+import {
+  Cause,
+  Context,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Ref,
+  Result,
+  Scope,
+  ScopedRef,
+} from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
 import {
@@ -463,6 +477,23 @@ const ownManagedRuntime = <R, E>(
 ): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
   Effect.acquireRelease(Effect.succeed(managed), (runtime) => runtime.disposeEffect)
 
+export const initializeNativeExecutionProjectionRuntime = <R, E>(
+  projectionRunner: NativeExecutionProjectionRuntime<R, E>,
+): Effect.Effect<void, NativeExecutionRuntimeError> =>
+  Effect.promise((signal) =>
+    projectionRunner.runPromiseExit(ExecutionControllerStatusStore.pipe(Effect.asVoid), { signal }),
+  ).pipe(
+    Effect.flatMap((exit) =>
+      Exit.isSuccess(exit)
+        ? Effect.void
+        : Effect.failCause(
+            Cause.map(exit.cause, (cause) =>
+              runtimeError('initialize', 'native execution controller persistence bootstrap failed', cause),
+            ),
+          ),
+    ),
+  )
+
 export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
@@ -519,6 +550,7 @@ export const acquireNativeExecutionRuntime = (
     const projectionManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
     )
+    yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )

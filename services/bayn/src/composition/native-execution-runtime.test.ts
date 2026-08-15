@@ -1,5 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { Context, Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Ref, Result, ScopedRef } from 'effect'
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Redacted,
+  Ref,
+  Result,
+  ScopedRef,
+} from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { ApplicationPlanFor } from '../app'
@@ -26,6 +39,7 @@ import {
   executeNativeExecutionAdvance,
   executionControllerConfig,
   failRecoveryFirstCycleDriverSlot,
+  initializeNativeExecutionProjectionRuntime,
   makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
   makePublishedExecutionCycleDriverLive,
@@ -194,6 +208,123 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
 }
 
 describe('native execution runtime', () => {
+  test('bootstraps controller persistence before exposing the projection runtime and fails closed on acquisition error', async () => {
+    let acquired = 0
+    let released = 0
+    const projection = ManagedRuntime.make(
+      Layer.effect(
+        ExecutionControllerStatusStore,
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            acquired += 1
+            return statusStore((candidate) => ({ _tag: 'Applied', status: candidate }))
+          }),
+          () =>
+            Effect.sync(() => {
+              released += 1
+            }),
+        ),
+      ),
+    )
+
+    expect(acquired).toBe(0)
+    await Effect.runPromise(initializeNativeExecutionProjectionRuntime(projection))
+    expect(acquired).toBe(1)
+    await projection.dispose()
+    expect(released).toBe(1)
+
+    const failure = new Error('migration bootstrap failed')
+    const failedProjection = ManagedRuntime.make(Layer.effect(ExecutionControllerStatusStore, Effect.fail(failure)))
+    const observed = await Effect.runPromise(Effect.flip(initializeNativeExecutionProjectionRuntime(failedProjection)))
+    await failedProjection.dispose()
+
+    expect(observed).toMatchObject({
+      operation: 'initialize',
+      message: 'native execution controller persistence bootstrap failed',
+      cause: failure,
+    })
+
+    const defect = new Error('projection invariant defect')
+    const defectingProjection = ManagedRuntime.make(Layer.effect(ExecutionControllerStatusStore, Effect.die(defect)))
+    const defectExit = await Effect.runPromise(
+      Effect.exit(initializeNativeExecutionProjectionRuntime(defectingProjection)),
+    )
+    await defectingProjection.dispose()
+
+    expect(Exit.isFailure(defectExit)).toBe(true)
+    if (Exit.isFailure(defectExit)) {
+      expect(defectExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(
+        true,
+      )
+      expect(defectExit.cause.reasons.some(Cause.isFailReason)).toBe(false)
+    }
+  })
+
+  test('interrupts an in-flight controller persistence bootstrap before releasing its acquired resource', async () => {
+    const events: string[] = []
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const managedProjection = ManagedRuntime.make(
+          Layer.effect(
+            ExecutionControllerStatusStore,
+            Effect.acquireRelease(
+              Effect.sync(() => {
+                events.push('acquired')
+              }),
+              () =>
+                Effect.sync(() => {
+                  events.push('released')
+                }),
+            ).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.andThen(
+                Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Effect.sync(() => {
+                      events.push('interrupted')
+                    }),
+                  ),
+                ),
+              ),
+              Effect.as(statusStore((candidate) => ({ _tag: 'Applied', status: candidate }))),
+            ),
+          ),
+        )
+        let bootstrapSignal: AbortSignal | undefined
+        const projection = {
+          ...managedProjection,
+          runPromiseExit: ((effect, options) => {
+            bootstrapSignal = options?.signal
+            bootstrapSignal?.addEventListener(
+              'abort',
+              () => {
+                events.push('signal-aborted')
+              },
+              { once: true },
+            )
+            return managedProjection.runPromiseExit(effect, options)
+          }) as typeof managedProjection.runPromiseExit,
+        } as typeof managedProjection
+
+        const bootstrap = yield* Effect.forkChild(
+          Effect.scoped(
+            Effect.acquireRelease(Effect.succeed(projection), (runtime) => runtime.disposeEffect).pipe(
+              Effect.flatMap(initializeNativeExecutionProjectionRuntime),
+            ),
+          ),
+        )
+        yield* Deferred.await(started)
+        expect(events).toEqual(['acquired'])
+
+        yield* Fiber.interrupt(bootstrap)
+        expect(bootstrapSignal?.aborted).toBe(true)
+        expect(events).toEqual(['acquired', 'signal-aborted', 'interrupted', 'released'])
+      }),
+    )
+  })
+
   test('binds controller identity to code, authority, qualification, market data, and cadence', () => {
     const first = executionControllerConfig(plan())
     const replay = executionControllerConfig(plan())
