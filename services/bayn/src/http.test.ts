@@ -403,6 +403,7 @@ describe('Bayn HTTP pure decisions', () => {
           planHash,
           active: true,
           epoch: 3,
+          nextSequence: 18,
           lastSequence: 17,
           lastOutcome: ExecutionControllerOutcome.Blocked,
           lastReceiptHash: 'e'.repeat(64),
@@ -437,6 +438,55 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_execution_controller_epoch 3')
     expect(metrics).toContain('bayn_execution_controller_last_sequence 17')
     expect(metrics).not.toContain(controllerKey)
+  })
+
+  test('publishes durable activation without fabricated completion evidence', () => {
+    const controllerKey = 'f'.repeat(64)
+    const planHash = 'd'.repeat(64)
+    const state: RuntimeState = {
+      ...readyState(),
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash,
+        readAvailable: true,
+        checkedAt: '2026-08-13T19:00:00.000Z',
+        error: null,
+        status: {
+          schemaVersion: 1,
+          controllerKey,
+          planHash,
+          active: true,
+          epoch: 4,
+          nextSequence: 18,
+        },
+      },
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    expect(facts.executionController).toEqual({
+      configured: true,
+      controllerKeyHash: controllerKey,
+      readAvailable: true,
+      checkedAt: '2026-08-13T19:00:00.000Z',
+      status: {
+        active: true,
+        planHash,
+        epoch: 4,
+        lastSequence: null,
+        lastOutcome: null,
+        lastReceiptHash: null,
+        completedAt: null,
+        nextDueAt: null,
+      },
+      reasonCode: 'EXECUTION_CONTROLLER_FIRST_PASS_PENDING',
+    })
+    const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+    expect(metrics).toContain('bayn_execution_controller_epoch 4')
+    expect(metrics).toContain('bayn_execution_controller_last_outcome{outcome="unknown"} 1')
+    expect(metrics).not.toContain('bayn_execution_controller_last_sequence ')
+    expect(metrics).not.toContain('bayn_execution_controller_last_completion_timestamp_seconds ')
+    expect(metrics).not.toContain('bayn_execution_controller_next_due_timestamp_seconds ')
   })
 
   test('covers every readiness decision branch without mutating runtime facts', () => {

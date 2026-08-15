@@ -10,20 +10,43 @@ export enum ExecutionControllerOutcome {
   Blocked = 'Blocked',
 }
 
-export const ExecutionControllerStatusSchema = Schema.Struct({
+const ExecutionControllerStatusBase = {
   schemaVersion: Schema.Literal(1),
   controllerKey: LifecycleControllerKeySchema,
   planHash: Sha256Schema,
   active: Schema.Boolean,
   epoch: ControllerCounterSchema,
+  nextSequence: ControllerCounterSchema,
+} as const
+
+const ExecutionControllerStatusWithoutCompletionSchema = Schema.Struct(ExecutionControllerStatusBase)
+
+const ExecutionControllerStatusWithCompletionBase = Schema.Struct({
+  ...ExecutionControllerStatusBase,
   lastSequence: ControllerCounterSchema,
   lastOutcome: Schema.Enum(ExecutionControllerOutcome),
   lastReceiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
 })
+const ExecutionControllerStatusWithCompletionSchema = ExecutionControllerStatusWithCompletionBase.check(
+  Schema.makeFilter((status) => status.nextSequence === status.lastSequence + 1, {
+    expected: 'nextSequence to immediately follow lastSequence when completion evidence is present',
+  }),
+)
+
+export const ExecutionControllerStatusSchema = Schema.Union([
+  ExecutionControllerStatusWithCompletionSchema,
+  ExecutionControllerStatusWithoutCompletionSchema,
+])
 
 export type ExecutionControllerStatus = typeof ExecutionControllerStatusSchema.Type
+
+export type ExecutionControllerStatusWithCompletion = typeof ExecutionControllerStatusWithCompletionSchema.Type
+
+export const executionControllerStatusHasCompletion = (
+  status: ExecutionControllerStatus,
+): status is ExecutionControllerStatusWithCompletion => 'lastSequence' in status
 
 export type ExecutionControllerStatusProjection =
   | { readonly _tag: 'Applied'; readonly status: ExecutionControllerStatus }

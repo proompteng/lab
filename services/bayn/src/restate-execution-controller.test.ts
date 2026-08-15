@@ -128,6 +128,8 @@ describe('native Restate execution controller', () => {
     const object = handlers(makeBaynExecutionController(config, runtime))
 
     expect(await object.activate(context, activation)).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
+    expect(projectedStates).toHaveLength(1)
+    expect(projectedStates[0]).toMatchObject({ active: true, epoch: 1, nextSequence: 4 })
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
       delay: executionControllerInitialTickDelayMs,
@@ -136,6 +138,8 @@ describe('native Restate execution controller', () => {
     })
 
     await object.activate(context, activation)
+    expect(projectedStates).toHaveLength(2)
+    expect(projectedStates[1]).toEqual(projectedStates[0])
     expect(deliveries).toHaveLength(1)
 
     const firstTick = deliveries.shift()
@@ -178,12 +182,41 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
     expect(state).toMatchObject({ active: false, epoch: 2 })
-    expect(projectedStates).toHaveLength(1)
-    expect(projectedStates[0]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
+    expect(projectedStates).toHaveLength(3)
+    expect(projectedStates[2]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
     const pending = deliveries.shift()
     if (pending === undefined) throw new Error('completed tick did not schedule its successor')
     await object.tick(context, pending.parameter)
     expect(calls).toHaveLength(1)
+    expect(deliveries).toHaveLength(0)
+  })
+
+  test('fails activation closed before Restate state or scheduling when durable projection fails', async () => {
+    let state: ExecutionControllerState | null = null
+    let sets = 0
+    const deliveries: Delivery[] = []
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        sets += 1
+        state = next
+      },
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      request: () => ({ id: 'activation-projection-failed', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        advance: () => Promise.reject(new Error('must not advance')),
+        log: () => Promise.resolve(),
+        projectState: () => Promise.reject(new Error('postgres unavailable')),
+      }),
+    )
+
+    expect(object.activate(context, activation)).rejects.toThrow('postgres unavailable')
+    expect(state).toBeNull()
+    expect(sets).toBe(0)
     expect(deliveries).toHaveLength(0)
   })
 

@@ -401,6 +401,11 @@ export const makeBaynExecutionController = (
           )
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
+          await ctx.run(
+            'project Bayn execution controller activation',
+            () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
+            executionControllerAdvanceRunOptions,
+          )
           if (decision._tag === 'Activated') {
             ctx.set(stateKey, decision.state)
             scheduleTick(ctx, decision.state, executionControllerInitialTickDelayMs)
@@ -500,12 +505,12 @@ export const makeBaynExecutionController = (
           )
           verifyDeactivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerDeactivation(await readState(ctx), request))
+          await ctx.run(
+            'project Bayn execution controller deactivation',
+            () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
+            executionControllerAdvanceRunOptions,
+          )
           if (decision._tag === 'Deactivated') {
-            await ctx.run(
-              'project Bayn execution controller deactivation',
-              () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
-              executionControllerAdvanceRunOptions,
-            )
             ctx.set(stateKey, decision.state)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller deactivated', {
               controllerKey: ctx.key,

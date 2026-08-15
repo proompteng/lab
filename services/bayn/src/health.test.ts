@@ -1338,6 +1338,61 @@ describe('Bayn continuous health', () => {
     })
   })
 
+  test('observes durable Restate activation but keeps first-pass readiness closed until a real completion', () => {
+    const controllerKey = 'f'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: { configured: true, owner: 'Restate', startedAt: null, lastPass: null },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
+      },
+    }
+    const activation = {
+      schemaVersion: 1 as const,
+      controllerKey,
+      planHash: controllerPlanHash,
+      active: true,
+      epoch: 4,
+      nextSequence: 12,
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: activation },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:00:01.000Z'),
+    })
+
+    expect(transition.next).toMatchObject({
+      status: 'DEGRADED',
+      executionController: { readAvailable: true, status: activation },
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'Restate lifecycle has not completed its first durable pass',
+          },
+        },
+      },
+      error: 'cycleRunner: Restate lifecycle has not completed its first durable pass',
+    })
+  })
+
   test('accepts a fresh Restate controller projection without a local lifecycle fiber', () => {
     const controllerKey = 'f'.repeat(64)
     const completedAt = '2026-07-20T00:00:00.000Z'
@@ -1361,6 +1416,7 @@ describe('Bayn continuous health', () => {
       planHash: controllerPlanHash,
       active: true,
       epoch: 4,
+      nextSequence: 13,
       lastSequence: 12,
       lastOutcome: ExecutionControllerOutcome.Blocked,
       lastReceiptHash: 'e'.repeat(64),
@@ -1477,6 +1533,7 @@ describe('Bayn continuous health', () => {
             planHash: controllerPlanHash,
             active: true,
             epoch: 4,
+            nextSequence: 13,
             lastSequence: 12,
             lastOutcome: ExecutionControllerOutcome.Blocked,
             lastReceiptHash: 'e'.repeat(64),
