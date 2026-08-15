@@ -278,6 +278,7 @@ export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean =>
 
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
+  state.capitalActivation?._tag !== 'Pending' &&
   qualificationEvidenceSatisfied(state) &&
   state.cycle.condition !== CycleOperationsCondition.Unknown &&
   state.cycle.condition !== CycleOperationsCondition.Stalled &&

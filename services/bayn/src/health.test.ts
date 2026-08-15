@@ -65,7 +65,7 @@ const probe = (
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservationId?: string | null,
   qualificationEvidenceRequired = true,
 ) =>
   testHealthDependencies.pipe(
@@ -443,6 +443,63 @@ describe('Bayn continuous health', () => {
 
     expect(transition.next.status).toBe('READY')
     expect(isReady(transition.next)).toBe(true)
+  })
+
+  test('fails readiness while capital activation is pending even when health probes are otherwise ready', () => {
+    const pending: RuntimeState = {
+      ...readyState(),
+      capitalActivation: { _tag: 'Pending', requestHash: null, reason: 'REQUEST_INVALID' },
+    }
+
+    expect(isReady(pending)).toBe(false)
+    expect(readinessResponseDecision(pending)).toMatchObject({
+      status: 503,
+      body: {
+        ready: false,
+        failedDependencies: ['capitalActivation'],
+      },
+    })
+  })
+
+  test('does not fall back to retained evidence when cycle observation is explicitly unavailable', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    const observedBindings: string[] = []
+    const program = probe(config, state, undefined, undefined, null).pipe(
+      Effect.provideService(MarketData, {
+        check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
+        inspect: Effect.die(new Error('health probes must not inspect sessions')),
+        inspectCyclePublications: Effect.die(new Error('health probes must not inspect cycle publication candidates')),
+        inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+        inspectSnapshotPublication: () =>
+          Effect.die(new Error('health probes must not inspect bound cycle publications')),
+        loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
+        load: Effect.die(new Error('health probes must not load bars')),
+      }),
+      Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
+      Effect.provideService(EvidenceStore, recoveringStore(initial)),
+      Effect.provideService(
+        CycleObservability,
+        cycleObservability((bindingId) =>
+          Effect.sync(() => {
+            observedBindings.push(bindingId)
+            return emptyCycleProjection()
+          }),
+        ),
+      ),
+    )
+
+    await Effect.runPromise(program)
+
+    expect(observedBindings).toEqual([])
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'DEGRADED',
+      health: { dependencies: { cycle: { status: 'UNAVAILABLE' } } },
+      cycle: {
+        condition: CycleOperationsCondition.Unknown,
+        reason: CycleOperationsReason.ObservationUnavailable,
+      },
+    })
   })
 
   test('returns structured signal and durable evidence invariant failures', () => {
