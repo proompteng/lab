@@ -6,7 +6,12 @@ import process from 'node:process'
 import {
   advanceBaynLifecycleManifests,
   baynLifecycleCurrentPath,
+  baynLifecycleIsActive,
   baynLifecyclePreviousPath,
+  validateBaynLifecycleActivation,
+  validateBaynLifecycleCommandAuthentication,
+  validateBaynLifecycleCommandPort,
+  validateBaynLifecycleInactiveRuntime,
 } from './lifecycle-manifests'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
@@ -272,6 +277,15 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const lifecyclePreviousManifestPath = options.lifecyclePreviousPath ?? baynLifecyclePreviousPath
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const deployment = readFileSync(deploymentPath, 'utf8')
+  const lifecycleActive = baynLifecycleIsActive(kustomization)
+  validateBaynLifecycleActivation(deployment, kustomization)
+  if (lifecycleActive) {
+    validateBaynLifecycleCommandPort(deployment)
+    validateBaynLifecycleCommandAuthentication(deployment)
+    environmentValue(deployment, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
+  } else {
+    validateBaynLifecycleInactiveRuntime(deployment)
+  }
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
@@ -429,12 +443,14 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     `$1${options.sourceSha}`,
     'BAYN_CODE_REVISION value',
   )
-  updatedDeployment = replaceExactlyOnce(
-    updatedDeployment,
-    /(            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: )[^\n]+/,
-    `$1${deployedSourceSha}`,
-    'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION value',
-  )
+  if (lifecycleActive) {
+    updatedDeployment = replaceExactlyOnce(
+      updatedDeployment,
+      /(            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: )[^\n]+/,
+      `$1${deployedSourceSha}`,
+      'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION value',
+    )
+  }
   updatedDeployment = replaceExactlyOnce(
     updatedDeployment,
     /(            - name: BAYN_IMAGE_DIGEST\n              value: )[^\n]+/,

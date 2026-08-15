@@ -4,12 +4,15 @@ import { inflateRawSync } from 'node:zlib'
 import process from 'node:process'
 
 import {
+  baynLifecycleIsActive,
   baynLifecycleCurrentPath,
   baynLifecyclePreviousPath,
   parseBaynLifecycleCurrent,
   parseBaynLifecyclePrevious,
   validateBaynLifecycleActivation,
+  validateBaynLifecycleCommandAuthentication,
   validateBaynLifecycleCommandPort,
+  validateBaynLifecycleInactiveRuntime,
   validateBaynLifecyclePromotion,
   validateBaynServiceLinksDisabled,
   type BaynLifecycleImagePin,
@@ -85,7 +88,6 @@ export const isBaynPromotionSourceAffectingPath = (path: string): boolean =>
 
 const mutableDeploymentEnvironmentNames = [
   'BAYN_CODE_REVISION',
-  'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION',
   'BAYN_IMAGE_DIGEST',
   'BAYN_STRATEGY_BEHAVIOR_HASH',
   'BAYN_STRATEGY_PARAMETER_HASH',
@@ -336,7 +338,8 @@ export class GitHubPromotionEligibilityError extends Error {
 
 interface BaynPromotionPins {
   readonly sourceSha: string
-  readonly lifecyclePreviousSourceRevision: string
+  readonly lifecycleActive: boolean
+  readonly lifecyclePreviousSourceRevision: string | null
   readonly tag: string
   readonly digest: string
   readonly deploymentRepository: string
@@ -526,6 +529,14 @@ const environmentValue = (deployment: string, name: string): string => {
   return scalarValue(value)
 }
 
+const optionalEnvironmentValue = (deployment: string, name: string): string | null => {
+  const pattern = new RegExp(`            - name: ${name}\\n              value: ([^\\n]+)\\n`, 'g')
+  const matches = [...deployment.matchAll(pattern)]
+  if (matches.length > 1) throw new Error(`expected at most one ${name} value`)
+  const value = matches[0]?.[1]
+  return value === undefined ? null : scalarValue(value)
+}
+
 const rolloutTimestamp = (deployment: string): string => {
   const matches = [...deployment.matchAll(/        kubectl\.kubernetes\.io\/restartedAt: ([^\n]+)\n/g)]
   if (matches.length !== 1) throw new Error('expected exactly one Bayn rollout annotation')
@@ -564,15 +575,32 @@ const applicationEnabled = (applicationSet: string): boolean => {
 }
 
 export const parseBaynPromotionPins = (manifests: BaynPromotionManifestContents): BaynPromotionPins => {
-  validateBaynLifecycleCommandPort(manifests.deployment)
+  const lifecycleActive = baynLifecycleIsActive(manifests.kustomization)
+  if (lifecycleActive) {
+    validateBaynLifecycleCommandPort(manifests.deployment)
+    validateBaynLifecycleCommandAuthentication(manifests.deployment)
+  } else {
+    validateBaynLifecycleInactiveRuntime(manifests.deployment)
+  }
   validateBaynServiceLinksDisabled(manifests.deployment)
   validateBaynLifecycleActivation(manifests.deployment, manifests.kustomization)
   const image = kustomizationImage(manifests.kustomization)
   const lifecycleCurrent = parseBaynLifecycleCurrent(manifests.lifecycleCurrent)
   parseBaynLifecyclePrevious(manifests.lifecyclePrevious)
+  const lifecyclePreviousSourceRevision = optionalEnvironmentValue(
+    manifests.deployment,
+    'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION',
+  )
+  if (lifecycleActive && lifecyclePreviousSourceRevision === null) {
+    throw new Error('active Bayn lifecycle requires BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
+  }
+  if (!lifecycleActive && lifecyclePreviousSourceRevision !== null) {
+    throw new Error('inactive Bayn lifecycle must not retain BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION')
+  }
   return {
     sourceSha: environmentValue(manifests.deployment, 'BAYN_CODE_REVISION'),
-    lifecyclePreviousSourceRevision: environmentValue(manifests.deployment, 'BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION'),
+    lifecycleActive,
+    lifecyclePreviousSourceRevision,
     tag: image.tag,
     digest: environmentValue(manifests.deployment, 'BAYN_IMAGE_DIGEST'),
     deploymentRepository: environmentValue(manifests.deployment, 'BAYN_IMAGE_REPOSITORY'),
@@ -599,6 +627,16 @@ const normalizeDeployment = (deployment: string): string => {
       `${name} value`,
     )
   }
+  const lifecyclePreviousSourceRevisionPattern =
+    /(            - name: BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION\n              value: )[^\n]+/g
+  const lifecyclePreviousSourceRevisions = [...normalized.matchAll(lifecyclePreviousSourceRevisionPattern)]
+  if (lifecyclePreviousSourceRevisions.length > 1) {
+    throw new Error('expected at most one BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION value')
+  }
+  normalized = normalized.replace(
+    lifecyclePreviousSourceRevisionPattern,
+    '$1"__BAYN_LIFECYCLE_PREVIOUS_SOURCE_REVISION__"',
+  )
   const qualificationPattern = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/g
   const qualifications = [...normalized.matchAll(qualificationPattern)]
   if (qualifications.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID value')
@@ -643,8 +681,14 @@ const validateManifestShape = (
 
 const validatePins = (pins: BaynPromotionPins, requireApplicationEnabled: boolean): string | null => {
   if (!/^[0-9a-f]{40}$/.test(pins.sourceSha)) return `invalid source revision ${pins.sourceSha}`
-  if (!/^[0-9a-f]{40}$/.test(pins.lifecyclePreviousSourceRevision)) {
+  if (
+    pins.lifecycleActive &&
+    (pins.lifecyclePreviousSourceRevision === null || !/^[0-9a-f]{40}$/.test(pins.lifecyclePreviousSourceRevision))
+  ) {
     return `invalid previous lifecycle source revision ${pins.lifecyclePreviousSourceRevision}`
+  }
+  if (!pins.lifecycleActive && pins.lifecyclePreviousSourceRevision !== null) {
+    return 'inactive Bayn lifecycle retains a previous lifecycle source revision'
   }
   if (pins.tag !== `sha-${pins.sourceSha}`) {
     return `image tag ${pins.tag} does not bind source revision ${shortSha(pins.sourceSha)}`
@@ -659,9 +703,10 @@ const validatePins = (pins: BaynPromotionPins, requireApplicationEnabled: boolea
   }
   if (!Number.isFinite(Date.parse(pins.rolloutTimestamp))) return 'Bayn rollout timestamp is invalid'
   if (
-    pins.lifecycleCurrent.sourceSha !== pins.sourceSha ||
-    pins.lifecycleCurrent.tag !== pins.tag ||
-    pins.lifecycleCurrent.digest !== pins.digest
+    pins.lifecycleActive &&
+    (pins.lifecycleCurrent.sourceSha !== pins.sourceSha ||
+      pins.lifecycleCurrent.tag !== pins.tag ||
+      pins.lifecycleCurrent.digest !== pins.digest)
   ) {
     return 'Bayn lifecycle current endpoint does not bind the promoted source and image'
   }
@@ -780,7 +825,10 @@ export const evaluateBaynPromotionEligibility = (input: {
   if (lifecycleFailure !== null) {
     return hold('promotion-manifest-shape-mismatch', lifecycleFailure, false)
   }
-  if (headPins.lifecyclePreviousSourceRevision !== basePins.sourceSha) {
+  if (basePins.lifecycleActive !== headPins.lifecycleActive) {
+    return hold('promotion-manifest-shape-mismatch', 'Bayn lifecycle activation state changed during promotion', false)
+  }
+  if (headPins.lifecycleActive && headPins.lifecyclePreviousSourceRevision !== basePins.sourceSha) {
     return hold(
       'promotion-pin-inconsistent',
       'Bayn command boundary does not retain exactly the prior lifecycle source revision',

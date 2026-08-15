@@ -12,7 +12,6 @@ import {
   renderBaynLifecyclePrevious,
   validateBaynLifecycleActivation,
   validateBaynLifecyclePromotion,
-  validateBaynLifecycleCommandAuthentication,
   validateBaynLifecycleCommandPort,
   validateBaynLifecycleOperationTimeout,
   validateBaynServiceLinksDisabled,
@@ -67,7 +66,7 @@ describe('Bayn lifecycle release manifests', () => {
     expect(previous.match(/name: POD_NAMESPACE/g)).toHaveLength(1)
   })
 
-  test('keeps the checked-in initial Restate endpoint canonical and atomically active', () => {
+  test('keeps the retired Restate endpoints canonical but inactive', () => {
     const current = readFileSync(
       new URL('../../../../argocd/applications/bayn/lifecycle-current.yaml', import.meta.url),
       'utf8',
@@ -95,42 +94,16 @@ describe('Bayn lifecycle release manifests', () => {
       tag: 'sha-bf16e466d98825d889a71675bcc8ba9458ab12b6',
       digest: 'sha256:a0b49f9c5a7a1ee7011dca5fa3ee8799d36924f4ec3e131397d108a1ddf35908',
     })
-    expect(baynLifecycleIsActive(kustomization)).toBeTrue()
-    expect(() => validateBaynLifecycleCommandPort(deployment)).not.toThrow()
+    expect(baynLifecycleIsActive(kustomization)).toBeFalse()
+    expect(() => validateBaynLifecycleCommandPort(deployment)).toThrow(
+      'Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081',
+    )
     expect(() => validateBaynServiceLinksDisabled(deployment)).not.toThrow()
-    expect(() => validateBaynLifecycleCommandAuthentication(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleOperationTimeout(deployment)).not.toThrow()
     expect(() => validateBaynLifecycleActivation(deployment, kustomization)).not.toThrow()
-    expect(() =>
-      validateBaynLifecycleCommandPort(
-        deployment.replace(
-          `            - name: lifecycle-cmd\n              containerPort: 8081\n              protocol: TCP\n`,
-          '',
-        ),
-      ),
-    ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
-    expect(() =>
-      validateBaynLifecycleCommandPort(deployment.replace('name: lifecycle-cmd', 'name: lifecycle-command')),
-    ).toThrow('Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081')
     expect(() => validateBaynServiceLinksDisabled(deployment.replace('      enableServiceLinks: false\n', ''))).toThrow(
       'Bayn deployment must disable Kubernetes service-link environment injection',
     )
-    expect(() =>
-      validateBaynLifecycleCommandAuthentication(
-        deployment.replace(
-          `            - name: bayn-lifecycle-reviewer\n              mountPath: /var/run/secrets/bayn-lifecycle-reviewer\n              readOnly: true\n`,
-          '',
-        ),
-      ),
-    ).toThrow('Bayn deployment must mount exactly one read-only lifecycle TokenReview identity')
-    expect(() =>
-      validateBaynLifecycleCommandAuthentication(
-        deployment.replace(
-          '                  expirationSeconds: 3600\n',
-          '                  audience: bayn.proompteng.ai/lifecycle-command\n                  expirationSeconds: 3600\n',
-        ),
-      ),
-    ).toThrow('Bayn lifecycle TokenReview identity must use the API server audience and be bounded and CA-verified')
     expect(() =>
       validateBaynLifecycleOperationTimeout(
         deployment.replace(
@@ -142,13 +115,13 @@ describe('Bayn lifecycle release manifests', () => {
   })
 
   test('switches lifecycle resources and ownership as one activation boundary', () => {
-    const restateOwnedDeployment = readFileSync(
+    const processOwnedDeployment = readFileSync(
       new URL('../../../../argocd/applications/bayn/deployment.yaml', import.meta.url),
       'utf8',
     )
-    const processOwnedDeployment = restateOwnedDeployment.replace(
-      '            - name: BAYN_LIFECYCLE_OWNER\n              value: RESTATE\n',
-      '',
+    const restateOwnedDeployment = processOwnedDeployment.replace(
+      '            - name: BAYN_CODE_REVISION\n',
+      '            - name: BAYN_LIFECYCLE_OWNER\n              value: RESTATE\n            - name: BAYN_CODE_REVISION\n',
     )
 
     expect(() => validateBaynLifecycleActivation(processOwnedDeployment, activeKustomization)).toThrow(
