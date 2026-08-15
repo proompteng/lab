@@ -2,6 +2,7 @@ import { Result, Schema, pipe } from 'effect'
 
 import type { Account, AccountConfigurationObservation, AssetObservation } from '../broker/alpaca'
 import { Authority } from '../execution/contracts'
+import { legacyCandidateDiscoveryOperationToken } from '../execution/legacy-wire'
 import { strictParseOptions } from '../schemas'
 import {
   AccountConfigurationFactsSchema,
@@ -241,7 +242,7 @@ const makeExecutionCandidateDiscoveryReceiptDataFirst = (
     Result.flatMap(({ candidateFacts, candidateFactsHash, immutableBindingHash }) =>
       decodeReceipt({
         schemaVersion: discoverySchemaVersion,
-        operation: 'PAPER_CANDIDATE_DISCOVERY',
+        operation: legacyCandidateDiscoveryOperationToken,
         authority: Authority.Observe,
         dispatchable: false,
         binding,

@@ -20,6 +20,7 @@ import {
   executionCycleRestrictionSubject,
   executionMandateFailureRestrictionPrefix,
 } from '../execution/mandate'
+import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
 import { IntentState, TerminalOutcome } from '../execution/contracts'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -231,7 +232,7 @@ const ensureExecutionCycleClosure = (
       if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
       const closure = yield* Effect.fromResult(
         makeExecutionCycleClosure({
-          schemaVersion: 'bayn.paper-cycle-closure.v1',
+          schemaVersion: legacyCycleClosureSchemaVersion,
           cycleId: cycle.identity.cycleId,
           entryDecisionHash,
           document,
@@ -270,7 +271,7 @@ const ensureExecutionCycleClosure = (
     if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
     const closure = yield* Effect.fromResult(
       makeExecutionCycleClosure({
-        schemaVersion: 'bayn.paper-cycle-closure.v1',
+        schemaVersion: legacyCycleClosureSchemaVersion,
         cycleId: cycle.identity.cycleId,
         entryDecisionHash,
         document,

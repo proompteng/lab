@@ -15,6 +15,7 @@ import { RuntimeProvenanceSchema } from '../contracts'
 import type { AutonomousCycle } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { legacyCandidateDiscoveryOperationToken } from '../execution/legacy-wire'
 import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
@@ -246,7 +247,7 @@ export const BrokerObservationsSchema = Schema.Struct({
 
 export const DiscoveryReceiptMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(discoverySchemaVersion),
-  operation: Schema.Literal('PAPER_CANDIDATE_DISCOVERY'),
+  operation: Schema.Literal(legacyCandidateDiscoveryOperationToken),
   authority: Schema.Literal(Authority.Observe),
   dispatchable: Schema.Literal(false),
   binding: DiscoveryBindingSchema,

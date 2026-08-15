@@ -17,6 +17,7 @@ import {
 } from '../broker/alpaca'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
 import { unusedAssetBySymbol } from '../broker/alpaca-test-support'
+import { Authority } from '../execution/contracts'
 import {
   CycleState,
   CycleTerminalReason,
@@ -864,7 +865,7 @@ describe('autonomous cycle runner', () => {
     const paperDecision = {
       ...decision,
       schemaVersion: 'bayn.paper-cycle-decision.v1',
-      mode: 'PAPER',
+      mode: Authority.Execution,
       dispatchable: true,
       bindings: {
         ...decision.bindings,

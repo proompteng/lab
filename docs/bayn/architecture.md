@@ -2,12 +2,12 @@
 
 ## Boundary
 
-Bayn is a single-writer, paper-only quantitative qualification runtime. It evaluates one compiled
-`risk-balanced-trend` candidate against one immutable Signal snapshot, journals the deterministic simulation, verifies
-the accounting result, and exposes the resulting qualification evidence. It has no order-submission entry point or
-capital-promotion authority. A dedicated paper credential may build the GET-only Alpaca read adapter while authority
-remains `OBSERVE`; paper mutation and recovery remain dormant. Public status reports maximum authority independently
-of credential presence.
+Bayn is a single-writer quantitative research and execution runtime. It evaluates one compiled `risk-balanced-trend`
+candidate against one immutable Signal snapshot, journals deterministic simulation, verifies accounting, and exposes
+qualification evidence. The same intent, risk, recovery, reconciliation, and mutation core is used regardless of
+whether the broker adapter targets sandbox or live. The deployed controller currently has read-only broker access and
+no capital authority, so it cannot submit or cancel orders. A bounded `ExecutionMandate` exists only when a separately
+reviewed durable capital grant and mutation-capable broker binding are both present.
 
 The runtime has three external I/O boundaries:
 
@@ -15,9 +15,10 @@ The runtime has three external I/O boundaries:
 - a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
 - the existing `EvidenceStore` interface for durable qualification evidence.
 
-Alpaca is reachable only through the existing paper-host CONNECT proxy. Credentials provide runtime-decoded GET-only
-broker access. Under `OBSERVE`, the canonical non-dispatchable autonomous shadow loop composes `PaperStore` and
-`WriterFence` and performs one same-pass reconciliation when it builds a decision; broker mutation remains absent.
+Alpaca is reachable only through the configured CONNECT proxy; the current sandbox adapter uses
+`paper-api.alpaca.markets`. Credentials provide runtime-decoded GET-only broker access in the deployed configuration.
+The canonical autonomous loop performs same-pass reconciliation when it builds a decision, and no broker mutation
+capability is composed while broker access is read-only and capital authority is none.
 Exact asset reads retain status, tradability, fractionability, and normalized attributes as policy-neutral evidence.
 
 The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
@@ -49,11 +50,11 @@ after bounded acquisition escapes the scoped runtime, closes HTTP and acquired c
 restart the process. A deterministic contract or evidence failure enters `FAILED` and keeps HTTP available for
 diagnosis with readiness closed.
 
-## Dormant paper mutation boundary
+## Execution mutation boundary
 
-Paper mutation uses one deliberately small transaction/I/O boundary:
+Execution mutation uses one deliberately small transaction/I/O boundary, shared by sandbox and live adapters:
 
-1. A committed approved intent and current paper authority acquire the single-writer fence.
+1. A committed approved intent and current `ExecutionMandate` acquire the single-writer fence.
 2. PostgreSQL records `SUBMIT_STARTED`, the exact request hash, deterministic client-order ID, and immutable broker
    consistency delay before the first POST.
 3. The coordinator rechecks the committed risk-decision expiry with the Effect clock immediately before POST or
@@ -70,10 +71,10 @@ order identity, and consistency delay in PostgreSQL. Any unresolved submit or ca
 intents; terminal recovery releases that block. There is no scheduler, public order route, arbitrary order API, blind
 flatten, runtime registry, or alternate writer.
 
-This path is intentionally dormant: credentials provide GET-only broker access, while `OBSERVE` composes `PaperStore`
-and `WriterFence` for one same-pass reconciliation inside the canonical non-dispatchable autonomous shadow loop.
-`BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain absent. `PAPER` startup fails closed until
-the PROOMPT-375 Phase B authority generation and dispatch transition exists.
+This boundary is capability-gated rather than account-type-gated. The deployed controller currently composes only
+GET-capable broker access, so `BrokerMutation` is unavailable and capital authority is none. When a reviewed mandate
+is present, the same coordinator, intent store, mutation store, risk logic, and recovery path are used for sandbox or
+live; only the injected broker adapter/configuration differs.
 
 ## Effect composition
 
@@ -96,10 +97,9 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   operation.
 - HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
   the complete evidence service.
-- The Alpaca read adapter enters runtime composition for GET-only access under `OBSERVE`. `PaperStore` and
-  `WriterFence` support one same-pass reconciliation inside the canonical non-dispatchable autonomous shadow loop.
-  `BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain outside composition, and `PAPER` startup
-  fails closed until the PROOMPT-375 Phase B authority generation and dispatch transition exists.
+- The Alpaca adapter enters runtime composition with an explicit `BrokerEnvironment` and `BrokerAccess`. The deployed
+  binding is GET-only. `WriterFence`, intent/mutation stores, and the coordinator are composed only when the decoded
+  execution policy grants their capabilities; sandbox/live selection does not change core decisions.
 
 Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
 only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.

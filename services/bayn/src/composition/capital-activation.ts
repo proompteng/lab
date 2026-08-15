@@ -51,6 +51,7 @@ import {
   executionMandateCompletionPersistenceSubject,
   validateExecutionMandateCloseWindow,
 } from '../execution/mandate'
+import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import {
   loadObserveRiskPolicy,
   executionMandateCloseExpiresAt,
@@ -272,7 +273,9 @@ export const capitalGenerationIsBoundToRequest = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   generation: CapitalGrantGeneration,
 ): Result.Result<void, string> => {
-  if (generation.maximum !== 'PAPER') return Result.fail('execution PREPARE did not return a mutation generation')
+  if (generation.maximum !== Authority.Execution) {
+    return Result.fail('execution PREPARE did not return a mutation generation')
+  }
   if (generation.previousGenerationHash !== plan.config.alpaca.authorityGenerationHash) {
     return Result.fail('execution PREPARE did not chain from the configured OBSERVE generation')
   }
@@ -821,7 +824,7 @@ export const prepareResearchCapitalActivation = (
     )
     return yield* readBoundCapitalActivationGeneration(plan, request, null, authorityStore).pipe(
       Effect.flatMap((generation) =>
-        generation.schemaVersion === 'bayn.paper-authority-generation.v3'
+        generation.schemaVersion === legacyAuthorityGenerationV3SchemaVersion
           ? Effect.succeed(generation)
           : Effect.fail(capitalActivationOperationalError('research capital activation loaded qualified history')),
       ),

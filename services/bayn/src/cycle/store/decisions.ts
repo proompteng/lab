@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { Pipeable } from '../../pipeable'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner'
 import type { InputManifest } from '../../types'
@@ -249,7 +250,8 @@ const decideDecisionBindingDataFirst = (
     document.bindings.cycleId !== cycle.identity.cycleId ||
     document.bindings.strategyName !== cycle.identity.strategyName ||
     document.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
-    (document.mode === 'PAPER' && document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
+    (document.mode === legacyExecutionAuthorityToken &&
+      document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
     document.bindings.snapshotId !== cycle.bindings.snapshotId ||
     document.bindings.accountId !== cycle.identity.accountId ||
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -299,8 +301,12 @@ const validateCompletionDocumentDataFirst = (
     storedDocument !== undefined &&
     storedDocument.contentHash === decision.decisionHash &&
     storedDocument.targetPlan.status === expectedStatus &&
-    !(storedDocument.mode === 'PAPER' && storedDocument.riskBlock !== undefined) &&
-    !(storedDocument.mode === 'PAPER' && decision.state === CycleState.Completed && !completionEvidenceMatches)
+    !(storedDocument.mode === legacyExecutionAuthorityToken && storedDocument.riskBlock !== undefined) &&
+    !(
+      storedDocument.mode === legacyExecutionAuthorityToken &&
+      decision.state === CycleState.Completed &&
+      !completionEvidenceMatches
+    )
     ? Result.succeed(undefined)
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
@@ -372,7 +378,10 @@ const validateBlockedDecisionDataFirst = (
       ? Result.succeed(undefined)
       : fail('invariant', 'cycle blocked reason must match its exact durable shadow decision')
   }
-  if (storedDocument.mode === 'PAPER' && storedDocument.targetPlan.status === TargetPlanStatus.Planned) {
+  if (
+    storedDocument.mode === legacyExecutionAuthorityToken &&
+    storedDocument.targetPlan.status === TargetPlanStatus.Planned
+  ) {
     if (decision.reason === CycleTerminalReason.ProvenanceMismatch && generationIsSuperseded) {
       return Result.succeed(undefined)
     }

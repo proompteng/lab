@@ -10,6 +10,7 @@ import {
   type ExecutionPolicy,
   type ExecutionPolicyResolutionFailure,
 } from '../execution/configuration'
+import type { LegacyAuthorityToken as PersistedAuthorityToken } from '../execution/legacy-wire'
 import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
 export const minimumOperationalThresholdMs = 1_000
@@ -105,7 +106,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
       }
   )
 
-export type LegacyAuthorityToken = 'OBSERVE' | 'PAPER'
+export type LegacyAuthorityToken = PersistedAuthorityToken
 export enum LegacyCapitalAuthoritySelection {
   Sandbox = 'sandbox-capital',
   Live = 'live-capital-grant',

@@ -4,6 +4,7 @@ import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
+import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import {
   Authority,
@@ -263,7 +264,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     const mutationStore = yield* MutationStore
     const targets = new Map(document.targetPlan.targets.map((target) => [target.symbol, target]))
     const documentAuthority: AuthorityState = {
-      schemaVersion: 'bayn.paper-authority.v1',
+      schemaVersion: legacyAuthorityStateSchemaVersion,
       generationHash: document.bindings.authorityGenerationHash,
       maximum: Authority.Execution,
       effective: Authority.Execution,
@@ -335,7 +336,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     for (const lookup of recoveryLookups) {
       const intent = yield* planExecutionIntent(
         {
-          schemaVersion: 'bayn.paper-intent-plan.v1',
+          schemaVersion: legacyIntentPlanSchemaVersion,
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
           ...(document.replanGenerationHash === undefined

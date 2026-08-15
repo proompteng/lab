@@ -18,6 +18,7 @@ import {
   type Order,
   type Position,
 } from '../execution/contracts'
+import { legacyOrderV2SchemaVersion, legacyPositionSchemaVersion } from '../execution/legacy-wire'
 import { MutationEventType, type MutationEvent } from '../execution/mutations'
 import type { PlannedTargetQuantity } from '../target-planner'
 import { Pipeable } from '../pipeable'
@@ -77,7 +78,7 @@ const projectMutationPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: 'bayn.paper-position.v1',
+    schemaVersion: legacyPositionSchemaVersion,
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityMicros: target.targetQuantityMicros,
@@ -174,7 +175,7 @@ const decidePreparedMutationIntentDataFirst = (
       return Result.succeed({
         _tag: 'Pending',
         order: {
-          schemaVersion: 'bayn.paper-order.v2',
+          schemaVersion: legacyOrderV2SchemaVersion,
           accountId: intent.accountId,
           brokerOrderId: latest.brokerOrderId,
           clientOrderId: intent.clientOrderId,

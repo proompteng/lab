@@ -1,4 +1,5 @@
 import type { ForwardPerformanceExecutionEvidence, ForwardPerformanceMarketVolumeRequest } from '../model'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import {
   CycleDecisionRow,
   FillExecutionRow,
@@ -67,7 +68,8 @@ export const executionEvidenceFromRows = (
   for (const row of decisionRows) {
     const document = row.document
     if (document.targetPlan.status !== 'PLANNED') continue
-    const replanGenerationHash = document.mode === 'PAPER' ? document.replanGenerationHash : undefined
+    const replanGenerationHash =
+      document.mode === legacyExecutionAuthorityToken ? document.replanGenerationHash : undefined
     for (const target of document.targetPlan.intentTargets) {
       const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
       const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
