@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
-import YAML from 'yaml'
 
 import {
   advanceBaynLifecycleManifests,
@@ -93,15 +92,10 @@ describe('Bayn lifecycle release manifests', () => {
       '../../../../argocd/applications/bayn/restate-registration-cleanup.yaml',
       import.meta.url,
     )
-    const hookGc = YAML.parseAllDocuments(
-      readFileSync(
-        new URL('../../../../argocd/applications/bayn/restate-retirement-hook-gc.yaml', import.meta.url),
-        'utf8',
-      ),
-    ).map((document) => document.toJSON() as Record<string, any>)
-    const hookGcNetworkPolicy = hookGc.find((document) => document.kind === 'NetworkPolicy')!
-    const hookGcJob = hookGc.find((document) => document.kind === 'Job')!
-    const hookGcContainer = hookGcJob.spec.template.spec.containers[0]
+    const hookGcManifest = new URL(
+      '../../../../argocd/applications/bayn/restate-retirement-hook-gc.yaml',
+      import.meta.url,
+    )
 
     expect(parseBaynLifecycleCurrent(current)).toEqual({
       sourceSha: '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
@@ -117,34 +111,12 @@ describe('Bayn lifecycle release manifests', () => {
     expect(kustomization).not.toContain('restate-registration-cleanup.yaml')
     expect(existsSync(cleanupManifest)).toBeFalse()
     expect(restateNetworkPolicy).not.toContain('app.kubernetes.io/name: bayn-lifecycle-register')
-    expect(kustomization).toContain('restate-retirement-hook-gc.yaml')
-    expect(hookGcNetworkPolicy.spec).toEqual({
-      podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-retirement-hook-gc' } },
-      policyTypes: ['Ingress', 'Egress'],
-      ingress: [],
-      egress: [],
-    })
-    expect(hookGcJob.metadata.name).toBe('bayn-restate-registration-final-retirement')
-    expect(hookGcJob.metadata.annotations).toEqual({
-      'argocd.argoproj.io/hook': 'PostSync',
-      'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation,HookSucceeded',
-      'argocd.argoproj.io/sync-wave': '2',
-    })
-    expect(hookGcJob.spec.backoffLimit).toBe(0)
-    expect(hookGcJob.spec.template.spec).toMatchObject({
-      automountServiceAccountToken: false,
-      enableServiceLinks: false,
-      restartPolicy: 'Never',
-    })
-    expect(hookGcContainer.image).toBe(
-      'docker.restate.dev/restatedev/restate-cli:1.7.2@sha256:6905cd107840658f8ef0338c95e3c691dba3da450e9e0fb12066d00fd57e69f9',
-    )
-    expect(hookGcContainer.command).toEqual(['/bin/sh', '-eu', '-c'])
-    expect(hookGcContainer.args).toEqual(['exit 0'])
-    expect(hookGcContainer.env).toBeUndefined()
+    expect(kustomization).not.toContain('restate-retirement-hook-gc.yaml')
+    expect(existsSync(hookGcManifest)).toBeFalse()
     expect(readme).toContain(
       'The legacy `BaynLifecycle`/`BaynLifecycleBootstrap` Restate registration set is fully retired.',
     )
+    expect(readme).toContain('The one-sync tombstone is no longer desired state.')
     expect(() => validateBaynLifecycleCommandPort(deployment)).toThrow(
       'Bayn deployment must expose exactly one lifecycle-cmd container port on TCP 8081',
     )
