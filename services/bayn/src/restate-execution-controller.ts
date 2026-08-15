@@ -402,6 +402,11 @@ export const makeBaynExecutionController = (
           verifyActivationBinding(config, ctx.key, request)
           const decision = decisionOrTerminal(decideExecutionControllerActivation(await readState(ctx), request))
           if (decision._tag === 'Activated') {
+            await ctx.run(
+              'project Bayn execution controller activation',
+              () => runtime.projectState(ctx.key, decision.state, ctx.request().attemptCompletedSignal),
+              executionControllerAdvanceRunOptions,
+            )
             ctx.set(stateKey, decision.state)
             scheduleTick(ctx, decision.state, executionControllerInitialTickDelayMs)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller activated', {
