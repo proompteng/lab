@@ -32,17 +32,17 @@ export type LifecycleAdvanceMaintenance = {
   readonly afterReconciliation: Effect.Effect<LifecycleAdvanceDisposition, CycleRunnerError>
 }
 
-export const executionEpisodeCloseGraceMs = 15 * 60_000
+export const executionMandateCloseGraceMs = 15 * 60_000
 
-export const executionEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
-  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + executionEpisodeCloseGraceMs)
+export const executionMandateCloseExpiresAt = (authorityExpiresAt: string): string =>
+  utcInstantFromEpochMillis(Date.parse(authorityExpiresAt) + executionMandateCloseGraceMs)
 
 /** Receipt finalization remains bounded, but survives late close settlement and transient read failures. */
-export const executionEpisodeReceiptFinalizationGraceMs = 15 * 60_000
+export const executionMandateReceiptFinalizationGraceMs = 15 * 60_000
 
-export const executionEpisodeReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
+export const executionMandateReceiptFinalizationExpiresAt = (authorityExpiresAt: string): string =>
   utcInstantFromEpochMillis(
-    Date.parse(executionEpisodeCloseExpiresAt(authorityExpiresAt)) + executionEpisodeReceiptFinalizationGraceMs,
+    Date.parse(executionMandateCloseExpiresAt(authorityExpiresAt)) + executionMandateReceiptFinalizationGraceMs,
   )
 
 export type ObserveDecisionRuntime =
@@ -95,9 +95,9 @@ export type ObserveAutonomousCycleInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape
-  readonly executionEpisodeCutoffAt?: string
-  readonly executionEpisodeCloseSubmitCutoffAt?: string
-  readonly executionEpisodeExpiresAt?: string
+  readonly executionMandateCutoffAt?: string
+  readonly executionMandateCloseSubmitCutoffAt?: string
+  readonly executionMandateExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
   /** Runs phased lifecycle maintenance inside the same serialized command as reconciliation and the cycle pass. */
   readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance

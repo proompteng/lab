@@ -46,15 +46,15 @@ import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
 import { OperationalError } from '../errors'
 import { runForwardPerformance } from '../forward-performance'
 import {
-  decideExecutionEpisodeAuthority,
+  decideExecutionMandateAuthority,
   executionActivationRestrictionSubject,
-  executionEpisodeRestrictionSubject,
-  validateExecutionEpisodeCloseWindow,
-} from '../execution/episode'
+  executionMandateCompletionPersistenceSubject,
+  validateExecutionMandateCloseWindow,
+} from '../execution/mandate'
 import {
   loadObserveRiskPolicy,
-  executionEpisodeCloseExpiresAt,
-  executionEpisodeReceiptFinalizationExpiresAt,
+  executionMandateCloseExpiresAt,
+  executionMandateReceiptFinalizationExpiresAt,
   type LifecycleAdvanceMaintenance,
   type LifecycleAdvanceDisposition,
 } from '../observe-composition'
@@ -516,7 +516,7 @@ export const recoverCapitalActivationGeneration = (
         buildContinuation,
       }),
     ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
-    const closeExpiresAt = executionEpisodeCloseExpiresAt(request.expiresAt)
+    const closeExpiresAt = executionMandateCloseExpiresAt(request.expiresAt)
     if (observedAt >= closeExpiresAt) {
       yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
       return yield* capitalActivationOperationalError(
@@ -548,7 +548,7 @@ export const recoverCapitalReceiptFinalizationGeneration = (
         buildContinuation,
       }),
     ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
-    if (observedAt < executionEpisodeCloseExpiresAt(request.expiresAt)) {
+    if (observedAt < executionMandateCloseExpiresAt(request.expiresAt)) {
       return yield* capitalActivationOperationalError(
         'durable capital receipt finalization is outside its bounded lease',
       )
@@ -745,7 +745,7 @@ export const validateResearchCapitalCloseLease = (
     ),
     Effect.flatMap((sessions) =>
       Effect.fromResult(
-        validateExecutionEpisodeCloseWindow({
+        validateExecutionMandateCloseWindow({
           cutoffAt: request.cutoffAt,
           expiresAt: request.expiresAt,
           maximumCloseSessions: request.maximumCloseSessions,
@@ -903,7 +903,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
             ),
       )
     const decision = yield* Effect.fromResult(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         generationHash: authority.generationHash,
         sourceGenerationHash: currentSourceGenerationHash,
         currentGenerationMatchesRequest,
@@ -914,7 +914,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
       }),
     ).pipe(
       Effect.mapError((cause) =>
-        capitalActivationOperationalError('research capital authority does not match this episode', cause),
+        capitalActivationOperationalError('research capital authority does not match this mandate', cause),
       ),
     )
     if (buildContinuation !== null && decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
@@ -1123,8 +1123,8 @@ export const runExecutionLifecycleMaintenance = (
       observedAt,
       decision: decideExecutionLifecycleMaintenance({
         cutoffAt: request.cutoffAt,
-        closeExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
-        finalizationExpiresAt: executionEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
+        closeExpiresAt: executionMandateCloseExpiresAt(request.expiresAt),
+        finalizationExpiresAt: executionMandateReceiptFinalizationExpiresAt(request.expiresAt),
         observedAt,
       }),
     })),
@@ -1269,7 +1269,7 @@ export const makeClosedCycleReceiptEmitter =
       ),
     )
 
-export const finalizeExecutionEpisodeDataFirst = (
+export const finalizeExecutionMandateDataFirst = (
   state: Ref.Ref<RuntimeState>,
   request: CapitalActivationRequest,
   generationHash: string,
@@ -1283,7 +1283,7 @@ export const finalizeExecutionEpisodeDataFirst = (
     Effect.flatMap((receiptHash) =>
       receiptHash === undefined
         ? Effect.succeed(false)
-        : restrictMutationAuthority(executionEpisodeRestrictionSubject, 'flat exact receipt finalized').pipe(
+        : restrictMutationAuthority(executionMandateCompletionPersistenceSubject, 'flat exact receipt finalized').pipe(
             Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
             Effect.provideService(WriterFence, writerFence),
             Effect.andThen(completedCapitalActivation(state, request, generationHash, receiptHash)),
@@ -1291,7 +1291,7 @@ export const finalizeExecutionEpisodeDataFirst = (
           ),
     ),
     Effect.catch((cause) =>
-      Effect.logError('Bayn execution episode finalization failed').pipe(
+      Effect.logError('Bayn execution mandate finalization failed').pipe(
         Effect.annotateLogs({
           service: 'bayn',
           cycleId,
@@ -1303,7 +1303,7 @@ export const finalizeExecutionEpisodeDataFirst = (
     ),
   )
 
-export const finalizeExecutionEpisode = Pipeable.dual(8, finalizeExecutionEpisodeDataFirst)
+export const finalizeExecutionMandate = Pipeable.dual(8, finalizeExecutionMandateDataFirst)
 
 export const closedCycleReceiptEmissionAllowedDataFirst = (cutoffAt: string, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(cutoffAt)
@@ -1315,8 +1315,8 @@ export const capitalReceiptFinalizationWindowOpenDataFirst = (
   observedAt: string,
 ): boolean => {
   const observedMs = Date.parse(observedAt)
-  const closeExpiresMs = Date.parse(executionEpisodeCloseExpiresAt(authorityExpiresAt))
-  const finalizationExpiresMs = Date.parse(executionEpisodeReceiptFinalizationExpiresAt(authorityExpiresAt))
+  const closeExpiresMs = Date.parse(executionMandateCloseExpiresAt(authorityExpiresAt))
+  const finalizationExpiresMs = Date.parse(executionMandateReceiptFinalizationExpiresAt(authorityExpiresAt))
   return Number.isFinite(observedMs) && observedMs >= closeExpiresMs && observedMs < finalizationExpiresMs
 }
 

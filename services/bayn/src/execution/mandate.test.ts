@@ -2,17 +2,17 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import {
-  decideExecutionEpisodeAuthority,
-  decideExecutionEpisodeCycleTerminalization,
-  executionEpisodeAllocationCapitalMicros,
-  executionEpisodeFailureRestrictionPrefix,
-  isExecutionEpisodeFailureRestriction,
+  decideExecutionMandateAuthority,
+  decideExecutionMandateCycleTerminalization,
+  executionMandateAllocationCapitalMicros,
+  executionMandateFailureRestrictionPrefix,
+  isExecutionMandateFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
-  validateExecutionEpisodeCloseWindow,
-} from './episode'
+  validateExecutionMandateCloseWindow,
+} from './mandate'
 
-describe('executionEpisodeAllocationCapitalMicros', () => {
+describe('executionMandateAllocationCapitalMicros', () => {
   test('selects the smallest account, exposure, and remaining-turnover bound', () => {
     const common = {
       accountEquityMicros: 100_000_000_000n,
@@ -25,21 +25,21 @@ describe('executionEpisodeAllocationCapitalMicros', () => {
       referencePriceMicros: {},
     }
 
-    expect(Result.getOrThrow(executionEpisodeAllocationCapitalMicros(common))).toBe(1_000_000_000n)
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(common))).toBe(1_000_000_000n)
     expect(
       Result.getOrThrow(
-        executionEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n }),
+        executionMandateAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n }),
       ),
     ).toBe(250_000_000n)
     expect(
-      Result.getOrThrow(executionEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
     ).toBe(200_000_000n)
     expect(
       Result.getOrThrow(
-        executionEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n }),
+        executionMandateAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n }),
       ),
     ).toBe(0n)
-    expect(Result.getOrThrow(executionEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
       999_000_999n,
     )
   })
@@ -55,12 +55,12 @@ describe('executionEpisodeAllocationCapitalMicros', () => {
       referencePriceMicros: { SPY: '100000000' },
     }
     const scalable = Result.getOrThrow(
-      executionEpisodeAllocationCapitalMicros({
+      executionMandateAllocationCapitalMicros({
         ...common,
         positions: [{ symbol: 'SPY', quantityMicros: '1000000' }],
       }),
     )
-    const rejected = executionEpisodeAllocationCapitalMicros({
+    const rejected = executionMandateAllocationCapitalMicros({
       ...common,
       positions: [{ symbol: 'SPY', quantityMicros: '10000000' }],
     })
@@ -76,39 +76,39 @@ describe('executionEpisodeAllocationCapitalMicros', () => {
   })
 })
 
-describe('execution episode decisions', () => {
+describe('execution mandate decisions', () => {
   test('recognizes only canonical and exact legacy system failure restrictions', () => {
     const cycleId = 'a'.repeat(64)
     const intentId = 'b'.repeat(64)
 
     expect(
-      isExecutionEpisodeFailureRestriction(
-        `${executionEpisodeFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`,
+      isExecutionMandateFailureRestriction(
+        `${executionMandateFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`,
       ),
     ).toBe(true)
     expect(
-      isExecutionEpisodeFailureRestriction(
+      isExecutionMandateFailureRestriction(
         'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_RISK',
       ),
     ).toBe(true)
     expect(
-      isExecutionEpisodeFailureRestriction(
+      isExecutionMandateFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} submit settled denied`,
       ),
     ).toBe(true)
     expect(
-      isExecutionEpisodeFailureRestriction(
+      isExecutionMandateFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended REJECTED`,
       ),
     ).toBe(true)
-    expect(isExecutionEpisodeFailureRestriction('operator requested PAPER stop')).toBe(false)
+    expect(isExecutionMandateFailureRestriction('operator requested PAPER stop')).toBe(false)
     expect(
-      isExecutionEpisodeFailureRestriction(
+      isExecutionMandateFailureRestriction(
         `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended FILLED`,
       ),
     ).toBe(false)
     expect(
-      isExecutionEpisodeFailureRestriction(
+      isExecutionMandateFailureRestriction(
         `bound PAPER cycle ${cycleId.slice(1)} restricted effective authority: intent ${intentId} submit settled denied`,
       ),
     ).toBe(false)
@@ -141,7 +141,7 @@ describe('execution episode decisions', () => {
   test('keeps the entry cycle active through holding and terminalizes only after close evidence', () => {
     const cutoff = '2026-09-01T13:00:00.000Z'
     expect(
-      decideExecutionEpisodeCycleTerminalization({
+      decideExecutionMandateCycleTerminalization({
         closeOnly: false,
         observedAt: '2026-08-31T20:00:00.000Z',
         entryCutoffAt: cutoff,
@@ -149,7 +149,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual({ _tag: 'WaitForClose' })
     expect(
-      decideExecutionEpisodeCycleTerminalization({
+      decideExecutionMandateCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -157,7 +157,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
-      decideExecutionEpisodeCycleTerminalization({
+      decideExecutionMandateCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -165,7 +165,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
-      decideExecutionEpisodeCycleTerminalization({
+      decideExecutionMandateCycleTerminalization({
         closeOnly: false,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
@@ -180,7 +180,7 @@ describe('execution episode decisions', () => {
       currentGenerationMatchesRequest: false,
     }
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: common.sourceGenerationHash,
         maximum: 'OBSERVE',
@@ -189,7 +189,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Activate' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -199,7 +199,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Resume' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -209,7 +209,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -220,7 +220,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: 'b'.repeat(64),
         maximum: 'PAPER',
@@ -231,7 +231,7 @@ describe('execution episode decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         generationHash: 'c'.repeat(64),
         maximum: 'PAPER',
@@ -250,18 +250,18 @@ describe('execution episode decisions', () => {
       kill: 'ACTIVE' as const,
       currentGenerationMatchesRequest: false,
     }
-    expect(decideExecutionEpisodeAuthority({ ...common, reason: 'operator kill' })).toEqual(
+    expect(decideExecutionMandateAuthority({ ...common, reason: 'operator kill' })).toEqual(
       Result.fail({ _tag: 'IdentityDrift' }),
     )
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         sourceGenerationHash: common.generationHash,
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
     expect(
-      decideExecutionEpisodeAuthority({
+      decideExecutionMandateAuthority({
         ...common,
         sourceGenerationHash: common.generationHash,
         maximum: 'PAPER',
@@ -269,11 +269,11 @@ describe('execution episode decisions', () => {
         kill: 'CLEAR',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
-    expect(decideExecutionEpisodeAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(decideExecutionMandateAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
 
   test('rejects source-generation drift instead of activating over unknown OBSERVE history', () => {
-    const result = decideExecutionEpisodeAuthority({
+    const result = decideExecutionMandateAuthority({
       generationHash: 'c'.repeat(64),
       sourceGenerationHash: 'a'.repeat(64),
       maximum: 'OBSERVE',
@@ -291,7 +291,7 @@ describe('execution episode decisions', () => {
       { date: '2026-09-03', openAt: '2026-09-03T13:30:00.000Z', closeAt: '2026-09-03T20:00:00.000Z' },
     ]
     expect(
-      validateExecutionEpisodeCloseWindow({
+      validateExecutionMandateCloseWindow({
         cutoffAt: sessions[0].openAt,
         expiresAt: sessions[2].closeAt,
         maximumCloseSessions: 3,
@@ -328,7 +328,7 @@ describe('execution episode decisions', () => {
       },
     ]
     for (const input of invalid) {
-      const result = validateExecutionEpisodeCloseWindow(input)
+      const result = validateExecutionMandateCloseWindow(input)
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result)) expect(result.failure._tag).toBe('InvalidCloseWindow')
     }

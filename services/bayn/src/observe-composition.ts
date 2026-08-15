@@ -44,10 +44,10 @@ export type {
 } from './observe-composition/decision-builder'
 
 export {
-  executionEpisodeCloseExpiresAt,
-  executionEpisodeCloseGraceMs,
-  executionEpisodeReceiptFinalizationExpiresAt,
-  executionEpisodeReceiptFinalizationGraceMs,
+  executionMandateCloseExpiresAt,
+  executionMandateCloseGraceMs,
+  executionMandateReceiptFinalizationExpiresAt,
+  executionMandateReceiptFinalizationGraceMs,
 } from './observe-composition/model'
 export type {
   LifecycleAdvanceDisposition,

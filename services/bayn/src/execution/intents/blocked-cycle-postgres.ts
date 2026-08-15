@@ -5,13 +5,13 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import {
   executionActivationExpiredRestrictionReason,
-  executionEpisodeCompletedRestrictionReason,
-  executionEpisodeFailureRestrictionPrefix,
+  executionMandateCompletedRestrictionReason,
+  executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
-  legacyExecutionEpisodeCompletedRestrictionReason,
-  legacyExecutionEpisodeFailureRestrictionPattern,
-  legacyExecutionEpisodeFailureRestrictionPrefix,
-} from '../episode'
+  legacyExecutionMandateFailureRestrictionPattern,
+  legacyExecutionMandateFailureRestrictionPrefix,
+  legacyV1CompletedRestrictionReason,
+} from '../mandate'
 import {
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreError,
@@ -175,7 +175,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           SELECT
             state.generation_hash,
             generation.account_id,
-            state.reason ~ ${legacyExecutionEpisodeFailureRestrictionPattern} AS legacy_failure_restriction
+            state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
           JOIN authority_generations AS generation
             ON generation.generation_hash = state.generation_hash
@@ -184,14 +184,14 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
             AND (
-              state.reason LIKE ${`${executionEpisodeFailureRestrictionPrefix}%`}
-              OR state.reason LIKE ${`${legacyExecutionEpisodeFailureRestrictionPrefix}%`}
-              OR state.reason ~ ${legacyExecutionEpisodeFailureRestrictionPattern}
+              state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
+              OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
+              OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
               OR (
                 state.reason IN (
-                  ${executionEpisodeCompletedRestrictionReason},
+                  ${executionMandateCompletedRestrictionReason},
                   ${executionActivationExpiredRestrictionReason},
-                  ${legacyExecutionEpisodeCompletedRestrictionReason},
+                  ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
                 AND EXISTS (
@@ -276,7 +276,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         ), canonicalized_authority AS (
           UPDATE authority_state AS state
           SET
-            reason = ${executionEpisodeFailureRestrictionPrefix} || ' ' || state.reason,
+            reason = ${executionMandateFailureRestrictionPrefix} || ' ' || state.reason,
             version = state.version + 1,
             updated_at = GREATEST(
               ${input.observedAt}::timestamptz,

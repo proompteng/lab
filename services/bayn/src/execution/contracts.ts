@@ -1,7 +1,7 @@
 import { pipe, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
-import { ResearchCapitalGrantSchema } from './episode'
+import { ResearchCapitalGrantSchema } from './mandate'
 import {
   ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,

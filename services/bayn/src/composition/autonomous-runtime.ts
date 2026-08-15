@@ -47,13 +47,13 @@ import { WriterFence } from '../execution/writer-fence'
 import { OperationalError } from '../errors'
 import { MarketData } from '../market-data'
 import {
-  isExecutionEpisodeFailureRestriction,
+  isExecutionMandateFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
-} from '../execution/episode'
+} from '../execution/mandate'
 import {
   loadObserveRiskPolicy,
-  executionEpisodeCloseExpiresAt,
+  executionMandateCloseExpiresAt,
   type RecoveryFirstCycleDriverInterpreter,
 } from '../observe-composition'
 import { runOnce } from '../reconciler'
@@ -77,7 +77,7 @@ import {
   completeExecutionLifecycle,
   completedCapitalActivation,
   decodeConfiguredCapitalActivation,
-  finalizeExecutionEpisode,
+  finalizeExecutionMandate,
   makeClosedCycleReceiptEmitter,
   pendingCapitalActivation,
   prepareCapitalActivation,
@@ -159,7 +159,7 @@ export const makeAutonomousServiceRuntime = (
         if (request === null) {
           if (plan.config.execution.brokerAccess === BrokerAccess.Mutation) {
             yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
-            return Result.fail('configured granted capital requires an immutable execution episode request')
+            return Result.fail('configured granted capital requires an immutable execution mandate request')
           }
           return Result.succeed({ request, buildContinuation, evidence: current.evidence })
         }
@@ -378,7 +378,7 @@ export const makeAutonomousServiceRuntime = (
                           currentUtcInstant.pipe(
                             Effect.flatMap(
                               (observedAt): Effect.Effect<CapitalActivationStartupResolution, OperationalError> =>
-                                observedAt >= executionEpisodeCloseExpiresAt(request.expiresAt)
+                                observedAt >= executionMandateCloseExpiresAt(request.expiresAt)
                                   ? recoverCapitalReceiptFinalizationGeneration(
                                       observePlan,
                                       request,
@@ -453,7 +453,7 @@ export const makeAutonomousServiceRuntime = (
                             runtimeServices.forwardPerformanceReceiptStore,
                           )
                           const finalizeClosedCycleReceipt = (cycleId: string | undefined, observedAt: string) =>
-                            finalizeExecutionEpisode(
+                            finalizeExecutionMandate(
                               state,
                               request,
                               prepared.generation.generationHash,
@@ -484,7 +484,7 @@ export const makeAutonomousServiceRuntime = (
                                 )
                               if (Option.isSome(existing)) {
                                 yield* completeExecutionLifecycle(
-                                  finalizeExecutionEpisode(
+                                  finalizeExecutionMandate(
                                     state,
                                     request,
                                     prepared.generation.generationHash,
@@ -564,7 +564,7 @@ export const makeAutonomousServiceRuntime = (
                                 authorityState.maximum === Authority.Execution &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
-                                isExecutionEpisodeFailureRestriction(authorityState.reason)
+                                isExecutionMandateFailureRestriction(authorityState.reason)
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }
@@ -621,7 +621,7 @@ export const makeAutonomousServiceRuntime = (
                                     cycleId: string | undefined,
                                     observedAt: string,
                                   ) =>
-                                    finalizeExecutionEpisode(
+                                    finalizeExecutionMandate(
                                       state,
                                       request,
                                       prepared.generation.generationHash,
@@ -667,7 +667,7 @@ export const makeAutonomousServiceRuntime = (
                                               riskPolicy,
                                               currentUtcInstant,
                                               entrySubmitExpiresAt: request.cutoffAt,
-                                              closeSubmitExpiresAt: executionEpisodeCloseExpiresAt(request.expiresAt),
+                                              closeSubmitExpiresAt: executionMandateCloseExpiresAt(request.expiresAt),
                                               isCloseOnlyIntent: (intentId) =>
                                                 runtimeServices.executionCycleClosureStore
                                                   .containsIntent(intentId)
