@@ -272,15 +272,49 @@ describe('native execution runtime', () => {
               (runtime) => runtime.disposeEffect,
             ),
           )
+          const projectionManaged = yield* Effect.acquireRelease(
+            Effect.succeed(
+              ManagedRuntime.make(
+                Layer.succeed(
+                  ExecutionControllerStatusStore,
+                  statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+                ),
+              ),
+            ),
+            (runtime) => runtime.disposeEffect,
+          )
           const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
             managed,
             executionResources,
+            projectionManaged,
             hostRunner,
             controllerPlanHash,
           )
 
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.log('info', 'inactive worker discovery', {}))
+          expect(acquired).toBe(0)
+          yield* Effect.promise(() =>
+            runtime.projectState(
+              command.controllerKey,
+              {
+                schemaVersion: 1,
+                active: false,
+                epoch: command.epoch + 1,
+                planHash: controllerPlanHash,
+                sourceRevision,
+                initialSequence: command.sequence,
+                nextSequence: command.sequence + 1,
+                lastCompletion: {
+                  sequence: command.sequence,
+                  outcome: ExecutionControllerOutcome.Blocked,
+                  receiptHash: hash('2'),
+                  completedAt,
+                },
+              },
+              new AbortController().signal,
+            ),
+          )
           expect(acquired).toBe(0)
           yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
           yield* Effect.promise(() =>
@@ -395,9 +429,21 @@ describe('native execution runtime', () => {
               (runtime) => runtime.disposeEffect,
             ),
           )
+          const projectionManaged = yield* Effect.acquireRelease(
+            Effect.succeed(
+              ManagedRuntime.make(
+                Layer.succeed(
+                  ExecutionControllerStatusStore,
+                  statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+                ),
+              ),
+            ),
+            (runtime) => runtime.disposeEffect,
+          )
           const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
             managed,
             executionResources,
+            projectionManaged,
             hostRunner,
             controllerPlanHash,
           )
