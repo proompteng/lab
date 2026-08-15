@@ -22,13 +22,13 @@ let
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     # Refreshed from the two authoritative Linux image builders after packaging native execution activation.
-    x86_64-linux = "sha256-Jqzdd+6DKpjTskHKk/CHb1ch3IVuFChkYo35UrncBXY=";
-    aarch64-linux = "sha256-JvmAEBrbOSZQlf+J0dkcMPiIPzIwrzcqo35o2zs/aJc=";
+    x86_64-linux = "sha256-w5W1nSJSgL5a92YqANHZe6477nQHQFM4jiT1feYHLKE=";
+    aarch64-linux = "sha256-m20VFC+NPshUHNlQwQqzgmrlB5OA4kyE3KG0NbL0IxA=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate-lifecycle-server.ts src/restate-lifecycle-register.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate-execution-server.ts src/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -41,8 +41,6 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-lifecycle-server.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-lifecycle-register.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -52,8 +50,6 @@ let
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-lifecycle-server.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-lifecycle-register.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
@@ -99,7 +95,6 @@ import ./bun-workspace-service.nix {
   ];
   exposedPorts = {
     "8080/tcp" = { };
-    "8081/tcp" = { };
     "9080/tcp" = { };
   };
   labels = {

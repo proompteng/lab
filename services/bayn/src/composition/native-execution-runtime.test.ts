@@ -79,7 +79,6 @@ const marketDataBinding: MarketDataBinding = {
 }
 
 type PlanOverrides = {
-  readonly lifecycleOwner?: 'Process' | 'Restate'
   readonly brokerAccess?: 'mutation' | 'read-only'
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
@@ -152,9 +151,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
-      lifecycleOwner: overrides.lifecycleOwner ?? 'Restate',
-      lifecycleCommandPort: 8081,
-      lifecycleControllerKey: 'primary',
       alpaca: {
         provider: BrokerProvider.Alpaca,
         environment: BrokerEnvironment.Sandbox,
@@ -369,10 +365,48 @@ describe('native execution runtime', () => {
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })
 
-  test('keeps native controller identity independent of the legacy lifecycle owner compatibility setting', () => {
-    expect(executionControllerConfig(plan({ lifecycleOwner: 'Process' }))).toEqual(
-      executionControllerConfig(plan({ lifecycleOwner: 'Restate' })),
+  test('the native worker captures exactly one bounded pass for one Restate advance', async () => {
+    let advances = 0
+    const slot = Effect.runSync(
+      Effect.gen(function* () {
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+          ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
     )
+    const capturedDriver = {
+      ...driver,
+      advance: Effect.sync(() => {
+        advances += 1
+        return {
+          observation: {
+            result: 'SUCCESS' as const,
+            observedAt: completedAt,
+            outcome: 'NOT_DUE' as const,
+          },
+        }
+      }),
+    }
+    const publication = Effect.runFork(
+      captureRecoveryFirstCycleDriver(slot)(capturedDriver).pipe(
+        Effect.provideContext(Context.empty() as Context.Context<RecoveryFirstRuntime>),
+      ),
+    )
+
+    await Effect.runPromise(Deferred.await(slot.ready))
+    const captured = await Effect.runPromise(readRecoveryFirstCycleDriverSlot(slot))
+    await Effect.runPromise(
+      executeNativeExecutionAdvance(
+        command,
+        captured,
+        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        controllerPlanHash,
+      ),
+    )
+    await Effect.runPromise(Fiber.interrupt(publication))
+
+    expect(advances).toBe(1)
   })
 
   test('keeps recovery-capable execution resources dormant until the first tick and releases them exactly once', async () => {

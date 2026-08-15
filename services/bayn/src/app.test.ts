@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted, Ref, Result, Scope } from 'effect'
+import { Context, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted, Ref, Result, Scope } from 'effect'
 
 import {
   config,
-  fixtureEvaluation,
   fixtureRuntime,
   marketDataService,
   pinnedEvaluation,
@@ -15,7 +14,6 @@ import {
   successfulEvidenceStore,
   successfulJournal,
 } from './app-test-support'
-import { utcInstantFromEpochMillis } from './time'
 import {
   type ApplicationIdentity,
   type AutonomousCycleStartupInput,
@@ -116,9 +114,6 @@ const broker: BrokerProbe = {
 const autonomousConfig = (runtime: typeof config): AutonomousApplicationConfig => ({
   ...runtime,
   runtimeMode: 'AutonomousService',
-  lifecycleOwner: runtime.lifecycleOwner ?? 'Process',
-  lifecycleCommandPort: runtime.lifecycleCommandPort ?? 8081,
-  lifecycleControllerKey: runtime.lifecycleControllerKey ?? 'primary',
   cyclePollIntervalMs: 30_000,
   execution: {
     brokerIdentity: Result.getOrThrow(
@@ -158,9 +153,6 @@ const autonomousConfig = (runtime: typeof config): AutonomousApplicationConfig =
 const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig => ({
   ...runtime,
   runtimeMode: 'BrokerlessService',
-  lifecycleOwner: runtime.lifecycleOwner ?? 'Process',
-  lifecycleCommandPort: runtime.lifecycleCommandPort ?? 8081,
-  lifecycleControllerKey: runtime.lifecycleControllerKey ?? 'primary',
   cyclePollIntervalMs: 30_000,
   execution: {
     brokerIdentity: undefined,
@@ -347,37 +339,25 @@ describe('Bayn application composition', () => {
     }
   })
 
-  test('starts one scoped autonomous cycle after initialization and interrupts it with the application', async () => {
+  test('public application initializes and serves health without starting an autonomous cycle', async () => {
     const calls: string[] = []
-    let backgroundInterrupted = false
+    let cycleStarted = false
     const marketData = marketDataService(
       Effect.sync(() => {
         calls.push('initialize')
         return makeSnapshot()
       }),
     )
-    let startupQualificationRunId: string | undefined
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
-          const startCycle = ({ qualificationRunId, recordPass }: AutonomousCycleStartupInput) =>
-            pipe(
-              Effect.sync(() => {
-                calls.push('autonomous-cycle')
-                startupQualificationRunId = qualificationRunId
-              }),
-              Effect.andThen(Clock.currentTimeMillis),
-              Effect.map(utcInstantFromEpochMillis),
-              Effect.flatMap((observedAt) => recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' })),
-              Effect.as(
-                pipe(
-                  Deferred.succeed(started, undefined),
-                  Effect.andThen(Effect.never),
-                  Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))),
-                ),
-              ),
-            )
+          const observed = yield* Deferred.make<void>()
+          const healthCycleObservability = {
+            read: (_bindingId: string) =>
+              Deferred.succeed(observed, undefined).pipe(Effect.andThen(cycleObservability.read())),
+          }
+          const startCycle = () =>
+            Effect.sync(() => void (cycleStarted = true)).pipe(Effect.as(Effect.die('public process started cycle')))
           const fiber = yield* pipe(
             runApplication(
               autonomousConfig(config),
@@ -386,25 +366,24 @@ describe('Bayn application composition', () => {
                 marketData,
                 journal: successfulJournal,
                 evidenceStore: successfulEvidenceStore,
-                cycleObservability,
+                cycleObservability: healthCycleObservability,
               },
               { _tag: 'AutonomousRead', broker, startCycle },
             ),
             Effect.provide(HttpServerLive(config)),
             Effect.forkScoped,
           )
-          yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
+          yield* pipe(Deferred.await(observed), Effect.timeout('2 seconds'))
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(calls).toEqual(['initialize', 'autonomous-cycle'])
-    expect(startupQualificationRunId).toBe(fixtureEvaluation.runId)
-    expect(backgroundInterrupted).toBe(true)
+    expect(calls).toEqual(['initialize'])
+    expect(cycleStarted).toBe(false)
   })
 
-  test('starts an observation-bound autonomous cycle without qualification evidence', async () => {
+  test('public application observes an exact cycle binding without starting its cycle driver', async () => {
     const observationBinding = 'b'.repeat(64)
     let startedBindingId: string | undefined
     let observedBindingId: string | undefined
@@ -414,12 +393,9 @@ describe('Bayn application composition', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
           const observed = yield* Deferred.make<void>()
           const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
-            Effect.sync(() => void (startedBindingId = qualificationRunId)).pipe(
-              Effect.as(Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))),
-            )
+            Effect.sync(() => void (startedBindingId = qualificationRunId)).pipe(Effect.as(Effect.never))
           const researchCycleObservability = {
             read: (bindingId: string) =>
               Effect.sync(() => void (observedBindingId = bindingId)).pipe(
@@ -457,14 +433,13 @@ describe('Bayn application composition', () => {
               startCycle,
             },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
-          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
           yield* Deferred.await(observed).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(startedBindingId).toBe(observationBinding)
+    expect(startedBindingId).toBeUndefined()
     expect(observedBindingId).toBe(observationBinding)
     expect(startupMarketDataLoads).toBe(0)
     expect(startupQualificationOpens).toBe(0)
@@ -517,17 +492,13 @@ describe('Bayn application composition', () => {
     )
   })
 
-  test('resolves the autonomous broker runtime before starting its cycle', async () => {
+  test('resolves the autonomous broker runtime for health without starting its cycle', async () => {
     const events: string[] = []
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
-          const startCycle = () =>
-            Effect.sync(() => events.push('cycle')).pipe(
-              Effect.andThen(Deferred.succeed(started, undefined)),
-              Effect.andThen(Effect.never),
-            )
+          const resolved = yield* Deferred.make<void>()
+          const startCycle = () => Effect.sync(() => events.push('cycle')).pipe(Effect.as(Effect.never))
           const unresolvedStartCycle = () => Effect.succeed(Effect.void)
           const fiber = yield* runApplication(
             autonomousConfig(config),
@@ -551,31 +522,32 @@ describe('Bayn application composition', () => {
                   const current = yield* Ref.get(state)
                   expect(current.broker?.readAvailable).toBe(null)
                   events.push('resolved')
+                  yield* Deferred.succeed(resolved, undefined)
                   return { _tag: 'AutonomousRead' as const, broker, startCycle }
                 }),
             },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
-          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(resolved).pipe(Effect.timeout('1 second'))
+          yield* Effect.yieldNow
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(events).toEqual(['resolved', 'cycle'])
+    expect(events).toEqual(['resolved'])
   })
 
-  test('keeps resolver-owned runtime resources open through cycle and health until application interruption', async () => {
+  test('keeps resolver-owned read resources open through health until application interruption', async () => {
     const events: string[] = []
     let finalizations = 0
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const cycleUsed = yield* Deferred.make<void>()
           const healthUsed = yield* Deferred.make<void>()
           interface RuntimeResourceShape {
             readonly close: () => void
-            readonly use: (consumer: 'cycle' | 'health') => Effect.Effect<void>
+            readonly use: () => Effect.Effect<void>
           }
           class RuntimeResource extends Context.Service<RuntimeResource, RuntimeResourceShape>()(
             '@proompteng/bayn/app.test/RuntimeResource',
@@ -587,17 +559,11 @@ describe('Bayn application composition', () => {
                 let open = true
                 const resource: RuntimeResourceShape = {
                   close: () => void (open = false),
-                  use: (consumer) =>
+                  use: () =>
                     Effect.sync(() => {
-                      if (!open) throw new Error(`runtime resource was finalized before ${consumer} use`)
-                      events.push(consumer)
-                    }).pipe(
-                      Effect.andThen(
-                        consumer === 'cycle'
-                          ? Deferred.succeed(cycleUsed, undefined)
-                          : Deferred.succeed(healthUsed, undefined),
-                      ),
-                    ),
+                      if (!open) throw new Error('runtime resource was finalized before health use')
+                      events.push('health')
+                    }).pipe(Effect.andThen(Deferred.succeed(healthUsed, undefined))),
                 }
                 return resource
               }),
@@ -640,21 +606,13 @@ describe('Bayn application composition', () => {
                             ...broker,
                             read: {
                               ...broker.read,
-                              account: resource.use('health').pipe(Effect.andThen(broker.read.account)),
+                              account: resource.use().pipe(Effect.andThen(broker.read.account)),
                             },
                           }
                           return {
                             _tag: 'AutonomousRead' as const,
                             broker: runtimeBroker,
-                            startCycle: ({ recordPass }: AutonomousCycleStartupInput) =>
-                              resource.use('cycle').pipe(
-                                Effect.andThen(Clock.currentTimeMillis),
-                                Effect.map(utcInstantFromEpochMillis),
-                                Effect.flatMap((observedAt) =>
-                                  recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' }),
-                                ),
-                                Effect.as(Effect.never),
-                              ),
+                            startCycle: () => Effect.die('public process started cycle'),
                           }
                         }),
                       ),
@@ -664,8 +622,6 @@ describe('Bayn application composition', () => {
             },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
 
-          yield* Deferred.await(cycleUsed).pipe(Effect.timeout('1 second'))
-          expect(finalizations).toBe(0)
           yield* Deferred.await(healthUsed).pipe(Effect.timeout('1 second'))
           expect(finalizations).toBe(0)
           yield* Fiber.interrupt(fiber)
@@ -673,7 +629,6 @@ describe('Bayn application composition', () => {
       ),
     )
 
-    expect(events).toContain('cycle')
     expect(events).toContain('health')
     expect(finalizations).toBe(1)
   })
@@ -708,22 +663,18 @@ describe('Bayn application composition', () => {
     expect(finalizations).toBe(1)
   })
 
-  test('starts the same scoped autonomous cycle for mutation runtime readiness', async () => {
+  test('public mutation-shaped runtime still cannot start an autonomous cycle', async () => {
     let startedQualificationRunId: string | undefined
-    let interrupted = false
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
+          const observed = yield* Deferred.make<void>()
           const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
-            Effect.sync(() => void (startedQualificationRunId = qualificationRunId)).pipe(
-              Effect.as(
-                Deferred.succeed(started, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
-                ),
-              ),
-            )
+            Effect.sync(() => void (startedQualificationRunId = qualificationRunId)).pipe(Effect.as(Effect.never))
+          const healthCycleObservability = {
+            read: (_bindingId: string) =>
+              Deferred.succeed(observed, undefined).pipe(Effect.andThen(cycleObservability.read())),
+          }
           const fiber = yield* runApplication(
             autonomousConfig(config),
             fixtureRuntime,
@@ -731,7 +682,7 @@ describe('Bayn application composition', () => {
               marketData: marketDataService(Effect.succeed(makeSnapshot())),
               journal: successfulJournal,
               evidenceStore: successfulEvidenceStore,
-              cycleObservability,
+              cycleObservability: healthCycleObservability,
             },
             {
               _tag: 'AutonomousMutation',
@@ -740,14 +691,13 @@ describe('Bayn application composition', () => {
               startCycle,
             },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
-          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(observed).pipe(Effect.timeout('2 seconds'))
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(startedQualificationRunId).toBe(fixtureEvaluation.runId)
-    expect(interrupted).toBe(true)
+    expect(startedQualificationRunId).toBeUndefined()
   })
 
   test('keeps the pinned qualification scope separate from the current decision protocol identity', async () => {
@@ -760,15 +710,20 @@ describe('Bayn application composition', () => {
     expect(currentProtocolHash).not.toBe(pinnedEvaluation.protocolHash)
 
     let startupQualificationRunId: string | undefined
+    let observedQualificationRunId: string | undefined
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
+          const observed = yield* Deferred.make<void>()
           const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
-            pipe(
-              Effect.sync(() => void (startupQualificationRunId = qualificationRunId)),
-              Effect.as(pipe(Deferred.succeed(started, undefined), Effect.andThen(Effect.never))),
-            )
+            Effect.sync(() => void (startupQualificationRunId = qualificationRunId)).pipe(Effect.as(Effect.never))
+          const pinnedCycleObservability = {
+            read: (bindingId: string) =>
+              Effect.sync(() => void (observedQualificationRunId = bindingId)).pipe(
+                Effect.andThen(Deferred.succeed(observed, undefined)),
+                Effect.andThen(cycleObservability.read()),
+              ),
+          }
           const fiber = yield* pipe(
             runApplication(
               autonomousConfig(pinnedRuntimeConfig),
@@ -777,19 +732,20 @@ describe('Bayn application composition', () => {
                 marketData: marketDataService(Effect.die(new Error('pinned startup must not load Signal bars'))),
                 journal: successfulJournal,
                 evidenceStore: pinnedStore(),
-                cycleObservability,
+                cycleObservability: pinnedCycleObservability,
               },
               { _tag: 'AutonomousRead', broker, startCycle },
             ),
             Effect.provide(HttpServerLive(pinnedRuntimeConfig)),
             Effect.forkScoped,
           )
-          yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
+          yield* pipe(Deferred.await(observed), Effect.timeout('2 seconds'))
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(startupQualificationRunId).toBe(pinnedEvaluation.runId)
+    expect(startupQualificationRunId).toBeUndefined()
+    expect(observedQualificationRunId).toBe(pinnedEvaluation.runId)
   })
 })

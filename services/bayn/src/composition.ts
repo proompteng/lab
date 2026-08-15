@@ -32,7 +32,7 @@ export {
   runExecutionPreparePlan,
   validateExecutionPreparePlan,
 } from './composition/execution-prepare'
-export { observeCycleGenerationHash, runRestateLifecycleWithReconciliationGuardian } from './composition/lifecycle'
+export { observeCycleGenerationHash } from './composition/lifecycle'
 export {
   ApplicationPlatformLive,
   AutonomousApplicationResourcesLive,
@@ -69,20 +69,43 @@ const provideApplicationResources = <A, E, R, E2, RIn>(
 ): Effect.Effect<A, E | E2, RIn> =>
   Effect.scoped(Layer.build(resources).pipe(Effect.flatMap((context) => Effect.provide(effect, context))))
 
-export const runApplicationPlan = pipe(
-  Match.type<ApplicationPlan>(),
-  Match.tag('BrokerlessService', (plan) =>
+const runRoutedApplicationPlan = pipe(
+  Match.type<RoutedApplicationPlan>(),
+  Match.tag('BrokerlessService', ({ plan }) =>
     provideApplicationResources(runBrokerlessService(plan), BrokerlessApplicationResourcesLive(plan)),
   ),
-  Match.tag('AutonomousService', (plan) =>
+  Match.tag('AutonomousReadOnlyStatus', ({ plan }) =>
     provideApplicationResources(
       runReadOnlyAutonomousStatusService(plan),
       AutonomousStatusApplicationResourcesLive(plan),
     ),
   ),
-  Match.tag('ExecutionCandidateDiscovery', (plan) =>
+  Match.tag('ExecutionCandidateDiscovery', ({ plan }) =>
     provideApplicationResources(runExecutionCandidateDiscovery(plan), ExecutionCandidateDiscoveryResourcesLive(plan)),
   ),
-  Match.tag('ExecutionPrepare', runExecutionPreparePlan),
+  Match.tag('ExecutionPrepare', ({ plan }) => runExecutionPreparePlan(plan)),
   Match.exhaustive,
 )
+
+export type RoutedApplicationPlan =
+  | { readonly _tag: 'BrokerlessService'; readonly plan: ApplicationPlanFor<'BrokerlessService'> }
+  | { readonly _tag: 'AutonomousReadOnlyStatus'; readonly plan: ApplicationPlanFor<'AutonomousService'> }
+  | {
+      readonly _tag: 'ExecutionCandidateDiscovery'
+      readonly plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>
+    }
+  | { readonly _tag: 'ExecutionPrepare'; readonly plan: ApplicationPlanFor<'ExecutionPrepare'> }
+
+export const routeApplicationPlan = pipe(
+  Match.type<ApplicationPlan>(),
+  Match.tag('BrokerlessService', (plan): RoutedApplicationPlan => ({ _tag: 'BrokerlessService', plan })),
+  Match.tag('AutonomousService', (plan): RoutedApplicationPlan => ({ _tag: 'AutonomousReadOnlyStatus', plan })),
+  Match.tag(
+    'ExecutionCandidateDiscovery',
+    (plan): RoutedApplicationPlan => ({ _tag: 'ExecutionCandidateDiscovery', plan }),
+  ),
+  Match.tag('ExecutionPrepare', (plan): RoutedApplicationPlan => ({ _tag: 'ExecutionPrepare', plan })),
+  Match.exhaustive,
+)
+
+export const runApplicationPlan = (plan: ApplicationPlan) => runRoutedApplicationPlan(routeApplicationPlan(plan))
