@@ -216,11 +216,12 @@ const collectHealthProbeResults = (
   evidenceStore: HealthDependencies['evidenceStore'],
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
-  cycleObservationId: string | undefined,
+  cycleObservationId: string | null | undefined,
   qualificationEvidenceRequired: boolean,
   executionController: ExecutionControllerProbe | undefined,
 ): Effect.Effect<HealthProbeResults, never> => {
-  const cycleBindingId = cycleObservationId ?? evidence?.evaluation.runId
+  const cycleBindingId =
+    cycleObservationId === undefined ? evidence?.evaluation.runId : (cycleObservationId ?? undefined)
   return Effect.map(
     Effect.all(
       [
@@ -339,7 +340,7 @@ const checkHealthDataFirst = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservationId?: string | null,
   qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
@@ -384,7 +385,7 @@ export const checkHealth = Pipeable.by<
     dependencies: HealthDependencies,
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservationId?: string,
+    cycleObservationId?: string | null,
     qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof checkHealthDataFirst>,
@@ -400,7 +401,7 @@ const runHealthMonitorDataFirst = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
-  cycleObservationId?: string,
+  cycleObservationId?: string | null,
   qualificationEvidenceRequired = true,
   executionController?: ExecutionControllerProbe,
 ): Effect.Effect<void> =>
@@ -421,7 +422,7 @@ export const runHealthMonitor = Pipeable.by<
     dependencies: HealthDependencies,
     broker?: BrokerProbe,
     autonomousCycleFiber?: Fiber.Fiber<void, never>,
-    cycleObservationId?: string,
+    cycleObservationId?: string | null,
     qualificationEvidenceRequired?: boolean,
     executionController?: ExecutionControllerProbe,
   ) => (config: RuntimeConfig) => ReturnType<typeof runHealthMonitorDataFirst>,
