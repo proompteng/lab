@@ -66,7 +66,7 @@ spec:
                   memory: 768Mi
                 limits:
                   cpu: "2"
-                  memory: 1536Mi
+                  memory: 4096Mi
               volumeMounts:
                 - name: scripts
                   mountPath: /opt/restate-resilience

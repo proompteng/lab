@@ -97,8 +97,9 @@ replication two and healthy three-node quorum are proven live.
 cluster replication setting. It first requires all three stable node names to be alive and ready, all three metadata
 servers to report the same three-member Raft configuration, and partition snapshots to remain archived. It then uses
 the Restate 1.7.2-supported `restatectl config set --replication 2 --yes` operation. It refuses mixed or unexpected
-replication state and succeeds only after all 24 log tails report replication two and all 24 partitions have exactly
-two active processors. On roll-forward after singleton rollback it reactivates only the exact retained
+replication state and succeeds only after all 24 logs are replication two and all 24 partitions have exactly two active
+processors. A sealed idle log tail is accepted only when `logs describe --all --extra` proves its latest replicated
+segment is replication two. On roll-forward after singleton rollback it reactivates only the exact retained
 `restate-1`/`restate-2` node IDs (log storage read-write, worker active, metadata member) before readiness and rejects
 unexpected identities. This is intentionally different from setting `default-replication`: Restate documents that the
 default is only used when a cluster is initially provisioned and does not migrate existing logs or partitions.
@@ -113,7 +114,7 @@ read-only SQL without writing RGW or contacting production Restate. This proves 
 Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
 snapshot open keeps the Restate Application from completing rather than bypassing recovery proof; while snapshot upload
 is still converging, the proof retries the isolated repository open until all 24 partitions are present. The proof and daily
-drill each request 100m CPU/768Mi memory and are capped at 2 CPU/1536Mi while downloading the latest 24 snapshots into
+drill each request 100m CPU/768Mi memory and are capped at 2 CPU/4096Mi while downloading the latest 24 snapshots into
 ephemeral storage; expect bounded RGW/network reads but no object-store writes. The Alloy configuration hash change
 restarts the single cluster-metrics collector, so require its rollout plus all pre-existing scrape jobs and all three
 Restate NodeCtl targets to return before considering telemetry healthy.

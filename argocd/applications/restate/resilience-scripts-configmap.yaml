@@ -113,7 +113,7 @@ data:
       printf '%s\n' "$output"
       if [ "$doctor_status" -eq 0 ] && \
         printf '%s\n' "$output" | grep -Fq 'Found 24 partition(s):' && \
-        printf '%s\n' "$output" | grep -Fq 'invocation_rows'; then
+        printf '%s\n' "$output" | grep -Fqi 'invocation_rows'; then
         echo "All 24 latest Restate partition snapshots opened in an isolated read-only store"
         exit 0
       fi
