@@ -7,13 +7,16 @@ import type { LoadedRuntimeConfig } from '../config'
 import { CycleObservability } from '../cycle/store'
 import { readForwardPerformanceReceiptByGeneration } from '../db/forward-performance-receipt-postgres'
 import { EvidenceStore } from '../db/evidence-store'
-import type { AuthorityGenerationStoreShape } from '../db/execution-store'
+import { ExecutionStoreError, type AuthorityGenerationStoreShape } from '../db/execution-store'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { ExecutionControllerStatusStore } from '../execution/controller-status'
 import { BrokerAccess } from '../execution/authority'
-import { isResearchCapitalActivationRequest } from '../execution/configuration'
-import { checkHealth } from '../health'
+import {
+  capitalActivationRequiresQualificationEvidence,
+  isResearchCapitalActivationRequest,
+} from '../execution/configuration'
+import { checkHealth, type CycleObservationBinding } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
 import { MarketData } from '../market-data'
@@ -200,11 +203,70 @@ export const refreshReadOnlyQualification = (
 
 export const readOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
-  qualificationRunId: string | undefined,
 ): string | undefined => {
-  if (Result.isFailure(configured) || configured.success === null) return qualificationRunId
+  if (Result.isFailure(configured)) return undefined
+  if (configured.success === null) return undefined
   const request = configured.success.request
   return isResearchCapitalActivationRequest(request) ? request.grant.planHash : request.qualification.runId
+}
+
+export const resolveReadOnlyCycleObservationId = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  activationRequestRequired: boolean,
+  authority: AuthorityGenerationStoreShape,
+): Effect.Effect<CycleObservationBinding, ExecutionStoreError> => {
+  const configuredId = readOnlyCycleObservationId(configured)
+  if (
+    configuredId !== undefined ||
+    Result.isFailure(configured) ||
+    configured.success !== null ||
+    activationRequestRequired
+  ) {
+    return Effect.succeed(
+      configuredId === undefined
+        ? { _tag: 'Unavailable' as const }
+        : { _tag: 'Exact' as const, bindingId: configuredId },
+    )
+  }
+  const readAuthorityState = authority.readAuthorityState
+  return readAuthorityState === undefined
+    ? Effect.fail(
+        new ExecutionStoreError({
+          operation: 'authority',
+          failure: 'invariant',
+          message: 'read-only status authority projection is unavailable',
+        }),
+      )
+    : readAuthorityState.pipe(
+        Effect.map((current): CycleObservationBinding => ({ _tag: 'Exact', bindingId: current.generationHash })),
+      )
+}
+
+export const resolveReadOnlyCycleObservationIdForHealth = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  activationRequestRequired: boolean,
+  authority: AuthorityGenerationStoreShape,
+  operationTimeoutMs: number,
+): Effect.Effect<CycleObservationBinding> =>
+  resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(
+    Effect.timeoutOrElse({
+      duration: operationTimeoutMs,
+      orElse: () =>
+        logActivationUnavailable('AUTHORITY_STATE_TIMEOUT').pipe(Effect.as({ _tag: 'Unavailable' as const })),
+    }),
+    Effect.catch(() =>
+      logActivationUnavailable('AUTHORITY_STATE_UNAVAILABLE').pipe(Effect.as({ _tag: 'Unavailable' as const })),
+    ),
+  )
+
+export const readOnlyQualificationEvidenceRequired = (
+  configured: Result.Result<ConfiguredCapitalActivation | null, string>,
+  qualificationRunId: string | undefined,
+  activationRequestRequired: boolean,
+): boolean => {
+  if (Result.isFailure(configured)) return true
+  if (configured.success === null) return activationRequestRequired || qualificationRunId !== undefined
+  return capitalActivationRequiresQualificationEvidence(configured.success.request)
 }
 
 export const readOnlyExecutionControllerBinding = (
@@ -231,13 +293,16 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const observePlan = readOnlyPlan(plan)
     const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
-    const researchActivation =
-      Result.isSuccess(configured) &&
-      configured.success !== null &&
-      isResearchCapitalActivationRequest(configured.success.request)
+    const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
+    const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(
+      configured,
+      observePlan.config.qualificationRunId,
+      activationRequestRequired,
+    )
     const controller = readOnlyExecutionControllerBinding(plan)
     const state = yield* Ref.make(
       initialState({
+        qualificationEvidenceRequired,
         broker: {
           expectedAccountId: plan.config.alpaca.expectedAccountId,
           executionEligible: false,
@@ -263,17 +328,26 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
       Effect.andThen(refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)),
       Effect.andThen(Ref.get(state)),
       Effect.flatMap((current) =>
-        checkHealth(
-          observePlan.config,
-          state,
-          dependencies,
-          runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
-          undefined,
-          readOnlyCycleObservationId(configured, observePlan.config.qualificationRunId),
-          !researchActivation,
-          controller === undefined
-            ? undefined
-            : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+        resolveReadOnlyCycleObservationIdForHealth(
+          configured,
+          activationRequestRequired,
+          activationStore.authority,
+          observePlan.config.operationTimeoutMs,
+        ).pipe(
+          Effect.flatMap((cycleObservation) =>
+            checkHealth(
+              observePlan.config,
+              state,
+              dependencies,
+              runtimeBroker(observePlan, brokerSession.read, current.capitalActivation?._tag === 'Realized'),
+              undefined,
+              cycleObservation,
+              qualificationEvidenceRequired,
+              controller === undefined
+                ? undefined
+                : { controllerKey: controller.controllerKey, read: controllerStatus.read },
+            ),
+          ),
         ),
       ),
     )

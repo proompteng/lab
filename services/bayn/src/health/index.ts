@@ -1,6 +1,7 @@
 export type {
   AutonomousCycleFiberObservation,
   BrokerProbe,
+  CycleObservationBinding,
   DurableEvidenceFailure,
   HealthDependencies,
   HealthDependencyName,

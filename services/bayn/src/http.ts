@@ -463,10 +463,15 @@ export const readinessResponseDecision = (state: RuntimeState): HttpResponseDeci
       state.cycle.condition === CycleOperationsCondition.Stalled ||
       state.cycle.condition === CycleOperationsCondition.Failed,
   )
-  const failedDependencies = appendFailure(
+  const cycleRunnerFailures = appendFailure(
     cycleFailures,
     'cycleRunner',
     state.autonomousCycleLoop.lastPass?.result === 'FAILURE',
+  )
+  const failedDependencies = appendFailure(
+    cycleRunnerFailures,
+    'capitalActivation',
+    state.capitalActivation?._tag === 'Pending',
   )
   return jsonDecision(
     {
