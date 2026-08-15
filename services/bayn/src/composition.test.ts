@@ -756,19 +756,15 @@ describe('Bayn capital startup recovery boundary', () => {
       buildContinuation: researchBuildContinuation,
     })
 
-    expect(readOnlyCycleObservationId(configured, pinnedEvaluation.runId, true)).toBe(
-      continuationRequest.grant.planHash,
-    )
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, false)).toBe(pinnedEvaluation.runId)
-    expect(readOnlyCycleObservationId(Result.succeed(null), undefined, false)).toBeUndefined()
-    expect(readOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, true)).toBeUndefined()
-    expect(readOnlyCycleObservationId(Result.fail('invalid activation'), pinnedEvaluation.runId, false)).toBeUndefined()
+    expect(readOnlyCycleObservationId(configured)).toBe(continuationRequest.grant.planHash)
+    expect(readOnlyCycleObservationId(Result.succeed(null))).toBeUndefined()
+    expect(readOnlyCycleObservationId(Result.fail('invalid activation'))).toBeUndefined()
   })
 
-  test('binds request-free status to the current durable OBSERVE generation after rotation', async () => {
+  test('binds pinned request-free status to the current durable OBSERVE generation after rotation', async () => {
     const currentGenerationHash = hash('current-durable-observe-generation')
     const cycleObservationId = await Effect.runPromise(
-      resolveReadOnlyCycleObservationId(Result.succeed(null), undefined, false, {
+      resolveReadOnlyCycleObservationId(Result.succeed(null), false, {
         ensureAuthorityGeneration: () =>
           Effect.die(new Error('request-free read-only status must not mutate authority')),
         readAuthorityState: Effect.succeed({
@@ -793,7 +789,6 @@ describe('Bayn capital startup recovery boundary', () => {
         const interrupted = yield* Deferred.make<void>()
         const resolution = resolveReadOnlyCycleObservationIdForHealth(
           Result.succeed(null),
-          undefined,
           false,
           {
             ensureAuthorityGeneration: () =>
@@ -818,28 +813,30 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('requires qualification evidence only for valid qualification-bound status configuration', () => {
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), false)).toBe(false)
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), true)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), undefined, false)).toBe(false)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), pinnedEvaluation.runId, false)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), undefined, true)).toBe(true)
     expect(
       readOnlyQualificationEvidenceRequired(
         Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation }),
+        undefined,
         true,
       ),
     ).toBe(false)
-    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), false)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.fail('invalid activation'), undefined, false)).toBe(true)
   })
 
   test('blocks missing mutation activation before legacy qualification or durable OBSERVE can satisfy readiness', async () => {
     const unreachable = Effect.die(new Error('missing mutation activation must not inspect durable authority'))
     const cycleObservationId = await Effect.runPromise(
-      resolveReadOnlyCycleObservationId(Result.succeed(null), pinnedEvaluation.runId, true, {
+      resolveReadOnlyCycleObservationId(Result.succeed(null), true, {
         ensureAuthorityGeneration: () => unreachable,
         readAuthorityState: unreachable,
       }),
     )
 
     expect(cycleObservationId).toBeUndefined()
-    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), true)).toBe(true)
+    expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), pinnedEvaluation.runId, true)).toBe(true)
   })
 
   test('binds read-only health to the configured worker plan rather than the status pod plan', () => {
