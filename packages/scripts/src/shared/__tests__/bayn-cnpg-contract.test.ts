@@ -238,8 +238,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = '0df47ceec972e14548040ccdca3f6df43fe97bd8'
-  const imageDigest = 'sha256:8b850c6c2b1cf99f34efc80921142a4ff62fae01cf8df85c986322fcc7f5a590'
+  const sourceRevision = '5f366810884463ee593b417e21bc76bf2176de36'
+  const imageDigest = 'sha256:576f4d30cd878c1eb49036c562b6e149e2dc3a4dd8c1a89a74c91acc511ed005'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -314,11 +314,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    '3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784',
+    '76e6102a8182366da1e4db93d50397bc153d3882d1c19c18f7c9f323e1102269',
   )
   const previousBinding = {
-    planHash: '1c6f80f63d53f31c914639bbe071e0304a2cc2705356b48d4ba796a9b7341ef5',
-    sourceRevision: 'df6bc515e2579f4ee0f9256e45da0eb3e92104f4',
+    planHash: '3d3b6bf5c1216f0145affc14db704320612c0ab2f647c0fd52a45defb41a1784',
+    sourceRevision: '0df47ceec972e14548040ccdca3f6df43fe97bd8',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
@@ -332,17 +332,14 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   )
   expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
   expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')?.value).toBe('primary')
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')?.value).toBe(
-    '74cf59b76e34edf3bbdb499546ce8e4f7f92a66cac8eba2f4012ea21e67d473d',
-  )
-  expect(controllerEnvironment.get('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')?.value).toBe(
-    '2e6a1cbf1dce6737f6c96e25c097d214366af48d',
-  )
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
+  expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '76bc1cd4efb74017c7ca66e24d88829eae57bd75dd721d9f4707a64106dcb9e7',
+    'd43fcbf1f7009fcac0c3b7e48c0faae2a2530b6f7c03504e0cfd599f84818c42',
   )
+  expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
     { port: 53, protocol: 'UDP' },
