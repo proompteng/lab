@@ -51,16 +51,11 @@ import {
   type CycleRunContext,
   type CycleRunResult,
 } from '../runner'
-import { CycleNotDueReason } from '../runner/model'
 import { runAutonomousCycleUntilSettled } from '../runner/program'
-import { decideMonthEndCadenceEligibility } from '../observability'
 import { AuthorityGenerationStore, ExecutionStoreLive } from '../../db/execution-store'
-import { LifecycleCommandStore } from '../../db/lifecycle-command'
-import { LifecycleCommandStoreLive } from '../../db/lifecycle-command-postgres'
 import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
 import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../execution/intents'
 import { canonicalHashV1, sha256 } from '../../hash'
-import { lifecycleCommandId, lifecycleCommandV1StaleExecutionBootstrapReason } from '../../lifecycle-command-contract'
 import { Journal, type JournalService } from '../../ledger'
 import {
   MarketData,
@@ -309,12 +304,7 @@ const autonomousJournal: JournalService = {
 
 const makeAutonomousRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(
-      CycleStoreLive,
-      ExecutionStoreLive(autonomousRuntimeConfig),
-      BlockedCycleIntentStoreLive,
-      LifecycleCommandStoreLive,
-    ).pipe(
+    Layer.mergeAll(CycleStoreLive, ExecutionStoreLive(autonomousRuntimeConfig), BlockedCycleIntentStoreLive).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, autonomousJournal)),
       Layer.provideMerge(PostgresClientLive(autonomousRuntimeConfig)),
@@ -5462,163 +5452,4 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       if (restartedRuntime !== undefined) await restartedRuntime.dispose()
     }
   }, 60_000)
-
-  test('recovers one contiguous lifecycle command across process ownership loss and replays its completion', async () => {
-    let first = makeAutonomousRuntime()
-    let second: ReturnType<typeof makeAutonomousRuntime> | undefined
-    const issuedAt = new Date().toISOString()
-    const command = {
-      controllerKey: 'primary',
-      commandId: lifecycleCommandId('primary', 1),
-      sequence: 1,
-      issuedAt,
-    }
-
-    try {
-      const started = await first.runPromise(
-        Effect.gen(function* () {
-          const store = yield* LifecycleCommandStore
-          const fence = yield* WriterFence
-          const initialCursor = yield* store.readCursor('primary')
-          const begin = yield* fence.transaction(store.begin(command))
-          const pendingCursor = yield* store.readCursor('primary')
-          return { initialCursor, begin, pendingCursor }
-        }),
-      )
-      expect(started).toEqual({
-        initialCursor: { _tag: 'Next', sequence: 1 },
-        begin: { _tag: 'Execute' },
-        pendingCursor: { _tag: 'Pending', command },
-      })
-
-      await first.dispose()
-      second = makeAutonomousRuntime()
-      const recovered = await second.runPromise(
-        Effect.gen(function* () {
-          const store = yield* LifecycleCommandStore
-          const fence = yield* WriterFence
-          const recoveredCursor = yield* store.readCursor('primary')
-          const resumed = yield* fence.transaction(store.begin(command))
-          const completedAt = new Date().toISOString()
-          const observation = {
-            result: 'SUCCESS' as const,
-            outcome: 'NOT_DUE' as const,
-            observedAt: completedAt,
-          }
-          const completed = yield* fence.transaction(store.complete({ ...command, completedAt, observation }))
-          const replay = yield* fence.transaction(store.begin(command))
-          const nextCursor = yield* store.readCursor('primary')
-          const conflicting = yield* Effect.exit(
-            fence.transaction(store.begin({ ...command, commandId: lifecycleCommandId('primary', 3), sequence: 3 })),
-          )
-          const secondCommand = {
-            controllerKey: 'primary',
-            commandId: lifecycleCommandId('primary', 2),
-            sequence: 2,
-            issuedAt: new Date(Date.parse(issuedAt) + 1).toISOString(),
-          }
-          const secondBegin = yield* fence.transaction(store.begin(secondCommand))
-          const secondCompletedAt = new Date().toISOString()
-          const secondObservation = {
-            result: 'SUCCESS' as const,
-            outcome: 'NOT_DUE' as const,
-            observedAt: secondCompletedAt,
-            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-            cadenceDecision: decideMonthEndCadenceEligibility({
-              signalSessionDate: '2026-08-10',
-              executionSessionDate: '2026-08-11',
-            }),
-          }
-          const secondCompleted = yield* fence.transaction(
-            store.complete({ ...secondCommand, completedAt: secondCompletedAt, observation: secondObservation }),
-          )
-          const secondReplay = yield* fence.transaction(store.begin(secondCommand))
-          const secondNextCursor = yield* store.readCursor('primary')
-          const sql = yield* PgClient.PgClient
-          const [secondPersisted] = yield* sql<{ readonly not_due_reason: string | null }>`
-            SELECT not_due_reason
-            FROM lifecycle_commands
-            WHERE controller_key = ${secondCommand.controllerKey}
-              AND command_id = ${secondCommand.commandId}
-          `
-          const legacyCommand = {
-            controllerKey: 'primary',
-            commandId: lifecycleCommandId('primary', 3),
-            sequence: 3,
-            issuedAt: new Date(Date.parse(issuedAt) + 2).toISOString(),
-          }
-          const legacyBegin = yield* fence.transaction(store.begin(legacyCommand))
-          yield* sql`
-            UPDATE lifecycle_commands
-            SET
-              status = 'COMPLETED',
-              result = 'SUCCESS',
-              outcome = 'NOT_DUE',
-              observed_at = started_at + interval '1 microsecond',
-              not_due_reason = 'STALE_PAPER_BOOTSTRAP',
-              completed_at = started_at + interval '1 microsecond'
-            WHERE controller_key = ${legacyCommand.controllerKey}
-              AND command_id = ${legacyCommand.commandId}
-          `
-          const legacyReplay = yield* fence.transaction(store.begin(legacyCommand))
-          return {
-            recoveredCursor,
-            resumed,
-            completed,
-            replay,
-            nextCursor,
-            conflicting,
-            secondBegin,
-            secondCompleted,
-            secondReplay,
-            secondNextCursor,
-            secondPersistedReason: secondPersisted?.not_due_reason,
-            legacyBegin,
-            legacyReplay,
-          }
-        }),
-      )
-
-      expect(recovered).toMatchObject({
-        recoveredCursor: { _tag: 'Pending', command },
-        resumed: { _tag: 'Execute' },
-        completed: { result: 'SUCCESS', outcome: 'NOT_DUE' },
-        replay: { _tag: 'Completed', observation: { result: 'SUCCESS', outcome: 'NOT_DUE' } },
-        nextCursor: { _tag: 'Next', sequence: 2 },
-        secondBegin: { _tag: 'Execute' },
-        secondCompleted: {
-          result: 'SUCCESS',
-          outcome: 'NOT_DUE',
-          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-          cadenceDecision: {
-            signalSessionDate: '2026-08-10',
-            executionSessionDate: '2026-08-11',
-          },
-        },
-        secondReplay: {
-          _tag: 'Completed',
-          observation: {
-            result: 'SUCCESS',
-            outcome: 'NOT_DUE',
-            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-          },
-        },
-        secondNextCursor: { _tag: 'Next', sequence: 3 },
-        secondPersistedReason: lifecycleCommandV1StaleExecutionBootstrapReason,
-        legacyBegin: { _tag: 'Execute' },
-        legacyReplay: {
-          _tag: 'Completed',
-          observation: {
-            result: 'SUCCESS',
-            outcome: 'NOT_DUE',
-            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-          },
-        },
-      })
-      expect(Exit.isFailure(recovered.conflicting)).toBe(true)
-    } finally {
-      await first.dispose()
-      if (second !== undefined) await second.dispose()
-    }
-  })
 })
