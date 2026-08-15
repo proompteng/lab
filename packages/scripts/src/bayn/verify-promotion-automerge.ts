@@ -8,13 +8,9 @@ export const baynPromotionBranch = 'codex/bayn-release-current'
 export const baynPromotionAutomergeManifestPaths = [
   'argocd/applications/bayn/deployment.yaml',
   'argocd/applications/bayn/kustomization.yaml',
-  'argocd/applications/bayn/lifecycle-current.yaml',
 ] as const
 
-const optionalPromotionManifestPaths = new Set([
-  'argocd/applications/bayn/lifecycle-previous.yaml',
-  'argocd/applicationsets/product.yaml',
-])
+const optionalPromotionManifestPaths = new Set(['argocd/applicationsets/product.yaml'])
 
 export const baynPromotionAutomergeRequiredChecks = [
   { workflow: 'Semantic Commits', name: 'Lint commit messages' },
