@@ -13,7 +13,7 @@ import {
 import { sha256 } from './hash'
 import {
   executionBootstrapAuthorizationHash,
-  executionControllerCutoverAwaitTimeoutMs,
+  executionControllerBootstrapHandlerTimeouts,
 } from './restate-execution-controller'
 import {
   awaitRestateInvocation,
@@ -77,7 +77,7 @@ const restateExecutionActivationTransportConfig = Config.all({
 })
 
 export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs: number): number =>
-  executionControllerCutoverAwaitTimeoutMs(operationTimeoutMs)
+  executionControllerBootstrapHandlerTimeouts(operationTimeoutMs, true).inactivityTimeout
 
 export const restateExecutionActivationIdempotencyKey = (
   activationGeneration: string,

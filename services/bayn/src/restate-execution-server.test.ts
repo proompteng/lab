@@ -3,7 +3,7 @@ import { createServer as createHttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Effect, Exit } from 'effect'
+import { ConfigProvider, Effect } from 'effect'
 
 import type { ApplicationPlan } from './app'
 import { acquireRestateHttp2Server } from './restate-http2-server'
@@ -18,7 +18,6 @@ const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
-const legacyDeactivationSchemaVersion = 'bayn.restate-lifecycle-activation.v1'
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -118,44 +117,34 @@ describe('native Restate execution server', () => {
     expect(decodeRestateRequestIdentityKeys('not-a-restate-key')).toMatchObject({ _tag: 'Failure' })
   })
 
-  test('requires exact legacy owner provenance before the worker can start', async () => {
-    const common = {
-      BAYN_EXECUTION_BOOTSTRAP_TOKEN: 'test-bootstrap-token',
-      RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
-    }
-    const provide = (environment: Readonly<Record<string, string>>) =>
+  test('ignores retired legacy lifecycle configuration at the server boundary', async () => {
+    const configured = await Effect.runPromise(
       restateExecutionServerConfig.pipe(
-        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
-      )
-
-    for (const environment of [
-      common,
-      { ...common, BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash },
-      { ...common, BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision },
-      {
-        ...common,
-        BAYN_LEGACY_LIFECYCLE_DEACTIVATION_SCHEMA_VERSION: 'unsupported',
-        BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash,
-        BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision,
-      },
-    ]) {
-      expect(Exit.isFailure(await Effect.runPromiseExit(provide(environment)))).toBe(true)
-    }
-
-    expect(
-      await Effect.runPromise(
-        provide({
-          ...common,
-          BAYN_LEGACY_LIFECYCLE_PLAN_HASH: planHash,
-          BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: sourceRevision,
-        }),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({
+            BAYN_EXECUTION_BOOTSTRAP_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
+            RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
+            BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY: '',
+            BAYN_LEGACY_LIFECYCLE_DEACTIVATION_SCHEMA_VERSION: 'unsupported',
+            BAYN_LEGACY_LIFECYCLE_PLAN_HASH: 'not-a-hash',
+            BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION: 'not-a-revision',
+          }),
+        ),
       ),
-    ).toMatchObject({
-      legacyControllerKey: 'primary',
-      legacyDeactivationSchemaVersion,
-      legacyPlanHash: planHash,
-      legacySourceRevision: sourceRevision,
+    )
+
+    expect(configured).toMatchObject({
+      port: 9080,
+      requestIdentityKeys: requestIdentityKey,
     })
+    expect(Object.keys(configured).sort()).toEqual([
+      'bootstrapToken',
+      'port',
+      'previousPlanHash',
+      'previousSourceRevision',
+      'requestIdentityKeys',
+    ])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {

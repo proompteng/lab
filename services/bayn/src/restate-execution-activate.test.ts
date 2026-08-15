@@ -108,7 +108,7 @@ describe('native Restate execution activation', () => {
       },
       timeoutMs: 30_000,
     })
-    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(651_000)
+    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBe(480_000)
   })
 
   test('binds a rotation request and its idempotency identity to the exact previous controller', () => {
@@ -149,6 +149,7 @@ describe('native Restate execution activation', () => {
         { ...previousBinding, planHash: 'f'.repeat(64) },
       ),
     ).not.toBe(request.headers['idempotency-key'])
+    expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBeLessThan(900_000)
   })
 
   test('verifies only the exact active controller binding', () => {
