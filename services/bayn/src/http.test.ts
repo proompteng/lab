@@ -41,7 +41,9 @@ import {
   readHistoricalEvidence,
   readinessResponseDecision,
   renderPrometheusMetrics,
-  serveHttp,
+  runtimeHealthFreshnessLeaseMs,
+  runtimeHealthIsFresh,
+  serveHttpWithCurrentTime,
   statusFacts,
   statusResponseDecision,
   validateHistoricalRunRequest,
@@ -58,6 +60,8 @@ const metricValue = (metrics: string, name: string): number => {
 interface TestServerOptions {
   readonly state?: RuntimeState
   readonly execution?: ExecutionPolicy
+  readonly healthIntervalMs?: number
+  readonly nowMs?: number
   readonly operationTimeoutMs?: number
   readonly readEvidence?: EvidenceStoreService['read']
 }
@@ -145,6 +149,7 @@ const withHttpServer = <E>(
 ): Promise<void> => {
   const serverConfig = {
     cycleStallThresholdMs: config.cycleStallThresholdMs,
+    healthIntervalMs: options.healthIntervalMs ?? config.healthIntervalMs,
     host: '127.0.0.1',
     execution: options.execution ?? readOnlyExecution,
     operationTimeoutMs: options.operationTimeoutMs ?? 250,
@@ -152,18 +157,21 @@ const withHttpServer = <E>(
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
   }
+  const defaultCheckedAt = options.state?.health.checkedAt ?? readyState().health.checkedAt
+  const nowMs = options.nowMs ?? (defaultCheckedAt === null ? 0 : Date.parse(defaultCheckedAt))
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const services = yield* Layer.build(Layer.merge(HttpServerLive(serverConfig), NodeHttpClient.layerNodeHttp))
         return yield* Effect.gen(function* () {
           const state = yield* Ref.make(options.state ?? initialState({}))
-          yield* serveHttp(
+          yield* serveHttpWithCurrentTime(
             serverConfig,
             state,
             provenance,
             'embedded',
             options.readEvidence ?? successfulEvidenceStore.read,
+            Effect.succeed(nowMs),
           )
           const server = yield* HttpServer.HttpServer
           const address = server.address
@@ -229,6 +237,25 @@ const withConnectedSocket = <A, E, R>(
   )
 
 describe('Bayn HTTP pure decisions', () => {
+  test('fails health freshness closed at the exact lease boundary', () => {
+    const ready = readyState()
+    const checkedAt = ready.health.checkedAt
+    expect(checkedAt).not.toBeNull()
+    if (checkedAt === null) return
+    const checkedAtMs = Date.parse(checkedAt)
+    const leaseMs = runtimeHealthFreshnessLeaseMs({ healthIntervalMs: 30_000, operationTimeoutMs: 30_000 })
+
+    expect(leaseMs).toBe(90_000)
+    expect(runtimeHealthIsFresh(ready, { nowMs: checkedAtMs + leaseMs - 1, leaseMs })).toBe(true)
+    expect(runtimeHealthIsFresh(ready, { nowMs: checkedAtMs + leaseMs, leaseMs })).toBe(false)
+    expect(runtimeHealthIsFresh(ready, { nowMs: checkedAtMs - 1, leaseMs })).toBe(false)
+    expect(runtimeHealthIsFresh(ready, { nowMs: checkedAtMs, leaseMs: 0 })).toBe(false)
+  })
+
+  test('includes both serialized operation deadlines when the health interval is shorter', () => {
+    expect(runtimeHealthFreshnessLeaseMs({ healthIntervalMs: 10_000, operationTimeoutMs: 30_000 })).toBe(70_000)
+  })
+
   test.each([
     {
       name: 'missing parameter',
@@ -1168,6 +1195,46 @@ describe('Bayn HTTP pure decisions', () => {
 })
 
 describe('Bayn HTTP probes', () => {
+  test('fails stale READY health closed across readiness, status, and metrics until a fresh pass is published', async () => {
+    const ready = readyState()
+    const checkedAt = ready.health.checkedAt
+    expect(checkedAt).not.toBeNull()
+    if (checkedAt === null) return
+    const healthIntervalMs = 30_000
+    const operationTimeoutMs = 30_000
+    const leaseMs = runtimeHealthFreshnessLeaseMs({ healthIntervalMs, operationTimeoutMs })
+    const nowMs = Date.parse(checkedAt) + leaseMs
+
+    await withHttpServer({ state: ready, healthIntervalMs, operationTimeoutMs, nowMs }, ({ port, state }) =>
+      Effect.gen(function* () {
+        const [staleReady, staleStatus, staleMetrics] = yield* Effect.all([
+          request(port, '/readyz'),
+          request(port, '/v1/status'),
+          request(port, '/metrics'),
+        ])
+        expect(staleReady).toMatchObject({
+          status: 503,
+          body: { ready: false, status: 'READY', failedDependencies: expect.arrayContaining(['health']) },
+        })
+        expect(staleStatus).toMatchObject({ status: 200, body: { operational: { status: 'READY', ready: false } } })
+        expect(staleMetrics.body).toContain('bayn_runtime_ready 0')
+
+        yield* Ref.set(state, {
+          ...ready,
+          health: { ...ready.health, checkedAt: new Date(nowMs).toISOString() },
+        })
+        const [freshReady, freshStatus, freshMetrics] = yield* Effect.all([
+          request(port, '/readyz'),
+          request(port, '/v1/status'),
+          request(port, '/metrics'),
+        ])
+        expect(freshReady).toMatchObject({ status: 200, body: { ready: true, status: 'READY' } })
+        expect(freshStatus).toMatchObject({ status: 200, body: { operational: { status: 'READY', ready: true } } })
+        expect(freshMetrics.body).toContain('bayn_runtime_ready 1')
+      }),
+    )
+  })
+
   test('serves every route from the current runtime state and closes its socket', async () => {
     const initial = initialState({})
     let port = 0
@@ -1195,7 +1262,7 @@ describe('Bayn HTTP probes', () => {
             allow: null,
             cacheControl: null,
             contentType: 'application/json',
-            body: readinessResponseDecision(initial).body,
+            body: readinessResponseDecision(initial, { nowMs: 0, leaseMs: 1 }).body,
           },
         },
         {
