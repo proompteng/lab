@@ -21,7 +21,6 @@ import { AlpacaHttpClient } from '../broker/alpaca/http'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { CycleStore } from '../cycle/store'
-import { LifecycleCommandStore } from '../db/lifecycle-command'
 import { ForwardPerformanceReceiptStore } from '../db/forward-performance-receipt'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import {
@@ -198,7 +197,6 @@ export const makeAutonomousServiceRuntime = (
                       persistedCapitalGrants: PersistedCapitalGrantStore,
                       intentStore: IntentStore,
                       blockedCycleIntentStore: BlockedCycleIntentStore,
-                      lifecycleCommandStore: LifecycleCommandStore,
                       mutationStore: MutationStore,
                       writerFence: WriterFence,
                       cycleStore: CycleStore,
@@ -245,8 +243,6 @@ export const makeAutonomousServiceRuntime = (
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* observeCycle(
                               observePlan,
-                              runtimeServices.lifecycleCommandStore,
-                              runtimeServices.writerFence,
                               authorityGenerationHash,
                               options.interpretCycleDriver,
                             )(startup)
@@ -526,8 +522,6 @@ export const makeAutonomousServiceRuntime = (
                             const startCycle: AutonomousCycleStartup = (startup) =>
                               lifecycleMaintenanceCycle(
                                 observePlan,
-                                runtimeServices.lifecycleCommandStore,
-                                runtimeServices.writerFence,
                                 maintainReconciliation,
                                 maintainLifecycle,
                                 options.interpretCycleDriver,
@@ -701,8 +695,6 @@ export const makeAutonomousServiceRuntime = (
                                           request,
                                           runtimeServices.executionCycleClosureStore,
                                           runtimeServices.blockedCycleIntentStore,
-                                          runtimeServices.lifecycleCommandStore,
-                                          runtimeServices.writerFence,
                                           onClosedCycle,
                                           maintainExecutionLifecycle,
                                           interpretCycleDriver ?? options.interpretCycleDriver,

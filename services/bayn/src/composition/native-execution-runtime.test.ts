@@ -79,6 +79,7 @@ const marketDataBinding: MarketDataBinding = {
 }
 
 type PlanOverrides = {
+  readonly lifecycleOwner?: 'Process' | 'Restate'
   readonly brokerAccess?: 'mutation' | 'read-only'
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
   readonly imageDigest?: string
@@ -151,7 +152,7 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
     config: {
       ...config,
       runtimeMode: 'AutonomousService',
-      lifecycleOwner: 'Restate',
+      lifecycleOwner: overrides.lifecycleOwner ?? 'Restate',
       lifecycleCommandPort: 8081,
       lifecycleControllerKey: 'primary',
       alpaca: {
@@ -366,6 +367,12 @@ describe('native execution runtime', () => {
       if (Result.isSuccess(changed)) expect(first.success.planHash).not.toBe(changed.success.planHash)
     }
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
+  })
+
+  test('keeps native controller identity independent of the legacy lifecycle owner compatibility setting', () => {
+    expect(executionControllerConfig(plan({ lifecycleOwner: 'Process' }))).toEqual(
+      executionControllerConfig(plan({ lifecycleOwner: 'Restate' })),
+    )
   })
 
   test('keeps recovery-capable execution resources dormant until the first tick and releases them exactly once', async () => {
