@@ -66,7 +66,7 @@ admin API after the revert before resuming the Bayn worker layer.
 
 `restate-admin-tailscale` exposes the Restate admin/UI port only through the Tailscale Kubernetes operator:
 
-- Tailscale hostname: `restate-admin`
+- Tailscale hostname: `restate`
 - Kubernetes Service: `restate-admin-tailscale`
 - External port: `80`
 - Restate target port: `admin` / `9070`
@@ -88,7 +88,7 @@ Expected:
 - the `restate` Argo Application is `Synced` and `Healthy`;
 - `restate-admin-tailscale` exists with `loadBalancerClass: tailscale`;
 - one Tailscale proxy pod exists in the `tailscale` namespace with parent labels for `restate-admin-tailscale`;
-- opening `http://restate-admin` from an authorized tailnet client reaches the Restate admin UI.
+- opening `http://restate` from an authorized tailnet client reaches the Restate admin UI.
 
 Verify the NetworkPolicy still blocks ordinary cluster workloads from admin port `9070`:
 
@@ -115,7 +115,7 @@ Expected result: `admin_access_blocked`.
 
 ## Recovery
 
-If `http://restate-admin` is unreachable after Argo sync:
+If `http://restate` is unreachable after Argo sync:
 
 1. Inspect the Service and Tailscale proxy pod:
    ```sh

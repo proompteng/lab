@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: restate
     app.kubernetes.io/component: admin-ui
   annotations:
-    tailscale.com/hostname: restate-admin
+    tailscale.com/hostname: restate
     # Tailscale LB readiness is managed by the operator; don't hold the Argo app in Progressing.
     argocd.argoproj.io/ignore-healthcheck: "true"
 spec:
