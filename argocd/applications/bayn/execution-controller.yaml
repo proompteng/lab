@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn:sha-cade68a194e7398200180bb9a45d8c4f3b6bbfc4@sha256:9c386bf9f3e14d6b1bdc2a9d48df9911e2700d46632abf780ba1693604ee5638
+          image: registry.ide-newton.ts.net/lab/bayn:sha-954ee3130750637592e10c0d2455e6c53fd17efc@sha256:151d479035842d73084fd8e9ba14dcc5aef1e0f356e5b3da0ad7f4bca0651b13
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -55,22 +55,28 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: cade68a194e7398200180bb9a45d8c4f3b6bbfc4
+              value: 954ee3130750637592e10c0d2455e6c53fd17efc
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:9c386bf9f3e14d6b1bdc2a9d48df9911e2700d46632abf780ba1693604ee5638
+              value: sha256:151d479035842d73084fd8e9ba14dcc5aef1e0f356e5b3da0ad7f4bca0651b13
             # Bind the replacement to the exact immutable execution generation
-            # currently owned by the active controller. Activation remains an
-            # authenticated, serialized Restate rotation and grants no capital.
+            # currently owned by the active controller. The deployment stays
+            # read-only; only the sealed, validated research mandate can
+            # realize a mutation generation after startup.
             - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "c495a02718b19f4ed41801efeb936a7f3130c2affeb105a27a2966c056d7bdd3"
+              value: "ab572af47b7ff21db00d25023ba7d1b40ffab6e6a6af1179c3822ccf1d09a37b"
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: 7bc61449a217f268e81510e3818d5b5ebc379553
+              value: cade68a194e7398200180bb9a45d8c4f3b6bbfc4
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b"
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
