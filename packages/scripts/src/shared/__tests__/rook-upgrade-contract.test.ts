@@ -115,11 +115,12 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   const operatorValues = readYaml<{
     image: { repository: string; tag: string }
     csi: Record<string, unknown>
-    monitoring: { enabled: boolean }
+    monitoring?: { enabled: boolean }
     'ceph-csi-operator'?: unknown
   }>('argocd/applications/rook-ceph/operator-values.yaml')
   const clusterValues = readYaml<{
     cephImage: { repository: string; tag: string }
+    monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
       upgradeOSDRequiresHealthyPGs: boolean
       csi: { cephfs: { kernelMountOptions: string } }
@@ -144,12 +145,13 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.3' })
   expect(operatorValues.csi).toEqual({ installCsiOperator: true })
-  expect(operatorValues.monitoring.enabled).toBe(true)
+  expect(operatorValues.monitoring?.enabled ?? false).toBe(false)
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({
     repository: 'quay.io/ceph/ceph',
-    tag: 'v20.2.2-20260616',
+    tag: 'v20.2.3-20260804',
   })
+  expect(clusterValues.monitoring).toEqual({ enabled: false, createPrometheusRules: false })
   expect(clusterValues.cephClusterSpec.upgradeOSDRequiresHealthyPGs).toBe(true)
   expect(clusterValues.cephClusterSpec.csi.cephfs.kernelMountOptions).toBe('ms_mode=crc')
   expect(driverValues.operatorConfig.driverSpecDefaults).toMatchObject({

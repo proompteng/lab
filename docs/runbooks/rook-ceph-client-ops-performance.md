@@ -28,19 +28,24 @@ Live evidence captured on 2026-08-16 identified a separate correctness issue in 
    object store that rejects a matching `If-Match` update.
 1. Ceph `v20.2.2` contains the upstream RGW conditional `Put` fix. Rook `v1.20.3` supports Tentacle `v20.2.1+`, and
    this cluster's enabled CSI read affinity requires `v20.2.2+` rather than `v20.2.0`.
-1. The GitOps target is the immutable production image tag `quay.io/ceph/ceph:v20.2.2-20260616`, not a floating
-   major-version tag.
+1. The first `v20.2.2-20260616` rollout exposed an ARM64 packaging incompatibility on the Ampere monitor host:
+   `ceph-mon` crashed in `libunwind 1.6.2` while constructing global options. The same binary succeeded with
+   `TCMALLOC_STACKTRACE_METHOD=generic_fp`, isolating the failure to the packaged unwinder rather than monitor data.
+1. The GitOps fix-forward target is the immutable production image tag `quay.io/ceph/ceph:v20.2.3-20260804`. Its
+   ARM64 manifest upgrades `libunwind` to `1.8.0-4.el9`, whose package enables AArch64 tests and includes the upstream
+   AArch64 unwinding fixes. Do not replace this with an environment-variable workaround or a floating version tag.
 
 The pre-merge live gate is strict: Argo `rook-ceph` must be `Synced/Healthy`; Ceph must be `HEALTH_OK`; all six OSDs
 must be `up/in`; all 601 PGs must be `active+clean` apart from scrub suffixes; and no recovery, remap, degraded, or
 misplaced work may be active. The 2026-08-16 preflight met that gate with three monitors in quorum, two managers, six
 OSDs, two RGWs, and all Ceph daemons on `19.2.4`. GitOps also sets `upgradeOSDRequiresHealthyPGs=true`, so Rook will
-not begin the OSD phase if that clean-PG gate stops holding. The operator chart enables its monitoring RBAC because
-the CephCluster asks it to reconcile exporter ServiceMonitors; repeated RBAC denials are a preflight failure.
+not begin the OSD phase if that clean-PG gate stops holding. Ceph metrics are scraped directly from
+`rook-ceph-mgr.rook-ceph.svc.cluster.local:9283` by Alloy. This cluster does not install the Prometheus Operator CRDs,
+so both chart-managed ServiceMonitor integrations must remain disabled.
 
 After GitOps reconciliation, acceptance requires all of the following:
 
-1. `ceph versions` reports only `20.2.2`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
+1. `ceph versions` reports only `20.2.3`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
 1. Restate advances all 24 partition `latest.json` pointers and snapshot age returns below the configured one-hour
    alert threshold without direct object-store mutation.
 1. `RestateSnapshotUploadFailure`, `RestateSnapshotStale`, and `RestateControlPlaneAuditStale` resolve from fresh
@@ -50,7 +55,7 @@ After GitOps reconciliation, acceptance requires all of the following:
    reviewed retention cleanup proves exact reachability; do not bulk-delete the bucket during this rollout.
 
 Do not downgrade Ceph by reverting the image after any daemon has migrated to Tentacle. A failed major-version rollout
-is a fix-forward incident on the pinned `v20.2.2-20260616` build. The Rook operator performs the documented rolling
+is a fix-forward incident on the pinned `v20.2.3-20260804` build. The Rook operator performs the documented rolling
 daemon upgrade and gates each step on cluster health; do not patch the live `CephCluster` directly.
 
 References:
