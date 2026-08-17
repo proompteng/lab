@@ -69,6 +69,8 @@ export type ObserveStartupPreparation = {
 export type RecoveryFirstCycleAdvance = {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
+  /** Optional one-shot durable scheduling override for the next Restate command. */
+  readonly nextDelayMs?: number
 }
 
 export type RecoveryFirstCycleDriver = {

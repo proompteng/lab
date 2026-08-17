@@ -52,6 +52,30 @@ describe('advanceExecutionOnce', () => {
     expect(first.receiptHash).toMatch(/^[0-9a-f]{64}$/)
   })
 
+  test('persists a one-shot Restate delay returned by the completed advance', async () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      outcome: 'RECOVERED' as const,
+      observedAt: '2026-08-13T17:00:01.000Z',
+    }
+    const result = await Effect.runPromise(
+      advanceExecutionOnce(command, {
+        advance: Effect.succeed({
+          observation,
+          result: { outcome: 'RECOVERED' as const, action: 'WAITING' as const },
+          nextDelayMs: 300_000,
+        }),
+        nextDelayMs: 30_000,
+      }),
+    )
+
+    expect(result).toMatchObject({
+      _tag: 'Blocked',
+      reason: { _tag: 'RecoveryWaiting' },
+      nextDelayMs: 300_000,
+    })
+  })
+
   test('classifies expected business waits without exposing arbitrary failure messages', async () => {
     const notDue = await Effect.runPromise(
       advanceExecutionOnce(
