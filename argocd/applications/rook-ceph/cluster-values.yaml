@@ -4,7 +4,9 @@ clusterName: rook-ceph
 pspEnable: false
 
 monitoring:
-  enabled: true
+  # Metrics are scraped directly from rook-ceph-mgr by the cluster Alloy.
+  # This cluster does not install the Prometheus Operator ServiceMonitor CRD.
+  enabled: false
   createPrometheusRules: false
 
 cephImage:

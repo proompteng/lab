@@ -26,11 +26,6 @@ rbacEnable: true
 rbacAggregate:
   enableOBCs: true
 
-# The CephCluster enables exporter ServiceMonitors, so the operator must have
-# the chart-owned monitoring RBAC needed to reconcile them.
-monitoring:
-  enabled: true
-
 pspEnable: false
 
 allowLoopDevices: false
