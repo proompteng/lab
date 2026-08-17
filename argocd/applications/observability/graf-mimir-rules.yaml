@@ -2791,7 +2791,14 @@ data:
               description: No partition snapshot-age metric has been exported for fifteen minutes.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotStale
-            expr: max(restate_partition_snapshot_age_seconds{job="restate-server"}) > 3600
+            expr: |
+              max by (namespace, service) (
+                restate_partition_snapshot_age_seconds{
+                  job="restate-server",
+                  namespace="restate",
+                  service="restate"
+                }
+              ) > 3600
             for: 10m
             labels:
               severity: critical
@@ -2802,14 +2809,21 @@ data:
               description: A partition has not completed a snapshot within one hour despite the 30-minute schedule.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotUploadFailure
-            expr: increase(restate_partition_store_snapshots_upload_failed_total{job="restate-server"}[15m]) > 0
+            expr: |
+              sum by (namespace, service) (
+                increase(restate_partition_store_snapshots_upload_failed_total{
+                  job="restate-server",
+                  namespace="restate",
+                  service="restate"
+                }[15m])
+              ) > 0
             labels:
               severity: critical
               service: restate
               notify: email
             annotations:
               summary: Restate partition snapshot upload failed
-              description: Restate reported at least one snapshot-upload failure in the last fifteen minutes.
+              description: The Restate cluster reported at least one snapshot-upload failure in the last fifteen minutes.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateControlPlaneAuditStale
             expr: |

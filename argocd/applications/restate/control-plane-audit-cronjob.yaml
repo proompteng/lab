@@ -34,6 +34,10 @@ spec:
               env:
                 - name: RESTATE_ADMIN_URL
                   value: http://restate:9070
+                - name: RESTATE_AUDIT_CONNECT_ATTEMPTS
+                  value: "12"
+                - name: RESTATE_AUDIT_CONNECT_DELAY_SECONDS
+                  value: "5"
                 - name: HOME
                   value: /tmp
               securityContext:

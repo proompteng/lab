@@ -7,10 +7,37 @@ data:
     #!/bin/bash
     set -euo pipefail
 
-    address=http://restate-0.restate-cluster:5122,http://restate-1.restate-cluster:5122,http://restate-2.restate-cluster:5122
+    readonly address=http://restate-0.restate-cluster:5122,http://restate-1.restate-cluster:5122,http://restate-2.restate-cluster:5122
+    readonly connect_attempts="${RESTATE_AUDIT_CONNECT_ATTEMPTS:-12}"
+    readonly connect_delay_seconds="${RESTATE_AUDIT_CONNECT_DELAY_SECONDS:-5}"
     failed=0
 
-    nodes="$(restatectl --address "$address" nodes list --extra)"
+    case "$connect_attempts" in
+      ''|*[!0-9]*) echo "RESTATE_AUDIT_CONNECT_ATTEMPTS must be a positive integer" >&2; exit 2 ;;
+    esac
+    if [ "$connect_attempts" -lt 1 ]; then
+      echo "RESTATE_AUDIT_CONNECT_ATTEMPTS must be a positive integer" >&2
+      exit 2
+    fi
+    case "$connect_delay_seconds" in
+      ''|*[!0-9]*) echo "RESTATE_AUDIT_CONNECT_DELAY_SECONDS must be a non-negative integer" >&2; exit 2 ;;
+    esac
+
+    attempt=1
+    while true; do
+      if nodes="$(restatectl --address "$address" nodes list --extra 2>&1)"; then
+        break
+      fi
+      if [ "$attempt" -ge "$connect_attempts" ]; then
+        echo "Restate NodeCtl did not become reachable after ${connect_attempts} attempt(s)" >&2
+        printf '%s\n' "$nodes" >&2
+        exit 1
+      fi
+      echo "Restate NodeCtl is not reachable yet (${attempt}/${connect_attempts}); retrying" >&2
+      sleep "$connect_delay_seconds"
+      attempt=$((attempt + 1))
+    done
+
     printf '%s\n' "$nodes"
     for node in restate-0 restate-1 restate-2; do
       if ! printf '%s\n' "$nodes" | grep -Eq "[[:space:]]${node}[[:space:]].*Alive[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Ready[[:space:]]+Member"; then
@@ -25,7 +52,7 @@ data:
       }
       END {
         if (duplicate || count != 3) exit 1
-        for (i = 1; i <= count; i += 1) printf "%s%s", i == 1 ? "" : ",", ids[i]
+        for (i = 1; i <= count; i += 1) printf "%s%s", (i == 1 ? "" : ","), ids[i]
         print ""
       }
     ')"

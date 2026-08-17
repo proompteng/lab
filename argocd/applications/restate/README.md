@@ -107,8 +107,10 @@ default is only used when a cluster is initially provisioned and does not migrat
 ## Recovery proof and control-plane telemetry
 
 All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, snapshots, and audit/drill
-freshness. The five-minute SQL audit connects through all three stable NodeCtl addresses and requires replication two
-plus zero paused, recently killed, persistent five-minute vqueue inbox backlog, or active old-deployment invocations.
+freshness. Snapshot failures are aggregated once per Restate cluster rather than once per node. The five-minute SQL
+audit allows a bounded 55-second startup-connectivity window for a fresh audit Pod, then connects through all three
+stable NodeCtl addresses and requires replication two plus zero paused, recently killed, persistent five-minute vqueue
+inbox backlog, or active old-deployment invocations. It does not retry a successful but unhealthy control-plane result.
 The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs
 read-only SQL without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 

@@ -390,6 +390,94 @@ test('Restate admin exposure remains tailnet-restricted', () => {
   expect(service).toContain('port: 9070')
 })
 
+test('Restate control-plane audit tolerates only bounded startup connectivity failures', () => {
+  const configMap = YAML.parse(readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')) as {
+    data: Record<string, string>
+  }
+  const script = configMap.data['control-plane-audit.sh']
+  const tempDir = mkdtempSync('/tmp/restate-control-plane-audit-')
+  const calls = `${tempDir}/calls`
+  const restatectl = `${tempDir}/restatectl`
+  const restate = `${tempDir}/restate`
+  const sleep = `${tempDir}/sleep`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" nodes list --extra "*)
+    n=$(cat "${calls}" 2>/dev/null || echo 0)
+    n=$((n + 1))
+    echo "$n" >"${calls}"
+    if [ "$n" -le "\${FAKE_CONNECT_FAILURES:-0}" ]; then
+      echo 'synthetic NodeCtl connection failure' >&2
+      exit 7
+    fi
+    cat <<'OUT'
+N1 6 restate-0 http://restate-0 roles read-write active x Alive Ready Ready Ready Member
+N2 1 restate-1 http://restate-1 roles read-write active x Alive Ready Ready Ready Member
+N3 1 restate-2 http://restate-2 roles read-write active x Alive Ready Ready Ready Member
+OUT
+    ;;
+  *" metadata-server list "*)
+    cat <<'OUT'
+N1 Member v3 N1 [N1,N2,N3]
+N2 Member v3 N1 [N1,N2,N3]
+N3 Member v3 N1 [N1,N2,N3]
+OUT
+    ;;
+  *" config get "*)
+    cat <<'OUT'
+Partition replication: {node: 2}
+Log replication: {node: 2}
+OUT
+    ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    writeFileSync(restate, '#!/bin/sh\nset -eu\nprintf \'[{"count":0}]\\n\'\n')
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(restate, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const run = (failures: string, attempts: string) => {
+      writeFileSync(calls, '0\n')
+      return Bun.spawnSync(['/bin/bash', '-ceu', script], {
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+          FAKE_CONNECT_FAILURES: failures,
+          RESTATE_AUDIT_CONNECT_ATTEMPTS: attempts,
+          RESTATE_AUDIT_CONNECT_DELAY_SECONDS: '0',
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+    }
+
+    const recovered = run('3', '5')
+    if (recovered.exitCode !== 0) {
+      throw new Error(`control-plane audit unexpectedly failed: ${recovered.stderr.toString()}`)
+    }
+    expect(recovered.exitCode).toBe(0)
+    expect(readFileSync(calls, 'utf8').trim()).toBe('4')
+    expect(recovered.stderr.toString()).toContain('Restate NodeCtl is not reachable yet (3/5); retrying')
+    expect(recovered.stdout.toString()).toContain('Restate control-plane audit passed')
+
+    const exhausted = run('99', '3')
+    expect(exhausted.exitCode).not.toBe(0)
+    expect(readFileSync(calls, 'utf8').trim()).toBe('3')
+    expect(exhausted.stderr.toString()).toContain('Restate NodeCtl did not become reachable after 3 attempt(s)')
+    expect(exhausted.stderr.toString()).toContain('synthetic NodeCtl connection failure')
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('Restate resilience telemetry scrapes every node and audits exact operational state', () => {
   const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   const rules = readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml')
@@ -400,6 +488,8 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   const restateRules = ruleGroups.groups.find((group) => group.name === 'restate-control-plane.rules')?.rules ?? []
   const auditStale = restateRules.find((rule) => rule.alert === 'RestateControlPlaneAuditStale')
   const restoreNeverSucceeded = restateRules.find((rule) => rule.alert === 'RestateSnapshotRestoreDrillNeverSucceeded')
+  const snapshotStale = restateRules.find((rule) => rule.alert === 'RestateSnapshotStale')
+  const snapshotUploadFailure = restateRules.find((rule) => rule.alert === 'RestateSnapshotUploadFailure')
   const audit = readRepoFile('argocd/applications/restate/control-plane-audit-cronjob.yaml')
   const scripts = readRepoFile('argocd/applications/restate/resilience-scripts-configmap.yaml')
 
@@ -417,7 +507,15 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   expect(auditStale?.expr).toContain('> 600')
   expect(auditStale?.for).toBe('1m')
   expect(restoreNeverSucceeded?.expr).toContain('absent(kube_cronjob_created')
+  expect(snapshotStale?.expr).toContain('max by (namespace, service)')
+  expect(snapshotUploadFailure?.expr).toContain('sum by (namespace, service)')
+  expect(snapshotUploadFailure?.expr).toContain('namespace="restate"')
+  expect(snapshotUploadFailure?.expr).not.toContain('instance')
   expect(audit).toContain('docker.restate.dev/restatedev/restate:1.7.2')
+  expect(audit).toContain('name: RESTATE_AUDIT_CONNECT_ATTEMPTS')
+  expect(audit).toContain('value: "12"')
+  expect(audit).toContain('name: RESTATE_AUDIT_CONNECT_DELAY_SECONDS')
+  expect(audit).toContain('value: "5"')
   expect(scripts).toContain(
     'address=http://restate-0.restate-cluster:5122,http://restate-1.restate-cluster:5122,http://restate-2.restate-cluster:5122',
   )
@@ -427,6 +525,7 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   expect(scripts).toContain('i.pinned_deployment_id <> s.deployment_id')
   expect(scripts).toContain('expected_set[expected_ids[i]] = 1')
   expect(scripts).toContain('if (!(actual[i] in expected_set)) bad += 1')
+  expect(scripts).toContain('Restate NodeCtl did not become reachable after ${connect_attempts} attempt(s)')
 })
 
 test('Restate recovery proof opens all snapshots offline without exposing OBC credentials', () => {
