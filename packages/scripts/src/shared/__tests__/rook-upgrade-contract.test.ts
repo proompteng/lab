@@ -149,7 +149,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({
     repository: 'quay.io/ceph/ceph',
-    tag: 'v20.2.2-20260616',
+    tag: 'v20.2.3-20260804',
   })
   expect(clusterValues.monitoring).toEqual({ enabled: false, createPrometheusRules: false })
   expect(clusterValues.cephClusterSpec.upgradeOSDRequiresHealthyPGs).toBe(true)

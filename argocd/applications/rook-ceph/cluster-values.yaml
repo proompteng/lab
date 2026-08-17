@@ -12,8 +12,9 @@ monitoring:
 cephImage:
   repository: quay.io/ceph/ceph
   # Restate snapshots require RGW ETag conditional PUT support. Pin the full
-  # Tentacle build containing the upstream conditional-write fix.
-  tag: v20.2.2-20260616
+  # Tentacle build that also carries the updated ARM64 unwinder required by
+  # the cluster's Ampere monitor host.
+  tag: v20.2.3-20260804
   allowUnsupported: false
 
 toolbox:
