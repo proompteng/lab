@@ -508,6 +508,8 @@ test('Restate resilience telemetry scrapes every node and audits exact operation
   expect(auditStale?.for).toBe('1m')
   expect(restoreNeverSucceeded?.expr).toContain('absent(kube_cronjob_created')
   expect(snapshotStale?.expr).toContain('max by (namespace, service)')
+  expect(snapshotStale?.expr).toContain('min by (namespace, service, partition)')
+  expect(snapshotStale?.expr).not.toContain('max by (namespace, service) (\n  restate_partition_snapshot_age_seconds')
   expect(snapshotUploadFailure?.expr).toContain('sum by (namespace, service)')
   expect(snapshotUploadFailure?.expr).toContain('namespace="restate"')
   expect(snapshotUploadFailure?.expr).not.toContain('instance')

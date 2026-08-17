@@ -2793,11 +2793,13 @@ data:
           - alert: RestateSnapshotStale
             expr: |
               max by (namespace, service) (
-                restate_partition_snapshot_age_seconds{
-                  job="restate-server",
-                  namespace="restate",
-                  service="restate"
-                }
+                min by (namespace, service, partition) (
+                  restate_partition_snapshot_age_seconds{
+                    job="restate-server",
+                    namespace="restate",
+                    service="restate"
+                  }
+                )
               ) > 3600
             for: 10m
             labels:
@@ -2806,7 +2808,7 @@ data:
               notify: email
             annotations:
               summary: Restate partition snapshot is stale
-              description: A partition has not completed a snapshot within one hour despite the 30-minute schedule.
+              description: No Restate replica has completed a snapshot for at least one partition within one hour despite the 30-minute schedule.
               runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotUploadFailure
             expr: |
