@@ -18,6 +18,48 @@ Live evidence captured on 2026-07-06:
 
 That means read-primary balancing is a real performance opportunity, but it is not safe to enable yet.
 
+## Restate Snapshot Compatibility Upgrade
+
+Live evidence captured on 2026-08-16 identified a separate correctness issue in the shared RGW path:
+
+1. Restate `1.7.2` successfully uploaded immutable partition snapshot objects, then every conditional update of the
+   corresponding `latest.json` pointer failed with HTTP `412 Precondition Failed`.
+1. Restate requires S3-compatible snapshot stores to support ETag-based conditional writes. Retrying cannot repair an
+   object store that rejects a matching `If-Match` update.
+1. Ceph `v20.2.2` contains the upstream RGW conditional `Put` fix. Rook `v1.20.3` supports Tentacle `v20.2.1+`, and
+   this cluster's enabled CSI read affinity requires `v20.2.2+` rather than `v20.2.0`.
+1. The GitOps target is the immutable production image tag `quay.io/ceph/ceph:v20.2.2-20260616`, not a floating
+   major-version tag.
+
+The pre-merge live gate is strict: Argo `rook-ceph` must be `Synced/Healthy`; Ceph must be `HEALTH_OK`; all six OSDs
+must be `up/in`; all 601 PGs must be `active+clean` apart from scrub suffixes; and no recovery, remap, degraded, or
+misplaced work may be active. The 2026-08-16 preflight met that gate with three monitors in quorum, two managers, six
+OSDs, two RGWs, and all Ceph daemons on `19.2.4`. GitOps also sets `upgradeOSDRequiresHealthyPGs=true`, so Rook will
+not begin the OSD phase if that clean-PG gate stops holding. The operator chart enables its monitoring RBAC because
+the CephCluster asks it to reconcile exporter ServiceMonitors; repeated RBAC denials are a preflight failure.
+
+After GitOps reconciliation, acceptance requires all of the following:
+
+1. `ceph versions` reports only `20.2.2`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
+1. Restate advances all 24 partition `latest.json` pointers and snapshot age returns below the configured one-hour
+   alert threshold without direct object-store mutation.
+1. `RestateSnapshotUploadFailure`, `RestateSnapshotStale`, and `RestateControlPlaneAuditStale` resolve from fresh
+   successful evidence; they are not silenced or weakened.
+1. The isolated Restate snapshot restore proof and next scheduled restore drill succeed against the new pointers.
+1. Failed snapshot attempts stop creating unreferenced objects. Historical objects are retained until a separate,
+   reviewed retention cleanup proves exact reachability; do not bulk-delete the bucket during this rollout.
+
+Do not downgrade Ceph by reverting the image after any daemon has migrated to Tentacle. A failed major-version rollout
+is a fix-forward incident on the pinned `v20.2.2-20260616` build. The Rook operator performs the documented rolling
+daemon upgrade and gates each step on cluster health; do not patch the live `CephCluster` directly.
+
+References:
+
+- <https://docs.restate.dev/references/server-config>
+- <https://rook.io/docs/rook/latest-release/Getting-Started/maintenance-and-support/>
+- <https://rook.io/docs/rook/latest-release/Upgrade/ceph-upgrade/>
+- <https://docs.ceph.com/en/latest/releases/tentacle/>
+
 ## Non-Network Performance Pass
 
 The 2026-07-06 non-network performance pass keeps the existing NICs and network topology. It does not require a

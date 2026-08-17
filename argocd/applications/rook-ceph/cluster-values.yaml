@@ -9,7 +9,9 @@ monitoring:
 
 cephImage:
   repository: quay.io/ceph/ceph
-  tag: v19.2.4
+  # Restate snapshots require RGW ETag conditional PUT support. Pin the full
+  # Tentacle build containing the upstream conditional-write fix.
+  tag: v20.2.2-20260616
   allowUnsupported: false
 
 toolbox:
@@ -23,6 +25,8 @@ toolbox:
   priorityClassName: system-cluster-critical
 
 cephClusterSpec:
+  # Stop the major-version OSD rollout before it starts if any PG is not clean.
+  upgradeOSDRequiresHealthyPGs: true
   cephConfig:
     global:
       # This cluster currently runs OSDs on 2 hosts, so the default replicated pool size must be 2.
