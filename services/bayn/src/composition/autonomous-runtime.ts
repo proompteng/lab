@@ -1,4 +1,3 @@
-import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Layer, Option, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
@@ -14,23 +13,8 @@ import {
   recoverTerminalGenerationToObserve,
   type TerminalGenerationRolloverReceipt,
 } from '../blocked-generation-recovery'
-import { BrokerRead, BrokerSession } from '../broker/alpaca'
-import { AlpacaHttpClient } from '../broker/alpaca/http'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
-import { CycleStore } from '../cycle/store'
-import { ForwardPerformanceReceiptStore } from '../db/forward-performance-receipt'
-import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
-import {
-  AuthorityGenerationStore,
-  AuthorityRestrictionStore,
-  BrokerEventStore,
-  CapitalGrantLifecycleStore,
-  FillAccountingStore,
-  ReconciliationStore,
-  ValuationStore,
-} from '../db/execution-store'
-import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState } from '../execution/contracts'
 import {
@@ -39,13 +23,9 @@ import {
   type CapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
 } from '../execution/configuration'
-import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
 import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
-import { WriterFence } from '../execution/writer-fence'
 import { OperationalError } from '../errors'
-import { MarketData } from '../market-data'
 import {
   isExecutionMandateFailureRestriction,
   capitalGrantFromLegacyGeneration,
@@ -60,6 +40,7 @@ import { runOnce } from '../reconciler'
 import { currentUtcInstant } from '../time'
 import type { RuntimeEvidence } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
+import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
 import {
   executionProgramError,
@@ -188,42 +169,9 @@ export const makeAutonomousServiceRuntime = (
                   attemptScope,
                 ).pipe(
                   Effect.flatMap((runtimeContext) =>
-                    Effect.all({
-                      pgClient: PgClient.PgClient,
-                      session: BrokerSession,
-                      alpacaHttpClient: AlpacaHttpClient,
-                      persistedCapitalGrants: PersistedCapitalGrantStore,
-                      intentStore: IntentStore,
-                      blockedCycleIntentStore: BlockedCycleIntentStore,
-                      mutationStore: MutationStore,
-                      writerFence: WriterFence,
-                      cycleStore: CycleStore,
-                      brokerEventStore: BrokerEventStore,
-                      fillAccountingStore: FillAccountingStore,
-                      valuationStore: ValuationStore,
-                      reconciliationStore: ReconciliationStore,
-                      authorityGenerationStore: AuthorityGenerationStore,
-                      capitalGrantLifecycleStore: CapitalGrantLifecycleStore,
-                      authorityRestrictionStore: AuthorityRestrictionStore,
-                      executionCycleClosureStore: ExecutionCycleClosureStore,
-                      forwardPerformanceReceiptStore: ForwardPerformanceReceiptStore,
-                    }).pipe(
+                    autonomousRuntimeServices.pipe(
                       Effect.flatMap((runtimeServices) => {
-                        const cycleResources = Layer.mergeAll(
-                          Layer.succeed(BrokerRead, runtimeServices.session.read),
-                          Layer.succeed(MarketData, dependencies.marketData),
-                          Layer.succeed(CycleStore, runtimeServices.cycleStore),
-                          Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
-                          Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
-                          Layer.succeed(ValuationStore, runtimeServices.valuationStore),
-                          Layer.succeed(ReconciliationStore, runtimeServices.reconciliationStore),
-                          Layer.succeed(AuthorityGenerationStore, runtimeServices.authorityGenerationStore),
-                          Layer.succeed(AuthorityRestrictionStore, runtimeServices.authorityRestrictionStore),
-                          Layer.succeed(WriterFence, runtimeServices.writerFence),
-                          Layer.succeed(IntentStore, runtimeServices.intentStore),
-                          Layer.succeed(MutationStore, runtimeServices.mutationStore),
-                          Layer.succeed(ExecutionCycleClosureStore, runtimeServices.executionCycleClosureStore),
-                        )
+                        const cycleResources = makeAutonomousCycleResources(runtimeServices, dependencies.marketData)
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           Effect.gen(function* () {
                             if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {

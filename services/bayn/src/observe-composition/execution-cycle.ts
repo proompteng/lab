@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError, runAutonomousCyclePass, type CycleRunContext, type CycleRunResult } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
@@ -544,32 +544,12 @@ const executeBoundExecutionCycle = (
     return { _tag: 'Wait' as const, observedAt: step.observedAt }
   })
 
-export const completePostMutationReconciliation = (
-  pending: PostMutationReconciliation,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, ObserveDecisionRuntime> =>
-  Effect.gen(function* () {
-    if (pending.delayMs > 0) yield* Effect.sleep(Duration.millis(pending.delayMs))
-    const reconciled = yield* reconcile.pipe(
-      Effect.mapError((cause) =>
-        mutationRunnerError({ message: 'post-mutation reconciliation failed', cause, failure: 'operational' }),
-      ),
-    )
-    yield* Effect.logInfo('Execution mutation reconciled').pipe(
-      Effect.annotateLogs({
-        ...pending.logContext,
-        accountingExact: reconciled.report.metrics.accountingExact,
-        discrepancyCount: reconciled.report.reconciliation.discrepancies.length,
-        reconciliationStatus: reconciled.report.reconciliation.status,
-      }),
-    )
-    return {
-      outcome: 'RECOVERED' as const,
-      action: 'WAITING' as const,
-      observedAt: pending.observedAt,
-      cycle: pending.cycle,
-    }
-  })
+export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
+  outcome: 'RECOVERED' as const,
+  action: 'WAITING' as const,
+  observedAt: pending.observedAt,
+  cycle: pending.cycle,
+})
 
 const readUnfinishedMutationCycle = (
   context: CycleRunContext<ObserveDecisionRuntime>,

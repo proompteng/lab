@@ -32,6 +32,7 @@ type AdvanceCycleResult =
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: AdvanceCycleResult
+  readonly nextDelayMs?: number
 }
 
 export interface AdvanceExecutionCommand {
@@ -186,12 +187,13 @@ export const advanceExecutionOnce = <R>(
     ),
     Effect.flatMap((advance) => {
       const outcome = classifyAdvance(advance)
-      return hashOutcome(command, outcome, advance, driver.nextDelayMs).pipe(
+      const nextDelayMs = advance.nextDelayMs ?? driver.nextDelayMs
+      return hashOutcome(command, outcome, advance, nextDelayMs).pipe(
         Effect.map(
           (receiptHash): AdvanceOutcome => ({
             ...outcome,
             receiptHash,
-            nextDelayMs: driver.nextDelayMs,
+            nextDelayMs,
             observation: advance.observation,
           }),
         ),

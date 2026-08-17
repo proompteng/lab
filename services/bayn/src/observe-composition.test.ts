@@ -136,7 +136,7 @@ const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpre
   const run = (): ReturnType<RecoveryFirstCycleDriverInterpreter> =>
     Effect.suspend(() =>
       driver.advance.pipe(
-        Effect.andThen(Effect.sleep(Duration.millis(driver.nextDelayMs))),
+        Effect.flatMap((advance) => Effect.sleep(Duration.millis(advance.nextDelayMs ?? driver.nextDelayMs))),
         Effect.catch((restrictionError) => Effect.die(restrictionError)),
         Effect.andThen(run()),
       ),
@@ -4568,6 +4568,7 @@ describe('OBSERVE runtime composition', () => {
     }
     let boundaryReconciliations = 0
     let boundaryIntentReadDelayed = false
+    let boundaryMutationPersisted = false
 
     await Effect.runPromise(
       Effect.scoped(
@@ -4576,6 +4577,7 @@ describe('OBSERVE runtime composition', () => {
           const intentReadStarted = yield* Deferred.make<void>()
           const mutationSettled = yield* Deferred.make<void>()
           const preMutationReconciled = yield* Deferred.make<void>()
+          const postMutationReconciled = yield* Deferred.make<void>()
           const pass =
             yield* Deferred.make<
               Parameters<Parameters<ReturnType<typeof makeMutationAutonomousCycleStartup>>[0]['recordPass']>[0]
@@ -4587,10 +4589,13 @@ describe('OBSERVE runtime composition', () => {
                 boundaryReconciliations += 1
                 return boundaryReconciliations
               }).pipe(
-                Effect.tap((count) =>
-                  count === 1 ? Deferred.succeed(preMutationReconciled, undefined).pipe(Effect.asVoid) : Effect.void,
+                Effect.flatMap((count) =>
+                  count === 1
+                    ? Deferred.succeed(preMutationReconciled, undefined).pipe(Effect.as(paperPersisted))
+                    : count === 3
+                      ? Deferred.succeed(postMutationReconciled, undefined).pipe(Effect.andThen(Effect.never))
+                      : Effect.succeed(paperPersisted),
                 ),
-                Effect.as(paperPersisted),
               ),
             ensureAuthorityGeneration: () => Effect.succeed(paperAuthority),
           } satisfies BrokerEventStoreShape &
@@ -4628,14 +4633,28 @@ describe('OBSERVE runtime composition', () => {
             },
           }
           const boundaryMutationStore = {
-            latest: () => Effect.void,
+            latest: (_intentId: string, operation: MutationOperation) =>
+              Effect.succeed(
+                boundaryMutationPersisted && operation === MutationOperation.Submit ? boundaryAccepted : undefined,
+              ),
           } as unknown as MutationStoreShape
           const boundaryExecutionProgram: ExecutionProgram = {
             ...sandboxExecutionProgram(),
             submit: (intentId, consistencyDelayMs) => {
               expect(intentId).toBe(boundaryIntent.intentId)
               expect(consistencyDelayMs).toBe(boundaryAccepted.consistencyDelayMs)
-              return Deferred.succeed(mutationSettled, undefined).pipe(Effect.as(boundaryAccepted))
+              return Deferred.succeed(mutationSettled, undefined).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    boundaryMutationPersisted = true
+                  }),
+                ),
+                Effect.as(boundaryAccepted),
+              )
+            },
+            recover: (intentId) => {
+              expect(intentId).toBe(boundaryIntent.intentId)
+              return Effect.succeed(boundaryAccepted)
             },
           }
           const boundaryStartup = makeMutationAutonomousCycleStartup({
@@ -4684,35 +4703,42 @@ describe('OBSERVE runtime composition', () => {
               Effect.mapError(() => new Error('timed out waiting for pre-mutation reconciliation')),
             ),
           )
-          expect(Option.isNone(yield* Deferred.poll(pass))).toBe(true)
           yield* TestClock.withLive(
             Deferred.await(mutationSettled).pipe(
               Effect.timeout('1 second'),
               Effect.mapError(() => new Error('timed out waiting for durable mutation settlement')),
             ),
           )
-          yield* Effect.yieldNow
-          expect(boundaryReconciliations).toBe(2)
-          yield* TestClock.adjust(1)
           const observation = yield* TestClock.withLive(
             Deferred.await(pass).pipe(
               Effect.timeout('1 second'),
-              Effect.mapError(() => new Error('timed out waiting for aggregate timeout observation')),
+              Effect.mapError(() => new Error('timed out waiting for post-mutation Restate continuation')),
             ),
           )
           expect(observation).toMatchObject({
-            result: 'FAILURE',
-            operation: 'run-cycle-pass',
-            message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
+            result: 'SUCCESS',
+            outcome: 'RECOVERED',
           })
-          expect(authorityRestrictions).toBe(1)
+          expect(boundaryReconciliations).toBe(2)
+          expect(authorityRestrictions).toBe(0)
+          yield* TestClock.adjust(99)
+          expect(boundaryReconciliations).toBe(2)
+          yield* TestClock.adjust(1)
+          yield* TestClock.withLive(
+            Deferred.await(postMutationReconciled).pipe(
+              Effect.timeout('1 second'),
+              Effect.mapError(() => new Error('timed out waiting for Restate-owned post-mutation reconciliation')),
+            ),
+          )
+          expect(boundaryReconciliations).toBe(3)
+          expect(authorityRestrictions).toBe(0)
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
 
-    expect(boundaryReconciliations).toBe(2)
-    expect(authorityRestrictions).toBe(1)
+    expect(boundaryReconciliations).toBe(3)
+    expect(authorityRestrictions).toBe(0)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {

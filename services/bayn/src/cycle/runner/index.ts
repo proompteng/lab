@@ -22,5 +22,4 @@ export {
   validateCyclePassTimeout,
   validateReconciliationInterval,
 } from './decisions'
-export { makeAutonomousCycleLoop } from './loop'
 export { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'

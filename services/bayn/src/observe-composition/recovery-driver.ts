@@ -42,7 +42,7 @@ import {
   type ReconciliationPassError,
 } from './decision-builder'
 import {
-  completePostMutationReconciliation,
+  deferPostMutationReconciliation,
   isPostMutationReconciliation,
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
@@ -202,6 +202,7 @@ const makeRecoveryFirstCycleDriver = (
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
     const operationPermit = yield* Semaphore.make(1)
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+    const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
@@ -233,15 +234,27 @@ const makeRecoveryFirstCycleDriver = (
         cyclePassTimeoutMs,
       )
       if (isPostMutationReconciliation(result)) {
-        return yield* completePostMutationReconciliation(result, reconcile)
+        // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+        // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+        // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+        // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+        yield* Ref.set(cadence, {})
+        return {
+          result: deferPostMutationReconciliation(result),
+          ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+        }
       }
-      return result
+      return { result }
     }).pipe(
       Effect.matchEffect({
         onFailure: observeCycleFailure,
-        onSuccess: (result) =>
+        onSuccess: ({ result, nextDelayMs }) =>
           observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
-            Effect.map((observation) => ({ observation, result })),
+            Effect.map((observation) => ({
+              observation,
+              result,
+              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+            })),
           ),
       }),
     )
@@ -290,7 +303,7 @@ const makeRecoveryFirstCycleDriver = (
     )
     return {
       advance,
-      nextDelayMs: recoveryFirstCycleNextDelayMs(input),
+      nextDelayMs,
     }
   })
 
