@@ -2403,6 +2403,30 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isSuccess(observed.handedOff)).toBe(true)
   })
 
+  test('reuses the held writer-fence transaction for nested durable mutations', async () => {
+    const execution = makeExecutionRuntime()
+
+    const observed = await Effect.runPromise(
+      Effect.promise(() =>
+        execution.runPromise(
+          Effect.flatMap(WriterFence, (fence) =>
+            fence.transaction(
+              fence.transaction(
+                Effect.gen(function* () {
+                  const sql = yield* PgClient.PgClient
+                  const rows = yield* sql<{ backend_pid: number }>`SELECT pg_backend_pid()::integer AS backend_pid`
+                  return rows[0]?.backend_pid
+                }),
+              ),
+            ),
+          ),
+        ),
+      ).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+    )
+
+    expect(observed).toBeNumber()
+  })
+
   test('runs mutations on the transaction-fence session and rolls back when that session dies', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()

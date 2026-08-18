@@ -7,7 +7,7 @@ export {
   type CycleRecoveryScope,
   type CycleStoreShape,
 } from './model'
-export { CycleStoreLive } from './postgres'
+export { CycleStoreLive, WriterFencedCycleStoreLive, withWriterFenceCycleStore } from './postgres'
 export {
   CycleObservability,
   CycleObservabilityError,

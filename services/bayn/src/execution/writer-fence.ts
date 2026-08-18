@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Exit, Layer, Schema, Semaphore } from 'effect'
+import { Context, Data, Effect, Exit, Layer, Option, Schema, Semaphore } from 'effect'
 
 const LOCK_NAMESPACE = 1_111_578_958 // ASCII "BAYN"
 const WRITER_LEASE = 1
@@ -138,7 +138,17 @@ const acquire = Effect.gen(function* () {
 
   const check = runTransaction('check', Effect.void)
   const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>
-    runTransaction('transaction', effect)
+    Effect.serviceOption(sql.transactionService).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => runTransaction('transaction', effect),
+          onSome: ([transactionConnection]) =>
+            transactionConnection === connection
+              ? checkHeld('transaction').pipe(Effect.andThen(effect))
+              : runTransaction('transaction', effect),
+        }),
+      ),
+    )
 
   return { backendPid, check, transaction } satisfies WriterFenceService
 })
