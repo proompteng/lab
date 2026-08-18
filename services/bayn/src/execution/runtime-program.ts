@@ -17,7 +17,7 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import { IntentStore, type IntentStoreService } from './intents'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 import { MutationStore, type MutationStoreShape } from './mutations'
 import {
   makeAuthorityGuardedBrokerMutation,
@@ -142,15 +142,15 @@ const finalBrokerAuthorization = (
   })
 }
 
-const validateFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgramDependencies) =>
-  dependencies.intentStore.read(intentId).pipe(
-    Effect.flatMap((stored) => Effect.fromResult(selectStoredIntent(MutationOperation.Submit, intentId, stored))),
-    Effect.flatMap((stored) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((currentTimeMillis) =>
-          Effect.fromResult(validateStartedSubmitRiskDecision(stored, currentTimeMillis)),
-        ),
-      ),
+const readFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgramDependencies) =>
+  dependencies.intentStore
+    .read(intentId)
+    .pipe(Effect.flatMap((stored) => Effect.fromResult(selectStoredIntent(MutationOperation.Submit, intentId, stored))))
+
+const validateFinalSubmitRisk = (stored: StoredIntent) =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((currentTimeMillis) =>
+      Effect.fromResult(validateStartedSubmitRiskDecision(stored, currentTimeMillis)),
     ),
     Effect.asVoid,
   )
@@ -187,12 +187,15 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
         const closeOnly =
           dependencies.isCloseOnlyIntent !== undefined ? yield* dependencies.isCloseOnlyIntent(intent.intentId) : false
         yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
-        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
+        // The writer-fence transaction owns Bayn's PostgreSQL writer for this interval, so the started intent bytes are
+        // stable until commit. Reuse them and re-evaluate only the time-bound risk decision after broker I/O.
+        const startedIntent = yield* readFinalSubmitRisk(intent.intentId, dependencies)
+        yield* validateFinalSubmitRisk(startedIntent)
         const capital = yield* finalExecutionGrantAuthorization(authority, intent, dependencies)
-        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
+        yield* validateFinalSubmitRisk(startedIntent)
         yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
         yield* finalBrokerAuthorization(authority, capital, intent, closeOnly, dependencies)
-        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
+        yield* validateFinalSubmitRisk(startedIntent)
         yield* validateExecutionWindow(intent.intentId, dependencies, closeOnly)
         transmissionStarted = true
         return yield* transmit
