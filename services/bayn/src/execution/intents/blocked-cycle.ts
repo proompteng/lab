@@ -39,7 +39,7 @@ export class BlockedCycleIntentStoreError extends Data.TaggedError('BlockedCycle
  * Terminalizes untouched approved intents after their bound cycle has durably blocked.
  *
  * The live interpreter deliberately does not open its own transaction. Its only caller composes this operation with
- * cycle terminalization and authority restriction inside the process-owned WriterFence transaction.
+ * cycle terminalization and authority restriction inside one WriterFence transaction.
  */
 export interface BlockedCycleIntentStoreShape {
   readonly terminalizeUntouchedApproved: (
@@ -47,7 +47,7 @@ export interface BlockedCycleIntentStoreShape {
   ) => Effect.Effect<BlockedCycleIntentTerminalizationReceipt, BlockedCycleIntentStoreError>
   /**
    * Repairs a generation that was already kill-restricted and terminal when this process started. The caller must
-   * run this operation inside the process-owned WriterFence transaction. A later, separate exact reconciliation is
+   * run this operation inside the caller's WriterFence transaction. A later, separate exact reconciliation is
    * deliberately required before OBSERVE generation rollover can clear the kill.
    */
   readonly settleCurrentTerminalGeneration: (

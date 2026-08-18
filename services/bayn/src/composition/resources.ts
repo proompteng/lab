@@ -96,7 +96,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
-/** Read-only resources for the public status service. Mutation stores and the process-wide writer fence are absent. */
+/** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
 export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const evidence = Layer.effect(EvidenceStore, Effect.map(PgClient.PgClient, makeEvidenceStore)).pipe(
