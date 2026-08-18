@@ -156,6 +156,15 @@ export type ExecutionCapitalLimitFailure =
       readonly cause: unknown
     }
   | {
+      readonly _tag: 'BrokerOrderSnapshotChanged'
+      readonly beforeHash: string
+      readonly afterHash: string
+    }
+  | {
+      readonly _tag: 'BrokerOrderSnapshotInvalid'
+      readonly cause: unknown
+    }
+  | {
       readonly _tag: 'IncreasingSellUnsupported'
       readonly symbol: string
       readonly currentQuantityMicros: string
@@ -274,6 +283,34 @@ const validateStablePositionSnapshotDataFirst = (
 }
 
 export const validateStablePositionSnapshot = Pipeable.dual(2, validateStablePositionSnapshotDataFirst)
+
+const orderExposureIdentity = (orders: readonly Order[]) =>
+  orders
+    .map(({ observedAt: _observedAt, ...order }) => order)
+    .sort((left, right) =>
+      left.brokerOrderId < right.brokerOrderId ? -1 : left.brokerOrderId > right.brokerOrderId ? 1 : 0,
+    )
+
+const validateStableOrderSnapshot = (
+  before: readonly Order[],
+  after: readonly Order[],
+): Result.Result<readonly Order[], ExecutionCapitalLimitFailure> => {
+  const beforeHash = canonicalHashV1Result(orderExposureIdentity(before))
+  if (Result.isFailure(beforeHash)) {
+    return Result.fail({ _tag: 'BrokerOrderSnapshotInvalid', cause: beforeHash.failure })
+  }
+  const afterHash = canonicalHashV1Result(orderExposureIdentity(after))
+  if (Result.isFailure(afterHash)) {
+    return Result.fail({ _tag: 'BrokerOrderSnapshotInvalid', cause: afterHash.failure })
+  }
+  return beforeHash.success === afterHash.success
+    ? Result.succeed(after)
+    : Result.fail({
+        _tag: 'BrokerOrderSnapshotChanged',
+        beforeHash: beforeHash.success,
+        afterHash: afterHash.success,
+      })
+}
 
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority.authorityGenerationHash
@@ -772,17 +809,12 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
   dependencies: BrokerSubmitRefreshDependencies,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
-    const account = yield* dependencies.brokerRead.account.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker account could not be refreshed before submit', cause),
-      ),
-    )
     const positionsBefore = yield* dependencies.brokerRead.positions.pipe(
       Effect.mapError((cause) =>
         mutationAuthorizationError('broker positions could not be refreshed before submit', cause),
       ),
     )
-    const openOrders = yield* dependencies.brokerRead
+    const openOrdersBefore = yield* dependencies.brokerRead
       .orders({
         status: OrderCollection.Open,
         limit: limits.maxOpenOrders,
@@ -797,6 +829,16 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         mutationAuthorizationError('broker positions could not be confirmed after open-order refresh', cause),
       ),
     )
+    const openOrdersAfter = yield* dependencies.brokerRead
+      .orders({
+        status: OrderCollection.Open,
+        limit: limits.maxOpenOrders,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationAuthorizationError('broker open orders could not be confirmed after exposure refresh', cause),
+        ),
+      )
     const stablePositions = validateStablePositionSnapshot(positionsBefore.value, positionsAfter.value)
     if (Result.isFailure(stablePositions)) {
       return yield* mutationAuthorizationError(
@@ -804,13 +846,25 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         stablePositions.failure,
       )
     }
+    const stableOrders = validateStableOrderSnapshot(openOrdersBefore.value, openOrdersAfter.value)
+    if (Result.isFailure(stableOrders)) {
+      return yield* mutationAuthorizationError(
+        'broker open-order snapshot changed during exposure refresh',
+        stableOrders.failure,
+      )
+    }
+    const account = yield* dependencies.brokerRead.account.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('broker account could not be refreshed after exposure confirmation', cause),
+      ),
+    )
     return {
       account: account.value,
       positions: stablePositions.success,
-      openOrders: openOrders.value,
+      openOrders: stableOrders.success,
       accountObservedAt: account.evidence.observedAt,
       positionsObservedAt: positionsAfter.evidence.observedAt,
-      ordersObservedAt: openOrders.evidence.observedAt,
+      ordersObservedAt: openOrdersAfter.evidence.observedAt,
     }
   })
 

@@ -233,6 +233,7 @@ interface ScenarioInput {
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
+  readonly openOrderSnapshots?: readonly (readonly Order[])[]
   readonly proposedIntent?: Intent
   readonly persistedAtRead?: (positionReads: number) => GrantedCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
@@ -245,6 +246,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   let submits = 0
   let grantReads = 0
   let positionReads = 0
+  let orderReads = 0
   let orderLimit: number | undefined
   const unusedRead = Effect.die(new Error('unused broker read in mutation authority test'))
   const brokerRead: BrokerReadShape = {
@@ -265,7 +267,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       Effect.sync(() => {
         trace.push('orders')
         orderLimit = query?.limit
-        return readResult(input.openOrders ?? [], input.ordersObservedAt)
+        const snapshots = input.openOrderSnapshots
+        const openOrders = snapshots?.[Math.min(orderReads, snapshots.length - 1)] ?? input.openOrders ?? []
+        orderReads += 1
+        return readResult(openOrders, input.ordersObservedAt)
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
@@ -329,7 +334,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     finalSubmitAuthorization,
   })
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
-  return { exit, grant, grantReads, orderLimit, positionReads, submits, trace }
+  return { exit, grant, grantReads, orderLimit, orderReads, positionReads, submits, trace }
 }
 
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
@@ -357,6 +362,7 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.positionReads).toBe(2)
+    expect(observed.orderReads).toBe(2)
     expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
@@ -375,7 +381,18 @@ describe('final broker mutation authority', () => {
     expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
-    expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
+    expect(observed.trace).toEqual(['positions', 'orders', 'positions', 'orders'])
+  })
+
+  test('rejects an open-order change during the final broker refresh before transmission', async () => {
+    const observed = await runLiveSubmit({
+      openOrderSnapshots: [[], [order()]],
+    })
+
+    expect(failureTag(observed.exit)).toBe('BrokerOrderSnapshotChanged')
+    expect(observed.orderReads).toBe(2)
+    expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
   })
 
   test.each([
