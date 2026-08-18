@@ -62,12 +62,12 @@ narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and broker 
 service-account token and accepts Restate requests only from the `restate` namespace. The activation Job has no broker
 egress and its token-authenticated bootstrap call is made only by the labeled GitOps hook.
 
-Native controller rotation is available only when the replacement worker and activation hook are both bound to the
-exact previous plan hash and source revision. The replacement quiesces previous-binding ticks, verifies and deactivates
-that binding through the account-keyed Virtual Object, advances its epoch, and activates the replacement idempotently.
-Until the release updater emits that complete reviewed binding, it must continue returning
-`native-execution-controller-refresh-required` without changing GitOps. Never promote only the public status image
-while execution remains pinned to an older plan.
+The reviewed `main` build publishes an immutable image, then the release workflow atomically advances the status,
+controller, and activation pins on `codex/bayn-deploy`. Argo watches that generated branch directly, so a second
+promotion pull request is neither required nor permitted. A release is held without advancing the branch when strategy
+or runtime identity changes require new trading evidence. The durable controller plan identifies the orchestration
+protocol rather than a particular worker build; every successful tick records the exact worker source revision, while
+strategy, account, market-data, risk, and authority bindings remain validated by the execution pass.
 
 Rollback is another serialized native ownership transfer, not pruning an active worker. Through a reviewed GitOps
 change, move the account-keyed binding to a compatible native replacement, or deactivate the native controller so Bayn

@@ -131,8 +131,8 @@ export type ExecutionControllerBootstrapDecision =
 
 const sameBinding = (
   state: ExecutionControllerState,
-  request: Pick<ExecutionControllerActivation, 'planHash' | 'sourceRevision'>,
-): boolean => state.planHash === request.planHash && state.sourceRevision === request.sourceRevision
+  request: Pick<ExecutionControllerActivation, 'planHash'>,
+): boolean => state.planHash === request.planHash
 
 const conflict = (
   operation: ExecutionControllerDecisionError['operation'],
@@ -227,6 +227,7 @@ export const decideExecutionControllerTick = (
   tick: ExecutionControllerTick,
   controllerKey: string,
   issuedAt: string,
+  workerSourceRevision: string,
 ): Result.Result<ExecutionControllerTickDecision, ExecutionControllerDecisionError> => {
   if (state === null || !state.active) return Result.succeed({ _tag: 'Ignored', reason: 'Inactive' })
   if (tick.epoch !== state.epoch) return Result.succeed({ _tag: 'Ignored', reason: 'StaleEpoch' })
@@ -247,7 +248,7 @@ export const decideExecutionControllerTick = (
       epoch: state.epoch,
       sequence: state.nextSequence,
       issuedAt,
-      sourceRevision: state.sourceRevision,
+      sourceRevision: workerSourceRevision,
     },
   })
 }
@@ -256,6 +257,7 @@ export const completeExecutionControllerTick = (
   state: ExecutionControllerState,
   tick: ExecutionControllerTick,
   result: ExecutionAdvanceStepResult,
+  workerSourceRevision: string,
 ): Result.Result<ExecutionControllerState, ExecutionControllerDecisionError> => {
   if (!state.active || tick.epoch !== state.epoch || tick.sequence !== state.nextSequence) {
     return conflict('complete', 'execution controller completion does not match durable controller state')
@@ -291,6 +293,7 @@ export const completeExecutionControllerTick = (
   }
   return Result.succeed({
     ...state,
+    sourceRevision: workerSourceRevision,
     nextSequence: state.nextSequence + 1,
     lastCompletion: {
       sequence: tick.sequence,

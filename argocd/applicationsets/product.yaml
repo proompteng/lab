@@ -377,6 +377,9 @@ spec:
                 enabled: "true"
               - name: bayn
                 path: argocd/applications/bayn
+                # Bayn's reviewed main build writes immutable release pins here.
+                # The branch is generated deployment state, not a second review boundary.
+                targetRevision: codex/bayn-deploy
                 namespace: bayn
                 renderWithLovely: false
                 annotations:
@@ -500,7 +503,7 @@ spec:
         namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
         repoURL: https://github.com/proompteng/lab.git
-        targetRevision: main
+        targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
         path: "{{ .path }}"
       syncPolicy:
         syncOptions:

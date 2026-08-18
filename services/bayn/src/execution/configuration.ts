@@ -262,15 +262,9 @@ export const researchCapitalBuildContinuationIsBound = (
   continuation: ResearchCapitalBuildContinuation,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
-  currentActivation: CapitalActivationRevisionBinding,
 ): Result.Result<void, string> => {
-  if (
-    continuation.generationHash !== generation.generationHash ||
-    continuation.activation.sourceRevision !== currentActivation.sourceRevision ||
-    continuation.activation.imageRepository !== currentActivation.imageRepository ||
-    continuation.activation.imageDigest !== currentActivation.imageDigest
-  ) {
-    return Result.fail('research capital build continuation is not bound to the active generation and current build')
+  if (continuation.generationHash !== generation.generationHash) {
+    return Result.fail('research capital build continuation is not bound to the active generation')
   }
   return researchCapitalGenerationIsBoundToRequest(continuation.request, sourceGenerationHash, generation)
 }

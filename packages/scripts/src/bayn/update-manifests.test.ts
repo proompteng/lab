@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  baynExecutionControllerPlanHash,
   parseUpdateBaynManifestArguments,
   updateBaynManifests,
   type BaynCandidateRuntime,
@@ -14,6 +15,9 @@ const currentSnapshotId = '840c75885270b349d4a992e003918ce7e6fe39730f981a20b2e88
 const strategyBehaviorHash = '1'.repeat(64)
 const strategyParameterHash = '2'.repeat(64)
 const qualificationRunId = '9'.repeat(64)
+const deployedControllerPlanHash = '7'.repeat(64)
+const previousControllerPlanHash = '6'.repeat(64)
+const previousControllerSourceRevision = 'e'.repeat(40)
 const currentBindings = {
   BAYN_SIGNAL_SNAPSHOT_ID: currentSnapshotId,
   BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-22',
@@ -38,6 +42,7 @@ interface FixtureOptions {
   readonly parameterHash?: string
   readonly qualificationRunId?: string | null
   readonly capitalActivationRequest?: boolean
+  readonly capitalActivationKind?: 'ResearchCapitalActivationRequest' | 'ResearchCapitalBuildContinuation'
 }
 
 interface FixturePaths {
@@ -73,6 +78,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+    environmentBlock('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', deployedControllerPlanHash),
     environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
     environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
@@ -81,6 +87,12 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     options.capitalActivationRequest === undefined
       ? ''
       : `            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: capital-activation-request\n`,
+    options.capitalActivationRequest === undefined
+      ? ''
+      : environmentBlock(
+          'BAYN_CAPITAL_ACTIVATION_KIND',
+          options.capitalActivationKind ?? 'ResearchCapitalActivationRequest',
+        ),
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 
@@ -135,18 +147,33 @@ const installNativeExecutionManifests = (): {
   const executionActivationPath = join(directory, 'execution-activation.yaml')
   const immutableEnvironment =
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)) +
-    environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`)
-  const manifest = `spec:\n  template:\n    spec:\n      containers:\n        - env:\n${immutableEnvironment}`
-  writeFileSync(executionControllerPath, manifest)
-  writeFileSync(executionActivationPath, manifest)
+    environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`) +
+    environmentBlock('BAYN_EXECUTION_PREVIOUS_PLAN_HASH', previousControllerPlanHash) +
+    environmentBlock('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION', previousControllerSourceRevision) +
+    environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash) +
+    environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash) +
+    Object.entries(currentBindings)
+      .map(([name, value]) => environmentBlock(name, value))
+      .join('')
+  writeFileSync(
+    executionControllerPath,
+    `spec:\n  template:\n    spec:\n      containers:\n        - name: execution-controller\n          image: registry.ide-newton.ts.net/lab/bayn:sha-${'0'.repeat(40)}@sha256:${'0'.repeat(64)}\n          env:\n${immutableEnvironment}`,
+  )
+  writeFileSync(
+    executionActivationPath,
+    `metadata:\n  name: bayn-execution-activate-${'0'.repeat(12)}\n  labels:\n    app.kubernetes.io/version: ${'0'.repeat(12)}\nspec:\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/version: ${'0'.repeat(12)}\n    spec:\n      containers:\n        - name: activate\n          image: registry.ide-newton.ts.net/lab/bayn:sha-${'0'.repeat(40)}@sha256:${'0'.repeat(64)}\n          env:\n${environmentBlock('BAYN_EXECUTION_ACTIVATION_GENERATION', '5'.repeat(64))}${immutableEnvironment}`,
+  )
   return { executionControllerPath, executionActivationPath }
 }
 
 describe('Bayn manifest promotion', () => {
-  test('holds a release that would leave the native execution controller pinned to an older plan', () => {
-    const paths = makeFixture({ qualificationRunId: null })
+  test('atomically promotes the status service, native controller, and activation Job', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalBuildContinuation',
+    })
     const nativePaths = installNativeExecutionManifests()
-    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     const result = updateBaynManifests({
       sourceSha: 'a'.repeat(40),
@@ -161,10 +188,55 @@ describe('Bayn manifest promotion', () => {
     })
 
     expect(result).toMatchObject({
-      promotionAction: 'hold',
-      promotionReason: 'native-execution-controller-refresh-required',
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
     })
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+    const deployment = readFileSync(paths.deploymentPath, 'utf8')
+    const controller = readFileSync(nativePaths.executionControllerPath, 'utf8')
+    const activation = readFileSync(nativePaths.executionActivationPath, 'utf8')
+    for (const manifest of [deployment, controller, activation]) {
+      expect(manifest).toContain(`value: ${'a'.repeat(40)}`)
+      expect(manifest).toContain(`value: sha256:${'b'.repeat(64)}`)
+    }
+    expect(deployment).toContain(
+      environmentBlock('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', baynExecutionControllerPlanHash).trim(),
+    )
+    for (const manifest of [controller, activation]) {
+      expect(manifest).toContain(
+        `image: registry.ide-newton.ts.net/lab/bayn:sha-${'a'.repeat(40)}@sha256:${'b'.repeat(64)}`,
+      )
+      expect(manifest).toContain(
+        environmentBlock('BAYN_EXECUTION_PREVIOUS_PLAN_HASH', deployedControllerPlanHash).trim(),
+      )
+      expect(manifest).toContain(
+        `- name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
+      )
+    }
+    expect(activation).toContain(`name: bayn-execution-activate-${'a'.repeat(12)}`)
+    expect(activation).not.toContain(environmentBlock('BAYN_EXECUTION_ACTIVATION_GENERATION', '5'.repeat(64)).trim())
+
+    updateBaynManifests({
+      sourceSha: 'c'.repeat(40),
+      tag: `sha-${'c'.repeat(40)}`,
+      digest: `sha256:${'d'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-23T10:00:00Z',
+      candidateRuntime: currentBindings,
+      ...paths,
+      ...nativePaths,
+    })
+    for (const manifest of [
+      readFileSync(nativePaths.executionControllerPath, 'utf8'),
+      readFileSync(nativePaths.executionActivationPath, 'utf8'),
+    ]) {
+      expect(manifest).toContain(
+        environmentBlock('BAYN_EXECUTION_PREVIOUS_PLAN_HASH', deployedControllerPlanHash).trim(),
+      )
+      expect(manifest).toContain(
+        `- name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION\n              value: ${'0'.repeat(40)}`,
+      )
+    }
   })
 
   test('rejects mismatched native controller and activation image bindings', () => {
@@ -172,7 +244,10 @@ describe('Bayn manifest promotion', () => {
     const nativePaths = installNativeExecutionManifests()
     writeFileSync(
       nativePaths.executionActivationPath,
-      readFileSync(nativePaths.executionActivationPath, 'utf8').replace('0'.repeat(40), 'f'.repeat(40)),
+      readFileSync(nativePaths.executionActivationPath, 'utf8').replace(
+        environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+        environmentBlock('BAYN_CODE_REVISION', 'f'.repeat(40)),
+      ),
     )
 
     expect(() =>
@@ -188,6 +263,52 @@ describe('Bayn manifest promotion', () => {
         ...nativePaths,
       }),
     ).toThrow('native execution controller and activation manifests have different immutable image bindings')
+  })
+
+  test('atomically promotes candidate runtime into the status service, controller, and activation Job', () => {
+    const paths = makeFixture()
+    const nativePaths = installNativeExecutionManifests()
+    const candidateRuntime = {
+      ...currentBindings,
+      BAYN_SIGNAL_SNAPSHOT_ID: '4'.repeat(64),
+      BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-23',
+      BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v2',
+      BAYN_SIGNAL_DATA_START: '2016-01-05',
+      BAYN_SIGNAL_DATA_END: '2026-07-23',
+      BAYN_SIGNAL_LOOKBACK_START: '2016-01-06',
+      BAYN_SIGNAL_EVALUATION_START: '2017-01-04',
+      BAYN_SIGNAL_EVALUATION_END: '2026-07-23',
+      BAYN_TIGERBEETLE_CLUSTER_ID: '1',
+      BAYN_TIGERBEETLE_ADDRESSES: 'replacement-ledger.bayn.svc.cluster.local:3000',
+      BAYN_TIGERBEETLE_LEDGER: '7002',
+    } satisfies BaynCandidateRuntime
+
+    const result = updateBaynManifests({
+      sourceSha: 'a'.repeat(40),
+      tag: `sha-${'a'.repeat(40)}`,
+      digest: `sha256:${'b'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-23T10:00:00Z',
+      candidateRuntime,
+      ...paths,
+      ...nativePaths,
+    })
+
+    expect(result).toMatchObject({
+      promotionAction: 'promote',
+      qualificationMode: 'replace',
+      snapshotChanged: true,
+    })
+    for (const manifest of [
+      readFileSync(paths.deploymentPath, 'utf8'),
+      readFileSync(nativePaths.executionControllerPath, 'utf8'),
+      readFileSync(nativePaths.executionActivationPath, 'utf8'),
+    ]) {
+      for (const [name, value] of Object.entries(candidateRuntime)) {
+        expect(manifest).toContain(environmentBlock(name, value).trim())
+      }
+    }
   })
 
   test('preserves a qualification pin only for identical strategy and runtime bindings', () => {
@@ -210,6 +331,96 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
+  })
+
+  test('restores the deployed qualification pin when main carries a different unaccepted pin', () => {
+    const paths = makeFixture()
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const deployed = readFileSync(paths.deploymentPath, 'utf8')
+    const unacceptedRunId = '8'.repeat(64)
+    writeFileSync(deployedDeploymentPath, deployed)
+    writeFileSync(paths.deploymentPath, deployed.replace(qualificationRunId, unacceptedRunId))
+
+    const result = updateBaynManifests({
+      sourceSha: 'a'.repeat(40),
+      tag: `sha-${'a'.repeat(40)}`,
+      digest: `sha256:${'b'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      deployedDeploymentPath,
+      ...paths,
+    })
+
+    expect(result).toMatchObject({ qualificationMode: 'preserve', candidateQualificationRunId: qualificationRunId })
+    const updated = readFileSync(paths.deploymentPath, 'utf8')
+    expect(updated).toContain(environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim())
+    expect(updated).not.toContain(unacceptedRunId)
+  })
+
+  test('removes a qualification pin added to an unqualified research release on main', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalBuildContinuation',
+    })
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const deployed = readFileSync(paths.deploymentPath, 'utf8')
+    writeFileSync(deployedDeploymentPath, deployed)
+    writeFileSync(
+      paths.deploymentPath,
+      deployed.replace(
+        environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash),
+        environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash) +
+          environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId),
+      ),
+    )
+
+    const result = updateBaynManifests({
+      sourceSha: 'a'.repeat(40),
+      tag: `sha-${'a'.repeat(40)}`,
+      digest: `sha256:${'b'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      deployedDeploymentPath,
+      ...paths,
+    })
+
+    expect(result).toMatchObject({ qualificationMode: 'research', candidateQualificationRunId: null })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+  })
+
+  test('compares candidate runtime bindings with the pre-merge deployed manifest', () => {
+    const paths = makeFixture()
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const deployed = readFileSync(paths.deploymentPath, 'utf8')
+    writeFileSync(deployedDeploymentPath, deployed)
+    const candidateSnapshotId = '4'.repeat(64)
+    writeFileSync(paths.deploymentPath, deployed.replace(currentSnapshotId, candidateSnapshotId))
+
+    const result = updateBaynManifests({
+      sourceSha: 'a'.repeat(40),
+      tag: `sha-${'a'.repeat(40)}`,
+      digest: `sha256:${'b'.repeat(64)}`,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      deployedDeploymentPath,
+      ...paths,
+    })
+
+    expect(result).toMatchObject({
+      promotionAction: 'promote',
+      qualificationMode: 'replace',
+      deployedSnapshotId: currentSnapshotId,
+      candidateSnapshotId,
+      snapshotChanged: true,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
   test('keeps the retired lifecycle bridge absent while updating native promotion fields', () => {
@@ -400,24 +611,44 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
-  test('holds source-only research capital changes until the build-bound activation request is refreshed', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+  test('promotes source-only research capital changes with an explicit build-continuation contract', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalBuildContinuation',
+    })
+
+    expect(promote(paths)).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+      hadQualificationPin: false,
+      qualificationBindingsMatch: true,
+      snapshotChanged: false,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`,
+    )
+  })
+
+  test('keeps a raw research capital request bound to its exact source and image', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalActivationRequest',
+    })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths)).toMatchObject({
       promotionAction: 'hold',
       promotionReason: 'research-capital-activation-refresh-required',
       qualificationMode: 'research',
-      hadQualificationPin: false,
-      qualificationBindingsMatch: true,
-      snapshotChanged: false,
     })
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
-  test('makes an exact research capital release replay a no-op', () => {
+  test('keeps an exact research capital release eligible', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
-    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
       promotionAction: 'promote',
@@ -425,7 +656,7 @@ describe('Bayn manifest promotion', () => {
       qualificationMode: 'research',
       hadQualificationPin: false,
     })
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
   })
 
   test('holds research capital strategy and runtime identity changes without writing files', () => {
@@ -650,7 +881,15 @@ describe('Bayn manifest promotion', () => {
       qualificationRunId,
     ]
 
-    expect(parseUpdateBaynManifestArguments([...base, ...candidate])).toMatchObject({
+    expect(
+      parseUpdateBaynManifestArguments([
+        ...base,
+        '--deployed-deployment-path',
+        '.artifacts/bayn/deployed-deployment.yaml',
+        ...candidate,
+      ]),
+    ).toMatchObject({
+      deployedDeploymentPath: '.artifacts/bayn/deployed-deployment.yaml',
       candidateRuntime: currentBindings,
       acceptedQualificationRunId: qualificationRunId,
     })

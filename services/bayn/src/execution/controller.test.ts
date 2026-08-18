@@ -45,7 +45,7 @@ const completedResult: ExecutionAdvanceStepResult = {
 }
 
 describe('execution controller decisions', () => {
-  test('activates once and treats only the exact activation as idempotent', () => {
+  test('activates once and treats the same controller plan across worker revisions as idempotent', () => {
     const state = activated()
 
     expect(state).toEqual({
@@ -61,11 +61,13 @@ describe('execution controller decisions', () => {
       _tag: 'Replayed',
       state,
     })
+    expect(
+      Result.getOrThrow(decideExecutionControllerActivation(state, activation({ sourceRevision: nextSourceRevision }))),
+    ).toEqual({ _tag: 'Replayed', state })
     for (const conflicting of [
       activation({ epoch: 2 }),
       activation({ firstSequence: 1 }),
       activation({ planHash: nextPlanHash }),
-      activation({ sourceRevision: nextSourceRevision }),
     ]) {
       expect(Result.isFailure(decideExecutionControllerActivation(state, conflicting))).toBe(true)
     }
@@ -148,6 +150,7 @@ describe('execution controller decisions', () => {
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         controllerKey,
         '2026-08-13T17:59:00.000Z',
+        nextSourceRevision,
       ),
     )
     expect(command).toEqual({
@@ -157,7 +160,7 @@ describe('execution controller decisions', () => {
         epoch: 1,
         sequence: 0,
         issuedAt: '2026-08-13T17:59:00.000Z',
-        sourceRevision,
+        sourceRevision: nextSourceRevision,
       },
     })
     expect(
@@ -167,6 +170,7 @@ describe('execution controller decisions', () => {
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 2, sequence: 0 },
           controllerKey,
           '2026-08-13T17:59:00.000Z',
+          nextSourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleEpoch' })
@@ -177,6 +181,7 @@ describe('execution controller decisions', () => {
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 1 },
           controllerKey,
           '2026-08-13T17:59:00.000Z',
+          nextSourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'StaleSequence' })
@@ -187,6 +192,7 @@ describe('execution controller decisions', () => {
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           controllerKey,
           '2026-08-13T17:59:00.000Z',
+          nextSourceRevision,
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'Inactive' })
@@ -203,6 +209,7 @@ describe('execution controller decisions', () => {
       },
       controllerKey,
       '2026-08-13T17:59:00.000Z',
+      nextSourceRevision,
     )
 
     expect(Result.isFailure(decision)).toBe(true)
@@ -232,12 +239,14 @@ describe('execution controller decisions', () => {
         activated(),
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
         completedResult,
+        nextSourceRevision,
       ),
     )
 
     expect(state).toMatchObject({
       active: true,
       epoch: 1,
+      sourceRevision: nextSourceRevision,
       nextSequence: 1,
       nextDueAt: '2026-08-13T18:00:30.000Z',
       lastCompletion: {
@@ -253,6 +262,7 @@ describe('execution controller decisions', () => {
           state,
           { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
           completedResult,
+          nextSourceRevision,
         ),
       ),
     ).toBe(true)
@@ -271,6 +281,7 @@ describe('execution controller decisions', () => {
             nextDelayMs: 5_000,
           },
         },
+        nextSourceRevision,
       ),
     )
 
@@ -287,6 +298,7 @@ describe('execution controller decisions', () => {
         completedAt: '9999-12-31T23:59:59.999Z',
         outcome: { ...completedResult.outcome, nextDelayMs: 1 },
       },
+      nextSourceRevision,
     )
 
     expect(Result.isFailure(decision)).toBe(true)

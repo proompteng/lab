@@ -168,12 +168,7 @@ const verifyTickBinding = (
     config.previousBinding !== undefined &&
     state.planHash === config.previousBinding.planHash &&
     state.sourceRevision === config.previousBinding.sourceRevision
-  if (
-    key !== config.controllerKey ||
-    (state !== null &&
-      !matchesPrevious &&
-      (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision))
-  ) {
+  if (key !== config.controllerKey || (state !== null && !matchesPrevious && state.planHash !== config.planHash)) {
     throw terminal('execution controller durable state does not match this immutable deployment')
   }
 }
@@ -364,7 +359,9 @@ export const makeBaynExecutionController = (
             return
           }
           const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
-          const decision = decisionOrTerminal(decideExecutionControllerTick(state, tick, ctx.key, issuedAt))
+          const decision = decisionOrTerminal(
+            decideExecutionControllerTick(state, tick, ctx.key, issuedAt, config.sourceRevision),
+          )
           if (decision._tag === 'Ignored') return
 
           let stepResult: ExecutionAdvanceStepResult
@@ -404,7 +401,9 @@ export const makeBaynExecutionController = (
             'execution controller advance result failed validation',
           )
           if (state === null) throw terminal('execution controller state disappeared during an accepted tick')
-          const completed = decisionOrTerminal(completeExecutionControllerTick(state, tick, result))
+          const completed = decisionOrTerminal(
+            completeExecutionControllerTick(state, tick, result, config.sourceRevision),
+          )
           ctx.set(stateKey, completed)
           scheduleTick(ctx, completed, result.outcome.nextDelayMs)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {

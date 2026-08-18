@@ -38,6 +38,7 @@ import {
   captureRecoveryFirstCycleDriver,
   executeNativeExecutionAdvance,
   executionControllerConfig,
+  executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionRuntime,
   initializeNativeExecutionRuntimeForBinding,
@@ -432,7 +433,7 @@ describe('native execution runtime', () => {
     )
   })
 
-  test('binds controller identity to code, authority, qualification, market data, and cadence', () => {
+  test('keeps the Restate controller protocol stable across worker and trading-plan changes', () => {
     const first = executionControllerConfig(plan())
     const replay = executionControllerConfig(plan())
     const changedPlans = [
@@ -468,9 +469,10 @@ describe('native execution runtime', () => {
     expect(replay).toEqual(first)
     if (Result.isFailure(first)) return
     expect(first.success.controllerKey).toBe(command.controllerKey)
+    expect(first.success.planHash).toBe(executionControllerPlanHash)
     for (const changed of changedPlans) {
       expect(Result.isSuccess(changed)).toBe(true)
-      if (Result.isSuccess(changed)) expect(first.success.planHash).not.toBe(changed.success.planHash)
+      if (Result.isSuccess(changed)) expect(changed.success.planHash).toBe(first.success.planHash)
     }
     expect(nativeExecutionRuntimeInitializationTimeoutMs(30_000)).toBe(150_000)
   })

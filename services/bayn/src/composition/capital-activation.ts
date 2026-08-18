@@ -165,15 +165,12 @@ export const capitalActivationRequestIsCurrent = (
     request.activation.sourceRevision === plan.config.build.sourceRevision &&
     request.activation.imageRepository === plan.config.build.imageRepository &&
     request.activation.imageDigest === plan.config.build.imageDigest
-  const continuationBuildIsCurrent =
+  const continuationAuthorizesCurrentWorker =
     isResearchCapitalActivationRequest(request) &&
     options.buildContinuation !== null &&
     options.buildContinuation !== undefined &&
-    options.buildContinuation.request.requestHash === request.requestHash &&
-    options.buildContinuation.activation.sourceRevision === plan.config.build.sourceRevision &&
-    options.buildContinuation.activation.imageRepository === plan.config.build.imageRepository &&
-    options.buildContinuation.activation.imageDigest === plan.config.build.imageDigest
-  if (!requestBuildIsCurrent && !continuationBuildIsCurrent) {
+    options.buildContinuation.request.requestHash === request.requestHash
+  if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker) {
     return Result.fail('capital activation request is not bound to the current activation build')
   }
   if (isResearchCapitalActivationRequest(request)) {
@@ -359,12 +356,7 @@ export const readBoundCapitalActivationGeneration = (
       const binding =
         buildContinuation === null
           ? researchCapitalGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
-          : researchCapitalBuildContinuationIsBound(
-              buildContinuation,
-              generation.previousGenerationHash,
-              generation,
-              plan.config.build,
-            )
+          : researchCapitalBuildContinuationIsBound(buildContinuation, generation.previousGenerationHash, generation)
       yield* Effect.fromResult(binding).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
       return generation
     }
@@ -450,12 +442,7 @@ export const readCompletedExecutionLifecycle = (
       binding =
         buildContinuation === null
           ? researchCapitalGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
-          : researchCapitalBuildContinuationIsBound(
-              buildContinuation,
-              generation.previousGenerationHash,
-              generation,
-              plan.config.build,
-            )
+          : researchCapitalBuildContinuationIsBound(buildContinuation, generation.previousGenerationHash, generation)
     } else {
       if (authorityStore.readAuthorityGeneration === undefined) return undefined
       generation = yield* authorityStore
@@ -885,12 +872,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
       Result.isSuccess(
         buildContinuation === null
           ? researchCapitalGenerationIsBoundToRequest(request, currentSourceGenerationHash, currentGeneration)
-          : researchCapitalBuildContinuationIsBound(
-              buildContinuation,
-              currentSourceGenerationHash,
-              currentGeneration,
-              plan.config.build,
-            ),
+          : researchCapitalBuildContinuationIsBound(buildContinuation, currentSourceGenerationHash, currentGeneration),
       )
     const decision = yield* Effect.fromResult(
       decideExecutionMandateAuthority({

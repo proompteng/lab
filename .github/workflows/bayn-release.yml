@@ -36,7 +36,6 @@ jobs:
     permissions:
       actions: read
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout main
         uses: actions/checkout@v5
@@ -67,31 +66,7 @@ jobs:
           tag="$(jq -r '.tag' "$contract")"
           digest="$(jq -r '.digest' "$contract")"
           test "$source_sha" = "$WORKFLOW_SHA"
-          git merge-base --is-ancestor "$source_sha" HEAD
-          git diff --quiet "$source_sha..HEAD" -- \
-            services/bayn \
-            packages/scripts/src/bayn/native-runtime-manifest.ts \
-            packages/scripts/src/bayn/update-manifests.ts \
-            nix/images/bayn.nix \
-            nix/images/bayn-runtime-root.nix \
-            nix/images/bun-workspace-service.nix \
-            nix/images/bun-workspace-deps-source.nix \
-            nix/packages.nix \
-            nix/cache-push.sh \
-            nix/ci-nix-oci-summary.sh \
-            nix/ci-run-timed.sh \
-            nix/oci-inspect-archive.sh \
-            nix/oci-push.sh \
-            nix/verify-bayn-image-command.sh \
-            flake.nix \
-            flake.lock \
-            package.json \
-            bun.lock \
-            ':(glob)**/package.json' \
-            .npmrc \
-            bunfig.toml \
-            patches \
-            tsconfig.base.json
+          test "$(git rev-parse HEAD)" = "$source_sha"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           {
             echo "source_sha=$source_sha"
@@ -117,6 +92,7 @@ jobs:
         id: promotion
         shell: bash
         env:
+          DEPLOYMENT_BRANCH: codex/bayn-deploy
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           IMAGE_TAG: ${{ steps.release.outputs.tag }}
           IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
@@ -139,6 +115,24 @@ jobs:
           test "$(image_label "$config_arm64" org.opencontainers.image.revision)" = "$source_revision"
           test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$strategy_behavior_hash"
           test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$strategy_parameter_hash"
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"
+          deployed_manifest=.artifacts/bayn/deployed-deployment.yaml
+          if git fetch origin "+refs/heads/${DEPLOYMENT_BRANCH}:refs/remotes/origin/${DEPLOYMENT_BRANCH}"; then
+            git show "refs/remotes/origin/${DEPLOYMENT_BRANCH}:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
+            git switch --force-create bayn-release-generated "refs/remotes/origin/${DEPLOYMENT_BRANCH}"
+            git merge --no-edit "$SOURCE_SHA"
+          else
+            git show "$SOURCE_SHA:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
+            git switch --force-create bayn-release-generated "$SOURCE_SHA"
+          fi
+
+          allowed_release_path='^(argocd/applications/bayn/(deployment|execution-activation|execution-controller|kustomization)\.yaml|argocd/applicationsets/product\.yaml)$'
+          unexpected_paths="$(git diff --name-only "$SOURCE_SHA" -- | grep -Ev "$allowed_release_path" || true)"
+          test -z "$unexpected_paths"
           promotion="$(
             bun packages/scripts/src/bayn/update-manifests.ts \
               --source-sha "$SOURCE_SHA" \
@@ -146,6 +140,7 @@ jobs:
               --digest "$IMAGE_DIGEST" \
               --strategy-behavior-hash "$strategy_behavior_hash" \
               --strategy-parameter-hash "$strategy_parameter_hash" \
+              --deployed-deployment-path "$deployed_manifest" \
               --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )"
           jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace" or .qualificationMode == "install" or .qualificationMode == "research")' <<< "$promotion"
@@ -177,6 +172,8 @@ jobs:
           git diff --exit-code -- \
             argocd/applications/bayn/kustomization.yaml \
             argocd/applications/bayn/deployment.yaml \
+            argocd/applications/bayn/execution-controller.yaml \
+            argocd/applications/bayn/execution-activation.yaml \
             argocd/applicationsets/product.yaml
           {
             echo '## Bayn candidate image held'
@@ -184,72 +181,39 @@ jobs:
             echo "- Source commit: \`${SOURCE_SHA}\`"
             echo "- Image digest: \`${IMAGE_DIGEST}\`"
             echo "- Reason: \`${PROMOTION_REASON}\`"
-            echo '- GitOps remained unchanged; no deployment pull request was created.'
+            echo '- GitOps remained unchanged; the deployment branch was not advanced.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create deploy pull request
+      - name: Advance immutable GitOps deployment branch
         if: steps.promotion.outputs.promotion_action == 'promote'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/bayn-release-current
-          base: main
-          delete-branch: true
-          title: 'chore(bayn): promote image ${{ steps.release.outputs.tag }}'
-          commit-message: 'chore(bayn): promote image ${{ steps.release.outputs.tag }}'
-          add-paths: |
-            argocd/applications/bayn/kustomization.yaml
-            argocd/applications/bayn/deployment.yaml
+        shell: bash
+        env:
+          DEPLOYMENT_BRANCH: codex/bayn-deploy
+          IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
+          IMAGE_TAG: ${{ steps.release.outputs.tag }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          allowed_release_path='^(argocd/applications/bayn/(deployment|execution-activation|execution-controller|kustomization)\.yaml|argocd/applicationsets/product\.yaml)$'
+          unexpected_paths="$(git diff --name-only "$SOURCE_SHA" -- | grep -Ev "$allowed_release_path" || true)"
+          test -z "$unexpected_paths"
+
+          git add \
+            argocd/applications/bayn/kustomization.yaml \
+            argocd/applications/bayn/deployment.yaml \
+            argocd/applications/bayn/execution-controller.yaml \
+            argocd/applications/bayn/execution-activation.yaml \
             argocd/applicationsets/product.yaml
-          body: |
-            ## Summary
-
-            Promote the immutable Bayn image against the current Signal snapshot and dedicated Bayn TigerBeetle
-            ledger. Qualification-pin handling is selected from the verified compiled behavior identity.
-
-            - Source commit: `${{ steps.release.outputs.source_sha }}`
-            - Image tag: `${{ steps.release.outputs.tag }}`
-            - Image digest: `${{ steps.release.outputs.digest }}`
-            - Qualification mode: `${{ steps.promotion.outputs.qualification_mode }}`
-            - Existing pin: `${{ steps.promotion.outputs.had_qualification_pin }}`
-            - Qualification identity bindings match: `${{ steps.promotion.outputs.qualification_bindings_match }}`
-            - Snapshot changed: `${{ steps.promotion.outputs.snapshot_changed }}`
-            - Deployed snapshot: `${{ steps.promotion.outputs.deployed_snapshot_id }}`
-            - Candidate snapshot: `${{ steps.promotion.outputs.candidate_snapshot_id }}`
-            - Deployed behavior hash: `${{ steps.promotion.outputs.deployed_behavior_hash }}`
-            - Candidate behavior hash: `${{ steps.promotion.outputs.candidate_behavior_hash }}`
-            - Deployed parameter hash: `${{ steps.promotion.outputs.deployed_parameter_hash }}`
-            - Candidate parameter hash: `${{ steps.promotion.outputs.candidate_parameter_hash }}`
-
-            ## Related Issues
-
-            PROOMPT-400
-
-            ## Testing
-
-            - OCI index contains `linux/amd64` and `linux/arm64`.
-
-            ## Screenshots (if applicable)
-
-            N/A
-
-            ## Breaking Changes
-
-            This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
-            there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
-            behavior, protocol parameters, Signal inputs, TigerBeetle cluster ID, and TigerBeetle ledger all match.
-            Replica addresses are transport and an explicit candidate may change them without relabeling qualification
-            evidence. `replace` removes an existing incompatible pin only for a fresh Signal snapshot. `research`
-            keeps qualification state absent and holds a different source or image until the build-bound activation
-            request and image are refreshed together in a reviewed GitOps change. `install` is
-            available only to a controlled invocation that supplies the complete reviewed candidate runtime and exact
-            independently accepted terminal run ID; automatic image promotion supplies neither and therefore never
-            creates a pin. Installation can pin only the exact source, image digest, compiled strategy, and runtime
-            already deployed without a pin. It cannot replace an old pin and advance to a fresh candidate in the same
-            change.
-
-            ## Checklist
-
-            - [x] Testing section documents exact validation.
-            - [x] Runtime source revision and image digest are immutable.
-            - [x] No broker or capital-promotion authority is introduced.
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(bayn): promote image ${IMAGE_TAG}"
+          fi
+          git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"
+          {
+            echo '## Bayn immutable release promoted'
+            echo
+            echo "- Source commit: \`${SOURCE_SHA}\`"
+            echo "- Image tag: \`${IMAGE_TAG}\`"
+            echo "- Image digest: \`${IMAGE_DIGEST}\`"
+            echo "- Deployment branch: \`${DEPLOYMENT_BRANCH}\`"
+            echo '- Argo watches this branch directly; no promotion pull request is required.'
+          } >> "$GITHUB_STEP_SUMMARY"
