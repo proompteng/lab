@@ -2827,38 +2827,6 @@ data:
               summary: Restate partition snapshot upload failed
               description: The Restate cluster reported at least one snapshot-upload failure in the last fifteen minutes.
               runbook_url: argocd/applications/restate/README.md
-          - alert: RestateControlPlaneAuditStale
-            expr: |
-              absent(kube_cronjob_created{
-                namespace="restate",
-                cronjob="restate-control-plane-audit"
-              })
-              or
-              (
-                kube_cronjob_created{
-                  namespace="restate",
-                  cronjob="restate-control-plane-audit"
-                } < time() - 600
-                unless on(namespace, cronjob)
-                kube_cronjob_status_last_successful_time{
-                  namespace="restate",
-                  cronjob="restate-control-plane-audit"
-                }
-              )
-              or
-              time() - kube_cronjob_status_last_successful_time{
-                namespace="restate",
-                cronjob="restate-control-plane-audit"
-              } > 600
-            for: 1m
-            labels:
-              severity: critical
-              service: restate
-              notify: email
-            annotations:
-              summary: Restate exact control-plane audit has stopped succeeding
-              description: The audit checks three-member metadata quorum, replication two, paused or recently killed invocations, persistent vqueue inbox backlog, and active invocations pinned to an old deployment.
-              runbook_url: argocd/applications/restate/README.md
           - alert: RestateSnapshotRestoreDrillStale
             expr: |
               time() - kube_cronjob_status_last_successful_time{
