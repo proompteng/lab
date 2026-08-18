@@ -74,7 +74,7 @@ describe('native Restate execution controller', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
-    expect(executionControllerAdvanceMaximumAttempts(true)).toBe(6)
+    expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
     expect(executionControllerTickRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'pause' })
     expect(executionControllerCommandRetryPolicy).toMatchObject({ maxAttempts: 3, onMaxAttempts: 'pause' })
     expect(executionControllerHandlerTimeouts(30_000)).toEqual({
@@ -1047,7 +1047,7 @@ describe('native Restate execution controller', () => {
     expect(loggedLevels).toEqual(['warning', 'warning', 'error'])
   })
 
-  test('keeps a replacement tick retryable while the predecessor releases the writer fence', async () => {
+  test('keeps a replacement tick retryable across the predecessor termination grace period', async () => {
     let state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -1083,7 +1083,7 @@ describe('native Restate execution controller', () => {
         {
           advance: () => {
             advances += 1
-            return advances <= 3
+            return advances <= 6
               ? Promise.reject(new Error('predecessor still owns the writer fence'))
               : Promise.resolve({
                   completedAt: '2026-08-13T18:00:16.000Z',
@@ -1106,16 +1106,20 @@ describe('native Restate execution controller', () => {
       attempt: 0,
     }
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const handoffDelays: number[] = []
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       await object.tick(context, tick)
       const retry = deliveries.shift()
       if (retry === undefined) throw new Error('replacement handoff did not schedule its durable retry')
-      expect(retry.delay).toBe(1_000 * 2 ** attempt)
+      if (retry.delay === undefined) throw new Error('replacement handoff retry did not include a delay')
+      handoffDelays.push(retry.delay)
       tick = retry.parameter
     }
     await object.tick(context, tick)
 
-    expect(advances).toBe(4)
+    expect(handoffDelays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000])
+    expect(handoffDelays.reduce((total, delay) => total + delay, 0)).toBeGreaterThan(60_000)
+    expect(advances).toBe(7)
     expect(state).toMatchObject({
       nextSequence: 13,
       lastCompletion: { sequence: 12, receiptHash: 'f'.repeat(64) },

@@ -206,17 +206,17 @@ describe('execution controller decisions', () => {
           schemaVersion: 'bayn.execution-controller-tick.v1',
           epoch: 1,
           sequence: 0,
-          attempt: 5,
+          attempt: 6,
         }),
       ).attempt,
-    ).toBe(5)
+    ).toBe(6)
     expect(
       Result.isFailure(
         decodeExecutionControllerTick({
           schemaVersion: 'bayn.execution-controller-tick.v1',
           epoch: 1,
           sequence: 0,
-          attempt: 6,
+          attempt: 7,
         }),
       ),
     ).toBe(true)
