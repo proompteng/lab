@@ -8,11 +8,14 @@ import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
+  executionControllerBootstrapCompletionMaximumAttempts,
+  executionControllerBootstrapCompletionPollIntervalMs,
   executionControllerBootstrapHandlerTimeouts,
   executionControllerBootstrapRotationBoundMs,
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
+  executionControllerFirstPassCompleted,
   executionControllerTickIdempotencyKey,
   executionControllerTickRetryPolicy,
   executionBootstrapAuthorizationHash,
@@ -78,6 +81,8 @@ describe('native Restate execution controller', () => {
       abortTimeout: 30_000,
     })
     expect(executionControllerBootstrapRotationBoundMs(30_000)).toBe(480_000)
+    expect(executionControllerBootstrapCompletionPollIntervalMs).toBe(5_000)
+    expect(executionControllerBootstrapCompletionMaximumAttempts(30_000)).toBe(85)
     expect(executionControllerBootstrapHandlerTimeouts(30_000, true)).toEqual({
       inactivityTimeout: 480_000,
       abortTimeout: 30_000,
@@ -475,6 +480,18 @@ describe('native Restate execution controller', () => {
       initialSequence: 11,
       nextSequence: 17,
     }
+    const completedState: ExecutionControllerState = {
+      ...state,
+      active: true,
+      nextSequence: 18,
+      lastCompletion: {
+        sequence: 17,
+        outcome: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'f'.repeat(64),
+        completedAt: '2026-08-13T18:00:01.000Z',
+      },
+      nextDueAt: '2026-08-13T18:00:31.000Z',
+    }
     let forwarded: unknown
     let genericCalls = 0
     const controller = makeBaynExecutionController(config, {
@@ -493,9 +510,10 @@ describe('native Restate execution controller', () => {
         status: async () => state,
         activate: async (request: unknown) => {
           forwarded = request
-          return state
+          return completedState
         },
       }),
+      sleep: () => Promise.reject(new Error('completed activation must not poll')),
       genericCall: () => {
         genericCalls += 1
         return Promise.reject(new Error('bootstrap must not call a legacy service'))
@@ -538,6 +556,7 @@ describe('native Restate execution controller', () => {
     const calls: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
     const projectedStates: ExecutionControllerState[] = []
     let genericCalls = 0
+    let sleeps = 0
     const attempt = new AbortController()
     const controller = makeBaynExecutionController(rotationConfig, {
       advance: async (command) => {
@@ -588,6 +607,12 @@ describe('native Restate execution controller', () => {
         deactivate: (request: unknown) => object.deactivate(controllerContext, request),
         activate: (request: unknown) => object.activate(controllerContext, request),
       }),
+      sleep: async () => {
+        sleeps += 1
+        const firstTick = deliveries.shift()
+        if (firstTick === undefined) throw new Error('rotation did not schedule the new binding first pass')
+        await object.tick(controllerContext, firstTick.parameter)
+      },
       genericCall: () => {
         genericCalls += 1
         return Promise.reject(new Error('bootstrap must not call a legacy service'))
@@ -601,7 +626,14 @@ describe('native Restate execution controller', () => {
       previousBinding,
     }
 
-    expect(await start(context, request)).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision })
+    expect(await start(context, request)).toMatchObject({
+      active: true,
+      epoch: 5,
+      planHash,
+      sourceRevision,
+      lastCompletion: { sequence: 12, outcome: ExecutionControllerOutcome.Blocked },
+      nextSequence: 13,
+    })
     expect(projectedStates).toHaveLength(2)
     expect(projectedStates[0]).toMatchObject({ active: false, epoch: 5, ...previousBinding })
     expect(projectedStates[1]).toMatchObject({ active: true, epoch: 5, planHash, sourceRevision, nextSequence: 12 })
@@ -611,18 +643,22 @@ describe('native Restate execution controller', () => {
       'activation-projected',
       'state-committed',
       'first-pass-scheduled',
+      'advance-completed',
+      'state-committed',
+      'successor-scheduled',
     ])
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
-      delay: 0,
-      idempotencyKey: executionControllerTickIdempotencyKey(5, 12, 0),
-      parameter: { epoch: 5, sequence: 12, attempt: 0 },
+      delay: 30_000,
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
+      parameter: { epoch: 5, sequence: 13, attempt: 0 },
     })
+    expect(sleeps).toBe(1)
     expect(genericCalls).toBe(0)
 
     await start(context, request)
     expect(projectedStates).toHaveLength(3)
-    expect(projectedStates[2]).toEqual(projectedStates[1])
+    expect(projectedStates[2]).toEqual(state)
     expect(deliveries).toHaveLength(1)
     expect(genericCalls).toBe(0)
 
@@ -632,12 +668,8 @@ describe('native Restate execution controller', () => {
       sequence: 12,
       attempt: 0,
     })
-    expect(calls).toHaveLength(0)
+    expect(calls).toHaveLength(1)
     expect(deliveries).toHaveLength(1)
-
-    const firstTick = deliveries.shift()
-    if (firstTick === undefined) throw new Error('rotation did not schedule the new binding first pass')
-    await object.tick(controllerContext, firstTick.parameter)
     expect(calls).toEqual([
       {
         controllerKey,
@@ -660,7 +692,7 @@ describe('native Restate execution controller', () => {
       idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
       parameter: { epoch: 5, sequence: 13, attempt: 0 },
     })
-    expect(events.slice(-3)).toEqual(['advance-completed', 'state-committed', 'successor-scheduled'])
+    expect(events.at(-1)).toBe('activation-projected')
   })
 
   test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {
@@ -746,10 +778,18 @@ describe('native Restate execution controller', () => {
             planHash,
             sourceRevision,
             initialSequence: 0,
-            nextSequence: 0,
+            nextSequence: 1,
+            lastCompletion: {
+              sequence: 0,
+              outcome: ExecutionControllerOutcome.Blocked,
+              receiptHash: 'd'.repeat(64),
+              completedAt: '2026-08-13T18:00:01.000Z',
+            },
+            nextDueAt: '2026-08-13T18:00:31.000Z',
           }
         },
       }),
+      sleep: () => Promise.reject(new Error('completed activation must not poll')),
     } as unknown as Context
 
     await start(context, {
@@ -762,6 +802,64 @@ describe('native Restate execution controller', () => {
     expect(events).toEqual(['native-status', 'native-activate'])
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
     expect(genericCalls).toBe(0)
+  })
+
+  test('waits for first-pass evidence and fails bootstrap when it never arrives', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    const pending: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 0,
+      nextSequence: 0,
+    }
+    const controller = makeBaynExecutionController(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    const start = bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash)).start
+    let sleeps = 0
+    let statusReads = 0
+    const context = {
+      request: () => ({
+        id: 'bootstrap-first-pass-timeout',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      objectClient: () => ({
+        status: async () => {
+          statusReads += 1
+          return pending
+        },
+        activate: async () => pending,
+      }),
+      sleep: async () => {
+        sleeps += 1
+      },
+    } as unknown as Context
+
+    let failure: unknown
+    try {
+      await start(context, {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        controllerKey,
+        planHash,
+        sourceRevision,
+      })
+    } catch (cause) {
+      failure = cause
+    }
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toBe(
+      'execution controller bootstrap did not observe its first completed durable pass',
+    )
+    expect(sleeps).toBe(executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs) - 1)
+    expect(statusReads).toBe(executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs))
+    expect(executionControllerFirstPassCompleted(pending, activation)).toBe(false)
   })
 
   test('rejects unauthenticated bootstrap and caller-selected activation counters', async () => {

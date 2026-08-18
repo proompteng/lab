@@ -14,7 +14,11 @@ import {
 import { CycleState, CycleTerminalReason } from '../cycle'
 import { CycleNotDueReason, type CycleRunResult } from '../cycle/runner/model'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
-import { executionControllerStatusHasCompletion } from '../execution/controller-status'
+import {
+  ExecutionControllerOutcome,
+  executionControllerStatusHasCompletion,
+  type ExecutionControllerStatus,
+} from '../execution/controller-status'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'
 import type {
@@ -53,6 +57,32 @@ export interface ResearchCapitalBootstrapPassObservation {
   }
 }
 
+const observesCompletedControllerPassAfter = (
+  last: NonNullable<CycleOperationsStatus['last']>,
+  controller: ExecutionControllerStatus | null,
+): boolean => {
+  if (
+    controller === null ||
+    !controller.active ||
+    !executionControllerStatusHasCompletion(controller) ||
+    controller.lastOutcome !== ExecutionControllerOutcome.Blocked ||
+    controller.nextDueAt === undefined ||
+    last.terminalAt === null
+  ) {
+    return false
+  }
+  const terminalAtMs = Date.parse(last.terminalAt)
+  const completedAtMs = Date.parse(controller.completedAt)
+  const nextDueAtMs = Date.parse(controller.nextDueAt)
+  return (
+    Number.isFinite(terminalAtMs) &&
+    Number.isFinite(completedAtMs) &&
+    Number.isFinite(nextDueAtMs) &&
+    completedAtMs > terminalAtMs &&
+    nextDueAtMs >= completedAtMs
+  )
+}
+
 const observesMissedOrNewerBootstrap = (
   last: NonNullable<CycleOperationsStatus['last']>,
   cadence: NonNullable<ResearchCapitalBootstrapPassObservation['cadenceDecision']> | undefined,
@@ -66,24 +96,35 @@ const observesMissedOrNewerBootstrap = (
 }
 
 /**
- * A research activation that starts after its first publication deadline must wait for a newer publication. The
- * immutable missed cycle remains visible, but it is no longer an operational failure after a matching NOT_DUE pass
- * and fresh exact reconciliation prove that no mutation is pending. Every other blocked-cycle state remains failed.
+ * A research activation that starts after its first execution window must wait for a later eligible window. The
+ * immutable missed cycle remains visible, but it stops poisoning current readiness only after the active driver has
+ * completed a later pass and fresh exact reconciliation proves that no mutation is pending. Every other blocked-cycle
+ * state remains failed.
  */
 export const projectResearchCapitalBootstrapWaiting = (
   status: CycleOperationsStatus,
   enabled: boolean,
   lastPass: ResearchCapitalBootstrapPassObservation | null,
+  controller: ExecutionControllerStatus | null = null,
 ): CycleOperationsStatus => {
   const last = status.last
   const cadence = lastPass?.cadenceDecision
+  const processPassProvesRecovery =
+    last?.terminalReason === CycleTerminalReason.MissedPublication &&
+    lastPass?.result === 'SUCCESS' &&
+    lastPass.outcome === 'NOT_DUE' &&
+    lastPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
+    observesMissedOrNewerBootstrap(last, cadence)
+  const controllerPassProvesRecovery =
+    (last?.terminalReason === CycleTerminalReason.MissedPublication ||
+      last?.terminalReason === CycleTerminalReason.MissedSubmission) &&
+    observesCompletedControllerPassAfter(last, controller)
   if (
     !enabled ||
     status.condition !== CycleOperationsCondition.Failed ||
     status.reason !== CycleOperationsReason.LastCycleBlocked ||
     status.current !== null ||
     last?.phase !== CycleState.Blocked ||
-    last.terminalReason !== CycleTerminalReason.MissedPublication ||
     status.authority?.maximum !== Authority.Execution ||
     status.authority.effective !== Authority.Execution ||
     status.authority.kill !== KillState.Clear ||
@@ -91,17 +132,16 @@ export const projectResearchCapitalBootstrapWaiting = (
     status.reconciliation.discrepancyCount !== 0 ||
     !status.reconciliation.coversLatestMutation ||
     status.mutations.unresolvedCount !== 0 ||
-    lastPass?.result !== 'SUCCESS' ||
-    lastPass.outcome !== 'NOT_DUE' ||
-    lastPass.notDueReason !== CycleNotDueReason.StaleExecutionBootstrap ||
-    !observesMissedOrNewerBootstrap(last, cadence)
+    (!processPassProvesRecovery && !controllerPassProvesRecovery)
   ) {
     return status
   }
   return {
     ...status,
     condition: CycleOperationsCondition.Waiting,
-    reason: CycleOperationsReason.StaleExecutionBootstrapSkipped,
+    reason: controllerPassProvesRecovery
+      ? CycleOperationsReason.ResearchCapitalBootstrapRecovered
+      : CycleOperationsReason.StaleExecutionBootstrapSkipped,
     alerts: { ...status.alerts, cycleFailed: false },
   }
 }
@@ -397,6 +437,7 @@ const deriveCycleStatus = (
   config: RuntimeConfig,
   runtime: RuntimeState,
   clock: HealthProbeClock,
+  executionController: ExecutionControllerRuntimeStatus | undefined,
 ): CycleOperationsStatus => {
   const clockError =
     clock._tag === 'Unavailable'
@@ -425,6 +466,12 @@ const deriveCycleStatus = (
             status,
             runtime.capitalActivation?._tag === 'Realized' && runtime.capitalActivation.grant === 'Research',
             runtime.autonomousCycleLoop.lastPass,
+            executionController?.readAvailable === true &&
+              executionController.status !== null &&
+              executionController.status.controllerKey === executionController.controllerKey &&
+              executionController.status.planHash === executionController.planHash
+              ? executionController.status
+              : null,
           ),
       },
     )
@@ -537,13 +584,13 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     input.broker !== undefined,
   )
   const cycleObservation = publicCycleObservation(input.results.cycle)
-  const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock)
-  const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const executionController = deriveExecutionControllerStatus(
     current.executionController,
     input.results.executionController,
     checkedAt,
   )
+  const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock, executionController)
+  const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(

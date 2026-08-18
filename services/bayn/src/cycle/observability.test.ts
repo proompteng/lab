@@ -19,6 +19,7 @@ import {
 import { CycleState, CycleTerminalReason } from './model'
 import { CycleNotDueReason } from './runner/model'
 import { projectResearchCapitalBootstrapWaiting } from '../health/decisions'
+import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 
 const now = '2026-07-20T12:00:00.000Z'
@@ -305,6 +306,47 @@ describe('autonomous cycle operations classification', () => {
       last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
       alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
     })
+
+    const missedSubmission = deriveCycleOperationsStatus(
+      projection({
+        last: { ...last, terminalReason: CycleTerminalReason.MissedSubmission },
+        authority,
+        reconciliation,
+      }),
+      Date.parse(now),
+      Authority.Execution,
+      thresholds,
+    )
+    const controllerPass = {
+      schemaVersion: 1 as const,
+      controllerKey: '6'.repeat(64),
+      planHash: '7'.repeat(64),
+      active: true,
+      epoch: 3,
+      nextSequence: 9,
+      lastSequence: 8,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: '8'.repeat(64),
+      completedAt: '2026-07-20T12:00:00.000Z',
+      nextDueAt: '2026-07-20T12:01:00.000Z',
+    }
+    expect(projectResearchCapitalBootstrapWaiting(missedSubmission, true, null, controllerPass)).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.ResearchCapitalBootstrapRecovered,
+      last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedSubmission },
+      alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
+    })
+    const { nextDueAt: _nextDueAt, ...controllerWithoutSchedule } = controllerPass
+    for (const invalidController of [
+      { ...controllerPass, active: false },
+      { ...controllerPass, lastOutcome: ExecutionControllerOutcome.Completed },
+      { ...controllerPass, completedAt: last.terminalAt ?? '' },
+      controllerWithoutSchedule,
+    ]) {
+      expect(projectResearchCapitalBootstrapWaiting(missedSubmission, true, null, invalidController)).toBe(
+        missedSubmission,
+      )
+    }
     expect(projectResearchCapitalBootstrapWaiting(failed, false, matchingPass)).toBe(failed)
     expect(
       projectResearchCapitalBootstrapWaiting(failed, true, {

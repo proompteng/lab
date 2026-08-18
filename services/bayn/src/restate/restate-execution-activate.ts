@@ -144,12 +144,17 @@ export const verifyRestateExecutionActivation = (
     )
   }
   const state = decoded.success
-  return state.active && state.planHash === config.planHash && state.sourceRevision === config.sourceRevision
+  return state.active &&
+    state.planHash === config.planHash &&
+    state.sourceRevision === config.sourceRevision &&
+    state.lastCompletion !== undefined &&
+    state.lastCompletion.sequence >= state.initialSequence &&
+    state.nextSequence === state.lastCompletion.sequence + 1
     ? Result.succeed(state)
     : Result.fail(
         new RestateExecutionActivationError({
           operation: 'verify',
-          message: 'native Restate activation did not prove the expected active controller binding',
+          message: 'native Restate activation did not prove the expected active controller binding and first pass',
         }),
       )
 }
