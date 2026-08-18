@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: bayn
     app.kubernetes.io/part-of: bayn
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 2
   progressDeadlineSeconds: 600
   strategy:
@@ -31,8 +31,14 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
-      nodeSelector:
-        kubernetes.io/arch: arm64
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

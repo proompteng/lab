@@ -33,8 +33,6 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 60
-      nodeSelector:
-        kubernetes.io/arch: arm64
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
