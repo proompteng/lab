@@ -106,17 +106,17 @@ default is only used when a cluster is initially provisioned and does not migrat
 
 ## Recovery proof and control-plane telemetry
 
-All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, snapshots, and audit/drill
-freshness. Snapshot failures are aggregated once per Restate cluster rather than once per node. The five-minute SQL
-audit allows a bounded 55-second startup-connectivity window for a fresh audit Pod, then connects through all three
-stable NodeCtl addresses and requires replication two plus zero paused, recently killed, persistent five-minute vqueue
-inbox backlog, or active old-deployment invocations. It does not retry a successful but unhealthy control-plane result.
-The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs
-read-only SQL without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
+All three NodeCtl endpoints are scraped directly. Mimir covers node/quorum health, partition progress, snapshots, and
+restore-drill freshness. Snapshot failures are aggregated once per Restate cluster rather than once per node. Recurring
+operational monitoring uses these exported NodeCtl metrics; distributed SQL introspection is reserved for bounded,
+operator-initiated troubleshooting because a recurring full-cluster scan competes with the control plane it observes.
+The digest-pinned `restate-tools` drill opens all 24 RGW snapshots in isolated `emptyDir` storage and runs read-only SQL
+without writing RGW or contacting production Restate. This proves snapshots, not metadata/log DR.
 
 Do not use `restate_partition_applied_lsn_lag` as the workload-backlog alert. In Restate 1.7.2 it is a per-processor
 replay-target gauge and replicated followers can retain non-zero values while the live partition table is fully caught
-up. Persistent workload backlog is instead checked from `sys_vqueue_entry_status.stage = 'inbox'` after five minutes.
+up. Inspect invocation and queue state with a bounded, operator-initiated SQL query only when exported metrics or a
+runtime symptom requires troubleshooting.
 
 Rollout is fail-closed. `restate-snapshot-restore-proof` is PostSync with a 30-minute deadline, so a failed offline
 snapshot open keeps the Restate Application from completing rather than bypassing recovery proof; while snapshot upload
@@ -129,8 +129,8 @@ Restate NodeCtl targets to return before considering telemetry healthy.
 If the PostSync proof fails, inspect the Job and its logs without printing OBC Secret values, verify fresh partition
 snapshots exist, and fix forward; do not delete production Restate data or skip the hook. A failed daily drill is
 visible through its CronJob status and Mimir alerts and should be rerun only through normal Kubernetes scheduling/GitOps
-changes. Rollback of this layer is a normal reviewed Git revert: it removes the proof/drill/audit resources and restores
-the previous Alloy config/rules while the protected OBC and snapshots remain retained. The HA PDB intentionally stays
+changes. Rollback of this layer is a normal reviewed Git revert: it removes the proof/drill resources and restores the
+previous Alloy config/rules while the protected OBC and snapshots remain retained. The HA PDB intentionally stays
 at `minAvailable: 3`; relaxing it is a separate post-rollout change only after live replication-two/quorum proof.
 
 ### Safe replacement and rollback

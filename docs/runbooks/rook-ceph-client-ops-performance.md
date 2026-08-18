@@ -48,8 +48,8 @@ After GitOps reconciliation, acceptance requires all of the following:
 1. `ceph versions` reports only `20.2.3`, `ceph -s` remains `HEALTH_OK`, and every Rook/Ceph Deployment is ready.
 1. Restate advances all 24 partition `latest.json` pointers and snapshot age returns below the configured one-hour
    alert threshold without direct object-store mutation.
-1. `RestateSnapshotUploadFailure`, `RestateSnapshotStale`, and `RestateControlPlaneAuditStale` resolve from fresh
-   successful evidence; they are not silenced or weakened.
+1. `RestateSnapshotUploadFailure` and `RestateSnapshotStale` resolve from fresh successful evidence; they are not
+   silenced or weakened.
 1. The isolated Restate snapshot restore proof and next scheduled restore drill succeed against the new pointers.
 1. Failed snapshot attempts stop creating unreferenced objects. Historical objects are retained until a separate,
    reviewed retention cleanup proves exact reachability; do not bulk-delete the bucket during this rollout.

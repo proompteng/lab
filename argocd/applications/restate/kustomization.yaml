@@ -14,6 +14,5 @@ resources:
   - resilience-scripts-configmap.yaml
   - snapshot-bootstrap-job.yaml
   - replication-migration-job.yaml
-  - control-plane-audit-cronjob.yaml
   - snapshot-restore-proof-job.yaml
   - snapshot-restore-drill-cronjob.yaml
