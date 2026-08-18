@@ -14,9 +14,11 @@ scale the execution controller horizontally until the writer-fence ownership mod
 contract; multiple active controller processes are not an availability mechanism.
 
 The public Bayn process is read-only status/health only and owns no writer fence or scheduler. It runs two replicas,
-spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. This gives the
-status/readiness plane node-failure tolerance independently of the singleton execution owner and also continuously
-exercises the same immutable image on whatever supported architecture the scheduler selects.
+spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. Its stateless
+CONNECT-only Alpaca egress proxy uses the same two-replica, hostname-spread, minimum-one-available contract, so broker
+readiness does not collapse back onto a single proxy pod. This gives the status/readiness plane node-failure tolerance
+independently of the singleton execution owner and also continuously exercises the same immutable image on whatever
+supported architecture the scheduler selects.
 
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
@@ -51,13 +53,14 @@ Expected:
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
   read-only/none; any effective execution authority must still come only from the separately sealed and validated
   durable capital generation;
-- two public status pods run the same immutable image on distinct hostnames when at least two eligible nodes are
-  available, and both report exact reconciliation with zero unresolved mutations.
+- two public status pods and two stateless broker-proxy pods occupy distinct hostnames within each workload when at
+  least two eligible nodes are available; both status replicas report exact reconciliation with zero unresolved
+  mutations.
 
-The expected impact is one active worker pod plus two read-only status pods and narrowly scoped PostgreSQL, TigerBeetle,
-ClickHouse, telemetry, DNS, and broker-proxy network paths. The worker has no service-account token and accepts Restate
-requests only from the `restate` namespace. The activation Job has no broker egress and its token-authenticated bootstrap
-call is made only by the labeled GitOps hook.
+The expected impact is one active worker pod plus two read-only status pods, two stateless broker-proxy pods, and
+narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and broker network paths. The worker has no
+service-account token and accepts Restate requests only from the `restate` namespace. The activation Job has no broker
+egress and its token-authenticated bootstrap call is made only by the labeled GitOps hook.
 
 Native controller rotation is available only when the replacement worker and activation hook are both bound to the
 exact previous plan hash and source revision. The replacement quiesces previous-binding ticks, verifies and deactivates
