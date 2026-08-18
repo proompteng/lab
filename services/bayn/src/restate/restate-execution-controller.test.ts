@@ -75,7 +75,13 @@ describe('native Restate execution controller', () => {
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
     expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
-    expect(executionControllerTickRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'pause' })
+    expect(executionControllerTickRetryPolicy).toEqual({
+      maxAttempts: 3,
+      onMaxAttempts: 'pause',
+      initialInterval: 1_000,
+      maxInterval: 10_000,
+      exponentiationFactor: 2,
+    })
     expect(executionControllerCommandRetryPolicy).toMatchObject({ maxAttempts: 3, onMaxAttempts: 'pause' })
     expect(executionControllerHandlerTimeouts(30_000)).toEqual({
       inactivityTimeout: 450_000,
