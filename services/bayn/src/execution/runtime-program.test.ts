@@ -369,6 +369,53 @@ describe('same-code execution program composition', () => {
     expect(decisions).toEqual(['BrokerAccountUnavailable', 'BrokerAccountUnavailable'])
   })
 
+  test('carries the source-controlled net-exposure policy into final broker authorization', async () => {
+    const fixture = finalLiveFixture()
+    const boundedPolicy: Policy = { ...riskPolicy, maxNetExposureMicros: '199999999' }
+    const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
+    const intent: Intent = { ...fixture.intent, policyHash }
+    if (fixture.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
+    const stored: StoredIntent = {
+      ...fixture.stored,
+      intent,
+      decision: { ...fixture.stored.decision, policyHash },
+    }
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('final-net-exposure'),
+      riskPolicy: boundedPolicy,
+      brokerRead: stableBrokerRead([brokerPosition()]),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+    }
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* authorizeFinalBrokerSubmit(
+          fixture.authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('NetExposureLimitExceeded')
+    expect(posts).toBe(0)
+  })
+
   test('revalidates a persisted capital grant after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
     let instantReads = 0
