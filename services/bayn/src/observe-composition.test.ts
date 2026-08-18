@@ -784,6 +784,7 @@ const prepareStoredExecutionStep = async (
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
     readonly executionMandateCutoffAt?: string
+    readonly executionMandateCloseSubmitCutoffAt?: string
     readonly executionMandateExpiresAt?: string
   } = fixture.input,
   latestCancel?: MutationEvent,
@@ -2709,6 +2710,7 @@ describe('OBSERVE runtime composition', () => {
             ...fixture.input,
             mutationPhase: 'CLOSE',
             executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+            executionMandateCloseSubmitCutoffAt: closeExpiresAt,
             executionMandateExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
@@ -2771,6 +2773,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,
@@ -2800,7 +2803,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions).toHaveLength(1)
   })
 
-  test('continues to an unsubmitted later close intent after an earlier close rejection', async () => {
+  test('continues to a later close intent while capping fresh submission before close expiry', async () => {
     const fixture = await executionLifecycleFixture(
       (policy) => ({
         ...policy,
@@ -2810,6 +2813,7 @@ describe('OBSERVE runtime composition', () => {
       partialFillDecision,
     )
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const positions = fixture.intents.map((intent) => ({
       schemaVersion: 'bayn.paper-position.v1' as const,
@@ -2917,6 +2921,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,
@@ -2935,7 +2940,7 @@ describe('OBSERVE runtime composition', () => {
       action: 'SUBMIT',
       intentId: secondIntent.intentId,
       observedAt,
-      submitExpiresAt: closeExpiresAt,
+      submitExpiresAt: closeSubmitCutoffAt,
     })
     expect(restrictions).toHaveLength(1)
   })
@@ -3143,6 +3148,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: cutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,

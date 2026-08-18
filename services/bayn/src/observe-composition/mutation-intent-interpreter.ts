@@ -56,6 +56,7 @@ export type MutationIntentInput = {
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionMandateCutoffAt?: string
+  readonly executionMandateCloseSubmitCutoffAt?: string
   readonly executionMandateExpiresAt?: string
 }
 
@@ -143,19 +144,21 @@ const boundExecutionSubmissionCutoff = (
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
+      input.executionMandateCloseSubmitCutoffAt === undefined ||
       input.executionMandateExpiresAt === undefined ||
       document.submissionCutoffAt !== input.executionMandateExpiresAt ||
-      document.expiresAt !== input.executionMandateExpiresAt
+      document.expiresAt !== input.executionMandateExpiresAt ||
+      input.executionMandateCloseSubmitCutoffAt > input.executionMandateExpiresAt
     ) {
       return Result.fail(
         mutationRunnerError({
-          message: 'durable execution close plan changed from its immutable activation close lease',
+          message: 'durable execution close plan changed from its immutable activation close window',
           cause: undefined,
           failure: 'contract',
         }),
       )
     }
-    return Result.succeed(input.executionMandateExpiresAt)
+    return Result.succeed(input.executionMandateCloseSubmitCutoffAt)
   }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -463,7 +466,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       const commitExpiresAt = uncommittedIntents.reduce(
         (expiresAt, prepared) =>
           executionSubmitExpiresAt(expiresAt, prepared.riskBinding.evaluation.decision.expiresAt),
-        document.expiresAt,
+        executionSubmitExpiresAt(document.expiresAt, submissionCutoffAt),
       )
       const expirationReason = expiredExecutionPlanTerminalReason(commitObservedAt, commitExpiresAt, submissionCutoffAt)
       if (expirationReason !== undefined) {
