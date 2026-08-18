@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-17T09:07:44Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-18T05:29:54Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -62,7 +62,7 @@ spec:
             # execution worker. A cutover must update this binding atomically
             # with the worker image and activation generation.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
-              value: "d6342128193a049f11a0d59bd851cb227e3b0f54a138e0b5ba3d308c4d590b95"
+              value: "2f3e78f5cb4cfc51c2853de158b22d67cff65dfb16a94defe178583805ebf347"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
