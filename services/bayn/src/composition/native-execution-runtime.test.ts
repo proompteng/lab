@@ -39,6 +39,8 @@ import {
   executeNativeExecutionAdvance,
   executionControllerConfig,
   failRecoveryFirstCycleDriverSlot,
+  initializeNativeExecutionRuntime,
+  initializeNativeExecutionRuntimeForBinding,
   initializeNativeExecutionProjectionRuntime,
   makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
@@ -253,6 +255,116 @@ describe('native execution runtime', () => {
       )
       expect(defectExit.cause.reasons.some(Cause.isFailReason)).toBe(false)
     }
+  })
+
+  test('publishes the execution driver before the Restate endpoint can be exposed', async () => {
+    let acquired = 0
+    let released = 0
+    const readySlot = Effect.runSync(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+        yield* Deferred.succeed(ready, undefined)
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
+          ready,
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const execution = ManagedRuntime.make(
+      Layer.merge(
+        Layer.effect(
+          PublishedExecutionCycleDriver,
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              acquired += 1
+              return readySlot
+            }),
+            () =>
+              Effect.sync(() => {
+                released += 1
+              }),
+          ),
+        ),
+        Layer.succeed(
+          ExecutionControllerStatusStore,
+          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        ),
+      ),
+    )
+
+    expect(acquired).toBe(0)
+    await Effect.runPromise(initializeNativeExecutionRuntime(execution))
+    expect(acquired).toBe(1)
+    await execution.dispose()
+    expect(released).toBe(1)
+
+    const failure = new Error('execution dependency unavailable')
+    const failedExecution = ManagedRuntime.make(
+      Layer.merge(
+        Layer.effect(PublishedExecutionCycleDriver, Effect.fail(failure)),
+        Layer.succeed(
+          ExecutionControllerStatusStore,
+          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        ),
+      ),
+    )
+    const observed = await Effect.runPromise(Effect.flip(initializeNativeExecutionRuntime(failedExecution)))
+    await failedExecution.dispose()
+
+    expect(observed).toMatchObject({
+      operation: 'initialize',
+      message: 'native execution controller runtime bootstrap failed',
+      cause: failure,
+    })
+  })
+
+  test('defers execution driver acquisition until the first advance during an exact controller rotation', async () => {
+    let acquired = 0
+    let released = 0
+    const readySlot = Effect.runSync(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+        yield* Deferred.succeed(ready, undefined)
+        return {
+          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
+          ready,
+        } satisfies RecoveryFirstCycleDriverSlot
+      }),
+    )
+    const execution = ManagedRuntime.make(
+      Layer.merge(
+        Layer.effect(
+          PublishedExecutionCycleDriver,
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              acquired += 1
+              return readySlot
+            }),
+            () =>
+              Effect.sync(() => {
+                released += 1
+              }),
+          ),
+        ),
+        Layer.succeed(
+          ExecutionControllerStatusStore,
+          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        ),
+      ),
+    )
+
+    await Effect.runPromise(
+      initializeNativeExecutionRuntimeForBinding(execution, {
+        planHash: hash('8'),
+        sourceRevision: '8'.repeat(40),
+      }),
+    )
+    expect(acquired).toBe(0)
+
+    await execution.runPromise(PublishedExecutionCycleDriver.pipe(Effect.asVoid))
+    expect(acquired).toBe(1)
+    await execution.dispose()
+    expect(released).toBe(1)
   })
 
   test('interrupts an in-flight controller persistence bootstrap before releasing its acquired resource', async () => {

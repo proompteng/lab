@@ -25,6 +25,7 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
+  type ExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
@@ -490,6 +491,29 @@ export const initializeNativeExecutionProjectionRuntime = <R, E>(
     ),
   )
 
+export const initializeNativeExecutionRuntime = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+): Effect.Effect<void, NativeExecutionRuntimeError> =>
+  Effect.promise((signal) =>
+    executionRunner.runPromiseExit(PublishedExecutionCycleDriver.pipe(Effect.asVoid), { signal }),
+  ).pipe(
+    Effect.flatMap((exit) =>
+      Exit.isSuccess(exit)
+        ? Effect.void
+        : Effect.failCause(
+            Cause.map(exit.cause, (cause) =>
+              runtimeError('initialize', 'native execution controller runtime bootstrap failed', cause),
+            ),
+          ),
+    ),
+  )
+
+export const initializeNativeExecutionRuntimeForBinding = <R, E>(
+  executionRunner: NativeExecutionManagedRuntime<R, E>,
+  previousBinding: ExecutionControllerBinding | undefined,
+): Effect.Effect<void, NativeExecutionRuntimeError> =>
+  previousBinding === undefined ? initializeNativeExecutionRuntime(executionRunner) : Effect.void
+
 export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
@@ -530,9 +554,12 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
+  previousBinding?: ExecutionControllerBinding,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
-    const config = yield* Effect.fromResult(executionControllerConfig(plan))
+    const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
+    const config: ExecutionControllerConfig =
+      previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
     const sharedResources = Layer.mergeAll(
       AutonomousWorkerApplicationResourcesLive(plan),
       ExecutionControllerStatusResourceLive(plan.config),
@@ -542,11 +569,12 @@ export const acquireNativeExecutionRuntime = (
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
-    // Restate must register the replacement endpoint before its operator drains the previous version. Keep the
-    // process-wide writer fence lazy until the first tick so a rolling replacement can become ready; the recovering
-    // adapter rebuilds the runtime while the previous owner is releasing the fence, and bootstrap waits for that
-    // first durable pass before activation succeeds.
+    // Restate must register a replacement endpoint before its operator drains the previous version. For an exact
+    // predecessor-bound rotation, keep the process-wide writer fence lazy until the first durable tick so the new
+    // endpoint can become ready before the old owner releases it. Fresh startup has no predecessor to drain, so it
+    // still acquires the execution driver eagerly and fails closed before exposing an unusable endpoint.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
+    yield* initializeNativeExecutionRuntimeForBinding(ScopedRef.getUnsafe(managed), previousBinding)
     const projectionManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
     )
