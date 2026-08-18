@@ -964,7 +964,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('BrokerPositionSnapshotChanged')
-    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions'])
     expect(posts).toBe(0)
   })
 
@@ -1027,7 +1027,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(exit._tag).toBe('Success')
-    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions', 'orders'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(1)
   })
 

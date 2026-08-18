@@ -824,11 +824,6 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
   dependencies: BrokerSubmitRefreshDependencies,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
-    const account = yield* dependencies.brokerRead.account.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker account could not be refreshed before submit', cause),
-      ),
-    )
     const positionsBefore = yield* dependencies.brokerRead.positions.pipe(
       Effect.mapError((cause) =>
         mutationAuthorizationError('broker positions could not be refreshed before submit', cause),
@@ -873,6 +868,11 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         stableOpenOrders.failure,
       )
     }
+    const account = yield* dependencies.brokerRead.account.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('broker account could not be refreshed after exposure confirmation', cause),
+      ),
+    )
     return {
       account: account.value,
       positions: stablePositions.success,
