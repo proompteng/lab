@@ -408,6 +408,41 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
+  test('rejects broker state that expires during final authorization before transmission', async () => {
+    const fixture = finalLiveFixture()
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('broker-state-expiry-during-final-authorization'),
+      brokerRead: stableBrokerRead([], brokerAccount({ observedAt })),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(fixture.stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+      currentUtcInstant: Effect.succeed('2026-07-28T08:05:00.000Z'),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('BrokerStateStale')
+    expect(posts).toBe(0)
+  })
+
   test('revalidates the execution window after broker refresh and before transmission', async () => {
     const fixture = finalLiveFixture()
     const sandboxAuthority = Result.getOrThrow(

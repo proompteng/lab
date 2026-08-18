@@ -134,6 +134,7 @@ const finalBrokerAuthorization = (
       observedAt,
       {
         closeOnly,
+        maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
         ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
       },
     )
