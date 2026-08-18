@@ -107,10 +107,7 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
         }),
     ),
   )
-  const acquired = yield* acquireNativeExecutionRuntime(plan)
-  const config: ExecutionControllerConfig =
-    previousBinding === undefined ? acquired.config : { ...acquired.config, previousBinding }
-  const { runtime } = acquired
+  const { config, runtime } = yield* acquireNativeExecutionRuntime(plan, previousBinding)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
