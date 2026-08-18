@@ -16,6 +16,7 @@ import {
   decideExecutionControllerBootstrap,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
+  executionControllerMaximumDeliveryAttempt,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
   type ExecutionControllerBinding,
@@ -33,7 +34,7 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
     schemaVersion: { const: 'bayn.execution-controller-tick.v1' },
     epoch: { type: 'integer', minimum: 1 },
     sequence: { type: 'integer', minimum: 0 },
-    attempt: { type: 'integer', minimum: 0, maximum: 2 },
+    attempt: { type: 'integer', minimum: 0, maximum: executionControllerMaximumDeliveryAttempt },
     issuedAt: { type: 'string', format: 'date-time' },
   },
   required: ['schemaVersion', 'epoch', 'sequence'],
@@ -44,7 +45,8 @@ export const executionControllerActivationRetentionMs = 10 * 60_000
 export const executionControllerAdvanceRunOptions = {
   maxRetryAttempts: 0,
 } as const satisfies restate.RunOptions<ExecutionAdvanceStepResult>
-export const executionControllerAdvanceMaximumAttempts = 3
+export const executionControllerAdvanceMaximumAttempts = (replacementFirstPass: boolean): number =>
+  replacementFirstPass ? executionControllerMaximumDeliveryAttempt + 1 : 3
 export const executionControllerTickRetryPolicy = {
   maxAttempts: 1,
   onMaxAttempts: 'pause',
@@ -373,7 +375,13 @@ export const makeBaynExecutionController = (
             )
           } catch (cause) {
             const attempt = tick.attempt ?? 0
-            if (attempt + 1 < executionControllerAdvanceMaximumAttempts && state !== null) {
+            const replacementFirstPass =
+              config.previousBinding !== undefined &&
+              state !== null &&
+              state.lastCompletion === undefined &&
+              state.nextSequence === state.initialSequence
+            const maximumAttempts = executionControllerAdvanceMaximumAttempts(replacementFirstPass)
+            if (attempt + 1 < maximumAttempts && state !== null) {
               const nextAttempt = attempt + 1
               const retryDelayMs = Math.min(1_000 * 2 ** attempt, 30_000)
               scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt)

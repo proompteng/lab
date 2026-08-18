@@ -7,7 +7,12 @@ import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOpt
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 const EpochSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
 const DelaySchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
-const DeliveryAttemptSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2 }))
+// Replacement workers may briefly wait for the Restate operator to terminate the predecessor and release its
+// process-scoped PostgreSQL writer fence. Keep enough durable delivery identities for that bounded handoff window.
+export const executionControllerMaximumDeliveryAttempt = 6
+const DeliveryAttemptSchema = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
+)
 const decodeUtcInstant = Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)
 
 export const ExecutionControllerActivationSchema = Schema.Struct({
