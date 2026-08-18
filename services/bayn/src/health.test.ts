@@ -1259,7 +1259,11 @@ describe('Bayn continuous health', () => {
       failedDependencies: [],
     })
 
-    const unprovenController = deriveHealthTransition(current, {
+    const cachedPassCurrent: RuntimeState = {
+      ...current,
+      autonomousCycleLoop: { ...current.autonomousCycleLoop, lastPass: controller.lastPass },
+    }
+    const unprovenController = deriveHealthTransition(cachedPassCurrent, {
       ...input,
       results: {
         ...input.results,

@@ -852,6 +852,49 @@ describe('native execution runtime', () => {
     })
   })
 
+  test('keeps retained pass evidence in PostgreSQL while Restate state remains rollback-compatible', async () => {
+    const retained = status({ lastPass: staleBootstrapObservation })
+    if (!executionControllerStatusHasCompletion(retained)) {
+      throw new Error('retained projection fixture must contain completion evidence')
+    }
+    if (retained.nextDueAt === undefined) throw new Error('retained projection fixture must contain a next due time')
+    let projected: ExecutionControllerStatus | undefined
+    await Effect.runPromise(
+      projectExecutionControllerState(
+        command.controllerKey,
+        {
+          schemaVersion: 1,
+          active: true,
+          epoch: command.epoch,
+          planHash: controllerPlanHash,
+          sourceRevision,
+          initialSequence: command.sequence,
+          nextSequence: command.sequence + 1,
+          lastCompletion: {
+            sequence: command.sequence,
+            outcome: retained.lastOutcome,
+            receiptHash: retained.lastReceiptHash,
+            completedAt: retained.completedAt,
+          },
+          nextDueAt: retained.nextDueAt,
+        },
+        {
+          read: () => Effect.succeed(retained),
+          project: (candidate) =>
+            Effect.sync(() => {
+              projected = candidate
+              return { _tag: 'Replayed' as const, status: candidate }
+            }),
+        },
+      ),
+    )
+
+    expect(projected).toMatchObject({
+      lastSequence: command.sequence,
+      lastPass: staleBootstrapObservation,
+    })
+  })
+
   test('projects durable deactivation from the last real completion without fabricating another tick', async () => {
     let projected: ExecutionControllerStatus | undefined
     await Effect.runPromise(

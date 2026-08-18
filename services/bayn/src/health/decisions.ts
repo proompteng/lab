@@ -420,7 +420,7 @@ const deriveAutonomousCycleLoop = (
   const status = controller.status
   return executionControllerStatusHasCompletion(status) && status.lastPass !== undefined
     ? { ...current, lastPass: status.lastPass }
-    : current
+    : { ...current, lastPass: null }
 }
 
 const deriveBrokerStatus = (

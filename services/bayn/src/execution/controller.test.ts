@@ -310,11 +310,16 @@ describe('execution controller decisions', () => {
   })
 
   test('completes one tick, advances monotonically, and records the next due time', () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      observedAt: completedResult.completedAt,
+      outcome: 'NO_PUBLICATION' as const,
+    }
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
-        completedResult,
+        { ...completedResult, observation },
         nextSourceRevision,
       ),
     )
@@ -332,6 +337,7 @@ describe('execution controller decisions', () => {
         completedAt: completedResult.completedAt,
       },
     })
+    expect(state.lastCompletion).not.toHaveProperty('lastPass')
     expect(
       Result.isFailure(
         completeExecutionControllerTick(

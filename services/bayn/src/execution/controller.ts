@@ -86,7 +86,6 @@ const CompletionSchema = Schema.Struct({
   outcome: Schema.Enum(ExecutionControllerOutcome),
   receiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
-  lastPass: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
 })
 
 export const ExecutionControllerStateSchema = Schema.Struct({
@@ -308,7 +307,6 @@ export const completeExecutionControllerTick = (
       outcome: result.outcome._tag,
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
-      ...(result.observation === undefined ? {} : { lastPass: result.observation }),
     },
     nextDueAt: decodedNextDueAt.success,
   })

@@ -193,15 +193,10 @@ describe('native Restate execution controller', () => {
       lastCompletion: {
         sequence: 4,
         outcome: 'Blocked',
-        lastPass: {
-          result: 'SUCCESS',
-          outcome: 'NOT_DUE',
-          cadence: 'EVERY_SESSION',
-          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
-        },
       },
       nextDueAt: '2026-08-13T18:00:31.000Z',
     })
+    expect((state as ExecutionControllerState | null)?.lastCompletion).not.toHaveProperty('lastPass')
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
       delay: 30_000,
