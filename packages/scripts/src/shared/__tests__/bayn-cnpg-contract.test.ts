@@ -65,7 +65,7 @@ test('Bayn compares CNPG resources after admission defaulting', () => {
   expect(bayn.annotations['argocd.argoproj.io/compare-options']).toBe('ServerSideDiff=true,IncludeMutationWebhook=true')
 })
 
-test('Bayn keeps the read plane node-tolerant while execution remains a portable singleton', () => {
+test('Bayn keeps the read plane and serialized execution service tolerant of one node loss', () => {
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const egressProxyResources = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/egress-proxy.yaml')).map(
     (document) => document.toJSON(),
@@ -73,6 +73,7 @@ test('Bayn keeps the read plane node-tolerant while execution remains a portable
   const egressProxy = egressProxyResources.find((manifest) => manifest.kind === 'Deployment')
   const egressProxyDisruptionBudget = egressProxyResources.find((manifest) => manifest.kind === 'PodDisruptionBudget')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
+  const controllerDisruptionBudget = readManifest('argocd/applications/bayn/execution-controller-pdb.yaml')
   const activation = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/execution-activation.yaml'))
     .map((document) => document.toJSON())
     .find((manifest) => manifest.kind === 'Job')
@@ -130,8 +131,28 @@ test('Bayn keeps the read plane node-tolerant while execution remains a portable
     },
   })
 
-  expect(controller.spec.replicas).toBe(1)
+  expect(controller.spec.replicas).toBe(2)
   expect(controller.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
+    {
+      maxSkew: 1,
+      topologyKey: 'kubernetes.io/hostname',
+      whenUnsatisfiable: 'DoNotSchedule',
+      nodeTaintsPolicy: 'Honor',
+      labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } },
+    },
+  ])
+  expect(controllerDisruptionBudget).toMatchObject({
+    apiVersion: 'policy/v1',
+    kind: 'PodDisruptionBudget',
+    metadata: { name: 'bayn-execution-controller' },
+    spec: {
+      minAvailable: 1,
+      unhealthyPodEvictionPolicy: 'AlwaysAllow',
+      selector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } },
+    },
+  })
+  expect(kustomization.resources).toContain('execution-controller-pdb.yaml')
   expect(activation.spec.template.spec.nodeSelector).toBeUndefined()
 })
 

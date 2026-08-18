@@ -1756,8 +1756,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }),
           ),
         )
-        const secondOwnerExit = yield* Effect.promise(() =>
-          secondOwner.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+        const secondOwnerCommit = yield* Effect.promise(() =>
+          secondOwner.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
         )
         const retryAfterTransition = yield* Effect.promise(() =>
           execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
@@ -1786,7 +1786,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }),
           ),
         )
-        return { commits, retryAfterTransition, secondOwnerExit, stored }
+        return { commits, retryAfterTransition, secondOwnerCommit, stored }
       }).pipe(
         Effect.ensuring(
           Effect.all([Effect.promise(() => secondOwner.dispose()), Effect.promise(() => execution.dispose())], {
@@ -1801,7 +1801,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ).toEqual([false, true])
     expect(observed.commits[0].record.intent.intentId).toBe(intent.intentId)
     expect(observed.commits[1].record.intent.clientOrderId).toBe(intent.clientOrderId)
-    expect(Exit.isFailure(observed.secondOwnerExit)).toBe(true)
+    expect(observed.secondOwnerCommit).toMatchObject({
+      deduplicated: true,
+      record: { intent: { state: 'APPROVED' }, stateVersion: 2 },
+    })
     expect(observed.retryAfterTransition).toMatchObject({
       deduplicated: true,
       record: { intent: { state: 'APPROVED' }, stateVersion: 2 },
@@ -2340,7 +2343,91 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.counts).toEqual({ decisions: 0, intents: 0 })
   })
 
-  test('runs mutations on the lease session and rolls back when that session dies', async () => {
+  test('keeps two writer-fence runtimes ready while allowing only one durable transaction at a time', async () => {
+    const first = makeExecutionRuntime()
+    const standby = makeExecutionRuntime()
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const transactionStarted = yield* Deferred.make<void>()
+        const releaseTransaction = yield* Deferred.make<void>()
+        const firstPid = yield* Effect.promise(() =>
+          first.runPromise(Effect.map(WriterFence, (fence) => fence.backendPid)),
+        )
+        const transaction = yield* Effect.forkChild(
+          Effect.promise(() =>
+            first.runPromise(
+              Effect.flatMap(WriterFence, (fence) =>
+                fence.transaction(
+                  Deferred.succeed(transactionStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseTransaction)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          { startImmediately: true },
+        )
+        yield* Deferred.await(transactionStarted)
+        // Runtime acquisition itself is writer-fence neutral: a standby must become ready even while another replica
+        // is inside a legitimate trading-state transaction. Only explicit checks and transactions contend on the
+        // PostgreSQL advisory transaction lock.
+        const standbyPid = yield* Effect.promise(() =>
+          standby.runPromise(Effect.map(WriterFence, (fence) => fence.backendPid)),
+        )
+        const busy = yield* Effect.promise(() =>
+          standby.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+        )
+        yield* Deferred.succeed(releaseTransaction, undefined)
+        yield* Fiber.join(transaction)
+        const handedOff = yield* Effect.promise(() =>
+          standby.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+        )
+        return { busy, firstPid, handedOff, standbyPid }
+      }).pipe(
+        Effect.ensuring(
+          Effect.all([Effect.promise(() => first.dispose()), Effect.promise(() => standby.dispose())], {
+            concurrency: 'unbounded',
+          }).pipe(Effect.asVoid),
+        ),
+      ),
+    )
+
+    expect(observed.firstPid).not.toBe(observed.standbyPid)
+    expect(Exit.isFailure(observed.busy)).toBe(true)
+    if (Exit.isFailure(observed.busy)) {
+      expect(Cause.pretty(observed.busy.cause)).toContain(
+        'another PostgreSQL transaction owns the execution writer fence',
+      )
+    }
+    expect(Exit.isSuccess(observed.handedOff)).toBe(true)
+  })
+
+  test('reuses the held writer-fence transaction for nested durable mutations', async () => {
+    const execution = makeExecutionRuntime()
+
+    const observed = await Effect.runPromise(
+      Effect.promise(() =>
+        execution.runPromise(
+          Effect.flatMap(WriterFence, (fence) =>
+            fence.transaction(
+              fence.transaction(
+                Effect.gen(function* () {
+                  const sql = yield* PgClient.PgClient
+                  const rows = yield* sql<{ backend_pid: number }>`SELECT pg_backend_pid()::integer AS backend_pid`
+                  return rows[0]?.backend_pid
+                }),
+              ),
+            ),
+          ),
+        ),
+      ).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+    )
+
+    expect(observed).toBeNumber()
+  })
+
+  test('runs mutations on the transaction-fence session and rolls back when that session dies', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const nextOwner = makeExecutionRuntime()

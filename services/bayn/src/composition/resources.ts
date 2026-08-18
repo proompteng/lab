@@ -7,7 +7,7 @@ import type { ApplicationDependencies, ApplicationIdentity, ApplicationPlanFor }
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
 import { live as BrokerReadOnlyResourcesLive } from '../broker/alpaca/session'
 import type { LoadedRuntimeConfig } from '../config'
-import { CycleObservability, CycleObservabilityLive, CycleStoreLive } from '../cycle/store'
+import { CycleObservability, CycleObservabilityLive, CycleStoreLive, WriterFencedCycleStoreLive } from '../cycle/store'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '../db/evidence-store'
@@ -57,6 +57,8 @@ export const ExecutionControllerStatusResourceLive = (config: PostgresResourceCo
 
 export const CycleStoreResourceLive = CycleStoreLive
 
+export const WriterFencedCycleStoreResourceLive = WriterFencedCycleStoreLive
+
 export const WriterFenceResourceLive = WriterFenceLive
 
 export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
@@ -96,7 +98,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
-/** Read-only resources for the public status service. Mutation stores and the process-wide writer fence are absent. */
+/** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
 export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const evidence = Layer.effect(EvidenceStore, Effect.map(PgClient.PgClient, makeEvidenceStore)).pipe(
@@ -143,7 +145,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
   return Layer.mergeAll(
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
-    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
+    WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
