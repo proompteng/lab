@@ -15,7 +15,8 @@ export interface ExecutionCycleCloseWindow {
 export interface ExecutionCycleCloseWindowFacts {
   readonly cadence?: CycleCadence
   readonly executionCloseAt: string
-  readonly mandateCutoffAt?: string
+  /** Global end of entry authority and start of forced flattening. */
+  readonly mandateForceCloseAt?: string
   readonly mandateCloseSubmitCutoffAt?: string
   readonly mandateCloseExpiresAt?: string
 }
@@ -41,13 +42,13 @@ export const resolveExecutionCycleCloseWindow = (
 ): Result.Result<ExecutionCycleCloseWindow | undefined, ExecutionCycleCloseWindowFailure> =>
   Result.gen(function* () {
     if (
-      facts.mandateCutoffAt === undefined ||
+      facts.mandateForceCloseAt === undefined ||
       facts.mandateCloseSubmitCutoffAt === undefined ||
       facts.mandateCloseExpiresAt === undefined
     ) {
       return undefined
     }
-    const mandateCutoffAt = yield* decodeInstant(facts.mandateCutoffAt, 'mandate cutoff instant')
+    const mandateForceCloseAt = yield* decodeInstant(facts.mandateForceCloseAt, 'mandate force-close instant')
     const mandateCloseSubmitCutoffAt = yield* decodeInstant(
       facts.mandateCloseSubmitCutoffAt,
       'mandate close submit-cutoff instant',
@@ -73,13 +74,13 @@ export const resolveExecutionCycleCloseWindow = (
             }),
           )
           return {
-            startAt: earlierInstant(mandateCutoffAt, sessionStartAt),
+            startAt: earlierInstant(mandateForceCloseAt, sessionStartAt),
             submitCutoffAt: earlierInstant(mandateCloseSubmitCutoffAt, sessionSubmitCutoffAt),
             expiresAt: earlierInstant(mandateCloseExpiresAt, executionCloseAt),
           }
         })
       : {
-          startAt: mandateCutoffAt,
+          startAt: mandateForceCloseAt,
           submitCutoffAt: mandateCloseSubmitCutoffAt,
           expiresAt: mandateCloseExpiresAt,
         }

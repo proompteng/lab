@@ -448,7 +448,9 @@ const executeBoundExecutionCycle = (
       resolveExecutionCycleCloseWindow({
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
         executionCloseAt: cycle.window.executionCloseAt,
-        ...(input.executionMandateCutoffAt === undefined ? {} : { mandateCutoffAt: input.executionMandateCutoffAt }),
+        ...(input.executionMandateCutoffAt === undefined
+          ? {}
+          : { mandateForceCloseAt: input.executionMandateCutoffAt }),
         ...(input.executionMandateCloseSubmitCutoffAt === undefined
           ? {}
           : { mandateCloseSubmitCutoffAt: input.executionMandateCloseSubmitCutoffAt }),

@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { resolveExecutionCycleCloseWindow } from './execution-window'
 
 const mandateWindow = {
-  mandateCutoffAt: '2026-09-01T13:30:00.000Z',
+  mandateForceCloseAt: '2026-09-01T13:30:00.000Z',
   mandateCloseSubmitCutoffAt: '2026-09-03T20:00:00.000Z',
   mandateCloseExpiresAt: '2026-09-03T20:15:00.000Z',
 } as const
@@ -26,13 +26,13 @@ describe('execution-cycle close windows', () => {
     })
   })
 
-  test('lets the overall mandate shorten but never extend a session close window', () => {
+  test('forces flattening at the global entry cutoff instead of extending to the daily close window', () => {
     expect(
       Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
           cadence: 'EVERY_SESSION',
           executionCloseAt: '2026-09-01T20:00:00.000Z',
-          mandateCutoffAt: '2026-09-01T13:30:00.000Z',
+          mandateForceCloseAt: '2026-09-01T13:30:00.000Z',
           mandateCloseSubmitCutoffAt: '2026-09-01T19:30:00.000Z',
           mandateCloseExpiresAt: '2026-09-01T19:50:00.000Z',
         }),
@@ -54,7 +54,7 @@ describe('execution-cycle close windows', () => {
         }),
       ),
     ).toEqual({
-      startAt: mandateWindow.mandateCutoffAt,
+      startAt: mandateWindow.mandateForceCloseAt,
       submitCutoffAt: mandateWindow.mandateCloseSubmitCutoffAt,
       expiresAt: mandateWindow.mandateCloseExpiresAt,
     })
@@ -85,7 +85,7 @@ describe('execution-cycle close windows', () => {
         resolveExecutionCycleCloseWindow({
           cadence: 'EVERY_SESSION',
           executionCloseAt: '2026-08-19T20:00:00.000Z',
-          mandateCutoffAt: '2026-08-19T19:50:00.000Z',
+          mandateForceCloseAt: '2026-08-19T19:50:00.000Z',
           mandateCloseSubmitCutoffAt: '2026-08-19T18:50:00.000Z',
           mandateCloseExpiresAt: '2026-08-19T18:55:00.000Z',
         }),

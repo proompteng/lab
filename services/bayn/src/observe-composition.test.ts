@@ -4941,7 +4941,7 @@ describe('OBSERVE runtime composition', () => {
     expect(authorityRestrictions).toBe(0)
   })
 
-  test('terminalizes an unbound PAPER cycle as BLOCKED after the authority cutoff', async () => {
+  test('terminalizes an unbound PAPER cycle and refuses new discovery after the entry-authority cutoff', async () => {
     const cutoffAt = '2020-05-01T12:45:00.000Z'
     const observedAt = '2020-05-01T12:45:01.000Z'
     const terminalCycle = Effect.runSync(
@@ -5006,18 +5006,25 @@ describe('OBSERVE runtime composition', () => {
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureRuntime,
+      cycleCadence: 'EVERY_SESSION',
       executionProgram: sandboxExecutionProgram(),
       executionMandateCutoffAt: cutoffAt,
     })
 
-    const observation = await Effect.runPromise(
+    const observations = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
-          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const firstPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const secondPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          let passCount = 0
           const loop = yield* startup({
             qualificationRunId: cycle.identity.qualificationRunId,
-            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+            recordPass: (result) => {
+              const target = passCount === 0 ? firstPass : secondPass
+              passCount += 1
+              return Deferred.succeed(target, result).pipe(Effect.asVoid)
+            },
           })
           const fiber = yield* loop.pipe(
             Effect.provideService(BrokerRead, brokerRead),
@@ -5034,14 +5041,17 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped({ startImmediately: true }),
           )
-          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          const first = yield* Deferred.await(firstPass).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(30_000)
+          const second = yield* Deferred.await(secondPass).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
-          return result
+          return [first, second] as const
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
 
-    expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(observations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(observations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(blocked).toBe(1)
     expect(terminal).toBe(true)
   })
