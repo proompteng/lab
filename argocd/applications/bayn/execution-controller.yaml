@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: bayn-execution-controller
     app.kubernetes.io/part-of: bayn
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 2
   minReadySeconds: 5
   restate:
@@ -17,8 +17,10 @@ spec:
         name: restate
         namespace: restate
         port: 9070
-    # The controller owns one process-wide PostgreSQL writer fence. Retaining
-    # the previous service revision would overlap two potential writers.
+    # Restate serializes the account-keyed controller while every durable
+    # trading-state mutation acquires the same transaction-scoped PostgreSQL
+    # writer fence. Old revisions can therefore drain alongside ready replicas
+    # without overlapping durable writers.
     drainDelaySeconds: 0
   selector:
     matchLabels:
@@ -33,6 +35,14 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-execution-controller
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

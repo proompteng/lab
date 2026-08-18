@@ -111,7 +111,7 @@ import {
 import { PostgresClientLive } from '../../db/evidence-store'
 import { migrationLoader } from '../../db/migrations'
 import { ensureSnapshotReference } from '../../db/snapshot-reference'
-import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
+import { CycleStore, CycleStoreLive, WriterFencedCycleStoreLive, type CycleStoreShape } from '.'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
@@ -223,6 +223,15 @@ const restartGithubPostgres18Process = async (): Promise<PostgresProcessRestartE
 const makeRuntime = () =>
   ManagedRuntime.make(
     CycleStoreLive.pipe(Layer.provideMerge(PostgresClientLive(databaseConfig)), Layer.provideMerge(NodeServices.layer)),
+  )
+
+const makeWriterFencedRuntime = () =>
+  ManagedRuntime.make(
+    WriterFencedCycleStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(databaseConfig)),
+      Layer.provide(NodeServices.layer),
+    ),
   )
 
 const dueAccountId = '13354000-0000-4000-8000-000000000054'
@@ -2604,7 +2613,63 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         executionCloseAt: '2026-03-09T20:00:00.000Z',
       },
     })
+
     expect(observed.count).toBe(1)
+  })
+
+  test('fences standalone cycle mutations across ready execution runtimes and hands ownership off', async () => {
+    const owner = makeWriterFencedRuntime()
+    const standby = makeWriterFencedRuntime()
+    const draft = makeDraft('paper-account-cycle-writer-fence')
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const transactionStarted = yield* Deferred.make<void>()
+        const releaseTransaction = yield* Deferred.make<void>()
+        const ownerTransaction = yield* Effect.forkChild(
+          Effect.promise(() =>
+            owner.runPromise(
+              Effect.flatMap(WriterFence, (fence) =>
+                fence.transaction(
+                  Deferred.succeed(transactionStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseTransaction)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          { startImmediately: true },
+        )
+        yield* Deferred.await(transactionStarted)
+
+        const busy = yield* Effect.promise(() =>
+          standby.runPromiseExit(Effect.flatMap(CycleStore, (store) => store.acquire(draft, acquireAt))),
+        )
+        yield* Deferred.succeed(releaseTransaction, undefined)
+        yield* Fiber.join(ownerTransaction)
+        const handedOff = yield* Effect.promise(() =>
+          standby.runPromiseExit(Effect.flatMap(CycleStore, (store) => store.acquire(draft, acquireAt))),
+        )
+        return { busy, handedOff }
+      }).pipe(
+        Effect.ensuring(
+          Effect.all([Effect.promise(() => owner.dispose()), Effect.promise(() => standby.dispose())], {
+            concurrency: 'unbounded',
+          }).pipe(Effect.asVoid),
+        ),
+      ),
+    )
+
+    expect(Exit.isFailure(observed.busy)).toBe(true)
+    if (Exit.isFailure(observed.busy)) {
+      expect(Cause.pretty(observed.busy.cause)).toContain(
+        'autonomous cycle mutation could not acquire the PostgreSQL writer fence',
+      )
+      expect(Cause.pretty(observed.busy.cause)).toContain(
+        'another PostgreSQL transaction owns the execution writer fence',
+      )
+    }
+    expect(Exit.isSuccess(observed.handedOff)).toBe(true)
   })
 
   test('reads the oldest unfinished cycle inside one qualification and account scope', async () => {

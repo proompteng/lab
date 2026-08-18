@@ -102,7 +102,7 @@ export interface AuthorityGenerationStoreShape {
   ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }
 
-/** Domain operations; the live Layer captures the process-wide writer fence. */
+/** Domain operations; the live Layer captures the transaction-scoped PostgreSQL writer fence. */
 export interface CapitalGrantLifecycleStoreShape {
   /**
    * PREPARE operation: transactionally derives the stable canonical capital-grant generation identity plus current

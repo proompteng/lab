@@ -15,6 +15,7 @@ resources:
   - deployment.yaml
   - execution-bootstrap-sealedsecret.yaml
   - execution-controller.yaml
+  - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
   - service.yaml

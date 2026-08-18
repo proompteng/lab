@@ -187,9 +187,13 @@ qualification, or durable evidence closes readiness and never expands authority.
 
 GitOps owns the read/status `apps/v1 Deployment`, the native Restate execution worker, and a dedicated three-replica
 TigerBeetle cluster. The status Deployment may use `maxSurge: 1` because it does not own autonomous execution;
-per-account execution serialization is owned by the Restate virtual object and every broker mutation still crosses the
-durable writer fence. The pod has no Kubernetes API token. A broker Secret does not expand authority. Scaling the
-status Deployment to zero is a maintenance state, not a second execution mode.
+per-account execution serialization is owned by the Restate virtual object. The worker deployment may run multiple
+ready replicas because the PostgreSQL writer fence is transaction-scoped rather than process-scoped: each durable
+trading-state transaction acquires the same advisory transaction lock and releases it with the transaction or failed
+connection. Restate still chooses one serialized account command at a time, while persisted mutation intents and
+deterministic client order IDs protect external broker effects across retries and worker replacement. The pods have no
+Kubernetes API token. A broker Secret does not expand authority. Scaling the status Deployment to zero is a maintenance
+state, not a second execution mode.
 
 Every promoted image requires live acceptance against one coherent writer: the pod spec's digest-pinned image reference
 must match the GitOps OCI index digest. The runtime image ID is supporting evidence: its digest must be either that same

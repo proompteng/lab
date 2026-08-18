@@ -374,8 +374,8 @@ type TestTransactionBoundary =
   | { readonly _tag: 'DieAfterBody'; readonly defect: unknown }
   | { readonly _tag: 'InterruptAfterBody' }
 
-// Keep a real SQL transaction while bypassing the process-wide writer lease so independent runtimes exercise
-// ExecutionStore's database authority locks, rollback, and Effect exit channels directly.
+// Keep a real SQL transaction while bypassing the production advisory transaction fence so independent runtimes
+// exercise ExecutionStore's database authority locks, rollback, and Effect exit channels directly.
 const testTransactionFenceLive = (boundary: TestTransactionBoundary) =>
   Layer.effect(
     WriterFence,
@@ -1733,6 +1733,83 @@ describePostgres('paper accounting persistence', () => {
     } finally {
       await runtime.dispose()
     }
+  }, 15_000)
+
+  test('fences authority-generation mutations across ready runtimes and hands ownership off', async () => {
+    const owner = makeStoreRuntime({ fail: false, planHashes: [] })
+    const standby = makeStoreRuntime({ fail: false, planHashes: [] })
+    const generationHash = hash('replica-fenced-authority-generation')
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const transactionStarted = yield* Deferred.make<void>()
+        const releaseTransaction = yield* Deferred.make<void>()
+        const ownerTransaction = yield* Effect.forkChild(
+          Effect.promise(() =>
+            owner.runPromise(
+              Effect.flatMap(WriterFence, (fence) =>
+                fence.transaction(
+                  Deferred.succeed(transactionStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseTransaction)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          { startImmediately: true },
+        )
+        yield* Deferred.await(transactionStarted)
+
+        const busyEnsure = yield* Effect.promise(() =>
+          standby.runPromiseExit(
+            Effect.flatMap(AuthorityGenerationStore, (store) =>
+              store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
+            ),
+          ),
+        )
+        const busyReadOrInitialize = yield* Effect.promise(() =>
+          standby.runPromiseExit(
+            Effect.flatMap(AuthorityGenerationStore, (store) => {
+              if (store.readOrInitializeObserveAuthority === undefined) {
+                return Effect.die(new Error('OBSERVE authority initialization must be available'))
+              }
+              return store.readOrInitializeObserveAuthority({ generationHash, maximum: Authority.Observe })
+            }),
+          ),
+        )
+
+        yield* Deferred.succeed(releaseTransaction, undefined)
+        yield* Fiber.join(ownerTransaction)
+        const handedOff = yield* Effect.promise(() =>
+          standby.runPromise(
+            Effect.flatMap(AuthorityGenerationStore, (store) =>
+              store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
+            ),
+          ),
+        )
+        return { busyEnsure, busyReadOrInitialize, handedOff }
+      }).pipe(
+        Effect.ensuring(
+          Effect.all([Effect.promise(() => owner.dispose()), Effect.promise(() => standby.dispose())], {
+            concurrency: 'unbounded',
+          }).pipe(Effect.asVoid),
+        ),
+      ),
+    )
+
+    for (const busy of [observed.busyEnsure, observed.busyReadOrInitialize]) {
+      expect(Exit.isFailure(busy)).toBe(true)
+      if (Exit.isFailure(busy)) {
+        expect(Cause.pretty(busy.cause)).toContain('authority mutation could not acquire the PostgreSQL writer fence')
+        expect(Cause.pretty(busy.cause)).toContain('another PostgreSQL transaction owns the execution writer fence')
+      }
+    }
+    expect(observed.handedOff).toMatchObject({
+      generationHash,
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+    })
   }, 15_000)
 
   test('fails an absent-row restriction and persists a restriction once OBSERVE authority is initialized', async () => {

@@ -1,10 +1,11 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Exit, Layer, Schema, Semaphore } from 'effect'
+import { Context, Data, Effect, Exit, Layer, Option, Schema, Semaphore } from 'effect'
 
 const LOCK_NAMESPACE = 1_111_578_958 // ASCII "BAYN"
 const WRITER_LEASE = 1
 
-const AcquireRows = Schema.Tuple([Schema.Tuple([Schema.Boolean, Schema.Int])])
+const BackendRows = Schema.Tuple([Schema.Tuple([Schema.Int])])
+const AcquireRows = Schema.Tuple([Schema.Tuple([Schema.Boolean])])
 const HeldRows = Schema.Tuple([Schema.Tuple([Schema.Boolean])])
 
 export class WriterFenceError extends Data.TaggedError('WriterFenceError')<{
@@ -44,7 +45,7 @@ const unavailable = (operation: 'acquire' | 'check' | 'transaction', cause: unkn
     cause,
   })
 
-const decodeFailure = (operation: 'acquire' | 'check', cause: unknown) =>
+const decodeFailure = (operation: 'acquire' | 'check' | 'transaction', cause: unknown) =>
   new WriterFenceError({
     failure: 'decode',
     operation,
@@ -55,34 +56,36 @@ const decodeFailure = (operation: 'acquire' | 'check', cause: unknown) =>
 const acquire = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const connection = yield* sql.reserve.pipe(Effect.mapError((cause) => unavailable('acquire', cause)))
-  const rows = yield* connection
-    .executeValues('SELECT pg_try_advisory_lock($1::integer, $2::integer), pg_backend_pid()', [
-      LOCK_NAMESPACE,
-      WRITER_LEASE,
-    ])
+  const backendRows = yield* connection
+    .executeValues('SELECT pg_backend_pid()', [])
     .pipe(Effect.mapError((cause) => unavailable('acquire', cause)))
-  const [[acquired, backendPid]] = yield* Schema.decodeUnknownEffect(AcquireRows)(rows).pipe(
+  const [[backendPid]] = yield* Schema.decodeUnknownEffect(BackendRows)(backendRows).pipe(
     Effect.mapError((cause) => decodeFailure('acquire', cause)),
-  )
-  if (!acquired) {
-    return yield* new WriterFenceError({
-      failure: 'busy',
-      operation: 'acquire',
-      message: 'another PostgreSQL session owns the execution writer fence',
-    })
-  }
-
-  yield* Effect.addFinalizer(() =>
-    connection
-      .executeValues('SELECT pg_advisory_unlock($1::integer, $2::integer)', [LOCK_NAMESPACE, WRITER_LEASE])
-      .pipe(Effect.ignore),
   )
 
   const transactionPermit = yield* Semaphore.make(1)
-  const checkHeld = Effect.gen(function* () {
-    const heldRows = yield* connection
-      .executeValues(
-        `SELECT EXISTS (
+  const acquireTransactionLease = (operation: 'check' | 'transaction') =>
+    Effect.gen(function* () {
+      const rows = yield* connection
+        .executeValues('SELECT pg_try_advisory_xact_lock($1::integer, $2::integer)', [LOCK_NAMESPACE, WRITER_LEASE])
+        .pipe(Effect.mapError((cause) => unavailable(operation, cause)))
+      const [[acquired]] = yield* Schema.decodeUnknownEffect(AcquireRows)(rows).pipe(
+        Effect.mapError((cause) => decodeFailure(operation, cause)),
+      )
+      if (!acquired) {
+        return yield* new WriterFenceError({
+          failure: 'busy',
+          operation,
+          message: 'another PostgreSQL transaction owns the execution writer fence',
+        })
+      }
+    })
+
+  const checkHeld = (operation: 'check' | 'transaction') =>
+    Effect.gen(function* () {
+      const heldRows = yield* connection
+        .executeValues(
+          `SELECT EXISTS (
           SELECT 1
           FROM pg_locks
           WHERE locktype = 'advisory'
@@ -93,23 +96,25 @@ const acquire = Effect.gen(function* () {
             AND mode = 'ExclusiveLock'
             AND granted
         )`,
-        [LOCK_NAMESPACE, WRITER_LEASE],
+          [LOCK_NAMESPACE, WRITER_LEASE],
+        )
+        .pipe(Effect.mapError((cause) => unavailable(operation, cause)))
+      const [[held]] = yield* Schema.decodeUnknownEffect(HeldRows)(heldRows).pipe(
+        Effect.mapError((cause) => decodeFailure(operation, cause)),
       )
-      .pipe(Effect.mapError((cause) => unavailable('check', cause)))
-    const [[held]] = yield* Schema.decodeUnknownEffect(HeldRows)(heldRows).pipe(
-      Effect.mapError((cause) => decodeFailure('check', cause)),
-    )
-    if (!held) {
-      return yield* new WriterFenceError({
-        failure: 'unavailable',
-        operation: 'check',
-        message: 'PostgreSQL execution writer fence is no longer held',
-      })
-    }
-  })
-  const check = transactionPermit.withPermit(checkHeld)
+      if (!held) {
+        return yield* new WriterFenceError({
+          failure: 'unavailable',
+          operation,
+          message: 'PostgreSQL execution writer fence is no longer held',
+        })
+      }
+    })
 
-  const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>
+  const runTransaction = <A, E, R>(
+    operation: 'check' | 'transaction',
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E | WriterFenceError, R> =>
     transactionPermit.withPermit(
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
@@ -117,7 +122,9 @@ const acquire = Effect.gen(function* () {
             .executeUnprepared('BEGIN', [], undefined)
             .pipe(Effect.mapError((cause) => unavailable('transaction', cause)))
           const exit = yield* Effect.exit(
-            restore(checkHeld.pipe(Effect.andThen(effect))).pipe(
+            acquireTransactionLease(operation).pipe(
+              Effect.andThen(checkHeld(operation)),
+              Effect.andThen(restore(effect)),
               Effect.provideService(sql.transactionService, [connection, 0]),
             ),
           )
@@ -129,7 +136,20 @@ const acquire = Effect.gen(function* () {
       ),
     )
 
-  yield* check
+  const check = runTransaction('check', Effect.void)
+  const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>
+    Effect.serviceOption(sql.transactionService).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => runTransaction('transaction', effect),
+          onSome: ([transactionConnection]) =>
+            transactionConnection === connection
+              ? checkHeld('transaction').pipe(Effect.andThen(effect))
+              : runTransaction('transaction', effect),
+        }),
+      ),
+    )
+
   return { backendPid, check, transaction } satisfies WriterFenceService
 })
 
