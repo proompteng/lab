@@ -27,7 +27,7 @@ import {
   pinnedStore,
 } from './app-test-support'
 import { runApplication, type BrokerlessApplicationConfig } from './app'
-import { makeStrategyProtocolHash } from './contracts'
+import { makeStrategyProtocolHash } from './contracts.test-support'
 import { CycleObservability } from './cycle/store'
 import {
   DatabaseError,

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { canonicalHashV1 } from './hash'
 import { pinnedEvaluation, pinnedQualification } from './app-test-support'
-import { makeQualificationDiagnosis } from './qualification-diagnosis'
+import { makeQualificationDiagnosis } from './qualification-diagnosis.test-support'
 import { summarizeEvaluation } from './risk-balanced-trend'
 
 describe('qualification diagnosis', () => {

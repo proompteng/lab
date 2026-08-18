@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1, stableU128, stableU64 } from '../hash'
+import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
 import { Pipeable } from '../pipeable'
 import type { ReconciliationResult } from '../types'
 import {
@@ -91,10 +91,21 @@ const verifyPersistedTransfer = (
   const credit = accountsById.get(transfer.credit_account_id)
   const accountCodePair = transferAccountCodes.get(transfer.code)
   const fundingId = stableU128('bayn-transfer-v1', result.runId, 'funding', 'principal')
-  const fundingEventId = stableU128(
-    'bayn-event-v1',
-    canonicalHashV1({ kind: 'funding', runId: result.runId, amountMicros: transfer.amount.toString() }),
-  )
+  const fundingEventHash = canonicalHashV1Result({
+    kind: 'funding',
+    runId: result.runId,
+    amountMicros: transfer.amount.toString(),
+  })
+  if (Result.isFailure(fundingEventHash)) {
+    return failLedgerValidation({
+      operation: 'check-run',
+      reason: 'invalid-transfer-metadata',
+      detail: `run ${result.runId} funding event identity is not canonicalizable`,
+      material: { runId: result.runId, transferId: transfer.id },
+      cause: fundingEventHash.failure,
+    })
+  }
+  const fundingEventId = stableU128('bayn-event-v1', fundingEventHash.success)
   if (
     transfer.id === 0n ||
     transfer.debit_account_id === transfer.credit_account_id ||

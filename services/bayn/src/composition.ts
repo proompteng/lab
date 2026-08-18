@@ -12,20 +12,22 @@ import {
 
 export {
   activatePreparedQualifiedCapitalGeneration,
-  capitalReceiptFinalizationWindowOpen,
-  closedCycleReceiptEmissionAllowed,
-  decideExecutionLifecycleMaintenance,
-  finalizeExecutionMandate,
   prepareOrRecoverQualifiedCapitalActivation,
   prepareOrRecoverResearchCapitalActivation,
   readCompletedExecutionLifecycle,
   recoverCapitalActivationGeneration,
   refreshResearchCapitalActivationReconciliation,
   restrictExpiredCapitalActivation,
-  runExecutionLifecycleMaintenance,
   type CompletedExecutionLifecycle,
-  type ExecutionLifecycleMaintenanceDecision,
 } from './composition/capital-activation'
+export {
+  capitalReceiptFinalizationWindowOpen,
+  closedCycleReceiptEmissionAllowed,
+  decideExecutionLifecycleMaintenance,
+  finalizeExecutionMandate,
+  runExecutionLifecycleMaintenance,
+  type ExecutionLifecycleMaintenanceDecision,
+} from './composition/capital-lifecycle'
 export {
   executionPrepareBoundaryError,
   prepareExecutionPreparePlan,

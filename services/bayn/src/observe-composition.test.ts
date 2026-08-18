@@ -29,7 +29,7 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
 } from './cycle'
-import { makeStrategyProtocolHash } from './contracts'
+import { makeStrategyProtocolHash } from './contracts.test-support'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from './cycle/store'
 import { decideCompletion, validateCompletionDocument } from './cycle/store/decisions'
 import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from './cycle/store/model'
@@ -94,7 +94,7 @@ import {
   type MutationAutonomousCycleInput,
   type ObserveAutonomousCycleInput,
   type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverInterpreter,
+  type RecoveryFirstCycleDriverOwner,
 } from './observe-composition'
 import {
   AccountStatus,
@@ -132,8 +132,8 @@ const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:45:01.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
 
-const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpreter = (driver) => {
-  const run = (): ReturnType<RecoveryFirstCycleDriverInterpreter> =>
+const ownRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverOwner = (driver) => {
+  const run = (): ReturnType<RecoveryFirstCycleDriverOwner> =>
     Effect.suspend(() =>
       driver.advance.pipe(
         Effect.flatMap((advance) => Effect.sleep(Duration.millis(advance.nextDelayMs ?? driver.nextDelayMs))),
@@ -144,15 +144,19 @@ const interpretRecoveryFirstCycleInTestProcess: RecoveryFirstCycleDriverInterpre
   return run()
 }
 
-const makeObserveAutonomousCycleStartup = (
-  input: ObserveAutonomousCycleInput,
-  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter = interpretRecoveryFirstCycleInTestProcess,
-) => makeObserveAutonomousCycleStartupProduction(input, interpretCycleDriver)
+const makeObserveAutonomousCycleStartup =
+  (input: ObserveAutonomousCycleInput, owner: RecoveryFirstCycleDriverOwner = ownRecoveryFirstCycleInTestProcess) =>
+  (startup: Parameters<ReturnType<typeof makeObserveAutonomousCycleStartupProduction>>[0]) =>
+    makeObserveAutonomousCycleStartupProduction(input)(startup).pipe(
+      Effect.map((driver) => driver.pipe(Effect.flatMap(owner))),
+    )
 
-const makeMutationAutonomousCycleStartup = (
-  input: MutationAutonomousCycleInput,
-  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter = interpretRecoveryFirstCycleInTestProcess,
-) => makeMutationAutonomousCycleStartupProduction(input, interpretCycleDriver)
+const makeMutationAutonomousCycleStartup =
+  (input: MutationAutonomousCycleInput, owner: RecoveryFirstCycleDriverOwner = ownRecoveryFirstCycleInTestProcess) =>
+  (startup: Parameters<ReturnType<typeof makeMutationAutonomousCycleStartupProduction>>[0]) =>
+    makeMutationAutonomousCycleStartupProduction(input)(startup).pipe(
+      Effect.map((driver) => driver.pipe(Effect.flatMap(owner))),
+    )
 
 test('Restate scheduling never waits past the reconciliation cadence', () => {
   expect(recoveryFirstCycleNextDelayMs({ pollIntervalMs: 300_000, reconciliationIntervalMs: 30_000 })).toBe(30_000)

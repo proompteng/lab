@@ -56,7 +56,7 @@ import {
 import { makeApplicationPlan, type ApplicationPlanFor } from './app'
 import { AccountStatus, alpacaSandboxBaseUrl, type BrokerSessionShape } from './broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
-import { makeStrategyProtocolHash } from './contracts'
+import { makeStrategyProtocolHash } from './contracts.test-support'
 import { DatabaseError } from './db/evidence-store'
 import {
   CapitalGrantLifecycleStore,

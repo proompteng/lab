@@ -79,7 +79,7 @@ export type RecoveryFirstCycleDriver = {
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverInterpreter = (
+export type RecoveryFirstCycleDriverOwner = (
   driver: RecoveryFirstCycleDriver,
 ) => Effect.Effect<void, never, RecoveryFirstRuntime>
 

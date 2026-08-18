@@ -3,6 +3,7 @@ import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
   type ApplicationPlanFor,
+  type AutonomousCycleDriverStartup,
   type AutonomousCycleStartup,
   type AutonomousCycleStartupInput,
   type AutonomousRuntime,
@@ -34,7 +35,9 @@ import {
 import {
   loadObserveRiskPolicy,
   executionMandateCloseExpiresAt,
-  type RecoveryFirstCycleDriverInterpreter,
+  type RecoveryFirstCycleDriver,
+  type RecoveryFirstCycleDriverOwner,
+  type RecoveryFirstRuntime,
 } from '../observe-composition'
 import { runOnce } from '../reconciler'
 import { currentUtcInstant } from '../time'
@@ -53,13 +56,8 @@ import {
 import {
   capitalActivationOperationalError,
   capitalActivationRequestIsCurrent,
-  capitalReceiptFinalizationWindowOpen,
-  closedCycleReceiptEmissionAllowed,
-  completeExecutionLifecycle,
   completedCapitalActivation,
   decodeConfiguredCapitalActivation,
-  finalizeExecutionMandate,
-  makeClosedCycleReceiptEmitter,
   pendingCapitalActivation,
   prepareCapitalActivation,
   prepareOrRecoverQualifiedCapitalActivation,
@@ -70,14 +68,29 @@ import {
   recoverCapitalActivationGeneration,
   recoverCapitalReceiptFinalizationGeneration,
   refreshResearchCapitalActivationReconciliation,
-  runExecutionLifecycleMaintenance,
   type CapitalActivationStartupResolution,
   type ConfiguredCapitalActivation,
 } from './capital-activation'
+import {
+  capitalReceiptFinalizationWindowOpen,
+  closedCycleReceiptEmissionAllowed,
+  completeExecutionLifecycle,
+  finalizeExecutionMandate,
+  makeClosedCycleReceiptEmitter,
+  runExecutionLifecycleMaintenance,
+} from './capital-lifecycle'
 
 export interface AutonomousServiceRuntimeOptions {
-  readonly interpretCycleDriver: RecoveryFirstCycleDriverInterpreter
+  readonly ownCycleDriver: RecoveryFirstCycleDriverOwner
 }
+
+const ownCycleDriverStartup =
+  <StartupR, DriverR>(
+    startup: AutonomousCycleDriverStartup<RecoveryFirstCycleDriver, StartupR, DriverR>,
+    owner: RecoveryFirstCycleDriverOwner,
+  ): AutonomousCycleStartup<StartupR, DriverR | RecoveryFirstRuntime> =>
+  (input) =>
+    startup(input).pipe(Effect.map((driver) => driver.pipe(Effect.flatMap(owner))))
 
 export const makeAutonomousServiceRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -187,10 +200,9 @@ export const makeAutonomousServiceRuntime = (
                             const authorityGenerationHash = yield* Effect.fromResult(
                               observeCycleGenerationHash(authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
-                            return yield* observeCycle(
-                              observePlan,
-                              authorityGenerationHash,
-                              options.interpretCycleDriver,
+                            return yield* ownCycleDriverStartup(
+                              observeCycle(observePlan, authorityGenerationHash),
+                              options.ownCycleDriver,
                             )(startup)
                           }).pipe(
                             // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
@@ -466,11 +478,9 @@ export const makeAutonomousServiceRuntime = (
                               finalizeExecutionLifecycleReceipt,
                             )
                             const startCycle: AutonomousCycleStartup = (startup) =>
-                              lifecycleMaintenanceCycle(
-                                observePlan,
-                                maintainReconciliation,
-                                maintainLifecycle,
-                                options.interpretCycleDriver,
+                              ownCycleDriverStartup(
+                                lifecycleMaintenanceCycle(observePlan, maintainReconciliation, maintainLifecycle),
+                                options.ownCycleDriver,
                               )(startup).pipe(
                                 // @effect-diagnostics-next-line strictEffectProvide:off -- value-only lifecycle services have no resource lifetime
                                 Effect.provide(cycleResources),
@@ -633,17 +643,19 @@ export const makeAutonomousServiceRuntime = (
                                     Effect.flatMap((executionProgram) => {
                                       const startCycle = (
                                         startup: AutonomousCycleStartupInput,
-                                        interpretCycleDriver?: RecoveryFirstCycleDriverInterpreter,
+                                        owner: RecoveryFirstCycleDriverOwner = options.ownCycleDriver,
                                       ) =>
-                                        mutationCycle(
-                                          realizedPlan,
-                                          executionProgram,
-                                          request,
-                                          runtimeServices.executionCycleClosureStore,
-                                          runtimeServices.blockedCycleIntentStore,
-                                          onClosedCycle,
-                                          maintainExecutionLifecycle,
-                                          interpretCycleDriver ?? options.interpretCycleDriver,
+                                        ownCycleDriverStartup(
+                                          mutationCycle(
+                                            realizedPlan,
+                                            executionProgram,
+                                            request,
+                                            runtimeServices.executionCycleClosureStore,
+                                            runtimeServices.blockedCycleIntentStore,
+                                            onClosedCycle,
+                                            maintainExecutionLifecycle,
+                                          ),
+                                          owner,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                                           Effect.provide(cycleResources),
@@ -672,7 +684,7 @@ export const makeAutonomousServiceRuntime = (
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
 
-                                      const recover: RecoveryFirstCycleDriverInterpreter = (driver) =>
+                                      const recover: RecoveryFirstCycleDriverOwner = (driver) =>
                                         Deferred.make<void>().pipe(
                                           Effect.flatMap((rolledOver) => {
                                             const externallyOwnedDriver = {
@@ -696,7 +708,7 @@ export const makeAutonomousServiceRuntime = (
                                             }
                                             return Effect.raceFirst(
                                               options
-                                                .interpretCycleDriver(externallyOwnedDriver)
+                                                .ownCycleDriver(externallyOwnedDriver)
                                                 .pipe(Effect.andThen(Effect.never)),
                                               Deferred.await(rolledOver),
                                             )

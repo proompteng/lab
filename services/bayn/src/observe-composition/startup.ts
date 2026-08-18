@@ -1,8 +1,8 @@
 import { Effect, Result } from 'effect'
-import type { AutonomousCycleStartup } from '../app'
+import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle'
 import { AuthorityGenerationStore } from '../db/execution-store'
-import { makeStrategyProtocolHash } from '../contracts'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { strategyApplication } from '../strategy'
@@ -10,12 +10,12 @@ import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
   ObserveStartupPreparation,
-  RecoveryFirstCycleDriverInterpreter,
+  RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
 import { loadObserveRiskPolicy } from './decision-builder'
 import { validateMutationExecutionProgram } from './execution-cycle'
-import { makeRecoveryFirstAutonomousLoop, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
+import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
@@ -30,7 +30,7 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  return Result.map(
+  return Result.flatMap(
     Result.mapError(makeCycleExecutionPolicyFromModel(executionModel), (cause) =>
       operationalError({
         component: 'strategy',
@@ -39,11 +39,21 @@ export const prepareObserveStartup = (
         cause,
       }),
     ),
-    (executionPolicy) => ({
-      executionModel,
-      executionPolicy,
-      strategyProtocolHash: makeStrategyProtocolHash(input.strategy.provenance.strategy),
-    }),
+    (executionPolicy) =>
+      Result.mapError(makeStrategyProtocolHashResult(input.strategy.provenance.strategy), (cause) =>
+        operationalError({
+          component: 'strategy',
+          operation: 'cycle-policy',
+          message: 'strategy protocol hash construction failed',
+          cause,
+        }),
+      ).pipe(
+        Result.map((strategyProtocolHash) => ({
+          executionModel,
+          executionPolicy,
+          strategyProtocolHash,
+        })),
+      ),
   )
 }
 
@@ -87,8 +97,7 @@ const initializeObserveAuthority = (
 export const makeObserveAutonomousCycleStartup =
   (
     input: ObserveAutonomousCycleInput,
-    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
-  ): AutonomousCycleStartup<AuthorityGenerationStore, RecoveryFirstRuntime> =>
+  ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver, AuthorityGenerationStore, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -107,7 +116,7 @@ export const makeObserveAutonomousCycleStartup =
       )
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(
-        makeRecoveryFirstAutonomousLoop(
+        makeRecoveryFirstCycleDriver(
           input,
           startup,
           preparation,
@@ -115,7 +124,6 @@ export const makeObserveAutonomousCycleStartup =
           { _tag: 'RecoveryOnly' },
           observeDecisionBuilder(input, preparation, policy),
           'autonomous cycle loop',
-          interpretCycleDriver,
         ),
       )
     })
@@ -123,8 +131,7 @@ export const makeObserveAutonomousCycleStartup =
 export const makeMutationAutonomousCycleStartup =
   (
     input: MutationAutonomousCycleInput,
-    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
-  ): AutonomousCycleStartup<never, RecoveryFirstRuntime> =>
+  ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -143,7 +150,7 @@ export const makeMutationAutonomousCycleStartup =
         ),
       )
       return yield* Effect.fromResult(
-        makeRecoveryFirstAutonomousLoop(
+        makeRecoveryFirstCycleDriver(
           input,
           startup,
           preparation,
@@ -151,7 +158,6 @@ export const makeMutationAutonomousCycleStartup =
           { _tag: 'Mutation', executionProgram: input.executionProgram },
           mutationDecisionBuilder(input, preparation, policy),
           'mutation autonomous cycle loop',
-          interpretCycleDriver,
         ),
       )
     })

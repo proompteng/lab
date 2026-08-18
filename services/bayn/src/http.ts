@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import { Clock, Deferred, Effect, Option, Ref, Scope } from 'effect'
+import { Clock, Deferred, Effect, Option, Ref, Result, Scope } from 'effect'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
@@ -24,7 +24,7 @@ import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './execution/contracts'
-import { makeQualificationDiagnosis } from './qualification-diagnosis'
+import { makeQualificationDiagnosisResult } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
 
@@ -363,6 +363,11 @@ const statusFactsDataFirst = (
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
   const effectiveBrokerAccess = capitalActivationRealized ? BrokerAccess.Mutation : BrokerAccess.ReadOnly
   const effectiveCapitalAuthority = capitalActivationRealized ? CapitalAuthorityKind.Granted : CapitalAuthorityKind.None
+  const diagnosis =
+    state.evidence === null
+      ? null
+      : makeQualificationDiagnosisResult(state.evidence.evaluation, state.evidence.qualification)
+  const publicDiagnosis = diagnosis === null || Result.isFailure(diagnosis) ? null : diagnosis.success
   return {
     service: 'bayn',
     operational: {
@@ -392,10 +397,7 @@ const statusFactsDataFirst = (
       analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
       candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
       reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
-      diagnosis:
-        state.evidence === null
-          ? null
-          : makeQualificationDiagnosis(state.evidence.evaluation, state.evidence.qualification),
+      diagnosis: publicDiagnosis,
       executionProvenance: state.evidence?.provenance ?? null,
     },
     accounting: {

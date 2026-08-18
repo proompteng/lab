@@ -15,10 +15,10 @@ separately reviewed durable capital grant is present.
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
 - Effect Config validates environment input. `BAYN_OPERATION_TIMEOUT_MS` bounds dependency operations, and
   `BAYN_HEALTH_INTERVAL_MS` controls the continuous health interval; both default to 30 seconds.
-- `BAYN_MAXIMUM_AUTHORITY` accepts the durable `OBSERVE` and legacy `PAPER` wire tokens and defaults to `OBSERVE`.
-  Runtime code decodes those tokens into account-neutral execution authority. The setting never creates broker or
-  capital capability by itself; submit/cancel capability requires an exact durable capital grant, reviewed activation,
-  build/account identity, and broker preflight.
+- `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are the only runtime authority selectors. They default to
+  `read-only` and `none`; submit/cancel capability requires mutation broker access plus an exact durable capital grant,
+  reviewed activation, build/account identity, and broker preflight. Historical `OBSERVE`/`PAPER` values remain only in
+  persisted wire contracts and hashes.
 - Public egress is denied from the Bayn Pod. A separate CONNECT proxy permits only
   the configured Alpaca adapter host (`paper-api.alpaca.markets:443` for the sandbox deployment). A configured Alpaca
   credential is accepted only after account, position, order,
@@ -136,10 +136,9 @@ reviewed activation, durable grant, account, strategy, risk policy, source, and 
 authorized `ExecutionMandate` may enter, hold, and close one bounded research or qualified grant; terminalization
 restricts execution authority back to observe-only behavior.
 
-`BAYN_OPERATION=PAPER_CANDIDATE_DISCOVERY` is the retained legacy configuration token for the account-neutral
-`ExecutionCandidateDiscovery` operation. It is bounded and OBSERVE-only and requires maximum authority
-`OBSERVE`, a pinned terminal qualification, and a complete GET-only Alpaca binding, then exits before the HTTP service
-or autonomous cycle is constructed.
+`BAYN_OPERATION=EXECUTION_CANDIDATE_DISCOVERY` selects the bounded account-neutral `ExecutionCandidateDiscovery`
+operation. It requires read-only broker access, no capital authority, a pinned terminal qualification, and a complete
+GET-only Alpaca binding, then exits before the HTTP service or autonomous execution runtime is constructed.
 
 Candidate discovery opens one PostgreSQL `REPEATABLE READ, READ ONLY` transaction through the shared client and uses
 only `CycleObservability` and `CycleStore` domain reads. It does not run migrations, reconcile, re-run planning, or

@@ -17,6 +17,7 @@ import {
   Redacted,
   Ref,
   Result,
+  Schema,
 } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
@@ -41,7 +42,8 @@ import {
   type ReadEvidence,
   type ReadResult,
 } from './broker/alpaca'
-import { makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
+import type { RuntimeProvenance } from './contracts'
+import { makeStrategyProtocolHash } from './contracts.test-support'
 import { CycleState, type AutonomousCycle } from './cycle'
 import type { CycleOperationsProjection } from './cycle/observability'
 import { CycleObservability, CycleStore, type CycleObservabilityShape, type CycleStoreShape } from './cycle/store'
@@ -67,10 +69,18 @@ import {
 } from './execution-candidate-discovery'
 import { validateExecutionCandidateDiscoveryObservations as validateObservationsImplementation } from './execution-candidate-discovery/broker-observation-validation'
 import { renderExecutionCandidateDiscoveryError as renderErrorImplementation } from './execution-candidate-discovery/failure'
-import { ExecutionCandidateIneligibility as ExecutionCandidateIneligibilityImplementation } from './execution-candidate-discovery/model'
+import {
+  DiscoveryReceiptSchema,
+  ExecutionCandidateIneligibility as ExecutionCandidateIneligibilityImplementation,
+  legacyBindingSchemaVersion,
+  legacyCandidateFactsSchemaVersion,
+  legacyDiscoverySchemaVersion,
+  legacyObservationReceiptSchemaVersion,
+} from './execution-candidate-discovery/model'
 import { discoverExecutionCandidates as discoverExecutionCandidatesImplementation } from './execution-candidate-discovery/program'
 import { validateExecutionCandidateDiscoverySnapshot as validateSnapshotImplementation } from './execution-candidate-discovery/snapshot-validation'
 import { Gate, Reason } from './risk'
+import { strictParseOptions } from './schemas'
 import { BrokerEnvironment } from './execution/authority'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
@@ -622,8 +632,8 @@ describe('execution candidate discovery', () => {
     expect(state.brokerAccountConfigurationReads).toBe(1)
     expect(state.assetSymbols).toEqual([...symbols])
     expect(receipt).toMatchObject({
-      schemaVersion: 'bayn.paper-candidate-discovery.v2',
-      operation: 'PAPER_CANDIDATE_DISCOVERY',
+      schemaVersion: 'bayn.execution-candidate-discovery.v3',
+      operation: 'EXECUTION_CANDIDATE_DISCOVERY',
       authority: Authority.Observe,
       dispatchable: false,
       binding: {
@@ -632,7 +642,7 @@ describe('execution candidate discovery', () => {
         document: { reconciliationId, policyHash },
       },
       candidateFacts: {
-        schemaVersion: 'bayn.paper-candidate-facts.v1',
+        schemaVersion: 'bayn.execution-candidate-facts.v2',
         accountConfiguration: {
           fractionalTrading: true,
         },
@@ -667,7 +677,7 @@ describe('execution candidate discovery', () => {
           },
         ],
       },
-      observationReceiptSchemaVersion: 'bayn.paper-candidate-observation-receipt.v1',
+      observationReceiptSchemaVersion: 'bayn.execution-candidate-observation-receipt.v2',
       observations: {
         accountConfiguration: {
           value: { fractionalTrading: true },
@@ -675,14 +685,49 @@ describe('execution candidate discovery', () => {
       },
     })
     const serialized = JSON.stringify(receipt)
-    expect(receipt.immutableBindingHash).toBe('6ab1d19be479bfbd58e7ae673864b57913dcf8d0817d6087655468eda84ac9a5')
-    expect(receipt.candidateFactsHash).toBe('e3c32cfc6678d5d465ae216567b91bbacdf545c66073442f39e3d056c351e40b')
-    expect(receipt.observationReceiptHash).toBe('a04bf24ba8de2cc5b1f99f12dcc4df5225405614ffb9a691df9665fec88a9505')
+    expect(receipt.immutableBindingHash).toBe('2375fed188251b235a9e2c3b64a4add0078e6bf663d97bf957899888f7f8cf3a')
+    expect(receipt.candidateFactsHash).toBe('cafe0b56ef159f5c033e1ce06dec2f65935e31d8665427cfff250c84cbddd705')
+    expect(receipt.observationReceiptHash).toBe('da9f469126fc647a4518ad2cd1f504cb980eef75d0778a5c464097e2726837c6')
     expect(createHash('sha256').update(serialized).digest('hex')).toBe(
-      '47776b6b5a860db14d70c22f690291c877f54cee4f6df788597572046936c994',
+      'f85d4fcca71f34db8760f8f710ba39e8fad8c346a19eecc5ae65d5b3763557d1',
     )
     expect(serialized).not.toContain('account_number')
     expect(serialized).not.toContain('paper-secret')
+  })
+
+  test('decodes the immutable legacy discovery receipt without emitting legacy wire values', async () => {
+    const current = await Effect.runPromise(program(control()))
+    const binding = { ...current.binding, schemaVersion: legacyBindingSchemaVersion }
+    const immutableBindingHash = canonicalHashV1(binding)
+    const candidateFacts = {
+      ...current.candidateFacts,
+      schemaVersion: legacyCandidateFactsSchemaVersion,
+      immutableBindingHash,
+    }
+    const candidateFactsHash = canonicalHashV1(candidateFacts)
+    const legacyMaterial = {
+      ...current,
+      schemaVersion: legacyDiscoverySchemaVersion,
+      operation: 'PAPER_CANDIDATE_DISCOVERY' as const,
+      binding,
+      immutableBindingHash,
+      candidateFacts,
+      candidateFactsHash,
+      observationReceiptSchemaVersion: legacyObservationReceiptSchemaVersion,
+    }
+    const { observationReceiptHash: _currentReceiptHash, ...legacyMaterialWithoutHash } = legacyMaterial
+    const legacyReceipt = {
+      ...legacyMaterialWithoutHash,
+      observationReceiptHash: canonicalHashV1(legacyMaterialWithoutHash),
+    }
+
+    const decoded = Schema.decodeUnknownResult(DiscoveryReceiptSchema, strictParseOptions)(legacyReceipt)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isFailure(decoded)) expect.unreachable(String(decoded.failure))
+    expect(decoded.success.schemaVersion).toBe(legacyDiscoverySchemaVersion)
+    expect(decoded.success.operation).toBe('PAPER_CANDIDATE_DISCOVERY')
+    expect(current.schemaVersion).toBe('bayn.execution-candidate-discovery.v3')
+    expect(current.operation).toBe('EXECUTION_CANDIDATE_DISCOVERY')
   })
 
   test('rejects an invalid identity before any database or broker I/O', async () => {

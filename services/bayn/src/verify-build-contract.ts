@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { embeddedBuildMetadata, EmbeddedBuildMetadataSchema, verifyBehaviorHash, verifyParameterHash } from './build'
 import { operationalError } from './errors'
-import { hashParameters, loadDefaultProtocol } from './protocol'
+import { hashParametersResult, loadDefaultProtocol } from './protocol'
 import { strictParseOptions } from './schemas'
 
 const program = Effect.gen(function* () {
@@ -22,9 +22,19 @@ const program = Effect.gen(function* () {
     ),
   )
   const protocol = yield* loadDefaultProtocol
+  const parameterHash = yield* Effect.fromResult(hashParametersResult(protocol)).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'provenance',
+        message: 'compiled strategy parameters could not be canonically hashed',
+        cause,
+      }),
+    ),
+  )
   yield* Effect.all([
     verifyBehaviorHash(metadata, riskBalancedTrendBehaviorHash),
-    verifyParameterHash(metadata, hashParameters(protocol)),
+    verifyParameterHash(metadata, parameterHash),
   ])
 })
 

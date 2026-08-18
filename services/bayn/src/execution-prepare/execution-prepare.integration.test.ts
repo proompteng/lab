@@ -9,7 +9,7 @@ import { DateTime, Effect, Layer, ManagedRuntime, Redacted, Result, Schema } fro
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity } from '../broker/identity'
 import type { RuntimeConfig } from '../config'
-import { makeStrategyProtocolHash } from '../contracts'
+import { makeStrategyProtocolHash } from '../contracts.test-support'
 import { makeAuthorityPostgres } from '../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../db/execution-store/observe-authority'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from '../db/evidence-store'
@@ -35,7 +35,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import type { ExecutionPrepareProofPlanRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { ExecutionPrepareStoreLive } from './live'
 import { prepareExecution } from './program'
-import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-support'
 
 type ExecutionPrepareRequest = ExecutionPrepareProofPlanRequest
 

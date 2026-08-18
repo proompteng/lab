@@ -1,6 +1,6 @@
 import { Result, Schema, pipe } from 'effect'
 
-import { makeStrategyProtocolHash } from '../contracts'
+import { makeStrategyProtocolHashResult } from '../contracts'
 import { CycleState } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, RiskOutcome } from '../execution/contracts'
@@ -30,12 +30,22 @@ export const validateIdentity = (
     ),
     Result.flatMap((identity) =>
       pipe(
-        requireCondition(identity.strategyProtocolHash === makeStrategyProtocolHash(identity.strategy), {
-          _tag: 'StrategyProtocolMismatch',
-          failure: 'invalid-input',
-          observedStrategyProtocolHash: identity.strategyProtocolHash,
-          expectedStrategyProtocolHash: makeStrategyProtocolHash(identity.strategy),
-        }),
+        makeStrategyProtocolHashResult(identity.strategy),
+        Result.mapError(
+          (cause): ExecutionCandidateDiscoveryError => ({
+            _tag: 'IdentityDecodeFailed',
+            failure: 'invalid-input',
+            cause,
+          }),
+        ),
+        Result.flatMap((expectedStrategyProtocolHash) =>
+          requireCondition(identity.strategyProtocolHash === expectedStrategyProtocolHash, {
+            _tag: 'StrategyProtocolMismatch',
+            failure: 'invalid-input',
+            observedStrategyProtocolHash: identity.strategyProtocolHash,
+            expectedStrategyProtocolHash,
+          }),
+        ),
         Result.map(() => identity),
       ),
     ),

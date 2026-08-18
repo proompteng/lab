@@ -7,7 +7,7 @@ import {
   ExecutionModelV2Schema,
   SupportedExecutionModelSchema,
 } from './execution-model-contract'
-import { canonicalHashV1, sha256 } from './hash'
+import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from './hash'
 import {
   IsoDateSchema,
   PositiveFiniteSchema as PositiveFinite,
@@ -232,4 +232,5 @@ export const loadProtocol = (input: unknown): Effect.Effect<Protocol, Operationa
 export const loadDefaultProtocol: Effect.Effect<CausalProtocol, OperationalError> =
   protocolOperationalBoundary(decodeDefaultProtocol())
 
-export const hashParameters = (parameters: Protocol): string => canonicalHashV1(parameters)
+export const hashParametersResult = (parameters: Protocol): Result.Result<string, CanonicalHashFailure> =>
+  canonicalHashV1Result(parameters)

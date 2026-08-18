@@ -57,7 +57,7 @@ export type {
   ObserveStartupPreparation,
   RecoveryFirstCycleAdvance,
   RecoveryFirstCycleDriver,
-  RecoveryFirstCycleDriverInterpreter,
+  RecoveryFirstCycleDriverOwner,
   RecoveryFirstRuntime,
 } from './observe-composition/model'
 

@@ -33,10 +33,16 @@ import {
 } from '../schemas'
 import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
 
-export const discoverySchemaVersion = 'bayn.paper-candidate-discovery.v2' as const
-export const bindingSchemaVersion = 'bayn.paper-candidate-discovery-binding.v1' as const
-export const candidateFactsSchemaVersion = 'bayn.paper-candidate-facts.v1' as const
-export const observationReceiptSchemaVersion = 'bayn.paper-candidate-observation-receipt.v1' as const
+export const legacyDiscoverySchemaVersion = 'bayn.paper-candidate-discovery.v2' as const
+export const legacyBindingSchemaVersion = 'bayn.paper-candidate-discovery-binding.v1' as const
+export const legacyCandidateFactsSchemaVersion = 'bayn.paper-candidate-facts.v1' as const
+export const legacyObservationReceiptSchemaVersion = 'bayn.paper-candidate-observation-receipt.v1' as const
+
+export const discoverySchemaVersion = 'bayn.execution-candidate-discovery.v3' as const
+export const bindingSchemaVersion = 'bayn.execution-candidate-discovery-binding.v2' as const
+export const candidateFactsSchemaVersion = 'bayn.execution-candidate-facts.v2' as const
+export const observationReceiptSchemaVersion = 'bayn.execution-candidate-observation-receipt.v2' as const
+export const discoveryOperation = 'EXECUTION_CANDIDATE_DISCOVERY' as const
 export const assetReadConcurrency = 3
 const AssetObservationExchangeSchema = Schema.Enum(AssetExchange).pipe(
   Schema.refine((exchange): exchange is AssetObservationExchange => exchange !== AssetExchange.Empty, {
@@ -126,8 +132,7 @@ export const RuntimeIdentitySchema = Schema.Struct({
 })
 export type ExecutionCandidateDiscoveryIdentity = typeof RuntimeIdentitySchema.Type
 
-export const DiscoveryBindingSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(bindingSchemaVersion),
+const DiscoveryBindingFields = {
   runtime: RuntimeIdentitySchema,
   cycle: Schema.Struct({
     cycleId: Sha256Schema,
@@ -152,6 +157,16 @@ export const DiscoveryBindingSchema = Schema.Struct({
     createdAt: UtcInstantSchema,
     expiresAt: UtcInstantSchema,
   }),
+} as const
+
+export const LegacyDiscoveryBindingSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyBindingSchemaVersion),
+  ...DiscoveryBindingFields,
+})
+
+export const DiscoveryBindingSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(bindingSchemaVersion),
+  ...DiscoveryBindingFields,
 })
 export type ExecutionCandidateDiscoveryBinding = typeof DiscoveryBindingSchema.Type
 
@@ -215,8 +230,7 @@ export const CandidateFactsSchema = Schema.Struct({
   fractionalTradingEligible: Schema.Boolean,
 })
 
-export const CandidateFactsMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(candidateFactsSchemaVersion),
+const CandidateFactsMaterialFields = {
   immutableBindingHash: Sha256Schema,
   account: AccountFactsSchema,
   accountConfiguration: AccountConfigurationFactsSchema,
@@ -224,6 +238,16 @@ export const CandidateFactsMaterialSchema = Schema.Struct({
   consistencyDelayMs: Schema.Struct({
     status: Schema.Literal('REQUIRED_UNBOUND'),
   }),
+} as const
+
+export const LegacyCandidateFactsMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyCandidateFactsSchemaVersion),
+  ...CandidateFactsMaterialFields,
+})
+
+export const CandidateFactsMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(candidateFactsSchemaVersion),
+  ...CandidateFactsMaterialFields,
 })
 export type ExecutionCandidateFactsMaterial = typeof CandidateFactsMaterialSchema.Type
 
@@ -247,7 +271,7 @@ export const BrokerObservationsSchema = Schema.Struct({
 
 export const DiscoveryReceiptMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(discoverySchemaVersion),
-  operation: Schema.Literal(legacyCandidateDiscoveryOperationToken),
+  operation: Schema.Literal(discoveryOperation),
   authority: Schema.Literal(Authority.Observe),
   dispatchable: Schema.Literal(false),
   binding: DiscoveryBindingSchema,
@@ -259,10 +283,32 @@ export const DiscoveryReceiptMaterialSchema = Schema.Struct({
   observationReceiptSchemaVersion: Schema.Literal(observationReceiptSchemaVersion),
 })
 
-export const DiscoveryReceiptSchema = Schema.Struct({
+export const CurrentDiscoveryReceiptSchema = Schema.Struct({
   ...DiscoveryReceiptMaterialSchema.fields,
   observationReceiptHash: Sha256Schema,
 })
+export type CurrentExecutionCandidateDiscoveryReceipt = typeof CurrentDiscoveryReceiptSchema.Type
+
+const LegacyDiscoveryReceiptMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyDiscoverySchemaVersion),
+  operation: Schema.Literal(legacyCandidateDiscoveryOperationToken),
+  authority: Schema.Literal(Authority.Observe),
+  dispatchable: Schema.Literal(false),
+  binding: LegacyDiscoveryBindingSchema,
+  immutableBindingHash: Sha256Schema,
+  candidateFacts: LegacyCandidateFactsMaterialSchema,
+  candidateFactsHash: Sha256Schema,
+  observations: BrokerObservationsSchema,
+  capturedAt: UtcInstantSchema,
+  observationReceiptSchemaVersion: Schema.Literal(legacyObservationReceiptSchemaVersion),
+})
+
+export const LegacyDiscoveryReceiptSchema = Schema.Struct({
+  ...LegacyDiscoveryReceiptMaterialSchema.fields,
+  observationReceiptHash: Sha256Schema,
+})
+
+export const DiscoveryReceiptSchema = Schema.Union([CurrentDiscoveryReceiptSchema, LegacyDiscoveryReceiptSchema])
 export type ExecutionCandidateDiscoveryReceipt = typeof DiscoveryReceiptSchema.Type
 
 export type ExecutionCandidateDiscoverySnapshot = {

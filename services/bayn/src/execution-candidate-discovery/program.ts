@@ -7,8 +7,8 @@ import type { AutonomousCycle } from '../cycle'
 import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import {
   assetReadConcurrency,
+  type CurrentExecutionCandidateDiscoveryReceipt,
   type ExecutionCandidateDiscoveryIdentity,
-  type ExecutionCandidateDiscoveryReceipt,
   type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccount,
   type ValidatedAccountConfiguration,
@@ -197,7 +197,7 @@ const observeBroker = (
 export const discoverExecutionCandidates = (
   candidateIdentity: ExecutionCandidateDiscoveryIdentity,
 ): Effect.Effect<
-  ExecutionCandidateDiscoveryReceipt,
+  CurrentExecutionCandidateDiscoveryReceipt,
   ExecutionCandidateDiscoveryError,
   PgClient.PgClient | CycleObservability | CycleStore | BrokerRead
 > =>

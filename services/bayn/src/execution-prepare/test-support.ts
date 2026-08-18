@@ -3,18 +3,23 @@ import { Result, Schema } from 'effect'
 import { AccountStatus, AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca'
 import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import {
-  DiscoveryReceiptSchema,
+  bindingSchemaVersion,
+  candidateFactsSchemaVersion,
+  CurrentDiscoveryReceiptSchema,
+  discoveryOperation,
+  discoverySchemaVersion,
   ExecutionCandidateIneligibility,
-  type ExecutionCandidateDiscoveryReceipt,
+  observationReceiptSchemaVersion,
+  type CurrentExecutionCandidateDiscoveryReceipt,
 } from '../execution-candidate-discovery/model'
 import { canonicalHashV1OrThrow } from '../hash'
 import { strictParseOptions } from '../schemas'
 
 export interface ExecutionPrepareDiscoveryFixtureInput {
-  readonly sourceRevision: ExecutionCandidateDiscoveryReceipt['binding']['runtime']['sourceRevision']
-  readonly imageRepository: ExecutionCandidateDiscoveryReceipt['binding']['runtime']['image']['repository']
-  readonly imageDigest: ExecutionCandidateDiscoveryReceipt['binding']['runtime']['image']['digest']
-  readonly strategy: ExecutionCandidateDiscoveryReceipt['binding']['runtime']['strategy']
+  readonly sourceRevision: CurrentExecutionCandidateDiscoveryReceipt['binding']['runtime']['sourceRevision']
+  readonly imageRepository: CurrentExecutionCandidateDiscoveryReceipt['binding']['runtime']['image']['repository']
+  readonly imageDigest: CurrentExecutionCandidateDiscoveryReceipt['binding']['runtime']['image']['digest']
+  readonly strategy: CurrentExecutionCandidateDiscoveryReceipt['binding']['runtime']['strategy']
   readonly strategyProtocolHash: string
   readonly qualificationRunId: string
   readonly accountId: string
@@ -35,7 +40,7 @@ const hash = (label: string): string => canonicalHashV1OrThrow({ executionPrepar
 
 export const makeExecutionPrepareDiscoveryReceiptFixture = (
   input: ExecutionPrepareDiscoveryFixtureInput,
-): ExecutionCandidateDiscoveryReceipt => {
+): CurrentExecutionCandidateDiscoveryReceipt => {
   const cycleId = input.cycleId ?? hash('cycle')
   const decisionHash = input.decisionHash ?? hash('decision')
   const observedPlanIntentId = input.observedPlanIntentId ?? hash('observed-plan-intent')
@@ -44,7 +49,7 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
   const fractionalTradingEligible = input.fractionalTradingEligible ?? true
   const observedAt = input.observedAt ?? '2099-07-24T12:00:00.000Z'
   const binding = {
-    schemaVersion: 'bayn.paper-candidate-discovery-binding.v1' as const,
+    schemaVersion: bindingSchemaVersion,
     runtime: {
       sourceRevision: input.sourceRevision,
       image: { repository: input.imageRepository, digest: input.imageDigest },
@@ -83,7 +88,7 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
   const requestHash = hash('asset-request')
   const normalizedResponseHash = hash('asset-response')
   const candidateFacts = {
-    schemaVersion: 'bayn.paper-candidate-facts.v1' as const,
+    schemaVersion: candidateFactsSchemaVersion,
     immutableBindingHash,
     account: {
       id: input.accountId,
@@ -146,8 +151,8 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
   }
   const candidateFactsHash = canonicalHashV1OrThrow(candidateFacts)
   const material = {
-    schemaVersion: 'bayn.paper-candidate-discovery.v2' as const,
-    operation: 'PAPER_CANDIDATE_DISCOVERY' as const,
+    schemaVersion: discoverySchemaVersion,
+    operation: discoveryOperation,
     authority: Authority.Observe,
     dispatchable: false as const,
     binding,
@@ -221,11 +226,11 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
       ],
     },
     capturedAt: observedAt,
-    observationReceiptSchemaVersion: 'bayn.paper-candidate-observation-receipt.v1' as const,
+    observationReceiptSchemaVersion,
   }
   const receipt = {
     ...material,
     observationReceiptHash: canonicalHashV1OrThrow(material),
   }
-  return Result.getOrThrow(Schema.decodeUnknownResult(DiscoveryReceiptSchema, strictParseOptions)(receipt))
+  return Result.getOrThrow(Schema.decodeUnknownResult(CurrentDiscoveryReceiptSchema, strictParseOptions)(receipt))
 }

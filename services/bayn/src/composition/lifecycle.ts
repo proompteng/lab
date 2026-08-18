@@ -1,6 +1,6 @@
 import { Effect, Result, Schema, Semaphore } from 'effect'
 
-import type { ApplicationPlanFor, AutonomousCycleStartup } from '../app'
+import type { ApplicationPlanFor, AutonomousCycleDriverStartup } from '../app'
 import type { BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutationError } from '../broker/alpaca-mutations'
 import { CycleRunnerError } from '../cycle/runner'
@@ -16,8 +16,6 @@ import {
   type LifecycleAdvanceDisposition,
   type LifecycleAdvanceMaintenance,
   type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverInterpreter,
-  type RecoveryFirstRuntime,
 } from '../observe-composition'
 import { notDueReconciliationError } from '../observe-composition/decision-builder'
 import type { ReconciliationPassError } from '../reconciler'
@@ -40,8 +38,7 @@ export const lifecycleMaintenanceCycle =
     plan: ApplicationPlanFor<'AutonomousService'>,
     reconcileBeforeAdvance: Effect.Effect<void, ReconciliationPassError>,
     maintainLifecycle: LifecycleAdvanceMaintenance,
-    interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
-  ): AutonomousCycleStartup<RecoveryFirstRuntime> =>
+  ): AutonomousCycleDriverStartup<RecoveryFirstCycleDriver> =>
   (startup) =>
     Semaphore.make(1).pipe(
       Effect.map((operationPermit) => {
@@ -79,7 +76,7 @@ export const lifecycleMaintenanceCycle =
           advance,
           nextDelayMs,
         }
-        return interpretCycleDriver(driver)
+        return Effect.succeed(driver)
       }),
     )
 
@@ -107,22 +104,15 @@ export const observeCycleGenerationHash = (authority: AuthorityState): Result.Re
     ? Result.succeed(authority.generationHash)
     : Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority')
 
-export const observeCycle = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  authorityGenerationHash: string,
-  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
-) => {
-  return makeObserveAutonomousCycleStartup(
-    {
-      accountId: plan.config.alpaca.expectedAccountId,
-      authorityGenerationHash,
-      pollIntervalMs: plan.config.cyclePollIntervalMs,
-      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-      strategy: plan.strategy,
-    },
-    interpretCycleDriver,
-  )
+export const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>, authorityGenerationHash: string) => {
+  return makeObserveAutonomousCycleStartup({
+    accountId: plan.config.alpaca.expectedAccountId,
+    authorityGenerationHash,
+    pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+    strategy: plan.strategy,
+  })
 }
 
 export const mutationCycle = (
@@ -133,31 +123,27 @@ export const mutationCycle = (
   blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
   onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
   lifecycleMaintenance: LifecycleAdvanceMaintenance | undefined,
-  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
 ) => {
-  return makeMutationAutonomousCycleStartup(
-    {
-      accountId: plan.config.alpaca.expectedAccountId,
-      authorityGenerationHash:
-        plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
-          ? plan.config.execution.capitalAuthority.authorityGenerationHash
-          : plan.config.alpaca.authorityGenerationHash,
-      pollIntervalMs: plan.config.cyclePollIntervalMs,
-      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-      strategy: plan.strategy,
-      ...(isResearchCapitalActivationRequest(executionMandate) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
-      executionProgram,
-      executionCycleClosureStore,
-      blockedCycleIntentStore,
-      onClosedCycle,
-      executionMandateCutoffAt: executionMandate.cutoffAt,
-      executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
-      executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
-      ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
-    },
-    interpretCycleDriver,
-  )
+  return makeMutationAutonomousCycleStartup({
+    accountId: plan.config.alpaca.expectedAccountId,
+    authorityGenerationHash:
+      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
+        ? plan.config.execution.capitalAuthority.authorityGenerationHash
+        : plan.config.alpaca.authorityGenerationHash,
+    pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
+    strategy: plan.strategy,
+    ...(isResearchCapitalActivationRequest(executionMandate) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
+    executionProgram,
+    executionCycleClosureStore,
+    blockedCycleIntentStore,
+    onClosedCycle,
+    executionMandateCutoffAt: executionMandate.cutoffAt,
+    executionMandateCloseSubmitCutoffAt: executionMandate.expiresAt,
+    executionMandateExpiresAt: executionMandateCloseExpiresAt(executionMandate.expiresAt),
+    ...(lifecycleMaintenance === undefined ? {} : { lifecycleMaintenance }),
+  })
 }
 
 export const executionProgramError = (

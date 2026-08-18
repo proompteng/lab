@@ -2,7 +2,8 @@ import { DateTime, Effect } from 'effect'
 
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1 } from './hash'
-import { hashParameters, loadDefaultProtocol } from './protocol'
+import { loadDefaultProtocol } from './protocol'
+import { hashParameters } from './protocol.test-support'
 import { Pipeable } from './pipeable'
 import {
   DataFeed,

@@ -41,16 +41,6 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
       return { operation: 'broker-connection', message: renderBrokerConnectionDecodeFailure(failure.cause) }
     case 'InvalidExecutionPolicy':
       return { operation: 'execution-authority', message: renderExecutionPolicyFailure(failure.cause) }
-    case 'LegacyCapitalAuthorityEnvironmentMismatch':
-      return {
-        operation: 'execution-authority',
-        message: `legacy BAYN_CAPITAL_AUTHORITY=${failure.capitalAuthority} does not match the decoded broker environment`,
-      }
-    case 'LegacyAuthorityMismatch':
-      return {
-        operation: 'execution-authority',
-        message: `legacy BAYN_MAXIMUM_AUTHORITY=${failure.legacyMaximumAuthority} conflicts with the explicit broker access and capital authority`,
-      }
     case 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital':
       return {
         operation: 'operation',
