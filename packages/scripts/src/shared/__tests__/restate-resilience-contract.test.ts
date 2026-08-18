@@ -54,7 +54,7 @@ test('Restate HA migration preserves quorum and changes existing replication onl
   expect(migration).toContain('nodes set-storage-state --nodes "$id" --storage-state read-write')
   expect(migration).toContain('nodes set-worker-state --nodes "$id" --worker-state active')
   expect(migration).toContain('metadata-server add-node "$id"')
-  expect(migration).toContain('$8 !~ /^[1-9][0-9]*$/')
+  expect(migration).toContain('if (!(i in seen) || !(i in archived)) exit 1')
   expect(migration).not.toContain('kubectl')
   expect(kustomization).toContain('- poddisruptionbudget.yaml')
   expect(kustomization).toContain('- replication-migration-job.yaml')
@@ -113,6 +113,60 @@ esac
       })
 
     expect(run('2').exitCode).toBe(0)
+    expect(run('1').exitCode).not.toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('Restate replication migration accepts shared snapshot coverage when a restarted follower has no local marker', () => {
+  const migration = YAML.parse(readRepoFile('argocd/applications/restate/replication-migration-job.yaml')) as Record<
+    string,
+    any
+  >
+  const script = migration.spec.template.spec.containers[0].command[2] as string
+  const start = script.indexOf('snapshots_ready() {')
+  const end = script.indexOf('\n\nlogs_replication_ready() {', start)
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  const functionBody = script.slice(start, end)
+  const tempDir = mkdtempSync('/tmp/restate-shared-snapshot-')
+  const restatectl = `${tempDir}/restatectl`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" partitions list "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      leader_archived=100
+      [ "\${MISSING_PARTITION_ZERO:-0}" -eq 0 ] || [ "$i" -ne 0 ] || leader_archived=-
+      echo "$i N2:1 Leader Active e1 100 100 $leader_archived 0 1 v71 - journal_v2 now"
+      echo "$i N1:7 Follower Active e1 100 100 - 0 1 v71 - journal_v2 now"
+      i=$((i + 1))
+    done
+    ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    chmodSync(restatectl, 0o755)
+
+    const run = (missingPartitionZero: string) =>
+      Bun.spawnSync(['/bin/bash', '-ceu', `address=http://restate-0\n${functionBody}\nsnapshots_ready`], {
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+          MISSING_PARTITION_ZERO: missingPartitionZero,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+
+    expect(run('0').exitCode).toBe(0)
     expect(run('1').exitCode).not.toBe(0)
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
