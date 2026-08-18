@@ -10,7 +10,6 @@ import {
   type ExecutionPolicy,
   type ExecutionPolicyResolutionFailure,
 } from '../execution/configuration'
-import type { LegacyAuthorityToken as PersistedAuthorityToken } from '../execution/legacy-wire'
 import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
 export const minimumOperationalThresholdMs = 1_000
@@ -106,17 +105,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
       }
   )
 
-export type LegacyAuthorityToken = PersistedAuthorityToken
-export enum LegacyCapitalAuthoritySelection {
-  Sandbox = 'sandbox-capital',
-  Live = 'live-capital-grant',
-}
-export const LegacyCapitalAuthoritySelectionSchema = Schema.Enum(LegacyCapitalAuthoritySelection)
-export const CapitalAuthoritySelectionTokenSchema = Schema.Union([
-  Schema.Enum(CapitalAuthoritySelection),
-  LegacyCapitalAuthoritySelectionSchema,
-])
-export type CapitalAuthoritySelectionToken = typeof CapitalAuthoritySelectionTokenSchema.Type
+export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 export interface ParsedRuntimeConfig {
   readonly host: string
@@ -125,9 +114,8 @@ export interface ParsedRuntimeConfig {
   readonly capitalActivationRequestJson?: string | undefined
   readonly configuredOperation: RuntimeOperation | undefined
   readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
-  readonly legacyMaximumAuthority: LegacyAuthorityToken | undefined
   readonly brokerAccess: BrokerAccess
-  readonly capitalAuthority: CapitalAuthoritySelectionToken
+  readonly capitalAuthority: CapitalAuthoritySelection
   readonly persistedCapitalGrantHash: string | undefined
   readonly configuredBuild: EmbeddedBuildMetadata & {
     readonly imageDigest: string
@@ -199,17 +187,6 @@ export type RuntimeConfigResolutionFailure =
   | {
       readonly _tag: 'InvalidExecutionPolicy'
       readonly cause: ExecutionPolicyResolutionFailure
-    }
-  | {
-      readonly _tag: 'LegacyCapitalAuthorityEnvironmentMismatch'
-      readonly capitalAuthority: LegacyCapitalAuthoritySelection
-      readonly brokerEnvironment: BrokerEnvironment | undefined
-    }
-  | {
-      readonly _tag: 'LegacyAuthorityMismatch'
-      readonly legacyMaximumAuthority: LegacyAuthorityToken
-      readonly brokerAccess: BrokerAccess
-      readonly capitalAuthority: CapitalAuthoritySelection
     }
   | {
       readonly _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital'

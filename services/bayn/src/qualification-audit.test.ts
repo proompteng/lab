@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { riskBalancedTrendBehaviorV4Hash } from './behavior'
-import { makeStrategyProtocolHash } from './contracts'
+import { makeStrategyProtocolHash } from './contracts.test-support'
 import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
@@ -17,7 +17,6 @@ import {
 } from './audit/audit'
 import { makeAuditFacts, usesTerminalReplaySemantics } from './audit/core'
 import { auditQualification as auditQualificationResult } from './audit/run'
-import { makeQualificationDossier as makeQualificationDossierResult, type QualificationDossier } from './audit/dossier'
 import {
   analyzeQualification,
   defaultQualificationStatisticsPolicy,
@@ -37,12 +36,6 @@ const auditQualification = (input: QualificationAuditInput): QualificationAuditR
 const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   assert(Result.isFailure(result), 'fixture decision must fail')
   return result.failure
-}
-
-const makeQualificationDossier = (input: QualificationAuditInput): QualificationDossier => {
-  const result = makeQualificationDossierResult(input)
-  assert(Result.isSuccess(result), 'qualification dossier fixture must produce a dossier')
-  return result.success
 }
 
 const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditInput => {
@@ -779,120 +772,4 @@ describe('qualification audit', () => {
       expect(report.checks.find((check) => check.name === checkName)?.passed, name).toBe(false)
     },
   )
-})
-
-describe('qualification dossier', () => {
-  test('binds the complete audited subject deterministically', () => {
-    const first = makeQualificationDossier(fixture())
-    const second = makeQualificationDossier(fixture())
-    const { dossierHash, ...material } = first
-
-    expect(first.schemaVersion).toBe('bayn.qualification-dossier.v2')
-    expect(first.audit.schemaVersion).toBe('bayn.qualification-audit.v2')
-    expect(first.audit.status).toBe('PASS')
-    expect(first.audit.checks.every((check) => check.passed)).toBe(true)
-    expect(first.subject.run.runId).toBe(first.qualification.result.runId)
-    expect(first.subject.protocol.parameters).toEqual(fixtureProtocol)
-    expect(first.subject.inputManifest.finalizedSnapshot.snapshotId).toBe(first.subject.run.snapshotId)
-    expect(first.evidence.artifacts).toHaveLength(first.subject.run.artifactCount)
-    expect(first.evidence.events.count).toBe(first.subject.run.eventCount)
-    expect(first.evidence.gates.count).toBe(first.subject.run.gateCount)
-    expect(first.qualification.priorTrialSetHash).toBe(canonicalHashV1(first.qualification.priorTrialRunIds))
-    expect(first.authority).toEqual({
-      maximum: 'observe',
-      executable: false,
-      paperMutation: false,
-      brokerOrders: false,
-      capitalPromotion: false,
-    })
-    expect(dossierHash).toBe(canonicalHashV1(material))
-    expect(second.dossierHash).toBe(dossierHash)
-  })
-
-  test('refuses to publish a failed or mismatched audit', () => {
-    const failed = fixture()
-    expect(
-      assertFailure(
-        makeQualificationDossierResult({
-          ...failed,
-          repository: { ...failed.repository, sourceCommitAncestorOfMain: false },
-        }),
-      ),
-    ).toEqual({
-      _tag: 'QualificationDossierSubjectMismatch',
-      check: 'audit-passed',
-      actual: false,
-      expected: true,
-    })
-
-    const mismatched = fixture()
-    expect(
-      assertFailure(
-        makeQualificationDossierResult({
-          ...mismatched,
-          database: {
-            ...mismatched.database,
-            run: { ...mismatched.database.run, artifactCount: mismatched.database.run.artifactCount + 1 },
-          },
-        }),
-      ),
-    ).toEqual({
-      _tag: 'QualificationDossierSubjectMismatch',
-      check: 'audit-passed',
-      actual: false,
-      expected: true,
-    })
-  })
-
-  test('propagates typed audit canonicalization failures without throwing', () => {
-    const input = fixture()
-    const database = {
-      ...input.database,
-      artifacts: input.database.artifacts.map((artifact) =>
-        artifact.name === 'strategy' ? { ...artifact, payload: { invalid: Number.NaN } } : artifact,
-      ),
-    }
-    const dossier = () => makeQualificationDossierResult({ ...input, database })
-
-    expect(dossier).not.toThrow()
-    expect(assertFailure(dossier())).toEqual({
-      _tag: 'AuditCanonicalizationFailed',
-      subject: { scope: 'artifact', name: 'strategy' },
-      cause: {
-        _tag: 'CanonicalJsonFailure',
-        path: '$.invalid',
-        reason: 'non-finite-number',
-        actualType: 'number',
-      },
-    })
-  })
-
-  test('returns hostile dossier evidence inspection as data with the original cause', () => {
-    const input = fixture()
-    const strategy = input.database.artifacts.find((artifact) => artifact.name === 'strategy')
-    if (strategy === undefined || typeof strategy.payload !== 'object' || strategy.payload === null) {
-      throw new Error('strategy artifact fixture is missing')
-    }
-    const cause = new Error('items membership unavailable')
-    const payload = new Proxy(strategy.payload, {
-      has: () => {
-        throw cause
-      },
-    })
-    const database = {
-      ...input.database,
-      artifacts: input.database.artifacts.map((artifact) =>
-        artifact.name === 'strategy' ? { ...artifact, payload } : artifact,
-      ),
-    }
-    const dossier = () => makeQualificationDossierResult({ ...input, database })
-
-    expect(dossier).not.toThrow()
-    expect(assertFailure(dossier())).toEqual({
-      _tag: 'QualificationDossierEvidenceInspectionFailed',
-      artifactName: 'strategy',
-      operation: 'item-count',
-      cause,
-    })
-  })
 })

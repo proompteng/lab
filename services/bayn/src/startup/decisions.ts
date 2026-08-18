@@ -1,7 +1,7 @@
 import { Option, pipe, Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { makeRuntimeProvenanceResult, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import { makeRuntimeProvenanceResult, makeStrategyProtocolHashResult, type RuntimeProvenance } from '../contracts'
 import type {
   PersistenceReceipt,
   QualificationOpen,
@@ -105,7 +105,15 @@ const provenanceFromStored = (
     stored.protocol.parameters,
   )
   if (Result.isFailure(parameterHashResult)) return Result.fail(parameterHashResult.failure)
-  const protocolHash = makeStrategyProtocolHash(provenance.strategy)
+  const protocolHashResult = makeStrategyProtocolHashResult(provenance.strategy)
+  if (Result.isFailure(protocolHashResult)) {
+    return Result.fail({
+      _tag: 'StoredProvenanceInvalid',
+      identity,
+      issue: { reason: 'malformed', cause: protocolHashResult.failure },
+    })
+  }
+  const protocolHash = protocolHashResult.success
   if (
     parameterHashResult.success !== provenance.strategy.parameterHash ||
     stored.protocol.protocolHash !== protocolHash ||

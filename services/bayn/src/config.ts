@@ -1,14 +1,9 @@
 export { loadConfig } from './config/load'
-export {
-  CapitalAuthoritySelectionTokenSchema,
-  LegacyCapitalAuthoritySelection,
-  LegacyCapitalAuthoritySelectionSchema,
-} from './config/model'
+export { CapitalAuthoritySelectionSchema } from './config/model'
 export type {
   AlpacaCredentialPresence,
   AlpacaRuntimeConfig,
   AutonomousCycleRuntimeConfig,
-  CapitalAuthoritySelectionToken,
   LoadedRuntimeConfig,
   ParsedRuntimeConfig,
   RuntimeBuildMetadata,

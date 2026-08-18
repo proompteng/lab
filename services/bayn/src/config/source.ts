@@ -1,15 +1,10 @@
-import { Config, ConfigProvider, Effect, Option, Redacted, Schema, SchemaTransformation } from 'effect'
+import { Config, Option, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
-import {
-  legacyCandidateDiscoveryOperationToken,
-  legacyExecutionAuthorityToken,
-  legacyObserveAuthorityToken,
-} from '../execution/legacy-wire'
 import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
 import {
   GitSourceRevisionSchema as SourceRevision,
@@ -19,7 +14,7 @@ import {
   TrimmedNonEmptyStringSchema as NonEmptyString,
 } from '../schemas'
 import {
-  CapitalAuthoritySelectionTokenSchema,
+  CapitalAuthoritySelectionSchema,
   maximumOperationalThresholdMs,
   minimumOperationalThresholdMs,
   type ParsedRuntimeConfig,
@@ -32,12 +27,7 @@ const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3
 const OperationalThresholdMs = Schema.Int.check(
   Schema.isBetween({ minimum: minimumOperationalThresholdMs, maximum: maximumOperationalThresholdMs }),
 )
-const LegacyAuthorityTokenSchema = Schema.Literals([legacyObserveAuthorityToken, legacyExecutionAuthorityToken])
-const RuntimeOperationTokenSchema = Schema.Literals([
-  'EXECUTION_CANDIDATE_DISCOVERY',
-  legacyCandidateDiscoveryOperationToken,
-  'EXECUTION_PREPARE',
-])
+const RuntimeOperationTokenSchema = Schema.Literals(['EXECUTION_CANDIDATE_DISCOVERY', 'EXECUTION_PREPARE'])
 
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -67,44 +57,6 @@ const runtimeOperation = Config.schema(RuntimeOperationTokenSchema, 'BAYN_OPERAT
   ),
 )
 
-const capitalActivationRequest = Config.all({
-  canonical: Config.option(nonEmptyString('BAYN_CAPITAL_ACTIVATION_REQUEST')),
-  legacy: Config.option(nonEmptyString('BAYN_PAPER_ACTIVATION_REQUEST')),
-}).pipe(
-  Config.mapOrFail(({ canonical, legacy }) => {
-    if (Option.isSome(canonical) && Option.isSome(legacy)) {
-      return Effect.fail(
-        new Config.ConfigError(
-          new ConfigProvider.SourceError({
-            message:
-              'BAYN_CAPITAL_ACTIVATION_REQUEST and legacy BAYN_PAPER_ACTIVATION_REQUEST cannot both be configured',
-          }),
-        ),
-      )
-    }
-    return Effect.succeed(Option.isSome(canonical) ? canonical : legacy)
-  }),
-)
-
-const persistedCapitalGrantHash = Config.all({
-  canonical: Config.option(Config.schema(Sha256Schema, 'BAYN_PERSISTED_CAPITAL_GRANT_HASH')),
-  legacy: Config.option(Config.schema(Sha256Schema, 'BAYN_LIVE_CAPITAL_GRANT_HASH')),
-}).pipe(
-  Config.mapOrFail(({ canonical, legacy }) => {
-    if (Option.isSome(canonical) && Option.isSome(legacy)) {
-      return Effect.fail(
-        new Config.ConfigError(
-          new ConfigProvider.SourceError({
-            message:
-              'BAYN_PERSISTED_CAPITAL_GRANT_HASH and legacy BAYN_LIVE_CAPITAL_GRANT_HASH cannot both be configured',
-          }),
-        ),
-      )
-    }
-    return Effect.succeed(Option.isSome(canonical) ? canonical : legacy)
-  }),
-)
-
 export const runtimeConfigSource = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
@@ -115,17 +67,16 @@ export const runtimeConfigSource = Config.all({
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
-  capitalActivationRequestJson: capitalActivationRequest,
+  capitalActivationRequestJson: Config.option(nonEmptyString('BAYN_CAPITAL_ACTIVATION_REQUEST')),
   operation: Config.option(runtimeOperation),
   executionPrepareRequest: Config.option(
     Config.schema(Schema.fromJsonString(ExecutionPrepareRequestSchema), 'BAYN_EXECUTION_PREPARE_REQUEST'),
   ),
-  legacyMaximumAuthority: Config.option(Config.schema(LegacyAuthorityTokenSchema, 'BAYN_MAXIMUM_AUTHORITY')),
   brokerAccess: Config.schema(BrokerAccessSchema, 'BAYN_BROKER_ACCESS').pipe(Config.withDefault(BrokerAccess.ReadOnly)),
-  capitalAuthority: Config.schema(CapitalAuthoritySelectionTokenSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
+  capitalAuthority: Config.schema(CapitalAuthoritySelectionSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
     Config.withDefault(CapitalAuthoritySelection.None),
   ),
-  persistedCapitalGrantHash,
+  persistedCapitalGrantHash: Config.option(Config.schema(Sha256Schema, 'BAYN_PERSISTED_CAPITAL_GRANT_HASH')),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   expectedExecutionControllerPlanHash: Config.option(
@@ -179,7 +130,6 @@ export const runtimeConfigSource = Config.all({
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
       configuredOperation: Option.getOrUndefined(config.operation),
       executionPrepareRequest: Option.getOrUndefined(config.executionPrepareRequest),
-      legacyMaximumAuthority: Option.getOrUndefined(config.legacyMaximumAuthority),
       brokerAccess: config.brokerAccess,
       capitalAuthority: config.capitalAuthority,
       persistedCapitalGrantHash: Option.getOrUndefined(config.persistedCapitalGrantHash),

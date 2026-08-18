@@ -25,7 +25,8 @@ import {
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
-import { makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import type { RuntimeProvenance } from '../contracts'
+import { makeStrategyProtocolHash } from '../contracts.test-support'
 import { IntentStore, IntentStoreLive, planExecutionIntent, type IntentPlan } from '../execution/intents'
 import {
   MutationEventType,

@@ -35,6 +35,14 @@ export type AutonomousCycleStartup<StartupR = never, LoopR = StartupR> = (
   input: AutonomousCycleStartupInput,
 ) => Effect.Effect<AutonomousCycleLoop<LoopR>, OperationalError, StartupR>
 
+/**
+ * Builds one externally scheduled cycle driver without choosing its owner. The outer effect performs startup work;
+ * the returned effect binds the driver to the runtime services that execute its advances.
+ */
+export type AutonomousCycleDriverStartup<Driver, StartupR = never, DriverR = never> = (
+  input: AutonomousCycleStartupInput,
+) => Effect.Effect<Effect.Effect<Driver, never, DriverR>, OperationalError, StartupR>
+
 export type BrokerlessApplicationConfig = Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'BrokerlessService' }>
 
 export type AutonomousApplicationConfig = Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>

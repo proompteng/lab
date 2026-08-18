@@ -25,7 +25,7 @@ import {
   recoverTerminalGenerationToObserve,
 } from '../blocked-generation-recovery'
 import { orderRequestBody } from '../broker/alpaca-mutations'
-import { makeStrategyProtocolHash } from '../contracts'
+import { makeStrategyProtocolHash } from '../contracts.test-support'
 import { operationalError } from '../errors'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, grantedCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'

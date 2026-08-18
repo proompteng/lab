@@ -16,6 +16,7 @@ import { canonicalHashV1OrThrow, sha256 } from '../hash'
 import { renderExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareGenerationField } from './failure'
 import {
+  type CurrentExecutionCandidateDiscoveryReceipt,
   ExecutionCandidateIneligibility,
   type ExecutionCandidateDiscoveryReceipt,
 } from '../execution-candidate-discovery/model'
@@ -25,7 +26,7 @@ import {
   prepareExecution,
   prepareValidatedExecutionWithGeneration,
 } from './program'
-import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-support'
 import {
   authenticateExecutionPrepareDiscovery,
   makeExecutionPrepareReceipt,
@@ -70,9 +71,9 @@ const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
 const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
 
 const receiptWithCandidates = (
-  receipt: ExecutionCandidateDiscoveryReceipt,
-  candidates: readonly ExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number][],
-): ExecutionCandidateDiscoveryReceipt => {
+  receipt: CurrentExecutionCandidateDiscoveryReceipt,
+  candidates: readonly CurrentExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number][],
+): CurrentExecutionCandidateDiscoveryReceipt => {
   const candidateFacts = { ...receipt.candidateFacts, candidates }
   const candidateFactsHash = canonicalHashV1OrThrow(candidateFacts)
   const material = { ...receipt, candidateFacts, candidateFactsHash }

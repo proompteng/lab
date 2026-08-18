@@ -32,7 +32,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   type RecoveryFirstCycleAdvance,
   type RecoveryFirstCycleDriver,
-  type RecoveryFirstCycleDriverInterpreter,
+  type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
 import { currentOpenTelemetryLogAnnotations } from '../restate/restate-telemetry'
@@ -144,7 +144,7 @@ const bindRecoveryFirstCycleDriver = (
   )
 
 export const captureRecoveryFirstCycleDriver =
-  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverInterpreter =>
+  (slot: RecoveryFirstCycleDriverSlot): RecoveryFirstCycleDriverOwner =>
   (driver) =>
     bindRecoveryFirstCycleDriver(driver).pipe(
       Effect.flatMap((bound) =>
@@ -365,7 +365,7 @@ export const makeNativeExecutionRuntimeAdapter = (
 
 const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
-    interpretCycleDriver: captureRecoveryFirstCycleDriver(slot),
+    ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
   }).pipe(
     Effect.flatMap(({ dependencies, runtime }) =>
       prepareAutonomousApplication(plan.config, plan.strategy, dependencies, runtime),

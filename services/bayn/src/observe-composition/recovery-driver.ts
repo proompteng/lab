@@ -1,5 +1,5 @@
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
-import type { AutonomousCycleLoop, AutonomousCycleStartup } from '../app'
+import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
 import {
   CycleDecisionBuildError,
@@ -27,7 +27,6 @@ import type {
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
   RecoveryFirstCycleDriver,
-  RecoveryFirstCycleDriverInterpreter,
   RecoveryFirstRuntime,
 } from './model'
 import {
@@ -190,7 +189,7 @@ export const recoveryFirstCycleNextDelayMs = (input: {
   readonly reconciliationIntervalMs: number
 }): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
 
-const makeRecoveryFirstCycleDriver = (
+const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
@@ -307,7 +306,7 @@ const makeRecoveryFirstCycleDriver = (
     }
   })
 
-export const makeRecoveryFirstAutonomousLoop = (
+export const makeRecoveryFirstCycleDriver = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
@@ -315,17 +314,14 @@ export const makeRecoveryFirstAutonomousLoop = (
   capability: ExecutionCapability,
   buildDecision: RecoveryFirstDecisionBuilder,
   operation: 'autonomous cycle loop' | 'mutation autonomous cycle loop',
-  interpretCycleDriver: RecoveryFirstCycleDriverInterpreter,
-): Result.Result<AutonomousCycleLoop<RecoveryFirstRuntime>, OperationalError> => {
+): Result.Result<Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime>, OperationalError> => {
   const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
   return Result.mapError(
     Result.map(validateCycleLoopInterval(input.pollIntervalMs), () => input.reconciliationIntervalMs).pipe(
       Result.flatMap(validateReconciliationInterval),
       Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
       Result.map(() =>
-        makeRecoveryFirstCycleDriver(input, startup, preparation, policy, capability, buildDecision).pipe(
-          Effect.flatMap(interpretCycleDriver),
-        ),
+        makeRecoveryFirstCycleDriverEffect(input, startup, preparation, policy, capability, buildDecision),
       ),
     ),
     (cause) =>

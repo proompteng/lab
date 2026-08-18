@@ -2,7 +2,6 @@ import { Result, Schema, pipe } from 'effect'
 
 import type { Account, AccountConfigurationObservation, AssetObservation } from '../broker/alpaca'
 import { Authority } from '../execution/contracts'
-import { legacyCandidateDiscoveryOperationToken } from '../execution/legacy-wire'
 import { strictParseOptions } from '../schemas'
 import {
   AccountConfigurationFactsSchema,
@@ -10,12 +9,13 @@ import {
   AssetFactsSchema,
   CandidateFactsMaterialSchema,
   CandidateFactsSchema,
+  CurrentDiscoveryReceiptSchema,
   DiscoveryReceiptMaterialSchema,
-  DiscoveryReceiptSchema,
   candidateFactsSchemaVersion,
+  discoveryOperation,
   discoverySchemaVersion,
   observationReceiptSchemaVersion,
-  type ExecutionCandidateDiscoveryReceipt,
+  type CurrentExecutionCandidateDiscoveryReceipt,
   type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
@@ -151,7 +151,7 @@ const makeCandidates = (
 
 const decodeReceipt = (
   material: typeof DiscoveryReceiptMaterialSchema.Type,
-): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> =>
+): Result.Result<CurrentExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> =>
   pipe(
     canonicalHashResult(
       material,
@@ -166,7 +166,7 @@ const decodeReceipt = (
     Result.flatMap((observationReceiptHash) =>
       pipe(
         Schema.decodeResult(
-          DiscoveryReceiptSchema,
+          CurrentDiscoveryReceiptSchema,
           strictParseOptions,
         )({
           ...material,
@@ -188,7 +188,7 @@ const decodeReceipt = (
 const makeExecutionCandidateDiscoveryReceiptDataFirst = (
   validatedSnapshot: ValidatedExecutionCandidateSnapshot,
   observations: ValidatedExecutionCandidateObservations,
-): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> => {
+): Result.Result<CurrentExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> => {
   const { binding, snapshot } = validatedSnapshot
   return pipe(
     Result.Do,
@@ -242,7 +242,7 @@ const makeExecutionCandidateDiscoveryReceiptDataFirst = (
     Result.flatMap(({ candidateFacts, candidateFactsHash, immutableBindingHash }) =>
       decodeReceipt({
         schemaVersion: discoverySchemaVersion,
-        operation: legacyCandidateDiscoveryOperationToken,
+        operation: discoveryOperation,
         authority: Authority.Observe,
         dispatchable: false,
         binding,

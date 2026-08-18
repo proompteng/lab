@@ -5,13 +5,10 @@ import { BrokerEnvironment } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
-import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from '../execution/legacy-wire'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import {
-  LegacyCapitalAuthoritySelection,
   type AlpacaCredentialPresence,
   type AlpacaRuntimeConfig,
-  type LegacyAuthorityToken,
   type LoadedRuntimeConfig,
   type ParsedRuntimeConfig,
   type RuntimeBuildMetadata,
@@ -117,36 +114,16 @@ const decodeAlpaca = (
       })
 }
 
-const resolveCapitalAuthority = (
-  parsed: ParsedRuntimeConfig,
-  alpaca: AlpacaRuntimeConfig | undefined,
-): Result.Result<CapitalAuthoritySelection, RuntimeConfigResolutionFailure> => {
-  const configured = parsed.capitalAuthority
-  if (configured === CapitalAuthoritySelection.None || configured === CapitalAuthoritySelection.Granted) {
-    return Result.succeed(configured)
-  }
-  const expectedEnvironment =
-    configured === LegacyCapitalAuthoritySelection.Sandbox ? BrokerEnvironment.Sandbox : BrokerEnvironment.Live
-  return alpaca?.environment === expectedEnvironment
-    ? Result.succeed(CapitalAuthoritySelection.Granted)
-    : fail({
-        _tag: 'LegacyCapitalAuthorityEnvironmentMismatch',
-        capitalAuthority: configured,
-        brokerEnvironment: alpaca?.environment,
-      })
-}
-
 const resolvePolicy = (
   parsed: ParsedRuntimeConfig,
   alpaca: AlpacaRuntimeConfig | undefined,
-  capitalAuthority: CapitalAuthoritySelection,
 ): Result.Result<ExecutionPolicy, RuntimeConfigResolutionFailure> => {
   const policy = resolveExecutionPolicy({
     brokerIdentity: alpaca?.identity,
     brokerAccess: parsed.brokerAccess,
-    capitalAuthority,
+    capitalAuthority: parsed.capitalAuthority,
     authorityGenerationHash:
-      capitalAuthority === CapitalAuthoritySelection.None ? undefined : parsed.authorityGenerationHash,
+      parsed.capitalAuthority === CapitalAuthoritySelection.None ? undefined : parsed.authorityGenerationHash,
     persistedCapitalGrantHash: parsed.persistedCapitalGrantHash,
   })
   return Result.isFailure(policy)
@@ -154,34 +131,8 @@ const resolvePolicy = (
     : Result.succeed(policy.success)
 }
 
-const legacyAuthorityMatches = (legacy: LegacyAuthorityToken, policy: ExecutionPolicy): boolean => {
-  switch (legacy) {
-    case legacyObserveAuthorityToken:
-      return policy.brokerAccess === BrokerAccess.ReadOnly && policy.capitalAuthority._tag === CapitalAuthorityKind.None
-    case legacyExecutionAuthorityToken:
-      return (
-        policy.brokerAccess === BrokerAccess.Mutation && policy.capitalAuthority._tag === CapitalAuthorityKind.Granted
-      )
-  }
-}
-
-const validateLegacyAuthority = (
-  parsed: ParsedRuntimeConfig,
-  capitalAuthority: CapitalAuthoritySelection,
-  policy: ExecutionPolicy,
-): Result.Result<void, RuntimeConfigResolutionFailure> =>
-  parsed.legacyMaximumAuthority === undefined || legacyAuthorityMatches(parsed.legacyMaximumAuthority, policy)
-    ? Result.succeed(undefined)
-    : fail({
-        _tag: 'LegacyAuthorityMismatch',
-        legacyMaximumAuthority: parsed.legacyMaximumAuthority,
-        brokerAccess: parsed.brokerAccess,
-        capitalAuthority,
-      })
-
 const validateOperation = (
   parsed: ParsedRuntimeConfig,
-  capitalAuthority: CapitalAuthoritySelection,
   policy: ExecutionPolicy,
   alpaca: AlpacaRuntimeConfig | undefined,
 ): Result.Result<void, RuntimeConfigResolutionFailure> => {
@@ -190,7 +141,7 @@ const validateOperation = (
     return fail({
       _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
       brokerAccess: parsed.brokerAccess,
-      capitalAuthority,
+      capitalAuthority: parsed.capitalAuthority,
     })
   }
   if (parsed.qualificationRunId === undefined) {
@@ -379,15 +330,11 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(timing)) return Result.fail(timing.failure)
   const alpaca = decodeAlpaca(parsed)
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
-  const capitalAuthority = resolveCapitalAuthority(parsed, alpaca.success)
-  if (Result.isFailure(capitalAuthority)) return Result.fail(capitalAuthority.failure)
-  const execution = resolvePolicy(parsed, alpaca.success, capitalAuthority.success)
+  const execution = resolvePolicy(parsed, alpaca.success)
   if (Result.isFailure(execution)) return Result.fail(execution.failure)
   const reconciliationTiming = validateExecutionReconciliationTiming(parsed, execution.success, alpaca.success)
   if (Result.isFailure(reconciliationTiming)) return Result.fail(reconciliationTiming.failure)
-  const legacy = validateLegacyAuthority(parsed, capitalAuthority.success, execution.success)
-  if (Result.isFailure(legacy)) return Result.fail(legacy.failure)
-  const operation = validateOperation(parsed, capitalAuthority.success, execution.success, alpaca.success)
+  const operation = validateOperation(parsed, execution.success, alpaca.success)
   if (Result.isFailure(operation)) return Result.fail(operation.failure)
   const provenance = validateProvenanceMode(parsed, input.embeddedBuildMetadata)
   if (Result.isFailure(provenance)) return Result.fail(provenance.failure)

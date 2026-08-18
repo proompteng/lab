@@ -3,7 +3,7 @@ import { pipe, Result } from 'effect'
 import type { PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
 import type { BrokerEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
-import { canonicalHashV1, canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
 import type { AccountingReceipt, Valuation } from '../../execution/contracts'
 import type { EventReceipt, PositionSnapshotReceipt } from './contract'
 import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
@@ -123,15 +123,6 @@ export const brokerEventKind = (input: BrokerEventInput): typeof EventKind.Type 
       return 'FILL'
   }
 }
-
-export const brokerEventId = (input: BrokerEventInput): string =>
-  canonicalHashV1({
-    schemaVersion: 'bayn.paper-broker-event-id.v1',
-    broker: input.broker,
-    accountId: input.accountId,
-    sourceEventId: input.sourceEventId,
-    contentHash: input.contentHash,
-  })
 
 export const brokerEventIdResult = (input: BrokerEventInput): Result.Result<string, ExecutionStoreDecisionFailure> =>
   hashDecision(

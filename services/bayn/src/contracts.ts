@@ -1,6 +1,6 @@
 import { pipe, Result, Schema } from 'effect'
 
-import { canonicalHashV1, canonicalHashV1Result, sha256, type CanonicalJsonFailure } from './hash'
+import { canonicalHashV1Result, sha256, type CanonicalJsonFailure } from './hash'
 import {
   ImageDigestSchema as ImageDigest,
   IsoDateSchema,
@@ -176,7 +176,10 @@ export const RunIdentitySchema = RunIdentityBase.check(
   Schema.makeFilter((identity: typeof RunIdentityBase.Type) => {
     const { runId, ...material } = identity
     const issues = [...runIdentityMaterialIssues(material)]
-    if (runId !== canonicalHashV1(material)) {
+    const expected = canonicalHashV1Result(material)
+    if (Result.isFailure(expected)) {
+      issues.push({ path: ['runId'], issue: 'identity material cannot be canonically hashed' })
+    } else if (runId !== expected.success) {
       issues.push({ path: ['runId'], issue: 'does not match the identity material' })
     }
     return issues
@@ -207,15 +210,6 @@ const RuntimeProvenanceBase = Schema.Struct({
 export const RuntimeProvenanceSchema = RuntimeProvenanceBase
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
 export type RuntimeProvenanceInput = Omit<RuntimeProvenance, 'schemaVersion' | 'contractVersions'>
-
-export const makeStrategyProtocolHash = (strategy: RuntimeProvenance['strategy']): string =>
-  canonicalHashV1({
-    schemaVersion: 'bayn.strategy-protocol.v1',
-    name: strategy.name,
-    behaviorHash: strategy.behaviorHash,
-    parameterHash: strategy.parameterHash,
-    parameterSchemaVersion: strategy.parameterSchemaVersion,
-  })
 
 export type ContractConstructionFailure =
   | {
@@ -265,16 +259,9 @@ const decodeRuntimeProvenanceDataFirst = Schema.decodeUnknownEffect(RuntimeProve
 
 export const decodeRuntimeProvenance = Pipeable.dual(1, (input: unknown) => decodeRuntimeProvenanceDataFirst(input))
 
-const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
-const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)
 const decodeRunIdentityMaterialResult = Schema.decodeUnknownResult(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentityResult = Schema.decodeUnknownResult(RunIdentitySchema, StrictParseOptions)
 const decodeRuntimeProvenanceResult = Schema.decodeUnknownResult(RuntimeProvenanceSchema, StrictParseOptions)
-
-export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
-  const material = decodeRunIdentityMaterialSync(input)
-  return decodeRunIdentitySync({ ...material, runId: canonicalHashV1(material) })
-}
 
 export const makeRunIdentityResult = (
   input: RunIdentityMaterial,

@@ -83,7 +83,7 @@ const environmentValue = (deployment: string, name: string): string => {
 }
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
-const capitalActivationRequest = /            - name: BAYN_(?:CAPITAL|PAPER)_ACTIVATION_REQUEST\n/
+const capitalActivationRequest = /            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n/
 const qualificationIdentityNames = [
   'BAYN_SIGNAL_SNAPSHOT_ID',
   'BAYN_SIGNAL_PUBLICATION_ASOF',
@@ -268,7 +268,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const hadQualificationPin = qualificationPins.length === 1
   const capitalActivationRequests = [...deployment.matchAll(new RegExp(capitalActivationRequest.source, 'g'))]
   if (capitalActivationRequests.length > 1) {
-    throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST or legacy activation request block')
+    throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST block')
   }
   const hasCapitalActivationRequest = capitalActivationRequests.length === 1
   const deployedQualificationRunId = hadQualificationPin

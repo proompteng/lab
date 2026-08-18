@@ -84,8 +84,9 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   functions.
 - `MarketData`, `Journal`, and `EvidenceStore` are Effect services because they own external I/O and resource
   lifecycles.
-- `src/index.ts` is the only composition root. It loads configuration, builds the pure strategy, assembles the three
-  I/O layers, and hands them to `run`.
+- `src/index.ts` is the status/service process entry point; the native Restate worker and activation command have
+  dedicated process entry points. They share the same application-plan/configuration and Effect resource composition
+  rather than constructing parallel execution engines.
 - `run` owns one scoped lifetime. It starts the HTTP layer, performs initialization, and forks the repeating health
   monitor with `forkScoped`; scope closure releases the server and clients.
 - `startup.ts` and `health.ts` own lifecycle decisions; `ledger-plan.ts` is deterministic accounting, while
@@ -184,10 +185,11 @@ qualification, or durable evidence closes readiness and never expands authority.
 
 ## Deployment contract
 
-GitOps owns one `apps/v1 Deployment` configured as a single writer and a dedicated three-replica TigerBeetle cluster.
-`maxSurge: 0` prevents overlapping writers during rollout. The pod has no Kubernetes API token. A broker Secret may be
-consumed only by this Deployment and does not expand authority. Scaling to zero is a maintenance state, not a second
-deployment mode.
+GitOps owns the read/status `apps/v1 Deployment`, the native Restate execution worker, and a dedicated three-replica
+TigerBeetle cluster. The status Deployment may use `maxSurge: 1` because it does not own autonomous execution;
+per-account execution serialization is owned by the Restate virtual object and every broker mutation still crosses the
+durable writer fence. The pod has no Kubernetes API token. A broker Secret does not expand authority. Scaling the
+status Deployment to zero is a maintenance state, not a second execution mode.
 
 Every promoted image requires live acceptance against one coherent writer: the pod spec's digest-pinned image reference
 must match the GitOps OCI index digest. The runtime image ID is supporting evidence: its digest must be either that same

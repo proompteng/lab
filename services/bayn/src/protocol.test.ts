@@ -9,11 +9,11 @@ import {
   decodeDefaultProtocol,
   decodeProtocol,
   defaultProtocolDocument,
-  hashParameters,
   loadDefaultProtocol,
   loadProtocol,
   ProtocolDecodeError,
 } from './protocol'
+import { hashParameters } from './protocol.test-support'
 
 const legacyExecutionModelV2 = {
   ...defaultProtocolDocument.executionModel,

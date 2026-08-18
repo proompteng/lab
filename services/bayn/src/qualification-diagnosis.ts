@@ -1,4 +1,6 @@
-import { canonicalHashV1 } from './hash'
+import { Result } from 'effect'
+
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import type { QualificationResult } from './qualification'
 import type { EvaluationSummary, PerformanceMetrics } from './types'
 import { Pipeable } from './pipeable'
@@ -47,11 +49,11 @@ const metricFacts = (metrics: PerformanceMetrics) => ({
   totalCashYieldMicros: metrics.totalCashYieldMicros,
 })
 
-const makeQualificationDiagnosisDataFirst = (evaluation: EvaluationSummary, result: QualificationResult) => {
+const qualificationDiagnosisMaterial = (evaluation: EvaluationSummary, result: QualificationResult) => {
   const bootstrap = result.analysis.bootstrap
   const benchmarkMetrics =
     bootstrap.selectedBenchmark === 'buy-and-hold' ? evaluation.buyAndHold : evaluation.directVolTiming
-  const material = {
+  return {
     schemaVersion: 'bayn.qualification-diagnosis.v1' as const,
     runId: result.runId,
     candidateOrdinal: result.analysis.candidateOrdinal,
@@ -92,9 +94,18 @@ const makeQualificationDiagnosisDataFirst = (evaluation: EvaluationSummary, resu
       maximumAllowedFoldDrawdown: result.analysis.policy.walkForward.maximumFoldDrawdown,
     },
   }
-  return { ...material, diagnosisHash: canonicalHashV1(material) }
 }
 
-export const makeQualificationDiagnosis = Pipeable.dual(2, makeQualificationDiagnosisDataFirst)
+export type QualificationDiagnosis = ReturnType<typeof qualificationDiagnosisMaterial> & {
+  readonly diagnosisHash: string
+}
 
-export type QualificationDiagnosis = ReturnType<typeof makeQualificationDiagnosis>
+const makeQualificationDiagnosisDataFirst = (
+  evaluation: EvaluationSummary,
+  result: QualificationResult,
+): Result.Result<QualificationDiagnosis, CanonicalHashFailure> => {
+  const material = qualificationDiagnosisMaterial(evaluation, result)
+  return Result.map(canonicalHashV1Result(material), (diagnosisHash) => ({ ...material, diagnosisHash }))
+}
+
+export const makeQualificationDiagnosisResult = Pipeable.dual(2, makeQualificationDiagnosisDataFirst)

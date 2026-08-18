@@ -9,7 +9,7 @@ import {
   decodeFinalizedSnapshot,
   decodeRunIdentity,
   decodeRuntimeProvenance,
-  makeRunIdentity,
+  makeRunIdentityResult,
   makeRuntimeProvenanceResult,
 } from './contracts'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -56,18 +56,27 @@ describe('current contracts', () => {
       calendarVersion: snapshot.calendarVersion,
       bounds,
     }
-    const baseline = makeRunIdentity(material)
-    const reordered = makeRunIdentity({
-      ...material,
-      strategy: { ...material.strategy, parameters: { ...fixtureProtocol, universe: [...fixtureProtocol.universe] } },
-    })
+    const baseline = Result.getOrThrow(makeRunIdentityResult(material))
+    const reordered = Result.getOrThrow(
+      makeRunIdentityResult({
+        ...material,
+        strategy: { ...material.strategy, parameters: { ...fixtureProtocol, universe: [...fixtureProtocol.universe] } },
+      }),
+    )
 
     expect(reordered.runId).toBe(baseline.runId)
     expect(await Effect.runPromise(decodeRunIdentity(baseline))).toEqual(baseline)
     expect(Schema.encodeSync(RunIdentitySchema)(baseline)).toEqual(baseline)
-    expect(makeRunIdentity({ ...material, sourceRevision: 'f'.repeat(40) }).runId).not.toBe(baseline.runId)
+    expect(Result.getOrThrow(makeRunIdentityResult({ ...material, sourceRevision: 'f'.repeat(40) })).runId).not.toBe(
+      baseline.runId,
+    )
     expect(
-      makeRunIdentity({ ...material, strategy: { ...material.strategy, behaviorHash: '1'.repeat(64) } }).runId,
+      Result.getOrThrow(
+        makeRunIdentityResult({
+          ...material,
+          strategy: { ...material.strategy, behaviorHash: '1'.repeat(64) },
+        }),
+      ).runId,
     ).not.toBe(baseline.runId)
     await expectFailure(decodeRunIdentity({ ...baseline, runId: '9'.repeat(64) }))
   })

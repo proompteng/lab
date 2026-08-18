@@ -37,7 +37,7 @@ interface FixtureOptions {
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | null
-  readonly capitalActivationRequest?: 'canonical' | 'legacy'
+  readonly capitalActivationRequest?: boolean
 }
 
 interface FixturePaths {
@@ -80,7 +80,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     pin === null ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
     options.capitalActivationRequest === undefined
       ? ''
-      : `            - name: ${options.capitalActivationRequest === 'canonical' ? 'BAYN_CAPITAL_ACTIVATION_REQUEST' : 'BAYN_PAPER_ACTIVATION_REQUEST'}\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: ${options.capitalActivationRequest === 'canonical' ? 'capital-activation-request' : 'paper-activation-request'}\n`,
+      : `            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: capital-activation-request\n`,
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 
@@ -401,7 +401,7 @@ describe('Bayn manifest promotion', () => {
   })
 
   test('holds source-only research capital changes until the build-bound activation request is refreshed', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths)).toMatchObject({
@@ -416,7 +416,7 @@ describe('Bayn manifest promotion', () => {
   })
 
   test('makes an exact research capital release replay a no-op', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
@@ -428,19 +428,8 @@ describe('Bayn manifest promotion', () => {
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
-  test('recognizes the legacy activation env name without emitting it', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'legacy' })
-    const before = readFileSync(paths.deploymentPath, 'utf8')
-
-    expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
-      promotionAction: 'promote',
-      qualificationMode: 'research',
-    })
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toBe(before)
-  })
-
   test('holds research capital strategy and runtime identity changes without writing files', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths, { strategyParameterHash: '6'.repeat(64) })).toMatchObject({
@@ -464,7 +453,7 @@ describe('Bayn manifest promotion', () => {
   })
 
   test('does not install a qualification pin through an existing capital activation request', () => {
-    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: 'canonical' })
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(() =>

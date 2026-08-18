@@ -1,5 +1,6 @@
 export {
   ExecutionCandidateIneligibility,
+  type CurrentExecutionCandidateDiscoveryReceipt,
   type ExecutionCandidateDiscoveryBinding,
   type ExecutionCandidateDiscoveryIdentity,
   type ExecutionCandidateDiscoveryReceipt,
