@@ -2,6 +2,7 @@ import { DateTime, Option, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { Pipeable } from '../pipeable'
+import type { IsoDate } from '../schemas'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
 import { CycleState, CycleTerminalReason } from './model'
 
@@ -35,7 +36,7 @@ export enum MonthEndCadenceReason {
 export type MonthEndCadenceNextEligibility =
   | {
       readonly status: 'PROVEN'
-      readonly sessionDate: string
+      readonly sessionDate: IsoDate
       readonly basis: 'EXECUTION_SESSION_MONTH_TRANSITION'
     }
   | {
@@ -55,8 +56,8 @@ export interface MonthEndCadenceDecision {
     | MonthEndCadenceReason.SignalAndExecutionSessionSameMonth
     | MonthEndCadenceReason.SignalToExecutionMonthTransition
     | MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence
-  readonly signalSessionDate: string | null
-  readonly executionSessionDate: string | null
+  readonly signalSessionDate: IsoDate | null
+  readonly executionSessionDate: IsoDate | null
   readonly nextEligibility: MonthEndCadenceNextEligibility
 }
 
@@ -64,14 +65,14 @@ export type AutonomousCycleCadenceObservation = {
   readonly schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1'
   readonly condition: MonthEndCadenceCondition
   readonly reason: MonthEndCadenceReason
-  readonly signalSessionDate: string | null
-  readonly executionSessionDate: string | null
+  readonly signalSessionDate: IsoDate | null
+  readonly executionSessionDate: IsoDate | null
   readonly nextEligibility: MonthEndCadenceNextEligibility
 }
 
 export type AutonomousCycleCadenceFreshness = 'AVAILABLE' | 'STALE' | 'UNAVAILABLE'
 
-const isIsoDate = (value: string | undefined): value is string => {
+const isIsoDate = (value: string | undefined): value is IsoDate => {
   if (value === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = DateTime.make(`${value}T00:00:00.000Z`)
   return Option.isSome(date) && DateTime.formatIsoDate(date.value) === value

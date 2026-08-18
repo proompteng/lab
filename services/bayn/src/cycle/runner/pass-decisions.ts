@@ -9,11 +9,13 @@ import {
   runnerError,
   isEverySessionCycleCadence,
   type CycleCadence,
-  type CycleNotDueReason,
   type CyclePassObservation,
   type CycleRunnerError,
   type CycleRunResult,
 } from './model'
+import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
+
+export type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
 export const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure'] => {
   switch (cause.failure) {
@@ -90,24 +92,6 @@ export const cycleRunResultCadenceDecision = (result: CycleRunResult): MonthEndC
       return cadenceDecisionFromCycle(result.readiness.cycle)
   }
 }
-
-export type RetainedAutonomousCyclePassObservation =
-  | {
-      readonly result: 'SUCCESS'
-      readonly observedAt: string
-      readonly outcome: CycleRunResult['outcome']
-      readonly cadence?: ObservableCycleCadence
-      readonly notDueReason?: CycleNotDueReason
-      readonly cadenceDecision?: MonthEndCadenceDecision
-    }
-  | {
-      readonly result: 'FAILURE'
-      readonly observedAt: string
-      readonly cadence?: ObservableCycleCadence
-      readonly operation: CycleRunnerError['operation']
-      readonly failure: CycleRunnerError['failure']
-      readonly message: string
-    }
 
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,

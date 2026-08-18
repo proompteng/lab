@@ -3093,6 +3093,39 @@ data:
               summary: Bayn durable execution controller is overdue
               description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionSessionAdmissionMissed
+            expr: |
+              (
+                max by (job, namespace, service) (
+                  bayn_autonomous_cycle_not_due_reason{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn",
+                    reason="stale_capital_bootstrap"
+                  }
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_capital_activation_state{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn",
+                    state="realized"
+                  }
+                ) == 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn missed an every-session execution admission
+              description: A realized research-capital runtime is durably reporting STALE_CAPITAL_BOOTSTRAP, so the current eligible execution session was not admitted before its publication deadline.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |
               bayn_cycle_observation_available{

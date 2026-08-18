@@ -139,13 +139,16 @@ const hashOutcome = (
             result: observation.result,
             outcome: observation.outcome,
             observedAt: observation.observedAt,
+            ...(observation.cadence === undefined ? {} : { cadence: observation.cadence }),
             ...(observation.notDueReason === undefined ? {} : { notDueReason: observation.notDueReason }),
+            ...(observation.cadenceDecision === undefined ? {} : { cadenceDecision: observation.cadenceDecision }),
           }
         : {
             result: observation.result,
             operation: observation.operation,
             failure: observation.failure,
             observedAt: observation.observedAt,
+            ...(observation.cadence === undefined ? {} : { cadence: observation.cadence }),
           },
     cycleResult:
       result === undefined

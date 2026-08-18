@@ -4,6 +4,7 @@ import { Result } from 'effect'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionAdvanceStepResult,
   decodeExecutionControllerBootstrap,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
@@ -222,6 +223,57 @@ describe('execution controller decisions', () => {
     ).toBe(true)
   })
 
+  test('rejects malformed retained session dates in durable pass evidence', () => {
+    const candidate = {
+      completedAt: '2026-08-13T18:00:00.000Z',
+      observation: {
+        result: 'SUCCESS',
+        observedAt: '2026-08-13T18:00:00.000Z',
+        outcome: 'NOT_DUE',
+        cadence: 'EVERY_SESSION',
+        notDueReason: 'STALE_CAPITAL_BOOTSTRAP',
+        cadenceDecision: {
+          schemaVersion: 'bayn.month-end-cadence-decision.v1',
+          condition: 'EXPECTED_WAIT',
+          reason: 'SIGNAL_AND_EXECUTION_SESSION_SAME_MONTH',
+          signalSessionDate: 'zzz',
+          executionSessionDate: 'zzzz',
+          nextEligibility: {
+            status: 'UNKNOWN',
+            reason: 'FUTURE_CALENDAR_EVIDENCE_UNAVAILABLE',
+          },
+        },
+      },
+      outcome: {
+        _tag: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'f'.repeat(64),
+        nextDelayMs: 30_000,
+      },
+    }
+
+    expect(Result.isFailure(decodeExecutionAdvanceStepResult(candidate))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeExecutionAdvanceStepResult({
+          ...candidate,
+          observation: {
+            ...candidate.observation,
+            cadenceDecision: {
+              ...candidate.observation.cadenceDecision,
+              signalSessionDate: '2026-08-12',
+              executionSessionDate: '2026-08-13',
+              nextEligibility: {
+                status: 'PROVEN',
+                sessionDate: 'not-a-date',
+                basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(true)
+  })
+
   test('rejects an exhausted exact sequence before issuing an advance command', () => {
     const state = activated()
     const decision = decideExecutionControllerTick(
@@ -258,11 +310,16 @@ describe('execution controller decisions', () => {
   })
 
   test('completes one tick, advances monotonically, and records the next due time', () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      observedAt: completedResult.completedAt,
+      outcome: 'NO_PUBLICATION' as const,
+    }
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
         { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 0 },
-        completedResult,
+        { ...completedResult, observation },
         nextSourceRevision,
       ),
     )
@@ -280,6 +337,7 @@ describe('execution controller decisions', () => {
         completedAt: completedResult.completedAt,
       },
     })
+    expect(state.lastCompletion).not.toHaveProperty('lastPass')
     expect(
       Result.isFailure(
         completeExecutionControllerTick(

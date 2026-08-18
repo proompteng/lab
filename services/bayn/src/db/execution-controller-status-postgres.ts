@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Schema } from 'effect'
+import { Effect, Layer, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
@@ -9,10 +9,12 @@ import {
   ExecutionControllerStatusStoreError,
   executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
+  type ExecutionControllerStatusWithCompletion,
   type ExecutionControllerStatusProjection,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { ExecutionControllerKeySchema } from '../execution/controller-key'
+import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const StatusRow = Schema.Struct({
@@ -26,6 +28,7 @@ const StatusRow = Schema.Struct({
   last_receipt_hash: Schema.NullOr(Sha256Schema),
   completed_at: Schema.NullOr(UtcInstantSchema),
   next_due_at: Schema.NullOr(UtcInstantSchema),
+  last_pass: Schema.NullOr(Schema.Unknown),
 })
 const StatusRows = Schema.Array(StatusRow).check(Schema.isMaxLength(1))
 
@@ -88,6 +91,7 @@ const statusFromRow = (
           lastReceiptHash: row.last_receipt_hash,
           completedAt: row.completed_at,
           ...(row.next_due_at === null ? {} : { nextDueAt: row.next_due_at }),
+          ...(row.last_pass === null ? {} : { lastPass: row.last_pass }),
         }),
   }).pipe(Effect.mapError((cause) => storeError('read', 'decode', 'controller status row failed decoding', cause)))
 }
@@ -110,7 +114,8 @@ const selectStatus = (sql: PgClient.PgClient, controllerKey: string) =>
       CASE
         WHEN next_due_at IS NULL THEN NULL
         ELSE to_char(next_due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-      END AS next_due_at
+      END AS next_due_at,
+      last_pass
     FROM execution_controller_status
     WHERE controller_key = ${controllerKey}
   `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(StatusRows, strictParseOptions)))
@@ -131,6 +136,15 @@ const read = (
     Effect.mapError((cause) => classifyCause('read', cause)),
   )
 
+const samePass = (
+  left: ExecutionControllerStatusWithCompletion['lastPass'] | undefined,
+  right: ExecutionControllerStatusWithCompletion['lastPass'] | undefined,
+): boolean => {
+  if (left === undefined || right === undefined) return left === right
+  const hashes = [canonicalHashV1Result(left), canonicalHashV1Result(right)] as const
+  return Result.isSuccess(hashes[0]) && Result.isSuccess(hashes[1]) && hashes[0].success === hashes[1].success
+}
+
 const sameStatus = (left: ExecutionControllerStatus, right: ExecutionControllerStatus): boolean =>
   left.controllerKey === right.controllerKey &&
   left.planHash === right.planHash &&
@@ -143,7 +157,8 @@ const sameStatus = (left: ExecutionControllerStatus, right: ExecutionControllerS
       left.lastOutcome === right.lastOutcome &&
       left.lastReceiptHash === right.lastReceiptHash &&
       left.completedAt === right.completedAt &&
-      left.nextDueAt === right.nextDueAt
+      left.nextDueAt === right.nextDueAt &&
+      samePass(left.lastPass, right.lastPass)
     : !executionControllerStatusHasCompletion(right))
 
 const statusIsNewer = (left: ExecutionControllerStatus, right: ExecutionControllerStatus): boolean =>
@@ -162,6 +177,7 @@ const project = (
   )(candidate).pipe(
     Effect.flatMap((status) => {
       const completion = executionControllerStatusHasCompletion(status) ? status : undefined
+      const lastPass = completion?.lastPass === undefined ? null : sql.json(completion.lastPass)
       return sql<Record<string, unknown>>`
         INSERT INTO execution_controller_status (
           controller_key,
@@ -173,7 +189,8 @@ const project = (
           last_outcome,
           last_receipt_hash,
           completed_at,
-          next_due_at
+          next_due_at,
+          last_pass
         ) VALUES (
           ${status.controllerKey},
           ${status.planHash},
@@ -184,7 +201,8 @@ const project = (
           ${completion?.lastOutcome ?? null},
           ${completion?.lastReceiptHash ?? null},
           ${completion?.completedAt ?? null},
-          ${completion?.nextDueAt ?? null}
+          ${completion?.nextDueAt ?? null},
+          ${lastPass}
         )
         ON CONFLICT (controller_key) DO UPDATE SET
           active = EXCLUDED.active,
@@ -196,6 +214,7 @@ const project = (
           last_receipt_hash = EXCLUDED.last_receipt_hash,
           completed_at = EXCLUDED.completed_at,
           next_due_at = EXCLUDED.next_due_at,
+          last_pass = EXCLUDED.last_pass,
           updated_at = clock_timestamp()
         WHERE EXCLUDED.epoch > execution_controller_status.epoch
            OR (
@@ -220,6 +239,7 @@ const project = (
              AND EXCLUDED.last_receipt_hash IS NOT DISTINCT FROM execution_controller_status.last_receipt_hash
              AND EXCLUDED.completed_at IS NOT DISTINCT FROM execution_controller_status.completed_at
              AND EXCLUDED.next_due_at IS NOT DISTINCT FROM execution_controller_status.next_due_at
+             AND EXCLUDED.last_pass IS NOT DISTINCT FROM execution_controller_status.last_pass
            )
         RETURNING controller_key
       `.pipe(

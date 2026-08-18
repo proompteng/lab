@@ -36,6 +36,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
+      'BaynExecutionSessionAdmissionMissed',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
       'BaynCycleStalled',
@@ -59,6 +60,10 @@ describe('Bayn cycle operations alert contract', () => {
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
+    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('bayn_autonomous_cycle_not_due_reason{')
+    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('reason="stale_capital_bootstrap"')
+    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('bayn_capital_activation_state{')
+    expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('state="realized"')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -190,6 +195,7 @@ describe('Bayn cycle operations alert contract', () => {
       readonly panels: readonly {
         readonly title: string
         readonly targets?: readonly { readonly expr?: string }[]
+        readonly fieldConfig?: Record<string, any>
       }[]
     }
     const dashboardExpressions = dashboard.panels.flatMap(({ targets = [] }) =>
@@ -214,6 +220,7 @@ describe('Bayn cycle operations alert contract', () => {
         'bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_autonomous_cycle_loop_configured{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_autonomous_cycle_loop_health_available{job="bayn",namespace="bayn",service="bayn"}',
+        'bayn_autonomous_cycle_not_due_reason{job="bayn",namespace="bayn",service="bayn",reason="stale_capital_bootstrap"}',
         'bayn_broker_configured{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_broker_read_available{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_broker_account_bound{job="bayn",namespace="bayn",service="bayn"}',
@@ -234,6 +241,22 @@ describe('Bayn cycle operations alert contract', () => {
         'sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
       ]),
     )
+    const autonomousLoopPanel = dashboard.panels.find(({ title }) => title === 'Autonomous loop')
+    expect(autonomousLoopPanel?.fieldConfig?.overrides).toContainEqual({
+      matcher: { id: 'byFrameRefID', options: 'C' },
+      properties: [
+        {
+          id: 'thresholds',
+          value: {
+            mode: 'absolute',
+            steps: [
+              { color: 'green', value: null },
+              { color: 'red', value: 1 },
+            ],
+          },
+        },
+      ],
+    })
     expect(kustomization).toContain('bayn-cycle-operations-dashboard-configmap.yaml')
     expect(grafanaValues).toContain('bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard')
     expect([...rules.map(({ expr }) => expr), ...dashboardExpressions].join('\n')).not.toMatch(

@@ -15,6 +15,7 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
+import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -177,30 +178,58 @@ const persistControllerStatus = (
     Effect.mapError(projectionFailure),
   )
 
+const retainedProjectedPass = (
+  controllerKey: string,
+  state: ExecutionControllerState,
+  stored: ExecutionControllerStatus | null,
+): RetainedAutonomousCyclePassObservation | undefined => {
+  const completion = state.lastCompletion
+  if (
+    completion === undefined ||
+    stored === null ||
+    !executionControllerStatusHasCompletion(stored) ||
+    stored.controllerKey !== controllerKey ||
+    stored.planHash !== state.planHash ||
+    stored.lastSequence !== completion.sequence ||
+    stored.lastOutcome !== completion.outcome ||
+    stored.lastReceiptHash !== completion.receiptHash ||
+    stored.completedAt !== completion.completedAt
+  ) {
+    return undefined
+  }
+  return stored.lastPass
+}
+
 export const projectExecutionControllerState = (
   controllerKey: string,
   state: ExecutionControllerState,
   statusStore: ExecutionControllerStatusStoreShape,
-): Effect.Effect<void, TransientExecutionFailure> => {
-  const completion = state.lastCompletion
-  return persistControllerStatus(statusStore, {
-    schemaVersion: 1,
-    controllerKey,
-    planHash: state.planHash,
-    active: state.active,
-    epoch: state.epoch,
-    nextSequence: state.nextSequence,
-    ...(completion === undefined
-      ? {}
-      : {
-          lastSequence: completion.sequence,
-          lastOutcome: completion.outcome,
-          lastReceiptHash: completion.receiptHash,
-          completedAt: completion.completedAt,
-          ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
-        }),
-  })
-}
+): Effect.Effect<void, TransientExecutionFailure> =>
+  statusStore.read(controllerKey).pipe(
+    Effect.mapError(projectionFailure),
+    Effect.flatMap((stored) => {
+      const completion = state.lastCompletion
+      const lastPass = retainedProjectedPass(controllerKey, state, stored)
+      return persistControllerStatus(statusStore, {
+        schemaVersion: 1,
+        controllerKey,
+        planHash: state.planHash,
+        active: state.active,
+        epoch: state.epoch,
+        nextSequence: state.nextSequence,
+        ...(completion === undefined
+          ? {}
+          : {
+              lastSequence: completion.sequence,
+              lastOutcome: completion.outcome,
+              lastReceiptHash: completion.receiptHash,
+              completedAt: completion.completedAt,
+              ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+              ...(lastPass === undefined ? {} : { lastPass }),
+            }),
+      })
+    }),
+  )
 
 const replayProjectedAdvance = (
   command: AdvanceExecutionCommand,
@@ -231,6 +260,7 @@ const replayProjectedAdvance = (
   return Result.mapError(
     decodeExecutionAdvanceStepResult({
       completedAt: status.completedAt,
+      ...(status.lastPass === undefined ? {} : { observation: status.lastPass }),
       outcome: {
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
@@ -254,6 +284,7 @@ const advanceAndProject = (
       'step',
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
+        observation: outcome.observation,
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
@@ -275,6 +306,7 @@ const advanceAndProject = (
           lastReceiptHash: outcome.receiptHash,
           completedAt,
           nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
+          lastPass: outcome.observation,
         })
         .pipe(
           Effect.flatMap((projection) =>
