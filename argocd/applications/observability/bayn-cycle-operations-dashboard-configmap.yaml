@@ -329,6 +329,11 @@ data:
               "expr": "bayn_autonomous_cycle_loop_health_available{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}",
               "legendFormat": "loop healthy",
               "refId": "B"
+            },
+            {
+              "expr": "bayn_autonomous_cycle_not_due_reason{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",reason=\"stale_capital_bootstrap\"}",
+              "legendFormat": "session admission missed",
+              "refId": "C"
             }
           ],
           "title": "Autonomous loop",

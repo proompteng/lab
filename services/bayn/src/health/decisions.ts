@@ -115,9 +115,15 @@ export const projectResearchCapitalBootstrapWaiting = (
     lastPass.outcome === 'NOT_DUE' &&
     lastPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
     observesMissedOrNewerBootstrap(last, cadence)
+  const controllerPass =
+    controller !== null && executionControllerStatusHasCompletion(controller) ? controller.lastPass : undefined
   const controllerPassProvesRecovery =
     (last?.terminalReason === CycleTerminalReason.MissedPublication ||
       last?.terminalReason === CycleTerminalReason.MissedSubmission) &&
+    controllerPass?.result === 'SUCCESS' &&
+    controllerPass.outcome === 'NOT_DUE' &&
+    controllerPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
+    observesMissedOrNewerBootstrap(last, controllerPass.cadenceDecision) &&
     observesCompletedControllerPassAfter(last, controller)
   if (
     !enabled ||
@@ -403,6 +409,17 @@ const deriveExecutionControllerStatus = (
       }
 }
 
+const deriveAutonomousCycleLoop = (
+  current: AutonomousCycleLoopStatus,
+  controller: ExecutionControllerRuntimeStatus | undefined,
+): AutonomousCycleLoopStatus => {
+  if (current.owner !== 'Restate' || controller?.readAvailable !== true || controller.status === null) return current
+  const status = controller.status
+  return executionControllerStatusHasCompletion(status) && status.lastPass !== undefined
+    ? { ...current, lastPass: status.lastPass }
+    : current
+}
+
 const deriveBrokerStatus = (
   current: BrokerStatus | null,
   broker: BrokerConfiguration | undefined,
@@ -589,12 +606,17 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     input.results.executionController,
     checkedAt,
   )
-  const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock, executionController)
+  const autonomousCycleLoop = deriveAutonomousCycleLoop(current.autonomousCycleLoop, executionController)
+  const projectedCurrent: RuntimeState =
+    executionController === undefined
+      ? { ...current, autonomousCycleLoop }
+      : { ...current, autonomousCycleLoop, executionController }
+  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock, executionController)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(
-    current,
+    projectedCurrent,
     input.evidenceAvailable,
     health,
     cycle,

@@ -2,6 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
+import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -85,6 +86,7 @@ const CompletionSchema = Schema.Struct({
   outcome: Schema.Enum(ExecutionControllerOutcome),
   receiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
+  lastPass: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
 })
 
 export const ExecutionControllerStateSchema = Schema.Struct({
@@ -102,6 +104,7 @@ export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Typ
 
 export const ExecutionAdvanceStepResultSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
+  observation: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
   outcome: Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
@@ -305,6 +308,7 @@ export const completeExecutionControllerTick = (
       outcome: result.outcome._tag,
       receiptHash: result.outcome.receiptHash,
       completedAt: result.completedAt,
+      ...(result.observation === undefined ? {} : { lastPass: result.observation }),
     },
     nextDueAt: decodedNextDueAt.success,
   })

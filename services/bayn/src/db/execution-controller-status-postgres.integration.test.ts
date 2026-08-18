@@ -6,6 +6,7 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
+import executionControllerPassObservation from '../../migrations/0044_execution_controller_pass_observation'
 import { config as fixtureConfig } from '../app-test-support'
 import { projectExecutionControllerState } from '../composition/native-execution-runtime'
 import { ExecutionControllerStatusResourceLive } from '../composition/resources'
@@ -80,6 +81,11 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       lastReceiptHash: 'a'.repeat(64),
       completedAt: '2026-08-13T17:00:00.000Z',
       nextDueAt: '2026-08-13T17:00:30.000Z',
+      lastPass: {
+        result: 'SUCCESS' as const,
+        observedAt: '2026-08-13T17:00:00.000Z',
+        outcome: 'NOT_DUE' as const,
+      },
     }
 
     const result = await runtime.runPromise(
@@ -89,6 +95,12 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         const replayed = yield* store.project(activation)
         const conflict = yield* store.project({ ...activation, planHash: 'e'.repeat(64) }).pipe(Effect.flip)
         const completed = yield* store.project(firstCompletion)
+        const passConflict = yield* store
+          .project({
+            ...firstCompletion,
+            lastPass: { ...firstCompletion.lastPass, outcome: 'NO_PUBLICATION' as const },
+          })
+          .pipe(Effect.flip)
         const stale = yield* store.project(activation)
         const stored = yield* store.read('primary')
         const sql = yield* PgClient.PgClient
@@ -99,6 +111,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           replayed,
           conflict,
           completed,
+          passConflict,
           stale,
           stored,
           truncate,
@@ -115,6 +128,11 @@ describePostgres('PostgreSQL execution controller status projection', () => {
       failure: 'conflict',
     })
     expect(result.completed).toEqual({ _tag: 'Applied', status: firstCompletion })
+    expect(result.passConflict).toMatchObject({
+      _tag: 'ExecutionControllerStatusStoreError',
+      operation: 'project',
+      failure: 'conflict',
+    })
     expect(result.stale).toEqual({ _tag: 'Stale', status: firstCompletion })
     expect(result.stored).toEqual(firstCompletion)
     expect(result.truncate._tag).toBe('Failure')
@@ -205,6 +223,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         yield* sql`
           ALTER TABLE execution_controller_status
           DROP CONSTRAINT execution_controller_status_completion_evidence,
+          DROP COLUMN last_pass,
           DROP COLUMN next_sequence,
           ALTER COLUMN last_sequence SET NOT NULL,
           ALTER COLUMN last_outcome SET NOT NULL,
@@ -288,6 +307,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           )
         `
         yield* executionControllerActivationProjection
+        yield* executionControllerPassObservation
 
         const store = yield* ExecutionControllerStatusStore
         const legacy = yield* store.read('primary')
@@ -401,7 +421,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
     expect(result.stored).toEqual(result.bound.status)
   })
 
-  test('controller persistence bootstraps v43 before rotating an active v42 binding', async () => {
+  test('controller persistence bootstraps current pass projection before rotating an active v42 binding', async () => {
     const controllerKey = 'primary'
     const oldPlanHash = '04221d3f591bcf064ed41d9c1ddd95b445bd5aa05840caab20bc8508625a169e'
     const oldSourceRevision = '9101af1d4e51da3d68f0a0a8b4928404f4566fb3'
@@ -417,6 +437,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         yield* sql`
           ALTER TABLE execution_controller_status
           DROP CONSTRAINT execution_controller_status_completion_evidence,
+          DROP COLUMN last_pass,
           DROP COLUMN next_sequence,
           ALTER COLUMN last_sequence SET NOT NULL,
           ALTER COLUMN last_outcome SET NOT NULL,
@@ -425,7 +446,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         `
         yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
         yield* executionControllerPlanStatus
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id = 43`
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44)`
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,
@@ -495,10 +516,10 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 43, name: 'execution_controller_activation_projection' })
+      expect(migrated.migration).toEqual({ migration_id: 44, name: 'execution_controller_pass_observation' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
-      expect(migrated.triggerDefinition).toContain('OLD.next_sequence IS NULL')
+      expect(migrated.triggerDefinition).toContain('NEW.last_pass')
 
       const oldState = {
         schemaVersion: 1 as const,

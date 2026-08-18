@@ -1214,6 +1214,17 @@ describe('Bayn continuous health', () => {
       lastReceiptHash: 'e'.repeat(64),
       completedAt: '2026-08-17T22:00:00.000Z',
       nextDueAt: '2026-08-17T23:01:00.000Z',
+      lastPass: {
+        result: 'SUCCESS' as const,
+        observedAt: '2026-08-17T22:00:00.000Z',
+        outcome: 'NOT_DUE' as const,
+        cadence: 'EVERY_SESSION' as const,
+        notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+        cadenceDecision: decideMonthEndCadenceEligibility({
+          signalSessionDate: '2026-08-17',
+          executionSessionDate: '2026-08-18',
+        }),
+      },
     }
     const input = {
       config,
@@ -1243,8 +1254,29 @@ describe('Bayn continuous health', () => {
           alerts: { cycleFailed: false, reconciliationBlocked: false },
         },
         executionController: { readAvailable: true, status: controller },
+        autonomousCycleLoop: { lastPass: controller.lastPass },
       },
       failedDependencies: [],
+    })
+
+    const unprovenController = deriveHealthTransition(current, {
+      ...input,
+      results: {
+        ...input.results,
+        executionController: {
+          _tag: 'Available',
+          value: { ...controller, lastPass: undefined },
+        },
+      },
+    })
+    expect(unprovenController.next).toMatchObject({
+      status: 'DEGRADED',
+      cycle: {
+        condition: CycleOperationsCondition.Failed,
+        reason: CycleOperationsReason.LastCycleBlocked,
+        alerts: { cycleFailed: true },
+      },
+      autonomousCycleLoop: { lastPass: null },
     })
 
     const staleCompletion = deriveHealthTransition(current, {

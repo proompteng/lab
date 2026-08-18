@@ -20,6 +20,8 @@ import { config, fixtureRuntime } from '../app-test-support'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { RuntimeConfig } from '../config'
+import { decideMonthEndCadenceEligibility } from '../cycle/observability'
+import { CycleNotDueReason } from '../cycle/runner/model'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -120,6 +122,23 @@ const driver = {
       outcome: 'NOT_DUE' as const,
     },
   }),
+  nextDelayMs: 30_000,
+}
+
+const staleBootstrapObservation = {
+  result: 'SUCCESS' as const,
+  observedAt: completedAt,
+  outcome: 'NOT_DUE' as const,
+  cadence: 'EVERY_SESSION' as const,
+  notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+  cadenceDecision: decideMonthEndCadenceEligibility({
+    signalSessionDate: '2026-08-17',
+    executionSessionDate: '2026-08-18',
+  }),
+}
+
+const staleBootstrapDriver = {
+  advance: Effect.succeed({ observation: staleBootstrapObservation }),
   nextDelayMs: 30_000,
 }
 
@@ -773,7 +792,7 @@ describe('native execution runtime', () => {
     const result = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
-        driver,
+        staleBootstrapDriver,
         statusStore((candidate) => {
           projected = candidate
           return { _tag: 'Applied', status: candidate }
@@ -783,6 +802,7 @@ describe('native execution runtime', () => {
     )
 
     expect(result.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
+    expect(result.observation).toEqual(staleBootstrapObservation)
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
       planHash: controllerPlanHash,
@@ -791,6 +811,7 @@ describe('native execution runtime', () => {
       lastSequence: command.sequence,
       lastOutcome: 'Blocked',
       lastReceiptHash: result.outcome.receiptHash,
+      lastPass: staleBootstrapObservation,
     })
     if (projected === undefined || !executionControllerStatusHasCompletion(projected)) {
       throw new Error('completed execution did not project completion evidence')
@@ -896,16 +917,10 @@ describe('native execution runtime', () => {
     let projectCount = 0
     const persistence: { current: ExecutionControllerStatus | null } = { current: null }
     const replayDriver = {
-      ...driver,
+      ...staleBootstrapDriver,
       advance: Effect.sync(() => {
         advanceCount += 1
-        return {
-          observation: {
-            result: 'SUCCESS' as const,
-            observedAt: completedAt,
-            outcome: 'NOT_DUE' as const,
-          },
-        }
+        return { observation: staleBootstrapObservation }
       }),
     }
     const uncertainStore: ExecutionControllerStatusStoreShape = {
@@ -944,6 +959,7 @@ describe('native execution runtime', () => {
     }
     expect(replay).toEqual({
       completedAt: committed.completedAt,
+      observation: staleBootstrapObservation,
       outcome: {
         _tag: committed.lastOutcome,
         receiptHash: committed.lastReceiptHash,

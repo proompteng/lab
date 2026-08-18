@@ -5,6 +5,7 @@ import { Result } from 'effect'
 
 import type { ExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
+import { CycleNotDueReason } from '../cycle/runner/model'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
@@ -115,6 +116,13 @@ describe('native Restate execution controller', () => {
         events.push('advance-completed')
         return {
           completedAt: '2026-08-13T18:00:01.000Z',
+          observation: {
+            result: 'SUCCESS' as const,
+            observedAt: '2026-08-13T18:00:01.000Z',
+            outcome: 'NOT_DUE' as const,
+            cadence: 'EVERY_SESSION' as const,
+            notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+          },
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: 'd'.repeat(64),
@@ -182,7 +190,16 @@ describe('native Restate execution controller', () => {
       active: true,
       epoch: 1,
       nextSequence: 5,
-      lastCompletion: { sequence: 4, outcome: 'Blocked' },
+      lastCompletion: {
+        sequence: 4,
+        outcome: 'Blocked',
+        lastPass: {
+          result: 'SUCCESS',
+          outcome: 'NOT_DUE',
+          cadence: 'EVERY_SESSION',
+          notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+        },
+      },
       nextDueAt: '2026-08-13T18:00:31.000Z',
     })
     expect(deliveries).toHaveLength(1)

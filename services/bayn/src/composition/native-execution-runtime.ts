@@ -198,6 +198,7 @@ export const projectExecutionControllerState = (
           lastReceiptHash: completion.receiptHash,
           completedAt: completion.completedAt,
           ...(state.nextDueAt === undefined ? {} : { nextDueAt: state.nextDueAt }),
+          ...(completion.lastPass === undefined ? {} : { lastPass: completion.lastPass }),
         }),
   })
 }
@@ -231,6 +232,7 @@ const replayProjectedAdvance = (
   return Result.mapError(
     decodeExecutionAdvanceStepResult({
       completedAt: status.completedAt,
+      ...(status.lastPass === undefined ? {} : { observation: status.lastPass }),
       outcome: {
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
@@ -254,6 +256,7 @@ const advanceAndProject = (
       'step',
       ({ completedAt, outcome }): ExecutionAdvanceStepResult => ({
         completedAt,
+        observation: outcome.observation,
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
@@ -275,6 +278,7 @@ const advanceAndProject = (
           lastReceiptHash: outcome.receiptHash,
           completedAt,
           nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
+          lastPass: outcome.observation,
         })
         .pipe(
           Effect.flatMap((projection) =>

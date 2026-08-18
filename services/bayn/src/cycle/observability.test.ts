@@ -364,6 +364,14 @@ describe('autonomous cycle operations classification', () => {
       lastReceiptHash: '8'.repeat(64),
       completedAt: '2026-07-20T12:00:00.000Z',
       nextDueAt: '2026-07-20T12:01:00.000Z',
+      lastPass: {
+        result: 'SUCCESS' as const,
+        observedAt: '2026-07-20T12:00:00.000Z',
+        outcome: 'NOT_DUE' as const,
+        cadence: 'EVERY_SESSION' as const,
+        notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+        cadenceDecision: { signalSessionDate: '2026-08-10', executionSessionDate: '2026-08-11' },
+      },
     }
     expect(projectResearchCapitalBootstrapWaiting(missedSubmission, true, null, controllerPass)).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
@@ -372,11 +380,17 @@ describe('autonomous cycle operations classification', () => {
       alerts: { cycleFailed: false, reconciliationBlocked: false, killActive: false },
     })
     const { nextDueAt: _nextDueAt, ...controllerWithoutSchedule } = controllerPass
+    const { lastPass: _lastPass, ...controllerWithoutPass } = controllerPass
     for (const invalidController of [
       { ...controllerPass, active: false },
       { ...controllerPass, lastOutcome: ExecutionControllerOutcome.Completed },
       { ...controllerPass, completedAt: last.terminalAt ?? '' },
       controllerWithoutSchedule,
+      controllerWithoutPass,
+      {
+        ...controllerPass,
+        lastPass: { ...controllerPass.lastPass, notDueReason: CycleNotDueReason.MonthEndCadence },
+      },
     ]) {
       expect(projectResearchCapitalBootstrapWaiting(missedSubmission, true, null, invalidController)).toBe(
         missedSubmission,
