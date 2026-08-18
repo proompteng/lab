@@ -73,7 +73,8 @@ describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
-    expect(executionControllerAdvanceMaximumAttempts).toBe(3)
+    expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
+    expect(executionControllerAdvanceMaximumAttempts(true)).toBe(6)
     expect(executionControllerTickRetryPolicy).toEqual({ maxAttempts: 1, onMaxAttempts: 'pause' })
     expect(executionControllerCommandRetryPolicy).toMatchObject({ maxAttempts: 3, onMaxAttempts: 'pause' })
     expect(executionControllerHandlerTimeouts(30_000)).toEqual({
@@ -965,6 +966,12 @@ describe('native Restate execution controller', () => {
       sourceRevision,
       initialSequence: 12,
       nextSequence: 12,
+      lastCompletion: {
+        sequence: 11,
+        outcome: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'e'.repeat(64),
+        completedAt: '2026-08-13T17:59:30.000Z',
+      },
     }
     const commands: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
     const deliveries: Delivery[] = []
@@ -983,17 +990,23 @@ describe('native Restate execution controller', () => {
       }),
     } as unknown as TestContext
     const object = handlers(
-      makeBaynExecutionController(config, {
-        advance: (command) => {
-          commands.push(command)
-          return Promise.reject(new Error('temporary database outage'))
+      makeBaynExecutionController(
+        {
+          ...config,
+          previousBinding: { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) },
         },
-        log: (level) => {
-          loggedLevels.push(level)
-          return Promise.reject(new Error('telemetry unavailable'))
+        {
+          advance: (command) => {
+            commands.push(command)
+            return Promise.reject(new Error('temporary database outage'))
+          },
+          log: (level) => {
+            loggedLevels.push(level)
+            return Promise.reject(new Error('telemetry unavailable'))
+          },
+          projectState: () => Promise.resolve(),
         },
-        projectState: () => Promise.resolve(),
-      }),
+      ),
     )
     let tick: unknown = {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -1002,7 +1015,8 @@ describe('native Restate execution controller', () => {
       attempt: 0,
     }
 
-    for (let attempt = 0; attempt < executionControllerAdvanceMaximumAttempts - 1; attempt += 1) {
+    const maximumAttempts = executionControllerAdvanceMaximumAttempts(false)
+    for (let attempt = 0; attempt < maximumAttempts - 1; attempt += 1) {
       await object.tick(context, tick)
       const retry = deliveries.shift()
       if (retry === undefined) throw new Error('transient failure did not schedule its durable retry')
@@ -1027,9 +1041,90 @@ describe('native Restate execution controller', () => {
     expect((exhaustionFailure as Error).message).toBe(
       'Bayn execution controller advance exhausted its durable retry budget',
     )
-    expect(commands).toHaveLength(executionControllerAdvanceMaximumAttempts)
+    expect(commands).toHaveLength(maximumAttempts)
     expect(new Set(commands.map(({ issuedAt }) => issuedAt))).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     expect(deliveries).toHaveLength(0)
     expect(loggedLevels).toEqual(['warning', 'warning', 'error'])
+  })
+
+  test('keeps a replacement tick retryable while the predecessor releases the writer fence', async () => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 7,
+      planHash,
+      sourceRevision,
+      initialSequence: 12,
+      nextSequence: 12,
+    }
+    const deliveries: Delivery[] = []
+    let advances = 0
+    let invocation = 0
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      request: () => ({
+        id: `rotation-${invocation++}`,
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(
+        {
+          ...config,
+          previousBinding: { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) },
+        },
+        {
+          advance: () => {
+            advances += 1
+            return advances <= 3
+              ? Promise.reject(new Error('predecessor still owns the writer fence'))
+              : Promise.resolve({
+                  completedAt: '2026-08-13T18:00:16.000Z',
+                  outcome: {
+                    _tag: ExecutionControllerOutcome.Blocked,
+                    receiptHash: 'f'.repeat(64),
+                    nextDelayMs: 30_000,
+                  },
+                })
+          },
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+      ),
+    )
+    let tick: unknown = {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      attempt: 0,
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await object.tick(context, tick)
+      const retry = deliveries.shift()
+      if (retry === undefined) throw new Error('replacement handoff did not schedule its durable retry')
+      expect(retry.delay).toBe(1_000 * 2 ** attempt)
+      tick = retry.parameter
+    }
+    await object.tick(context, tick)
+
+    expect(advances).toBe(4)
+    expect(state).toMatchObject({
+      nextSequence: 13,
+      lastCompletion: { sequence: 12, receiptHash: 'f'.repeat(64) },
+    })
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        delay: 30_000,
+        parameter: expect.objectContaining({ sequence: 13, attempt: 0 }),
+      }),
+    ])
   })
 })

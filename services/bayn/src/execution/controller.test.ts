@@ -5,6 +5,7 @@ import { Result } from 'effect'
 import {
   completeExecutionControllerTick,
   decodeExecutionControllerBootstrap,
+  decodeExecutionControllerTick,
   decideExecutionControllerActivation,
   decideExecutionControllerBootstrap,
   decideExecutionControllerDeactivation,
@@ -196,6 +197,29 @@ describe('execution controller decisions', () => {
         ),
       ),
     ).toEqual({ _tag: 'Ignored', reason: 'Inactive' })
+  })
+
+  test('accepts the bounded replacement handoff attempt range and rejects larger counters', () => {
+    expect(
+      Result.getOrThrow(
+        decodeExecutionControllerTick({
+          schemaVersion: 'bayn.execution-controller-tick.v1',
+          epoch: 1,
+          sequence: 0,
+          attempt: 5,
+        }),
+      ).attempt,
+    ).toBe(5)
+    expect(
+      Result.isFailure(
+        decodeExecutionControllerTick({
+          schemaVersion: 'bayn.execution-controller-tick.v1',
+          epoch: 1,
+          sequence: 0,
+          attempt: 6,
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('rejects an exhausted exact sequence before issuing an advance command', () => {
