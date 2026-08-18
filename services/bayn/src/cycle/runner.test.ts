@@ -1095,11 +1095,30 @@ describe('autonomous cycle runner', () => {
         { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: noTrade } },
         'CAPITAL_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication], reason: 'DISCOVERY' })
+    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: noTrade })
     const blocked = { ...terminal, state: CycleState.Blocked }
     expect(
       completeCycleAuthoritySelection(
         { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: { publication, cycle: blocked } },
+        'CAPITAL_BOOTSTRAP',
+      ),
+    ).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [publication],
+      reason: 'MISSED_CAPITAL_BOOTSTRAP',
+    })
+    const missedSubmission = {
+      ...blocked,
+      terminalReason: CycleTerminalReason.MissedSubmission,
+      updatedAt: blocked.window.submissionCutoffAt,
+      terminalAt: blocked.window.submissionCutoffAt,
+    }
+    expect(
+      completeCycleAuthoritySelection(
+        {
+          _tag: 'TERMINAL',
+          latestTerminal: { publication, cycle: missedSubmission },
+        },
         'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({
@@ -1118,6 +1137,31 @@ describe('autonomous cycle runner', () => {
         'CAPITAL_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
+    for (const completed of [
+      { ...terminal, state: CycleState.Completed },
+      { ...terminal, state: CycleState.NoTrade },
+    ] as const) {
+      expect(
+        completeCycleAuthoritySelection(
+          {
+            _tag: 'UNCLAIMED',
+            publications: [newerPublication],
+            latestTerminal: { publication, cycle: completed },
+          },
+          'CAPITAL_BOOTSTRAP',
+        ),
+      ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
+    }
+    expect(
+      completeCycleAuthoritySelection(
+        {
+          _tag: 'UNCLAIMED',
+          publications: [newerPublication],
+          latestTerminal: { publication, cycle: missedSubmission },
+        },
+        'CAPITAL_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
     const riskBlocked = { ...terminal, terminalReason: CycleTerminalReason.Risk }
     expect(
       completeCycleAuthoritySelection(
@@ -1128,7 +1172,7 @@ describe('autonomous cycle runner', () => {
         },
         'CAPITAL_BOOTSTRAP',
       ),
-    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: riskBlocked })
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication], reason: 'DISCOVERY' })
     expect(
       selectCycleAuthoritySlots([
         { publication, existing: terminal },
@@ -1939,6 +1983,63 @@ describe('autonomous cycle runner', () => {
     expect(control.acquisitions).toHaveLength(0)
     expect(control.binds).toBe(0)
     expect(persistence.cycles.get(terminal.identity.cycleId)).toEqual(terminal)
+  })
+
+  test('advances a capital bootstrap past a missed submission when a newer finalized publication exists', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const persistence = makeCycleStorePersistence()
+    const store = cycleStore(control, persistence)
+    const publication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
+    const executionSession = selectNextExecutionSession(publication.signalSession.session_date, monthEndCalendar)
+    if (executionSession === undefined) throw new Error('bootstrap fixture requires an execution session')
+    const capitalContext = { ...context(), cadence: 'CAPITAL_BOOTSTRAP' as const }
+    const draft = dueCycleDraftFixture(
+      { ...capitalContext, signalSession: publication.signalSession },
+      monthEndCalendar,
+      executionSession,
+    )
+    const missedPublication = cycleFrom(draft, draft.window.publicationDeadlineAt)
+    const missedSubmission = {
+      ...missedPublication,
+      terminalReason: CycleTerminalReason.MissedSubmission,
+      updatedAt: draft.window.submissionCutoffAt,
+      terminalAt: draft.window.submissionCutoffAt,
+    }
+    persistence.cycles.set(missedSubmission.identity.cycleId, missedSubmission)
+    persistence.slots.set(
+      slotKey({
+        qualificationRunId: missedSubmission.identity.qualificationRunId,
+        accountId: missedSubmission.identity.accountId,
+        signalSessionDate: missedSubmission.identity.signalSessionDate,
+      }),
+      missedSubmission.identity.cycleId,
+    )
+    const newerPublication = finalizedPublicationInspection('2026-01-30', '2026-01-30T21:15:00.000Z')
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        return yield* provide(
+          runAutonomousCyclePass(capitalContext),
+          brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
+          store,
+          marketDataService(Effect.succeed(finalizedPublications([newerPublication, publication])), newerPublication),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'ACQUIRED',
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      readiness: {
+        outcome: 'BOUND',
+        cycle: { state: CycleState.Pending, bindings: { snapshotId } },
+      },
+    })
+    expect(control.acquisitions).toHaveLength(1)
+    expect(control.binds).toBe(1)
+    expect(persistence.cycles.get(missedSubmission.identity.cycleId)).toEqual(missedSubmission)
   })
 
   test('reinspects and activates a bound cycle on restart before any new discovery', async () => {

@@ -22,6 +22,11 @@ interface TerminalCycleAuthoritySlot {
   readonly cycle: AutonomousCycle
 }
 
+const isMissedCapitalBootstrap = (cycle: AutonomousCycle): boolean =>
+  cycle.state === CycleState.Blocked &&
+  (cycle.terminalReason === CycleTerminalReason.MissedPublication ||
+    cycle.terminalReason === CycleTerminalReason.MissedSubmission)
+
 export type CycleAuthoritySelection =
   | Extract<CycleAuthoritySlotDecision, { readonly _tag: 'RESUME' | 'ALREADY_ACQUIRED' }>
   | {
@@ -109,7 +114,7 @@ const completeCycleAuthoritySelectionDataFirst = (
 ): CycleAuthoritySelection => {
   if (state._tag === 'TERMINAL') {
     const cycle = state.latestTerminal.cycle
-    return cadence === 'CAPITAL_BOOTSTRAP' && cycle.terminalReason === CycleTerminalReason.MissedPublication
+    return cadence === 'CAPITAL_BOOTSTRAP' && isMissedCapitalBootstrap(cycle)
       ? {
           _tag: 'READ_CALENDAR',
           publications: [state.latestTerminal.publication],
@@ -118,27 +123,19 @@ const completeCycleAuthoritySelectionDataFirst = (
       : { _tag: 'ALREADY_TERMINAL', cycle }
   }
   const latestTerminal = state.latestTerminal?.cycle
-  if (cadence === 'CAPITAL_BOOTSTRAP' && latestTerminal !== undefined && latestTerminal.state !== CycleState.NoTrade) {
+  if (cadence === 'CAPITAL_BOOTSTRAP' && latestTerminal !== undefined) {
     const newerPublications = state.publications.filter(
       (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
     )
     const [firstNewerPublication, ...remainingNewerPublications] = newerPublications
-    if (
-      latestTerminal.state === CycleState.Blocked &&
-      latestTerminal.terminalReason === CycleTerminalReason.MissedPublication &&
-      firstNewerPublication !== undefined
-    ) {
+    if (firstNewerPublication !== undefined) {
       return {
         _tag: 'READ_CALENDAR',
         publications: [firstNewerPublication, ...remainingNewerPublications],
         reason: 'DISCOVERY',
       }
     }
-    if (
-      latestTerminal.state === CycleState.Blocked &&
-      latestTerminal.terminalReason === CycleTerminalReason.MissedPublication &&
-      state.latestTerminal !== undefined
-    ) {
+    if (isMissedCapitalBootstrap(latestTerminal) && state.latestTerminal !== undefined) {
       return {
         _tag: 'READ_CALENDAR',
         publications: [state.latestTerminal.publication],
