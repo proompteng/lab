@@ -278,7 +278,15 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     type: 'RollingUpdate',
     rollingUpdate: { maxSurge: 1, maxUnavailable: 0 },
   })
-  expect(controller.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('-1')
+  const activationSecretWave = Number(activationSecret.metadata.annotations['argocd.argoproj.io/sync-wave'])
+  const controllerWave = Number(controller.metadata.annotations['argocd.argoproj.io/sync-wave'])
+  const activationWave = Number(activation.metadata.annotations['argocd.argoproj.io/sync-wave'])
+  const deploymentWave = Number(deployment.metadata.annotations['argocd.argoproj.io/sync-wave'])
+
+  expect([activationSecretWave, controllerWave, activationWave, deploymentWave]).toEqual([-2, -1, 0, 1])
+  expect(activationSecretWave).toBeLessThan(controllerWave)
+  expect(controllerWave).toBeLessThan(activationWave)
+  expect(activationWave).toBeLessThan(deploymentWave)
   expect(activation.metadata.annotations).toMatchObject({
     'argocd.argoproj.io/hook': 'Sync',
     'argocd.argoproj.io/sync-wave': '0',
@@ -286,7 +294,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activation.metadata.name).toBe(`bayn-execution-activate-${sourceRevision.slice(0, 12)}`)
   expect(activation.metadata.labels['app.kubernetes.io/version']).toBe(sourceRevision.slice(0, 12))
   expect(activation.spec.template.metadata.labels['app.kubernetes.io/version']).toBe(sourceRevision.slice(0, 12))
-  expect(deployment.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('1')
   expect(controller.spec.template.spec.containers[0].image).toBe(immutableImage)
   expect(activation.spec.template.spec.containers[0].image).toBe(immutableImage)
   expect(kustomization.images).toEqual([
