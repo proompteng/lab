@@ -42,6 +42,10 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
   Restate-managed `bayn-execution-controller-*` ReplicaSets. A healthy active controller with fewer Ready workers than
   desired has lost failover capacity. Restore the missing worker while preserving Restate serialization and the
   PostgreSQL writer fence; do not promote a pod to an independent writer.
+- `BaynExecutionControllerOverdue`: compare the active controller's `lastSequence`, `completedAt`, and `nextDueAt` in
+  `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
+  worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
+  a replacement scheduler or bypass the PostgreSQL writer fence.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,

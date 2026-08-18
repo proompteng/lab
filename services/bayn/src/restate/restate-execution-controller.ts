@@ -48,8 +48,11 @@ export const executionControllerAdvanceRunOptions = {
 export const executionControllerAdvanceMaximumAttempts = (replacementFirstPass: boolean): number =>
   replacementFirstPass ? executionControllerMaximumDeliveryAttempt + 1 : 3
 export const executionControllerTickRetryPolicy = {
-  maxAttempts: 1,
+  maxAttempts: 3,
   onMaxAttempts: 'pause',
+  initialInterval: 1_000,
+  maxInterval: 10_000,
+  exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
 export const executionControllerCommandRetryPolicy = {
   maxAttempts: 3,

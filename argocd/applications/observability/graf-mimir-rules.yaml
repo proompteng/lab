@@ -3050,6 +3050,49 @@ data:
               summary: Bayn execution worker pool is below its replica target
               description: Bayn has lost execution-worker failover capacity for two minutes while the Restate-managed ReplicaSets expect multiple workers.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionControllerOverdue
+            expr: |
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_controller_active{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  }
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
+                (
+                  time()
+                  -
+                  max by (job, namespace, service) (
+                    bayn_execution_controller_next_due_timestamp_seconds{
+                      job="bayn",
+                      namespace="bayn",
+                      service="bayn"
+                    }
+                  )
+                )
+                >
+                max by (job, namespace, service) (
+                  bayn_cycle_stall_threshold_seconds{
+                    job="bayn",
+                    namespace="bayn",
+                    service="bayn"
+                  }
+                )
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn durable execution controller is overdue
+              description: The active Restate execution controller has remained past its durable next-due time longer than Bayn's configured stall threshold for one minute.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |
               bayn_cycle_observation_available{
