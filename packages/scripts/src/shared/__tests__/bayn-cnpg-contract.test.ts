@@ -81,6 +81,7 @@ test('Bayn keeps the status plane node-tolerant while execution remains a portab
       maxSkew: 1,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
+      nodeTaintsPolicy: 'Honor',
       labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } },
     },
   ])
