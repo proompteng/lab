@@ -413,6 +413,27 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
+  test('rejects a buy when refreshed broker buying power falls below the durable order cap', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '99999999' }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('BuyingPowerExceeded')
+    expect(observed.grantReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('keeps a reducing sell eligible when refreshed broker buying power is exhausted', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ buyingPowerMicros: '0' }),
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell }),
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
   test('rejects exposure drift observed after the final account safety read', async () => {
     const observed = await runLiveSubmit({
       positionSnapshots: [[], [], [position()]],
