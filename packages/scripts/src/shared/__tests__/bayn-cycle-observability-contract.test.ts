@@ -195,6 +195,7 @@ describe('Bayn cycle operations alert contract', () => {
       readonly panels: readonly {
         readonly title: string
         readonly targets?: readonly { readonly expr?: string }[]
+        readonly fieldConfig?: Record<string, any>
       }[]
     }
     const dashboardExpressions = dashboard.panels.flatMap(({ targets = [] }) =>
@@ -240,6 +241,22 @@ describe('Bayn cycle operations alert contract', () => {
         'sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
       ]),
     )
+    const autonomousLoopPanel = dashboard.panels.find(({ title }) => title === 'Autonomous loop')
+    expect(autonomousLoopPanel?.fieldConfig?.overrides).toContainEqual({
+      matcher: { id: 'byFrameRefID', options: 'C' },
+      properties: [
+        {
+          id: 'thresholds',
+          value: {
+            mode: 'absolute',
+            steps: [
+              { color: 'green', value: null },
+              { color: 'red', value: 1 },
+            ],
+          },
+        },
+      ],
+    })
     expect(kustomization).toContain('bayn-cycle-operations-dashboard-configmap.yaml')
     expect(grafanaValues).toContain('bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard')
     expect([...rules.map(({ expr }) => expr), ...dashboardExpressions].join('\n')).not.toMatch(
