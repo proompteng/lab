@@ -86,6 +86,7 @@ import {
   type BlockedCycleIntentStoreShape,
 } from '../execution/intents'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
+import { readDailyTradedNotionalMicros } from './reconciliation'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -5013,17 +5014,23 @@ describePostgres('paper accounting persistence', () => {
             valuation,
             reconciledAt: '2026-07-22T15:31:00.000Z',
           })
+          const finalDailyTradedNotionalMicros = yield* readDailyTradedNotionalMicros(
+            sql,
+            accountId,
+            '2026-07-22T15:31:00.000Z',
+          )
           const [observationAfter] = yield* sql<{ observed_at: Date }>`
             SELECT clock_timestamp() AS observed_at
           `
           return {
             exact,
+            finalDailyTradedNotionalMicros,
             observationBefore: observationBefore.observed_at,
             observationAfter: observationAfter.observed_at,
           }
         }),
       )
-      const { exact, observationBefore, observationAfter } = result
+      const { exact, finalDailyTradedNotionalMicros, observationBefore, observationAfter } = result
       expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(exact.reconciliation.discrepancies).toEqual([])
       const { authorityObservedAt, ...riskContext } = exact.riskContext
@@ -5042,6 +5049,7 @@ describePostgres('paper accounting persistence', () => {
         dayStartEquityMicros: '999999800',
         peakEquityMicros: '1019999600',
       })
+      expect(finalDailyTradedNotionalMicros).toBe('420000000')
       if (authorityObservedAt === null) throw new Error('expected a durable authority observation')
       expect(Date.parse(authorityObservedAt)).toBeGreaterThanOrEqual(observationBefore.getTime())
       expect(Date.parse(authorityObservedAt)).toBeLessThanOrEqual(observationAfter.getTime())

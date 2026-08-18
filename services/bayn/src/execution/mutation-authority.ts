@@ -147,6 +147,11 @@ export type ExecutionCapitalLimitFailure =
       readonly projectedMicros: string
     }
   | {
+      readonly _tag: 'DailyTradedNotionalLimitExceeded'
+      readonly limitMicros: string
+      readonly projectedMicros: string
+    }
+  | {
       readonly _tag: 'DailyLossLimitExceeded'
       readonly limitMicros: string
       readonly observedMicros: string
@@ -224,6 +229,8 @@ export interface ExecutionCapitalLimitContext {
   readonly closeOnly: boolean
   readonly maxBrokerStateAgeMs: number
   readonly maxNetExposureMicros: string
+  readonly currentDailyTradedNotionalMicros: string
+  readonly maxDailyTradedNotionalMicros: string
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
 }
 
@@ -833,6 +840,15 @@ const validateExecutionCapitalLimitsDataFirst = (
       _tag: 'NetExposureLimitExceeded',
       limitMicros: context.maxNetExposureMicros,
       projectedMicros: projectedNetExposure.toString(),
+    })
+  }
+
+  const projectedDailyTradedNotional = BigInt(context.currentDailyTradedNotionalMicros) + proposedOrderNotional
+  if (!exposureReducingClose && projectedDailyTradedNotional > BigInt(context.maxDailyTradedNotionalMicros)) {
+    return Result.fail({
+      _tag: 'DailyTradedNotionalLimitExceeded',
+      limitMicros: context.maxDailyTradedNotionalMicros,
+      projectedMicros: projectedDailyTradedNotional.toString(),
     })
   }
 

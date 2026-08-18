@@ -239,6 +239,9 @@ interface ScenarioInput {
   readonly persistedAtRead?: (positionReads: number) => GrantedCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
   readonly maxNetExposureMicros?: string
+  readonly currentDailyTradedNotionalMicros?: string
+  readonly maxDailyTradedNotionalMicros?: string
+  readonly closeOnly?: boolean
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -329,9 +332,11 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           snapshot,
           observedAt,
           {
-            closeOnly: false,
+            closeOnly: input.closeOnly ?? false,
             maxBrokerStateAgeMs: 300_000,
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
+            currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
+            maxDailyTradedNotionalMicros: input.maxDailyTradedNotionalMicros ?? '1000000000',
           },
         )
         if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
@@ -449,6 +454,29 @@ describe('final broker mutation authority', () => {
     expect(failureTag(observed.exit)).toBe('NetExposureLimitExceeded')
     expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a buy when durable daily turnover plus the candidate exceeds the policy cap', async () => {
+    const observed = await runLiveSubmit({
+      currentDailyTradedNotionalMicros: '150000000',
+      maxDailyTradedNotionalMicros: '249999999',
+    })
+
+    expect(failureTag(observed.exit)).toBe('DailyTradedNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('keeps a strictly exposure-reducing close eligible above the daily turnover policy cap', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell }),
+      currentDailyTradedNotionalMicros: '250000000',
+      maxDailyTradedNotionalMicros: '249999999',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
   })
 
   test('keeps a net-exposure-reducing sell eligible while the account remains above the policy cap', async () => {
