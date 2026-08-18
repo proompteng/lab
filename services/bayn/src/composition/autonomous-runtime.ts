@@ -16,7 +16,7 @@ import {
 } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
-import { readDailyTradedNotionalMicros } from '../db/reconciliation'
+import { readFinalExecutionRiskContext } from '../db/reconciliation'
 import { BrokerAccess } from '../execution/authority'
 import { Authority, KillState } from '../execution/contracts'
 import {
@@ -624,8 +624,8 @@ export const makeAutonomousServiceRuntime = (
                                               brokerRead: runtimeServices.session.read,
                                               persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
                                               riskPolicy,
-                                              readDailyTradedNotionalMicros: (observedAt) =>
-                                                readDailyTradedNotionalMicros(
+                                              readFinalExecutionRiskContext: (observedAt) =>
+                                                readFinalExecutionRiskContext(
                                                   runtimeServices.pgClient,
                                                   realizedPlan.config.alpaca.expectedAccountId,
                                                   observedAt,

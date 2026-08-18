@@ -39,7 +39,12 @@ export interface ExecutionProgramDependencies {
   readonly writerFence: WriterFenceService
   readonly persistedCapitalGrants: Pick<PersistedCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly riskPolicy: Policy
-  readonly readDailyTradedNotionalMicros: (observedAt: string) => Effect.Effect<string, FinalSubmitAuthorizationFailure>
+  readonly readFinalExecutionRiskContext: (
+    observedAt: string,
+  ) => Effect.Effect<
+    { readonly dailyTradedNotionalMicros: string; readonly peakEquityMicros: string },
+    FinalSubmitAuthorizationFailure
+  >
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed entry lease, checked at the final writer fence. */
   readonly entrySubmitExpiresAt?: string
@@ -122,7 +127,7 @@ const finalBrokerAuthorization = (
   return Effect.gen(function* () {
     const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
-    const currentDailyTradedNotionalMicros = yield* dependencies.readDailyTradedNotionalMicros(observedAt)
+    const riskContext = yield* dependencies.readFinalExecutionRiskContext(observedAt)
     const refreshedAuthority =
       capital.persistedAuthority === undefined
         ? Result.succeed(authority)
@@ -138,8 +143,10 @@ const finalBrokerAuthorization = (
         closeOnly,
         maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
         maxNetExposureMicros: dependencies.riskPolicy.maxNetExposureMicros,
-        currentDailyTradedNotionalMicros,
+        currentDailyTradedNotionalMicros: riskContext.dailyTradedNotionalMicros,
         maxDailyTradedNotionalMicros: dependencies.riskPolicy.maxDailyTradedNotionalMicros,
+        peakEquityMicros: riskContext.peakEquityMicros,
+        maxDrawdownMicros: dependencies.riskPolicy.maxDrawdownMicros,
         ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
       },
     )

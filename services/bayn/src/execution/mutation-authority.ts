@@ -157,6 +157,11 @@ export type ExecutionCapitalLimitFailure =
       readonly observedMicros: string
     }
   | {
+      readonly _tag: 'DrawdownLimitExceeded'
+      readonly limitMicros: string
+      readonly observedMicros: string
+    }
+  | {
       readonly _tag: 'OpenOrderLimitExceeded'
       readonly limit: number
       readonly observed: number
@@ -231,6 +236,8 @@ export interface ExecutionCapitalLimitContext {
   readonly maxNetExposureMicros: string
   readonly currentDailyTradedNotionalMicros: string
   readonly maxDailyTradedNotionalMicros: string
+  readonly peakEquityMicros: string
+  readonly maxDrawdownMicros: string
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
 }
 
@@ -862,6 +869,15 @@ const validateExecutionCapitalLimitsDataFirst = (
       _tag: 'DailyLossLimitExceeded',
       limitMicros: enforcedDailyLossLimit,
       observedMicros: observedLoss.toString(),
+    })
+  }
+  const drawdown = BigInt(context.peakEquityMicros) - BigInt(snapshot.account.equityMicros)
+  const observedDrawdown = drawdown > 0n ? drawdown : 0n
+  if (!exposureReducingClose && observedDrawdown > BigInt(context.maxDrawdownMicros)) {
+    return Result.fail({
+      _tag: 'DrawdownLimitExceeded',
+      limitMicros: context.maxDrawdownMicros,
+      observedMicros: observedDrawdown.toString(),
     })
   }
   return Result.succeed(undefined)

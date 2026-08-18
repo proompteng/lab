@@ -86,7 +86,7 @@ import {
   type BlockedCycleIntentStoreShape,
 } from '../execution/intents'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
-import { readDailyTradedNotionalMicros } from './reconciliation'
+import { readFinalExecutionRiskContext } from './reconciliation'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -5014,7 +5014,7 @@ describePostgres('paper accounting persistence', () => {
             valuation,
             reconciledAt: '2026-07-22T15:31:00.000Z',
           })
-          const finalDailyTradedNotionalMicros = yield* readDailyTradedNotionalMicros(
+          const finalExecutionRiskContext = yield* readFinalExecutionRiskContext(
             sql,
             accountId,
             '2026-07-22T15:31:00.000Z',
@@ -5024,13 +5024,13 @@ describePostgres('paper accounting persistence', () => {
           `
           return {
             exact,
-            finalDailyTradedNotionalMicros,
+            finalExecutionRiskContext,
             observationBefore: observationBefore.observed_at,
             observationAfter: observationAfter.observed_at,
           }
         }),
       )
-      const { exact, finalDailyTradedNotionalMicros, observationBefore, observationAfter } = result
+      const { exact, finalExecutionRiskContext, observationBefore, observationAfter } = result
       expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(exact.reconciliation.discrepancies).toEqual([])
       const { authorityObservedAt, ...riskContext } = exact.riskContext
@@ -5049,7 +5049,10 @@ describePostgres('paper accounting persistence', () => {
         dayStartEquityMicros: '999999800',
         peakEquityMicros: '1019999600',
       })
-      expect(finalDailyTradedNotionalMicros).toBe('420000000')
+      expect(finalExecutionRiskContext).toEqual({
+        dailyTradedNotionalMicros: '420000000',
+        peakEquityMicros: '1019999600',
+      })
       if (authorityObservedAt === null) throw new Error('expected a durable authority observation')
       expect(Date.parse(authorityObservedAt)).toBeGreaterThanOrEqual(observationBefore.getTime())
       expect(Date.parse(authorityObservedAt)).toBeLessThanOrEqual(observationAfter.getTime())
