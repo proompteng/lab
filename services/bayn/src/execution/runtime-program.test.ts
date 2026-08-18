@@ -1078,7 +1078,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(exit._tag).toBe('Success')
-    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account', 'positions', 'orders'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(1)
   })
 

@@ -413,6 +413,18 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
+  test('rejects account safety drift observed during the final exposure confirmation', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccountAtRead: (orderReads) =>
+        orderReads >= 3 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
+    expect(observed.orderReads).toBe(3)
+    expect(observed.grantReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
   test('rejects a buy when refreshed broker buying power falls below the durable order cap', async () => {
     const observed = await runLiveSubmit({
       brokerAccount: account({ buyingPowerMicros: '99999999' }),
