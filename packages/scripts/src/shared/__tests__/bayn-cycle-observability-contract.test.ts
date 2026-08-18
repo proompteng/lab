@@ -35,6 +35,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynEgressProxyReplicaTargetMissed',
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',
+      'BaynExecutionControllerOverdue',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
       'BaynCycleStalled',
@@ -53,6 +54,11 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynExecutionWorkerUnavailable).toContain('replicaset=~"bayn-execution-controller-.*"')
     expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_replicaset_spec_replicas{')
     expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('> 1')
+    expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_execution_controller_active{')
+    expect(expressions.BaynExecutionControllerOverdue).toContain(
+      'bayn_execution_controller_next_due_timestamp_seconds{',
+    )
+    expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')

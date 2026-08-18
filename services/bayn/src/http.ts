@@ -745,6 +745,9 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_execution_controller_read_available Whether the controller projection was read successfully.',
     '# TYPE bayn_execution_controller_read_available gauge',
     `bayn_execution_controller_read_available ${booleanMetric(executionController?.readAvailable ?? null)}`,
+    '# HELP bayn_execution_controller_active Whether the durable Restate execution controller is active.',
+    '# TYPE bayn_execution_controller_active gauge',
+    `bayn_execution_controller_active ${executionControllerStatus?.active === true ? 1 : 0}`,
     '# HELP bayn_execution_controller_last_outcome Latest durable controller outcome.',
     '# TYPE bayn_execution_controller_last_outcome gauge',
     ...executionControllerOutcomes.map(

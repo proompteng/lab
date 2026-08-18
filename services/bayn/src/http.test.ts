@@ -461,6 +461,7 @@ describe('Bayn HTTP pure decisions', () => {
     const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
     expect(metrics).toContain('bayn_execution_controller_configured 1')
     expect(metrics).toContain('bayn_execution_controller_read_available 1')
+    expect(metrics).toContain('bayn_execution_controller_active 1')
     expect(metrics).toContain('bayn_execution_controller_last_outcome{outcome="blocked"} 1')
     expect(metrics).toContain('bayn_execution_controller_epoch 3')
     expect(metrics).toContain('bayn_execution_controller_last_sequence 17')
@@ -509,6 +510,7 @@ describe('Bayn HTTP pure decisions', () => {
       reasonCode: 'EXECUTION_CONTROLLER_FIRST_PASS_PENDING',
     })
     const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+    expect(metrics).toContain('bayn_execution_controller_active 1')
     expect(metrics).toContain('bayn_execution_controller_epoch 4')
     expect(metrics).toContain('bayn_execution_controller_last_outcome{outcome="unknown"} 1')
     expect(metrics).not.toContain('bayn_execution_controller_last_sequence ')
