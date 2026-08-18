@@ -196,6 +196,23 @@ const closePlanNeedsResidualReplan = (
     )
   })
 
+export type ExecutionCycleCloseDocumentDecision =
+  | { readonly _tag: 'Bind'; readonly document: ExecutionDecisionDocument }
+  | { readonly _tag: 'Complete' }
+  | { readonly _tag: 'Block' }
+
+export const decideExecutionCycleCloseDocument = (
+  document: ExecutionDecisionDocument,
+): ExecutionCycleCloseDocumentDecision => {
+  if (document.targetPlan.status === TargetPlanStatus.NoTrade) return { _tag: 'Complete' }
+  if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return { _tag: 'Block' }
+  return { _tag: 'Bind', document }
+}
+
+type ExecutionCycleClosureResult =
+  | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
+  | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
+
 const ensureExecutionCycleClosure = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -204,12 +221,13 @@ const ensureExecutionCycleClosure = (
   entryDocument: ExecutionDecisionDocument,
   closeWindow: ExecutionCycleCloseWindow | undefined,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<ExecutionDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
+): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const store = input.executionCycleClosureStore
-    if (closeWindow === undefined || store === undefined) return undefined
     const observedAt = yield* currentUtcInstant
-    if (observedAt < closeWindow.startAt) return undefined
+    if (closeWindow === undefined || store === undefined || observedAt < closeWindow.startAt) {
+      return { _tag: 'Wait', observedAt }
+    }
     const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
@@ -229,7 +247,11 @@ const ensureExecutionCycleClosure = (
         reconcile,
         closeExpiresAt: closeWindow.expiresAt,
       })
-      if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
+      const decision = decideExecutionCycleCloseDocument(document)
+      if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt }
+      if (decision._tag === 'Block') {
+        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt }
+      }
       const closure = yield* Effect.fromResult(
         makeExecutionCycleClosure({
           schemaVersion: legacyCycleClosureSchemaVersion,
@@ -251,12 +273,14 @@ const ensureExecutionCycleClosure = (
             mutationRunnerError({ message: 'execution close plan durable bind failed', cause, failure: 'store' }),
           ),
         )
-      return stored.document
+      return { _tag: 'Close', document: stored.document }
     }
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
-    if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
+    if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) {
+      return { _tag: 'Close', document: active.document }
+    }
 
     const document = yield* buildClosingExecutionCycleDecision({
       input,
@@ -268,7 +292,9 @@ const ensureExecutionCycleClosure = (
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
     })
-    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
+    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) {
+      return { _tag: 'Close', document: active.document }
+    }
     const closure = yield* Effect.fromResult(
       makeExecutionCycleClosure({
         schemaVersion: legacyCycleClosureSchemaVersion,
@@ -296,7 +322,7 @@ const ensureExecutionCycleClosure = (
         }),
       ),
     )
-    return stored.document
+    return { _tag: 'Close', document: stored.document }
   })
 
 const entryExecutionCycleHasUnsuccessfulIntent = (
@@ -503,9 +529,20 @@ const executeBoundExecutionCycle = (
     }
 
     if (step === undefined) {
-      const closeDocument = closeDue
-        ? yield* ensureExecutionCycleClosure(input, preparation, policy, cycle, document, closeWindow, reconcile)
-        : undefined
+      let closeDocument: ExecutionDecisionDocument | undefined
+      if (closeDue) {
+        const closure = yield* ensureExecutionCycleClosure(
+          input,
+          preparation,
+          policy,
+          cycle,
+          document,
+          closeWindow,
+          reconcile,
+        )
+        if (closure._tag !== 'Close') return closure
+        closeDocument = closure.document
+      }
       closeOnly = closeDocument !== undefined
       phaseInput =
         closeOnly && closeWindow !== undefined

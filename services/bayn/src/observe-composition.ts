@@ -62,6 +62,7 @@ export type {
 } from './observe-composition/model'
 
 export {
+  decideExecutionCycleCloseDocument,
   executionMutationSubmissionAllowed,
   prepareNextMutationIntent,
   terminalizeBlockedExecutionCycle,

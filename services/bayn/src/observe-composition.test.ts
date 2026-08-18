@@ -69,6 +69,7 @@ import {
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
+  decideExecutionCycleCloseDocument,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
   decidePreparedMutationIntent,
@@ -2725,7 +2726,10 @@ describe('OBSERVE runtime composition', () => {
         reconciliation: closeReconciliation,
       },
     }
-    const buildClose = (entryDocument: typeof fixture.document) =>
+    const buildClose = (
+      entryDocument: typeof fixture.document,
+      closeReconciliationResult: ReconciliationPassResult = currentReconciliation,
+    ) =>
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
@@ -2735,7 +2739,7 @@ describe('OBSERVE runtime composition', () => {
             policy: fixture.policy,
             cycle: fixture.boundCycle,
             entryDocument,
-            reconcile: Effect.succeed(currentReconciliation),
+            reconcile: Effect.succeed(closeReconciliationResult),
             closeExpiresAt,
           })
         }).pipe(
@@ -2753,6 +2757,7 @@ describe('OBSERVE runtime composition', () => {
       )
 
     const close = await buildClose(fixture.document)
+    const noTradeClose = await buildClose(fixture.document, reconciliationResultAt(observedAt))
     const { executionSession: _legacyExecutionSession, ...legacyDocument } = fixture.document
     const legacyClose = await buildClose(legacyDocument as typeof fixture.document)
 
@@ -2766,6 +2771,8 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect(close.dispatchable).toBe(true)
+    expect(noTradeClose.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+    expect(decideExecutionCycleCloseDocument(noTradeClose)).toEqual({ _tag: 'Complete' })
     expect(legacyClose.targetPlan.intentTargets).toEqual(close.targetPlan.intentTargets)
 
     const committedIntents = new Map<string, StoredIntent>()
