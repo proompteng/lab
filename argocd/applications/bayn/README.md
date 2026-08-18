@@ -7,6 +7,17 @@ access and no capital authority. A source-versioned Argo sync hook authenticates
 exact source/image/strategy/account plan and current native binding, then idempotently activates or rotates the
 account-keyed native controller. The public Bayn deployment rolls out after that verified native binding.
 
+The execution controller deliberately remains one replica because its runtime owns the process-wide PostgreSQL writer
+fence. It is architecture-neutral, so Kubernetes can reschedule that singleton onto any node supported by the published
+multi-architecture image after a node failure. The activation hook is architecture-neutral for the same reason. Do not
+scale the execution controller horizontally until the writer-fence ownership model has an explicit standby/failover
+contract; multiple active controller processes are not an availability mechanism.
+
+The public Bayn process is read-only status/health only and owns no writer fence or scheduler. It runs two replicas,
+spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. This gives the
+status/readiness plane node-failure tolerance independently of the singleton execution owner and also continuously
+exercises the same immutable image on whatever supported architecture the scheduler selects.
+
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
 `argocd/applications/restate/README.md`. The bootstrap `SealedSecret` uses sync wave `-2` and the repository's
@@ -37,13 +48,16 @@ Expected:
 - the operator reports one available worker revision at the committed image digest and drains the previous revision;
 - the activation hook completes once for the exact committed plan and source;
 - zero legacy lifecycle registrations exist and no second execution owner is active alongside the native controller;
-- delayed native ticks project fresh controller status while authority remains read-only with no capital grant;
-- the public status pod runs the same immutable image and reports exact reconciliation with zero unresolved mutations.
+- delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
+  read-only/none; any effective execution authority must still come only from the separately sealed and validated
+  durable capital generation;
+- two public status pods run the same immutable image on distinct hostnames when at least two eligible nodes are
+  available, and both report exact reconciliation with zero unresolved mutations.
 
-The expected impact is one active worker pod plus narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS,
-and broker-proxy network paths. The worker has no service-account token and accepts Restate requests only from the
-`restate` namespace. The activation Job has no broker egress and its token-authenticated bootstrap call is made only by
-the labeled GitOps hook.
+The expected impact is one active worker pod plus two read-only status pods and narrowly scoped PostgreSQL, TigerBeetle,
+ClickHouse, telemetry, DNS, and broker-proxy network paths. The worker has no service-account token and accepts Restate
+requests only from the `restate` namespace. The activation Job has no broker egress and its token-authenticated bootstrap
+call is made only by the labeled GitOps hook.
 
 Native controller rotation is available only when the replacement worker and activation hook are both bound to the
 exact previous plan hash and source revision. The replacement quiesces previous-binding ticks, verifies and deactivates

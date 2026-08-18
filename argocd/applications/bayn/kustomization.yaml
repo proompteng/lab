@@ -18,6 +18,7 @@ resources:
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
   - service.yaml
+  - status-pdb.yaml
   - networkpolicy.yaml
 configMapGenerator:
   - name: bayn-egress-proxy

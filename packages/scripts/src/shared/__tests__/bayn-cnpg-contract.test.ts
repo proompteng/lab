@@ -65,6 +65,42 @@ test('Bayn compares CNPG resources after admission defaulting', () => {
   expect(bayn.annotations['argocd.argoproj.io/compare-options']).toBe('ServerSideDiff=true,IncludeMutationWebhook=true')
 })
 
+test('Bayn keeps the status plane node-tolerant while execution remains a portable singleton', () => {
+  const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
+  const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
+  const activation = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/execution-activation.yaml'))
+    .map((document) => document.toJSON())
+    .find((manifest) => manifest.kind === 'Job')
+  const disruptionBudget = readManifest('argocd/applications/bayn/status-pdb.yaml')
+  const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
+
+  expect(deployment.spec.replicas).toBe(2)
+  expect(deployment.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(deployment.spec.template.spec.topologySpreadConstraints).toEqual([
+    {
+      maxSkew: 1,
+      topologyKey: 'kubernetes.io/hostname',
+      whenUnsatisfiable: 'DoNotSchedule',
+      labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } },
+    },
+  ])
+  expect(disruptionBudget).toMatchObject({
+    apiVersion: 'policy/v1',
+    kind: 'PodDisruptionBudget',
+    metadata: { name: 'bayn-status' },
+    spec: {
+      minAvailable: 1,
+      unhealthyPodEvictionPolicy: 'AlwaysAllow',
+      selector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } },
+    },
+  })
+  expect(kustomization.resources).toContain('status-pdb.yaml')
+
+  expect(controller.spec.replicas).toBe(1)
+  expect(controller.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(activation.spec.template.spec.nodeSelector).toBeUndefined()
+})
+
 test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const platform = readManifest('argocd/applications/cloudnative-pg/kustomization.yaml')
   const patches = platform.patches.map((patch: { patch: string }) => patch.patch).join('\n')
