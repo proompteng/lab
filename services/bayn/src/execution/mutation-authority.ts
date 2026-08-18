@@ -880,20 +880,15 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         stableOpenOrders.failure,
       )
     }
-    const account = yield* dependencies.brokerRead.account.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker account could not be refreshed after exposure confirmation', cause),
-      ),
-    )
     const positionsConfirmed = yield* dependencies.brokerRead.positions.pipe(
       Effect.mapError((cause) =>
-        mutationAuthorizationError('broker positions could not be confirmed after account refresh', cause),
+        mutationAuthorizationError('broker positions could not be confirmed after exposure refresh', cause),
       ),
     )
     const confirmedPositions = validateStablePositionSnapshot(stablePositions.success, positionsConfirmed.value)
     if (Result.isFailure(confirmedPositions)) {
       return yield* mutationAuthorizationError(
-        'broker position snapshot changed after account refresh',
+        'broker position snapshot changed during final exposure confirmation',
         confirmedPositions.failure,
       )
     }
@@ -904,21 +899,26 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
       })
       .pipe(
         Effect.mapError((cause) =>
-          mutationAuthorizationError('broker open orders could not be confirmed after account refresh', cause),
+          mutationAuthorizationError('broker open orders could not be confirmed after exposure refresh', cause),
         ),
       )
     const confirmedOpenOrders = validateStableOpenOrderSnapshot(stableOpenOrders.success, openOrdersConfirmed.value)
     if (Result.isFailure(confirmedOpenOrders)) {
       return yield* mutationAuthorizationError(
-        'broker open-order snapshot changed after account refresh',
+        'broker open-order snapshot changed during final exposure confirmation',
         confirmedOpenOrders.failure,
       )
     }
+    const accountConfirmed = yield* dependencies.brokerRead.account.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('broker account could not be refreshed after final exposure confirmation', cause),
+      ),
+    )
     return {
-      account: account.value,
+      account: accountConfirmed.value,
       positions: confirmedPositions.success,
       openOrders: confirmedOpenOrders.success,
-      accountObservedAt: account.evidence.observedAt,
+      accountObservedAt: accountConfirmed.evidence.observedAt,
       positionsObservedAt: positionsConfirmed.evidence.observedAt,
       ordersObservedAt: openOrdersConfirmed.evidence.observedAt,
     }
