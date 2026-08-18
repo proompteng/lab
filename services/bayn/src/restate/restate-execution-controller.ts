@@ -57,6 +57,7 @@ export const executionControllerCommandRetryPolicy = {
   exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
 export const executionControllerInitialTickDelayMs = 0
+export const executionControllerBootstrapCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string
@@ -284,6 +285,28 @@ export const executionControllerBootstrapHandlerTimeouts = (
       }
     : executionControllerHandlerTimeouts(operationTimeoutMs)
 
+export const executionControllerBootstrapCompletionMaximumAttempts = (operationTimeoutMs: number): number =>
+  Math.floor(
+    (executionControllerHandlerTimeouts(operationTimeoutMs).inactivityTimeout -
+      executionControllerFinalizationHeadroomMs) /
+      executionControllerBootstrapCompletionPollIntervalMs,
+  ) + 1
+
+export const executionControllerFirstPassCompleted = (
+  state: ExecutionControllerState | null,
+  activation: ExecutionControllerActivation,
+): state is ExecutionControllerState & {
+  readonly lastCompletion: NonNullable<ExecutionControllerState['lastCompletion']>
+} =>
+  state !== null &&
+  state.active &&
+  state.epoch === activation.epoch &&
+  state.planHash === activation.planHash &&
+  state.sourceRevision === activation.sourceRevision &&
+  state.lastCompletion !== undefined &&
+  state.lastCompletion.sequence >= activation.firstSequence &&
+  state.nextSequence === state.lastCompletion.sequence + 1
+
 export const makeBaynExecutionController = (
   config: ExecutionControllerConfig,
   runtime: NativeExecutionRuntime,
@@ -473,7 +496,18 @@ export const makeBaynExecutionBootstrap = (
             }
             activationState = deactivated
           }
-          return client.activate(bindBootstrapActivation(activationState ?? null, request, config))
+          const activation = bindBootstrapActivation(activationState ?? null, request, config)
+          let activated: ExecutionControllerState | null = await client.activate(activation)
+          const maximumAttempts = executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs)
+          for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+            if (executionControllerFirstPassCompleted(activated, activation)) return activated
+            if (attempt === maximumAttempts) {
+              throw new Error('execution controller bootstrap did not observe its first completed durable pass')
+            }
+            await ctx.sleep({ milliseconds: executionControllerBootstrapCompletionPollIntervalMs })
+            activated = await client.status(undefined)
+          }
+          throw new Error('execution controller bootstrap completion bound is invalid')
         },
       ),
     },

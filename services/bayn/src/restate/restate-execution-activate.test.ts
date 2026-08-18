@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Effect, Layer, Redacted, Result } from 'effect'
 
+import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
   activateRestateExecutionController,
   restateExecutionActivationCompletionWindowMs,
@@ -28,7 +29,14 @@ const activeState = {
   planHash: config.planHash,
   sourceRevision: config.sourceRevision,
   initialSequence: 0,
-  nextSequence: 0,
+  nextSequence: 1,
+  lastCompletion: {
+    sequence: 0,
+    outcome: ExecutionControllerOutcome.Blocked,
+    receiptHash: 'd'.repeat(64),
+    completedAt: '2026-08-17T18:00:00.000Z',
+  },
+  nextDueAt: '2026-08-17T18:01:00.000Z',
 }
 
 describe('native Restate execution activation', () => {
@@ -158,6 +166,8 @@ describe('native Restate execution activation', () => {
       { ...activeState, active: false },
       { ...activeState, planHash: 'd'.repeat(64) },
       { ...activeState, sourceRevision: 'e'.repeat(40) },
+      { ...activeState, lastCompletion: undefined },
+      { ...activeState, nextSequence: 0 },
       { active: true },
     ]) {
       expect(Result.isFailure(verifyRestateExecutionActivation(config, invalid))).toBe(true)

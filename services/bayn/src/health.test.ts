@@ -1147,6 +1147,152 @@ describe('Bayn continuous health', () => {
     })
   })
 
+  test('recovers a missed research submission only after a matching Restate controller pass', () => {
+    const checkedAt = '2026-08-17T23:00:00.000Z'
+    const terminalAt = '2026-08-17T21:00:00.000Z'
+    const generationHash = 'b'.repeat(64)
+    const controllerKey = 'f'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: { configured: true, owner: 'Restate', startedAt: null, lastPass: null },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
+      },
+      capitalActivation: {
+        _tag: 'Realized',
+        requestHash: 'a'.repeat(64),
+        generationHash,
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+    const cycle = {
+      ...emptyCycleProjection(),
+      last: {
+        ...pendingCycle(terminalAt),
+        signalSessionDate: '2026-08-14',
+        executionSessionDate: '2026-08-17',
+        phase: CycleState.Blocked,
+        snapshotId: '1'.repeat(64),
+        terminalReason: CycleTerminalReason.MissedSubmission,
+        terminalAt,
+      },
+      authority: {
+        generationHash,
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        kill: KillState.Clear,
+        reason: null,
+        updatedAt: checkedAt,
+      },
+      reconciliation: {
+        accountId: brokerAccountId,
+        reconciliationId: 'c'.repeat(64),
+        status: ReconciliationStatus.Exact,
+        discrepancyCount: 0,
+        reconciledAt: checkedAt,
+        coversLatestMutation: true,
+      },
+    } as const
+    const controller = {
+      schemaVersion: 1 as const,
+      controllerKey,
+      planHash: controllerPlanHash,
+      active: true,
+      epoch: 11,
+      nextSequence: 7_668,
+      lastSequence: 7_667,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'e'.repeat(64),
+      completedAt: '2026-08-17T22:00:00.000Z',
+      nextDueAt: '2026-08-17T23:01:00.000Z',
+    }
+    const input = {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available' as const, value: undefined },
+        signal: { _tag: 'Available' as const, value: undefined },
+        tigerBeetle: { _tag: 'Available' as const, value: undefined },
+        durableEvidence: { _tag: 'Available' as const, value: undefined },
+        cycle: { _tag: 'Available' as const, value: cycle },
+        broker: null,
+        executionController: { _tag: 'Available' as const, value: controller },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' as const },
+      clock: availableClock(checkedAt),
+    }
+
+    const recovered = deriveHealthTransition(current, input)
+    expect(recovered).toMatchObject({
+      next: {
+        status: 'READY',
+        cycle: {
+          condition: CycleOperationsCondition.Waiting,
+          reason: CycleOperationsReason.ResearchCapitalBootstrapRecovered,
+          last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedSubmission },
+          alerts: { cycleFailed: false, reconciliationBlocked: false },
+        },
+        executionController: { readAvailable: true, status: controller },
+      },
+      failedDependencies: [],
+    })
+
+    const staleCompletion = deriveHealthTransition(current, {
+      ...input,
+      results: {
+        ...input.results,
+        executionController: {
+          _tag: 'Available',
+          value: { ...controller, completedAt: '2026-08-17T20:00:00.000Z' },
+        },
+      },
+    })
+    expect(staleCompletion.next).toMatchObject({
+      status: 'DEGRADED',
+      cycle: {
+        condition: CycleOperationsCondition.Failed,
+        reason: CycleOperationsReason.LastCycleBlocked,
+        alerts: { cycleFailed: true },
+      },
+    })
+
+    const mismatchedController = deriveHealthTransition(current, {
+      ...input,
+      results: {
+        ...input.results,
+        executionController: {
+          _tag: 'Available',
+          value: { ...controller, planHash: '9'.repeat(64) },
+        },
+      },
+    })
+    expect(mismatchedController.next).toMatchObject({
+      status: 'DEGRADED',
+      cycle: {
+        condition: CycleOperationsCondition.Failed,
+        reason: CycleOperationsReason.LastCycleBlocked,
+      },
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'Restate execution-controller projection plan differs from the configured controller',
+          },
+        },
+      },
+    })
+  })
+
   test('observes a research cycle binding when startup evidence is unavailable', async () => {
     const researchPlanHash = 'b'.repeat(64)
     const checkedAt = '2026-07-20T00:00:00.000Z'

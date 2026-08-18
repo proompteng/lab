@@ -339,6 +339,7 @@ export enum CycleOperationsReason {
   ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
   StaleExecutionBootstrapSkipped = 'STALE_CAPITAL_BOOTSTRAP_SKIPPED',
+  ResearchCapitalBootstrapRecovered = 'RESEARCH_CAPITAL_BOOTSTRAP_RECOVERED',
 }
 
 export interface CycleOperationsAlerts {
