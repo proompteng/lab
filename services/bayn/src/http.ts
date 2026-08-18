@@ -159,6 +159,7 @@ const autonomousCycleCadenceObservation = (state: RuntimeState) => {
     lastPassResult: lastPass?.result ?? null,
     lastPassOutcome: lastPass?.result === 'SUCCESS' ? lastPass.outcome : null,
     freshness: autonomousCycleCadenceFreshness(state),
+    ...(lastPass?.cadence === undefined ? {} : { cadence: lastPass.cadence }),
     ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
   })
 }
@@ -178,6 +179,7 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               result: lastPass.result,
               observedAt: lastPass.observedAt,
               outcome: lastPass.outcome,
+              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
               ...(lastPass.notDueReason === undefined ? {} : { notDueReason: lastPass.notDueReason }),
             }
           : {
@@ -185,6 +187,7 @@ const publicAutonomousCycleLoop = (state: RuntimeState) => {
               observedAt: lastPass.observedAt,
               operation: lastPass.operation,
               failure: lastPass.failure,
+              ...(lastPass.cadence === undefined ? {} : { cadence: lastPass.cadence }),
               reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
             },
   } as const

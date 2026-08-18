@@ -110,12 +110,14 @@ export const AutonomousCyclePassObservationSchema = Schema.Union([
       'ACQUIRED',
       'REACQUIRED',
     ]),
+    cadence: Schema.optionalKey(Schema.Literals(['MONTHLY', 'EVERY_SESSION'])),
     notDueReason: Schema.optionalKey(Schema.Enum(CycleNotDueReason)),
     cadenceDecision: Schema.optionalKey(MonthEndCadenceDecisionSchema),
   }),
   Schema.Struct({
     result: Schema.Literal('FAILURE'),
     observedAt: UtcInstantSchema,
+    cadence: Schema.optionalKey(Schema.Literals(['MONTHLY', 'EVERY_SESSION'])),
     operation: Schema.Literals([
       'acquire-cycle',
       'bind-publication',

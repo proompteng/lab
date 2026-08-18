@@ -147,6 +147,7 @@ export const projectAutonomousCycleCadenceObservation = (input: {
   readonly lastPassResult: 'SUCCESS' | 'FAILURE' | null
   readonly lastPassOutcome: string | null
   readonly freshness: AutonomousCycleCadenceFreshness
+  readonly cadence?: 'MONTHLY' | 'EVERY_SESSION'
   readonly cadenceDecision?: MonthEndCadenceDecision
 }): AutonomousCycleCadenceObservation => {
   const common = { schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1' } as const
@@ -220,6 +221,16 @@ export const projectAutonomousCycleCadenceObservation = (input: {
       condition: MonthEndCadenceCondition.Unknown,
       reason: MonthEndCadenceReason.RunnerUnavailable,
       ...retainedEvidence,
+    }
+  }
+  if (input.cadence === 'EVERY_SESSION') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.NotApplicable,
+      reason: MonthEndCadenceReason.PassOutcomeNotApplicable,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
     }
   }
   if (input.cadenceDecision !== undefined) {

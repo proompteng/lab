@@ -11,7 +11,7 @@ import {
   type CycleConstructionFailure,
 } from '../construction'
 import type { CycleDraft } from '../model'
-import type { CycleCandidate } from './model'
+import { isEverySessionCycleCadence, type CycleCandidate } from './model'
 
 const calendarRangeDays = 31
 const publicationCatchUpRangeDays = 21
@@ -211,7 +211,7 @@ const makeDueCycleDraftDataFirst = (
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
 ): Result.Result<CycleDraft | undefined, CycleConstructionFailure> =>
-  candidate.cadence !== 'CAPITAL_BOOTSTRAP' &&
+  !isEverySessionCycleCadence(candidate.cadence) &&
   !isMonthEndCycleDue(candidate.signalSession.session_date, executionSession.date)
     ? Result.succeed(undefined)
     : Result.gen(function* () {

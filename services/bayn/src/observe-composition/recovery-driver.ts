@@ -6,6 +6,7 @@ import {
   CycleRunnerError,
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
+  observableCycleCadence,
   validateCyclePassTimeout,
   validateReconciliationInterval,
   type CycleRunContext,
@@ -55,10 +56,11 @@ type RecoveryFirstDecisionBuilder = (
 const observeMutationPass = (
   startup: Parameters<AutonomousCycleStartup>[0],
   observation: CyclePassObservation,
+  cadence?: CycleRunContext['cadence'],
 ): Effect.Effect<AutonomousCyclePassObservation> => {
-  const facts = cyclePassLogFacts(observation)
+  const facts = cyclePassLogFacts(observation, cadence)
   const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
-  return observePass(startup.recordPass, observation).pipe(
+  return observePass(startup.recordPass, observation, cadence).pipe(
     Effect.tap(() => log.pipe(Effect.annotateLogs(facts.annotations))),
   )
 }
@@ -152,13 +154,15 @@ const observeMutationIdleReconciliation = (
     Effect.flatMap((reconciled) =>
       currentUtcInstant.pipe(
         Effect.flatMap((observedAt) =>
-          observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result: reconciled }),
+          observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result: reconciled }, input.cycleCadence),
         ),
       ),
     ),
     Effect.catch((error) =>
       currentUtcInstant.pipe(
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.flatMap((observedAt) =>
+          observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
+        ),
       ),
     ),
   )
@@ -177,8 +181,12 @@ const observeMutationCycleResult = (
           currentUtcInstant.pipe(
             Effect.flatMap((observedAt) =>
               state.lastFailure === undefined
-                ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })
-                : observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: state.lastFailure }),
+                ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }, input.cycleCadence)
+                : observeMutationPass(
+                    startup,
+                    { outcome: 'FAILED', observedAt, error: state.lastFailure },
+                    input.cycleCadence,
+                  ),
             ),
           ),
         ),
@@ -210,13 +218,19 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.catch((restrictionError: CycleRunnerError) =>
           currentUtcInstant.pipe(
             Effect.flatMap((observedAt) =>
-              observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: restrictionError }),
+              observeMutationPass(
+                startup,
+                { outcome: 'FAILED', observedAt, error: restrictionError },
+                input.cycleCadence,
+              ),
             ),
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
         Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.flatMap((observedAt) =>
+          observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
+        ),
         Effect.map((observation) => ({ observation })),
       )
     const advanceCycle = Effect.gen(function* () {
@@ -263,6 +277,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           result: 'SUCCESS',
           observedAt,
           outcome: 'RECOVERED',
+          cadence: observableCycleCadence(input.cycleCadence),
         }
         return startup.recordPass(observation).pipe(Effect.as({ observation }))
       }),
@@ -281,7 +296,9 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.matchEffect({
         onFailure: (error) =>
           currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+            Effect.flatMap((observedAt) =>
+              observeMutationPass(startup, { outcome: 'FAILED', observedAt, error }, input.cycleCadence),
+            ),
             Effect.map((observation) => ({ observation })),
           ),
         onSuccess: () => continueAfterReconciliation,

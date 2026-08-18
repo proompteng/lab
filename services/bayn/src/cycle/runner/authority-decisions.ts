@@ -3,6 +3,7 @@ import { Pipeable } from '../../pipeable'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
 import type { NonEmptyPublications } from './calendar-decisions'
+import { isEverySessionCycleCadence, type CycleCadence } from './model'
 
 type CycleAuthoritySlotDecision =
   | { readonly _tag: 'UNCLAIMED'; readonly publication: MarketDataInspection }
@@ -110,11 +111,11 @@ export const reduceCycleAuthoritySelection = Pipeable.dual(2, reduceCycleAuthori
 
 const completeCycleAuthoritySelectionDataFirst = (
   state: CycleAuthoritySelectionState,
-  cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP',
+  cadence?: CycleCadence,
 ): CycleAuthoritySelection => {
   if (state._tag === 'TERMINAL') {
     const cycle = state.latestTerminal.cycle
-    return cadence === 'CAPITAL_BOOTSTRAP' && isMissedCapitalBootstrap(cycle)
+    return isEverySessionCycleCadence(cadence) && isMissedCapitalBootstrap(cycle)
       ? {
           _tag: 'READ_CALENDAR',
           publications: [state.latestTerminal.publication],
@@ -123,7 +124,7 @@ const completeCycleAuthoritySelectionDataFirst = (
       : { _tag: 'ALREADY_TERMINAL', cycle }
   }
   const latestTerminal = state.latestTerminal?.cycle
-  if (cadence === 'CAPITAL_BOOTSTRAP' && latestTerminal !== undefined) {
+  if (isEverySessionCycleCadence(cadence) && latestTerminal !== undefined) {
     const newerPublications = state.publications.filter(
       (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
     )
@@ -149,7 +150,7 @@ const completeCycleAuthoritySelectionDataFirst = (
 
 export const completeCycleAuthoritySelection = Pipeable.by<
   (
-    cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP',
+    cadence?: CycleCadence,
   ) => (state: CycleAuthoritySelectionState) => ReturnType<typeof completeCycleAuthoritySelectionDataFirst>,
   typeof completeCycleAuthoritySelectionDataFirst
 >((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, completeCycleAuthoritySelectionDataFirst)

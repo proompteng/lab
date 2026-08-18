@@ -172,6 +172,21 @@ describe('month-end cadence observability decisions', () => {
     })
   })
 
+  test('does not describe every-session execution as month-end waiting', () => {
+    expect(
+      projectAutonomousCycleCadenceObservation({
+        configured: true,
+        lastPassResult: 'SUCCESS',
+        lastPassOutcome: 'NOT_DUE',
+        freshness: 'AVAILABLE',
+        cadence: 'EVERY_SESSION',
+      }),
+    ).toMatchObject({
+      condition: MonthEndCadenceCondition.NotApplicable,
+      reason: MonthEndCadenceReason.PassOutcomeNotApplicable,
+    })
+  })
+
   test('reports a configured first-pass startup hang as stalled after runner classification', () => {
     expect(
       projectAutonomousCycleCadenceObservation({

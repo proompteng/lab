@@ -1,7 +1,7 @@
 import type { Effect } from 'effect'
 import { BrokerRead } from '../broker/alpaca'
 import type { CycleExecutionPolicy } from '../cycle'
-import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
+import type { CycleCadence, CycleRunnerError, CycleRunResult } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
 import {
   BrokerEventStore,
@@ -90,7 +90,7 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
-  readonly cycleCadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
+  readonly cycleCadence?: CycleCadence
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape
   readonly blockedCycleIntentStore?: BlockedCycleIntentStoreShape

@@ -134,7 +134,7 @@ export const mutationCycle = (
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
-    ...(isResearchCapitalActivationRequest(executionMandate) ? { cycleCadence: 'CAPITAL_BOOTSTRAP' as const } : {}),
+    ...(isResearchCapitalActivationRequest(executionMandate) ? { cycleCadence: 'EVERY_SESSION' as const } : {}),
     executionProgram,
     executionCycleClosureStore,
     blockedCycleIntentStore,

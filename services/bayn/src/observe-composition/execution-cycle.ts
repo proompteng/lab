@@ -66,6 +66,7 @@ import {
   type ObserveDecisionInput,
   type ReconciliationPassError,
 } from './decision-builder'
+import { resolveExecutionCycleCloseWindow, type ExecutionCycleCloseWindow } from './execution-window'
 
 export const isPostMutationReconciliation = (
   result: RecoveryFirstCyclePassResult,
@@ -201,15 +202,14 @@ const ensureExecutionCycleClosure = (
   policy: Policy,
   cycle: AutonomousCycle,
   entryDocument: ExecutionDecisionDocument,
+  closeWindow: ExecutionCycleCloseWindow | undefined,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<ExecutionDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
-    const cutoffAt = input.executionMandateCutoffAt
-    const closeExpiresAt = input.executionMandateExpiresAt
     const store = input.executionCycleClosureStore
-    if (cutoffAt === undefined || closeExpiresAt === undefined || store === undefined) return undefined
+    if (closeWindow === undefined || store === undefined) return undefined
     const observedAt = yield* currentUtcInstant
-    if (observedAt < cutoffAt) return undefined
+    if (observedAt < closeWindow.startAt) return undefined
     const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
@@ -227,7 +227,7 @@ const ensureExecutionCycleClosure = (
         cycle,
         entryDocument,
         reconcile,
-        closeExpiresAt,
+        closeExpiresAt: closeWindow.expiresAt,
       })
       if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
       const closure = yield* Effect.fromResult(
@@ -237,7 +237,7 @@ const ensureExecutionCycleClosure = (
           entryDecisionHash,
           document,
           createdAt: document.createdAt,
-          expiresAt: closeExpiresAt,
+          expiresAt: closeWindow.expiresAt,
         }),
       ).pipe(
         Effect.mapError((cause) =>
@@ -265,7 +265,7 @@ const ensureExecutionCycleClosure = (
       cycle,
       entryDocument,
       reconcile,
-      closeExpiresAt,
+      closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
     })
     if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
@@ -276,7 +276,7 @@ const ensureExecutionCycleClosure = (
         entryDecisionHash,
         document,
         createdAt: document.createdAt,
-        expiresAt: closeExpiresAt,
+        expiresAt: closeWindow.expiresAt,
       }),
     ).pipe(
       Effect.mapError((cause) =>
@@ -444,11 +444,46 @@ const executeBoundExecutionCycle = (
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    const closeDocument = yield* ensureExecutionCycleClosure(input, preparation, policy, cycle, document, reconcile)
+    const closeWindow = yield* Effect.fromResult(
+      resolveExecutionCycleCloseWindow({
+        ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
+        executionCloseAt: cycle.window.executionCloseAt,
+        ...(input.executionMandateCutoffAt === undefined ? {} : { mandateCutoffAt: input.executionMandateCutoffAt }),
+        ...(input.executionMandateCloseSubmitCutoffAt === undefined
+          ? {}
+          : { mandateCloseSubmitCutoffAt: input.executionMandateCloseSubmitCutoffAt }),
+        ...(input.executionMandateExpiresAt === undefined
+          ? {}
+          : { mandateCloseExpiresAt: input.executionMandateExpiresAt }),
+      }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'execution cycle close window is invalid',
+          cause,
+          failure: 'contract',
+        }),
+      ),
+    )
+    const closeDocument = yield* ensureExecutionCycleClosure(
+      input,
+      preparation,
+      policy,
+      cycle,
+      document,
+      closeWindow,
+      reconcile,
+    )
     const closeOnly = closeDocument !== undefined
     const phaseInput: ObserveAutonomousCycleInput = {
       ...input,
-      ...(closeOnly ? { mutationPhase: 'CLOSE' as const } : { mutationPhase: 'ENTRY' as const }),
+      ...(closeOnly && closeWindow !== undefined
+        ? {
+            mutationPhase: 'CLOSE' as const,
+            executionMandateCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
+            executionMandateExpiresAt: closeWindow.expiresAt,
+          }
+        : { mutationPhase: 'ENTRY' as const }),
     }
     const activeDocument = closeDocument ?? document
     const step = yield* prepareNextMutationIntent({
@@ -461,25 +496,26 @@ const executeBoundExecutionCycle = (
       allowSubmit: executionMutationSubmissionAllowed({
         capability: capability._tag,
         closeOnly,
-        ...(input.executionMandateCutoffAt === undefined
+        ...(phaseInput.executionMandateCutoffAt === undefined
           ? {}
-          : { executionMandateCutoffAt: input.executionMandateCutoffAt }),
-        ...(input.executionMandateCloseSubmitCutoffAt === undefined
+          : { executionMandateCutoffAt: phaseInput.executionMandateCutoffAt }),
+        ...(phaseInput.executionMandateCloseSubmitCutoffAt === undefined
           ? {}
-          : { executionMandateCloseSubmitCutoffAt: input.executionMandateCloseSubmitCutoffAt }),
+          : { executionMandateCloseSubmitCutoffAt: phaseInput.executionMandateCloseSubmitCutoffAt }),
         observedAt,
       }),
     })
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
+      const entryCutoffAt = closeWindow?.startAt
       const entryHasUnsuccessfulIntent =
-        closeOnly || (input.executionMandateCutoffAt !== undefined && observedAt >= input.executionMandateCutoffAt)
+        closeOnly || (entryCutoffAt !== undefined && observedAt >= entryCutoffAt)
           ? yield* entryExecutionCycleHasUnsuccessfulIntent(document)
           : false
       const terminalization = decideExecutionMandateCycleTerminalization({
         closeOnly,
         observedAt,
-        ...(input.executionMandateCutoffAt === undefined ? {} : { entryCutoffAt: input.executionMandateCutoffAt }),
+        ...(entryCutoffAt === undefined ? {} : { entryCutoffAt }),
         entryHasUnsuccessfulIntent,
       })
       switch (terminalization._tag) {

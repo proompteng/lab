@@ -7,6 +7,8 @@ import type { CycleReadinessError } from '../readiness'
 import type { CycleRecoverySelection } from '../recovery'
 import {
   runnerError,
+  isEverySessionCycleCadence,
+  type CycleCadence,
   type CycleNotDueReason,
   type CyclePassObservation,
   type CycleRunnerError,
@@ -58,6 +60,11 @@ export interface CyclePassLogFacts {
   readonly annotations: Readonly<Partial<Record<string, string | boolean>>>
 }
 
+export type ObservableCycleCadence = 'MONTHLY' | 'EVERY_SESSION'
+
+export const observableCycleCadence = (cadence: CycleCadence | undefined): ObservableCycleCadence =>
+  isEverySessionCycleCadence(cadence) ? 'EVERY_SESSION' : 'MONTHLY'
+
 const cadenceDecisionFromCycle = (cycle: AutonomousCycle): MonthEndCadenceDecision =>
   decideMonthEndCadenceEligibility({
     signalSessionDate: cycle.identity.signalSessionDate,
@@ -89,12 +96,14 @@ export type RetainedAutonomousCyclePassObservation =
       readonly result: 'SUCCESS'
       readonly observedAt: string
       readonly outcome: CycleRunResult['outcome']
+      readonly cadence?: ObservableCycleCadence
       readonly notDueReason?: CycleNotDueReason
       readonly cadenceDecision?: MonthEndCadenceDecision
     }
   | {
       readonly result: 'FAILURE'
       readonly observedAt: string
+      readonly cadence?: ObservableCycleCadence
       readonly operation: CycleRunnerError['operation']
       readonly failure: CycleRunnerError['failure']
       readonly message: string
@@ -102,11 +111,14 @@ export type RetainedAutonomousCyclePassObservation =
 
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,
+  cadence?: CycleCadence,
 ): RetainedAutonomousCyclePassObservation => {
+  const retainedCadence = observableCycleCadence(cadence)
   if (observation.outcome === 'FAILED') {
     return {
       result: 'FAILURE',
       observedAt: observation.observedAt,
+      cadence: retainedCadence,
       operation: observation.error.operation,
       failure: observation.error.failure,
       message: observation.error.message,
@@ -117,6 +129,7 @@ export const retainAutonomousCyclePassObservation = (
     result: 'SUCCESS',
     observedAt: observation.observedAt,
     outcome: observation.result.outcome,
+    cadence: retainedCadence,
     ...(observation.result.outcome === 'NOT_DUE' && observation.result.reason !== undefined
       ? { notDueReason: observation.result.reason }
       : {}),
@@ -138,7 +151,8 @@ const cadenceLogAnnotations = (
     : { nextEligibilityReason: decision.nextEligibility.reason }),
 })
 
-export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassLogFacts => {
+export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: CycleCadence): CyclePassLogFacts => {
+  const cycleCadence = observableCycleCadence(cadence)
   if (observation.outcome === 'FAILED') {
     return {
       level: 'ERROR',
@@ -147,18 +161,20 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         operation: observation.error.operation,
         failure: observation.error.failure,
         message: observation.error.message,
+        cycleCadence,
       },
     }
   }
   const result = observation.result
   const cadenceDecision = cycleRunResultCadenceDecision(result)
-  const cadenceAnnotations = cadenceDecision === undefined ? {} : cadenceLogAnnotations(cadenceDecision)
+  const cadenceAnnotations =
+    cycleCadence === 'EVERY_SESSION' || cadenceDecision === undefined ? {} : cadenceLogAnnotations(cadenceDecision)
   switch (result.outcome) {
     case 'NO_PUBLICATION':
       return {
         level: 'INFO',
         message: 'Bayn autonomous cycle pass completed',
-        annotations: { outcome: result.outcome, observedAt: result.observedAt },
+        annotations: { outcome: result.outcome, observedAt: result.observedAt, cycleCadence },
       }
     case 'ALREADY_ACQUIRED':
     case 'ALREADY_TERMINAL':
@@ -172,6 +188,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
+          cycleCadence,
           ...cadenceAnnotations,
         },
       }
@@ -187,6 +204,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           cycleId: result.readiness.cycle.identity.cycleId,
           cycleState: result.readiness.cycle.state,
           publicationReadiness: result.readiness.outcome,
+          cycleCadence,
           ...cadenceAnnotations,
         },
       }
@@ -202,6 +220,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
+          cycleCadence,
           ...cadenceAnnotations,
         },
       }
@@ -217,6 +236,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           observedAt: result.observedAt,
           calendarResponseHash: result.calendarResponseHash,
           calendarReadContentHash: result.calendarReadContentHash,
+          cycleCadence,
           ...cadenceAnnotations,
         },
       }
@@ -236,6 +256,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           cycleState: result.readiness.cycle.state,
           publicationReadiness: result.readiness.outcome,
           persistenceDeduplicated: !result.receipt.created,
+          cycleCadence,
           ...cadenceAnnotations,
         },
       }

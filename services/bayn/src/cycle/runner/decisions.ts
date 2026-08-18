@@ -30,9 +30,11 @@ export {
 export {
   cyclePassLogFacts,
   finishRecoveryResult,
+  observableCycleCadence,
   readinessFailure,
   validateCycleLoopInterval,
   type CyclePassLogFacts,
+  type ObservableCycleCadence,
 } from './pass-decisions'
 export {
   decideIdleReconciliationCadence,

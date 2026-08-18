@@ -1989,7 +1989,12 @@ describe('Bayn HTTP probes', () => {
         reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
       },
     })
-    expect(expectedFacts.autonomousCycleLoop.lastPass).toEqual({ result: 'SUCCESS', observedAt, outcome: 'NOT_DUE' })
+    expect(expectedFacts.autonomousCycleLoop.lastPass).toEqual({
+      result: 'SUCCESS',
+      observedAt,
+      outcome: 'NOT_DUE',
+      cadence: 'MONTHLY',
+    })
     expect(expectedFacts.autonomousCycleLoop.lastPass).not.toHaveProperty('cadenceDecision')
     const expectedMetrics = renderPrometheusMetrics(expectedWait, config, provenance, 'embedded')
     expect(expectedMetrics).toContain('bayn_autonomous_cycle_cadence_condition{condition="expected_wait"} 1')
@@ -2094,7 +2099,12 @@ describe('Bayn HTTP probes', () => {
           basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
         },
       })
-      expect(facts.autonomousCycleLoop.lastPass).toEqual({ result: 'SUCCESS', observedAt, outcome: result.outcome })
+      expect(facts.autonomousCycleLoop.lastPass).toEqual({
+        result: 'SUCCESS',
+        observedAt,
+        outcome: result.outcome,
+        cadence: 'MONTHLY',
+      })
       expect(facts.autonomousCycleLoop.lastPass).not.toHaveProperty('cadenceDecision')
 
       const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
