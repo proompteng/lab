@@ -60,6 +60,21 @@ export type IntentAuthorityBindingFailure =
 export type ExecutionCapitalLimitFailure =
   | IntentAuthorityBindingFailure
   | {
+      readonly _tag: 'BrokerStateObservationInvalid'
+      readonly observedAt: string
+    }
+  | {
+      readonly _tag: 'BrokerStateObservationInFuture'
+      readonly observedAt: string
+      readonly evaluatedAt: string
+    }
+  | {
+      readonly _tag: 'BrokerStateStale'
+      readonly oldestObservedAt: string
+      readonly evaluatedAt: string
+      readonly maxAgeMs: number
+    }
+  | {
       readonly _tag: 'BrokerAccountMismatch'
       readonly expected: string
       readonly observed: string
@@ -176,7 +191,11 @@ export interface MutationAuthorityDependencies {
   readonly finalSubmitAuthorization: FinalSubmitAuthorization
 }
 
-export type ExecutionBrokerSubmitSnapshot = ExecutionCapitalSnapshot
+export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot {
+  readonly accountObservedAt: string
+  readonly positionsObservedAt: string
+  readonly ordersObservedAt: string
+}
 
 export interface BrokerSubmitRefreshDependencies {
   readonly brokerRead: BrokerReadShape
@@ -184,6 +203,7 @@ export interface BrokerSubmitRefreshDependencies {
 
 export interface ExecutionCapitalLimitContext {
   readonly closeOnly: boolean
+  readonly maxBrokerStateAgeMs: number
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
 }
 
@@ -551,6 +571,53 @@ const validateSnapshotBindings = (
   return Result.succeed(undefined)
 }
 
+const validateBrokerStateFreshness = (
+  snapshot: ExecutionBrokerSubmitSnapshot,
+  evaluatedAt: string,
+  maxAgeMs: number,
+): Result.Result<void, ExecutionCapitalLimitFailure> => {
+  const evaluatedAtMs = Date.parse(evaluatedAt)
+  if (!Number.isFinite(evaluatedAtMs)) {
+    return Result.fail({ _tag: 'BrokerStateObservationInvalid', observedAt: evaluatedAt })
+  }
+
+  const observations = [
+    snapshot.accountObservedAt,
+    snapshot.positionsObservedAt,
+    snapshot.ordersObservedAt,
+    ...snapshot.positions.map((position) => position.observedAt),
+    ...snapshot.openOrders.map((order) => order.observedAt),
+  ]
+  let oldestObservedAt = snapshot.account.observedAt
+  let oldestObservedAtMs = Date.parse(oldestObservedAt)
+  if (!Number.isFinite(oldestObservedAtMs)) {
+    return Result.fail({ _tag: 'BrokerStateObservationInvalid', observedAt: oldestObservedAt })
+  }
+
+  for (const observedAt of [snapshot.account.observedAt, ...observations]) {
+    const observedAtMs = Date.parse(observedAt)
+    if (!Number.isFinite(observedAtMs)) {
+      return Result.fail({ _tag: 'BrokerStateObservationInvalid', observedAt })
+    }
+    if (observedAtMs > evaluatedAtMs) {
+      return Result.fail({ _tag: 'BrokerStateObservationInFuture', observedAt, evaluatedAt })
+    }
+    if (observedAtMs < oldestObservedAtMs) {
+      oldestObservedAt = observedAt
+      oldestObservedAtMs = observedAtMs
+    }
+  }
+
+  return evaluatedAtMs < oldestObservedAtMs + maxAgeMs
+    ? Result.succeed(undefined)
+    : Result.fail({
+        _tag: 'BrokerStateStale',
+        oldestObservedAt,
+        evaluatedAt,
+        maxAgeMs,
+      })
+}
+
 const validateExecutionCapitalLimitsDataFirst = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
@@ -741,6 +808,9 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
       account: account.value,
       positions: stablePositions.success,
       openOrders: openOrders.value,
+      accountObservedAt: account.evidence.observedAt,
+      positionsObservedAt: positionsAfter.evidence.observedAt,
+      ordersObservedAt: openOrders.evidence.observedAt,
     }
   })
 
@@ -797,9 +867,11 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
   limits: ExecutionCapitalLimits,
   intent: Intent,
   snapshot: ExecutionBrokerSubmitSnapshot,
-  _observedAt: string,
+  observedAt: string,
   context: ExecutionCapitalLimitContext,
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
+  const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
+  if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
   const requestedNotional = boundedBrokerOrderNotional(intent)
   if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
   const openOrderNotionals = priceOpenOrders(snapshot.openOrders)

@@ -64,7 +64,10 @@ const evidence: ReadEvidence = {
   contentHash: '4'.repeat(64),
   observedAt: activeAt,
 }
-const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence })
+const readResult = <A>(value: A, observedAt: string = evidence.observedAt): ReadResult<A> => ({
+  value,
+  evidence: { ...evidence, observedAt },
+})
 
 const account = (overrides: Partial<Account> = {}): Account => ({
   id: accountId,
@@ -223,6 +226,9 @@ interface ScenarioInput {
   readonly grant?: ReturnType<typeof persistedGrantRecord>
   readonly persisted?: GrantedCapitalAuthority | undefined
   readonly observedAt?: string
+  readonly accountObservedAt?: string
+  readonly positionsObservedAt?: string
+  readonly ordersObservedAt?: string
   readonly brokerAccount?: Account
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
@@ -244,7 +250,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   const brokerRead: BrokerReadShape = {
     account: Effect.sync(() => {
       trace.push('account')
-      return readResult(input.brokerAccount ?? account())
+      return readResult(input.brokerAccount ?? account(), input.accountObservedAt)
     }),
     accountConfiguration: unusedRead,
     assetBySymbol: () => unusedRead,
@@ -253,13 +259,13 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       const snapshots = input.positionSnapshots
       const positions = snapshots?.[Math.min(positionReads, snapshots.length - 1)] ?? input.positions ?? []
       positionReads += 1
-      return readResult(positions)
+      return readResult(positions, input.positionsObservedAt)
     }),
     orders: (query) =>
       Effect.sync(() => {
         trace.push('orders')
         orderLimit = query?.limit
-        return readResult(input.openOrders ?? [])
+        return readResult(input.openOrders ?? [], input.ordersObservedAt)
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
@@ -312,7 +318,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           proposedIntent,
           snapshot,
           observedAt,
-          { closeOnly: false },
+          { closeOnly: false, maxBrokerStateAgeMs: 300_000 },
         )
         if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
         trace.push('authorize')
@@ -370,6 +376,26 @@ describe('final broker mutation authority', () => {
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
     expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
+  })
+
+  test.each([
+    ['account', { brokerAccount: account({ observedAt: '2026-07-28T07:54:59.999Z' }) }],
+    ['position', { positions: [position({ observedAt: '2026-07-28T07:54:59.999Z' })] }],
+    ['open order', { openOrders: [order({ observedAt: '2026-07-28T07:54:59.999Z' })] }],
+    ['empty positions collection', { positionsObservedAt: '2026-07-28T07:54:59.999Z' }],
+    ['empty orders collection', { ordersObservedAt: '2026-07-28T07:54:59.999Z' }],
+  ] as const)('rejects stale final %s state before broker transmission', async (_name, snapshot) => {
+    const observed = await runLiveSubmit(snapshot)
+
+    expect(failureTag(observed.exit)).toBe('BrokerStateStale')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects final broker observations from the future', async () => {
+    const observed = await runLiveSubmit({ brokerAccount: account({ observedAt: '2026-07-28T08:00:00.001Z' }) })
+
+    expect(failureTag(observed.exit)).toBe('BrokerStateObservationInFuture')
+    expect(observed.submits).toBe(0)
   })
 
   test.each([
