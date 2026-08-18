@@ -1,6 +1,7 @@
-export { CycleDecisionBuildError, CycleRunnerError } from './model'
+export { CycleDecisionBuildError, CycleRunnerError, isEverySessionCycleCadence } from './model'
 export type {
   AutonomousCycleLoopOptions,
+  CycleCadence,
   CycleCandidate,
   CyclePassObservation,
   CycleRunContext,
@@ -14,6 +15,7 @@ export {
   makeDueCycleDraft,
   marketCalendarQueryForPublications,
   marketCalendarQueryForSignal,
+  observableCycleCadence,
   selectCycleAuthoritySlots,
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
@@ -21,5 +23,6 @@ export {
   shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
+  type ObservableCycleCadence,
 } from './decisions'
 export { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'

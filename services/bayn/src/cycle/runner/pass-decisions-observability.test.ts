@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { MonthEndCadenceCondition, MonthEndCadenceReason } from '../observability'
 import { CycleState, type AutonomousCycle } from '../model'
-import type { CyclePassObservation, CycleRunResult } from './model'
+import { CycleNotDueReason, type CyclePassObservation, type CycleRunResult } from './model'
 import { cyclePassLogFacts, retainAutonomousCyclePassObservation } from './pass-decisions'
 
 const observedAt = '2026-08-03T13:30:00.000Z'
@@ -67,11 +67,40 @@ describe('autonomous cycle pass observability', () => {
         observedAt: '2026-07-31T12:59:59.000Z',
         calendarResponseHash: 'a'.repeat(64),
         calendarReadContentHash: 'b'.repeat(64),
+        cycleCadence: 'MONTHLY',
         cadenceCondition: MonthEndCadenceCondition.ExpectedWait,
         cadenceReason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
         nextEligibilityStatus: 'UNKNOWN',
         nextEligibilityReason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
       },
+    })
+  })
+
+  test('reports every-session execution without projecting month-end eligibility', () => {
+    const observation = succeeded({
+      outcome: 'NOT_DUE',
+      reason: CycleNotDueReason.StaleExecutionBootstrap,
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      observedAt,
+      calendarResponseHash: 'a'.repeat(64),
+      calendarReadContentHash: 'b'.repeat(64),
+    })
+
+    expect(cyclePassLogFacts(observation, 'EVERY_SESSION').annotations).toEqual({
+      outcome: 'NOT_DUE',
+      notDueReason: CycleNotDueReason.StaleExecutionBootstrap,
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      observedAt,
+      calendarResponseHash: 'a'.repeat(64),
+      calendarReadContentHash: 'b'.repeat(64),
+      cycleCadence: 'EVERY_SESSION',
+    })
+    expect(retainAutonomousCyclePassObservation(observation, 'EVERY_SESSION')).toMatchObject({
+      result: 'SUCCESS',
+      cadence: 'EVERY_SESSION',
+      outcome: 'NOT_DUE',
     })
   })
 

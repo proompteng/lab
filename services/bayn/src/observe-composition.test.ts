@@ -69,6 +69,7 @@ import {
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
+  decideExecutionCycleCloseDocument,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
   decidePreparedMutationIntent,
@@ -784,6 +785,7 @@ const prepareStoredExecutionStep = async (
   input: typeof fixture.input & {
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
     readonly executionMandateCutoffAt?: string
+    readonly executionMandateCloseSubmitCutoffAt?: string
     readonly executionMandateExpiresAt?: string
   } = fixture.input,
   latestCancel?: MutationEvent,
@@ -796,6 +798,7 @@ const prepareStoredExecutionStep = async (
   document: typeof fixture.document = fixture.document,
   reconciledPositions: readonly Position[] = [],
   effectiveAuthority: Authority = Authority.Execution,
+  drainOpenOrders = false,
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
@@ -837,6 +840,7 @@ const prepareStoredExecutionStep = async (
           ),
         ),
         allowSubmit,
+        drainOpenOrders,
       })
     }).pipe(
       Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -1010,6 +1014,75 @@ describe('OBSERVE runtime composition', () => {
       intentId: second.intentId,
       observedAt,
       submitExpiresAt: secondRisk.evaluation.decision.expiresAt,
+    })
+  })
+
+  test('caps a fresh entry submission at the daily close start', async () => {
+    const fixture = await executionLifecycleFixture()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const dailyCloseStartAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Planned, fixture.document.createdAt),
+      undefined,
+      observedAt,
+      0,
+      () => undefined,
+      { ...fixture.input, executionMandateCutoffAt: dailyCloseStartAt },
+    )
+
+    expect(step).toMatchObject({
+      _tag: 'Execute',
+      action: 'SUBMIT',
+      intentId: fixture.intent.intentId,
+      submitExpiresAt: dailyCloseStartAt,
+    })
+  })
+
+  test('selects cancellation for a stable open entry order before close planning', async () => {
+    const fixture = await executionLifecycleFixture()
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'entry-order-to-cancel',
+      occurredAt: fixture.document.createdAt,
+    }
+    const pending = Result.getOrThrow(decidePreparedMutationIntent(fixture.intent, accepted))
+    if (pending._tag !== 'Pending') return expect.unreachable('accepted entry intent must be pending')
+    const observedAt = utcInstantFromEpochMillis(Date.parse(accepted.occurredAt) + accepted.consistencyDelayMs)
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, accepted.occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      { ...fixture.input, executionMandateCutoffAt: observedAt },
+      undefined,
+      false,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [{ ...pending.order, observedAt }],
+      fixture.document,
+      [],
+      Authority.Execution,
+      true,
+    )
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: 'CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
     })
   })
 
@@ -1470,6 +1543,14 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Unresolved',
       eventType: MutationEventType.SubmitUnknown,
     })
+    expect(decideMutationIntentSettlement(MutationEventType.CancelAccepted)).toEqual({
+      _tag: 'Settled',
+      outcome: 'accepted',
+    })
+    expect(decideMutationIntentSettlement(MutationEventType.CancelUnknown)).toEqual({
+      _tag: 'Unresolved',
+      eventType: MutationEventType.CancelUnknown,
+    })
   })
 
   test('waits the durable consistency window only after accepted submit settlement', () => {
@@ -1517,12 +1598,14 @@ describe('OBSERVE runtime composition', () => {
     const rejected = event(rejectedIntentId, MutationEventType.SubmitRejected)
     const accepted = event(laterIntentId, MutationEventType.SubmitAccepted)
     const submitted: string[] = []
+    const submitDeadlines: string[] = []
     let recoveries = 0
     const program: ExecutionProgram = {
       ...sandboxExecutionProgram(),
-      submit: (intentId) =>
+      submit: (intentId, _consistencyDelayMs, submitExpiresAt) =>
         Effect.sync(() => {
           submitted.push(intentId)
+          submitDeadlines.push(submitExpiresAt)
           return accepted
         }),
       recover: () =>
@@ -1547,10 +1630,11 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(submitted).toEqual([laterIntentId])
+    expect(submitDeadlines).toEqual(['9999-12-31T23:59:59.999Z'])
     expect(recoveries).toBe(0)
   })
 
-  test('recovers accepted and unknown submits and cancellations by lookup only without mutation dispatch', async () => {
+  test('dispatches one fresh cancellation while recovery actions remain lookup-only', async () => {
     const intentId = 'd'.repeat(64)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -1629,6 +1713,10 @@ describe('OBSERVE runtime composition', () => {
     await Effect.runPromise(
       executeMutationIntent(program, intentId, 'RECOVER_SUBMIT').pipe(Effect.provideService(MutationStore, store)),
     )
+    latestSubmit = accepted
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'CANCEL').pipe(Effect.provideService(MutationStore, store)),
+    )
     latestCancel = cancelAccepted
     await Effect.runPromise(
       executeMutationIntent(program, intentId, 'RECOVER_CANCEL').pipe(Effect.provideService(MutationStore, store)),
@@ -1639,7 +1727,7 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(submits).toBe(0)
-    expect(cancels).toBe(0)
+    expect(cancels).toBe(1)
     expect(recoveries).toEqual([
       MutationOperation.Submit,
       MutationOperation.Submit,
@@ -1673,7 +1761,7 @@ describe('OBSERVE runtime composition', () => {
       message: 'lookup-only execution recovery lost its durable cancel evidence',
     })
     expect(submits).toBe(0)
-    expect(cancels).toBe(0)
+    expect(cancels).toBe(1)
   })
 
   test('classifies an identical stable recovery observation as read-only', async () => {
@@ -2641,7 +2729,10 @@ describe('OBSERVE runtime composition', () => {
         reconciliation: closeReconciliation,
       },
     }
-    const buildClose = (entryDocument: typeof fixture.document) =>
+    const buildClose = (
+      entryDocument: typeof fixture.document,
+      closeReconciliationResult: ReconciliationPassResult = currentReconciliation,
+    ) =>
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
@@ -2651,7 +2742,7 @@ describe('OBSERVE runtime composition', () => {
             policy: fixture.policy,
             cycle: fixture.boundCycle,
             entryDocument,
-            reconcile: Effect.succeed(currentReconciliation),
+            reconcile: Effect.succeed(closeReconciliationResult),
             closeExpiresAt,
           })
         }).pipe(
@@ -2669,6 +2760,7 @@ describe('OBSERVE runtime composition', () => {
       )
 
     const close = await buildClose(fixture.document)
+    const noTradeClose = await buildClose(fixture.document, reconciliationResultAt(observedAt))
     const { executionSession: _legacyExecutionSession, ...legacyDocument } = fixture.document
     const legacyClose = await buildClose(legacyDocument as typeof fixture.document)
 
@@ -2682,6 +2774,9 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect(close.dispatchable).toBe(true)
+    expect(noTradeClose.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+    expect(decideExecutionCycleCloseDocument(noTradeClose)).toEqual({ _tag: 'Complete' })
+    expect(decideExecutionCycleCloseDocument({ ...close, dispatchable: false })).toEqual({ _tag: 'Block' })
     expect(legacyClose.targetPlan.intentTargets).toEqual(close.targetPlan.intentTargets)
 
     const committedIntents = new Map<string, StoredIntent>()
@@ -2709,6 +2804,7 @@ describe('OBSERVE runtime composition', () => {
             ...fixture.input,
             mutationPhase: 'CLOSE',
             executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+            executionMandateCloseSubmitCutoffAt: closeExpiresAt,
             executionMandateExpiresAt: closeExpiresAt,
           },
           preparation: fixture.preparation,
@@ -2771,6 +2867,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,
@@ -2800,7 +2897,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions).toHaveLength(1)
   })
 
-  test('continues to an unsubmitted later close intent after an earlier close rejection', async () => {
+  test('continues to a later close intent while capping fresh submission before close expiry', async () => {
     const fixture = await executionLifecycleFixture(
       (policy) => ({
         ...policy,
@@ -2810,6 +2907,7 @@ describe('OBSERVE runtime composition', () => {
       partialFillDecision,
     )
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
+    const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const positions = fixture.intents.map((intent) => ({
       schemaVersion: 'bayn.paper-position.v1' as const,
@@ -2917,6 +3015,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,
@@ -2935,7 +3034,7 @@ describe('OBSERVE runtime composition', () => {
       action: 'SUBMIT',
       intentId: secondIntent.intentId,
       observedAt,
-      submitExpiresAt: closeExpiresAt,
+      submitExpiresAt: closeSubmitCutoffAt,
     })
     expect(restrictions).toHaveLength(1)
   })
@@ -3143,6 +3242,7 @@ describe('OBSERVE runtime composition', () => {
         ...fixture.input,
         mutationPhase: 'CLOSE',
         executionMandateCutoffAt: cutoffAt,
+        executionMandateCloseSubmitCutoffAt: closeExpiresAt,
         executionMandateExpiresAt: closeExpiresAt,
       },
       undefined,
@@ -4941,7 +5041,7 @@ describe('OBSERVE runtime composition', () => {
     expect(authorityRestrictions).toBe(0)
   })
 
-  test('terminalizes an unbound PAPER cycle as BLOCKED after the authority cutoff', async () => {
+  test('terminalizes an unbound PAPER cycle and refuses new discovery after the entry-authority cutoff', async () => {
     const cutoffAt = '2020-05-01T12:45:00.000Z'
     const observedAt = '2020-05-01T12:45:01.000Z'
     const terminalCycle = Effect.runSync(
@@ -5006,18 +5106,25 @@ describe('OBSERVE runtime composition', () => {
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureRuntime,
+      cycleCadence: 'EVERY_SESSION',
       executionProgram: sandboxExecutionProgram(),
       executionMandateCutoffAt: cutoffAt,
     })
 
-    const observation = await Effect.runPromise(
+    const observations = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
-          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const firstPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const secondPass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          let passCount = 0
           const loop = yield* startup({
             qualificationRunId: cycle.identity.qualificationRunId,
-            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+            recordPass: (result) => {
+              const target = passCount === 0 ? firstPass : secondPass
+              passCount += 1
+              return Deferred.succeed(target, result).pipe(Effect.asVoid)
+            },
           })
           const fiber = yield* loop.pipe(
             Effect.provideService(BrokerRead, brokerRead),
@@ -5034,14 +5141,17 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped({ startImmediately: true }),
           )
-          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          const first = yield* Deferred.await(firstPass).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(30_000)
+          const second = yield* Deferred.await(secondPass).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
-          return result
+          return [first, second] as const
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
 
-    expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(observations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(observations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(blocked).toBe(1)
     expect(terminal).toBe(true)
   })

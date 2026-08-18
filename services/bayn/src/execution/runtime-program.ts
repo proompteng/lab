@@ -247,6 +247,26 @@ const provideCoordinatorDependencies = <A, E, R>(
     Effect.provideService(WriterFence, dependencies.writerFence),
   )
 
+const earlierDefinedInstant = (left: string | undefined, right: string | undefined): string | undefined => {
+  if (left === undefined) return right
+  if (right === undefined) return left
+  return left < right ? left : right
+}
+
+const scopeSubmitDeadline = (
+  dependencies: ExecutionProgramDependencies,
+  submitExpiresAt: string | undefined,
+): ExecutionProgramDependencies => {
+  if (submitExpiresAt === undefined) return dependencies
+  const entrySubmitExpiresAt = earlierDefinedInstant(dependencies.entrySubmitExpiresAt, submitExpiresAt)
+  const closeSubmitExpiresAt = earlierDefinedInstant(dependencies.closeSubmitExpiresAt, submitExpiresAt)
+  return {
+    ...dependencies,
+    ...(entrySubmitExpiresAt === undefined ? {} : { entrySubmitExpiresAt }),
+    ...(closeSubmitExpiresAt === undefined ? {} : { closeSubmitExpiresAt }),
+  }
+}
+
 const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
     return Result.fail({
@@ -255,31 +275,38 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
     })
   }
   const mutationAuthority: MutationExecutionAuthority = authority
-  const coordinatorDependencies: ExecutionProgramDependencies = {
-    ...dependencies,
-    brokerMutation: makeAuthorityGuardedBrokerMutation(authority, {
-      brokerMutation: dependencies.brokerMutation,
-      finalSubmitAuthorization: (intent, transmit) =>
-        authorizeFinalBrokerSubmit(mutationAuthority, intent, transmit, dependencies),
-    }),
+  const coordinatorDependencies = (submitExpiresAt?: string): ExecutionProgramDependencies => {
+    const scoped = scopeSubmitDeadline(dependencies, submitExpiresAt)
+    return {
+      ...scoped,
+      brokerMutation: makeAuthorityGuardedBrokerMutation(authority, {
+        brokerMutation: scoped.brokerMutation,
+        finalSubmitAuthorization: (intent, transmit) =>
+          authorizeFinalBrokerSubmit(mutationAuthority, intent, transmit, scoped),
+      }),
+    }
   }
+  const defaultCoordinatorDependencies = coordinatorDependencies()
   const isCloseOnlyIntent = (intentId: string) =>
     dependencies.isCloseOnlyIntent === undefined ? Effect.succeed(false) : dependencies.isCloseOnlyIntent(intentId)
   return Result.succeed({
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
-    dryRunSubmit: (intentId: string) => provideCoordinatorDependencies(dryRunSubmit(intentId), coordinatorDependencies),
-    submit: (intentId: string, consistencyDelayMs: number) =>
-      isCloseOnlyIntent(intentId).pipe(
+    dryRunSubmit: (intentId: string) =>
+      provideCoordinatorDependencies(dryRunSubmit(intentId), defaultCoordinatorDependencies),
+    submit: (intentId: string, consistencyDelayMs: number, submitExpiresAt: string) => {
+      const submissionDependencies = coordinatorDependencies(submitExpiresAt)
+      return isCloseOnlyIntent(intentId).pipe(
         Effect.flatMap((closeOnly) =>
-          provideCoordinatorDependencies(submit(intentId, consistencyDelayMs, closeOnly), coordinatorDependencies),
+          provideCoordinatorDependencies(submit(intentId, consistencyDelayMs, closeOnly), submissionDependencies),
         ),
-      ),
+      )
+    },
     cancel: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), coordinatorDependencies),
+      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
     recover: (intentId: string, operation: MutationOperation) =>
-      provideCoordinatorDependencies(recover(intentId, operation), coordinatorDependencies),
+      provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies),
   })
 }
 

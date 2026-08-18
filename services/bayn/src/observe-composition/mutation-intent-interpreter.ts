@@ -56,6 +56,7 @@ export type MutationIntentInput = {
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionMandateCutoffAt?: string
+  readonly executionMandateCloseSubmitCutoffAt?: string
   readonly executionMandateExpiresAt?: string
 }
 
@@ -143,19 +144,21 @@ const boundExecutionSubmissionCutoff = (
 ): Result.Result<string, CycleRunnerError> => {
   if (input.mutationPhase === 'CLOSE') {
     if (
+      input.executionMandateCloseSubmitCutoffAt === undefined ||
       input.executionMandateExpiresAt === undefined ||
       document.submissionCutoffAt !== input.executionMandateExpiresAt ||
-      document.expiresAt !== input.executionMandateExpiresAt
+      document.expiresAt !== input.executionMandateExpiresAt ||
+      input.executionMandateCloseSubmitCutoffAt > input.executionMandateExpiresAt
     ) {
       return Result.fail(
         mutationRunnerError({
-          message: 'durable execution close plan changed from its immutable activation close lease',
+          message: 'durable execution close plan changed from its immutable activation close window',
           cause: undefined,
           failure: 'contract',
         }),
       )
     }
-    return Result.succeed(input.executionMandateExpiresAt)
+    return Result.succeed(input.executionMandateCloseSubmitCutoffAt)
   }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -169,7 +172,11 @@ const boundExecutionSubmissionCutoff = (
       }),
     )
   }
-  return Result.succeed(cycle.window.submissionCutoffAt)
+  return Result.succeed(
+    input.executionMandateCutoffAt !== undefined && input.executionMandateCutoffAt < cycle.window.submissionCutoffAt
+      ? input.executionMandateCutoffAt
+      : cycle.window.submissionCutoffAt,
+  )
 }
 
 const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolean =>
@@ -245,6 +252,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
   document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
   allowSubmit: boolean,
+  drainOpenOrders: boolean,
   dependencies: MutationPreparationDependencies<R, E, I, P>,
 ): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore> =>
   Effect.gen(function* () {
@@ -405,7 +413,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    if (generationIsSuperseded) {
+    if (!drainOpenOrders && generationIsSuperseded) {
       if (pendingRecovery !== undefined) {
         return mutationRecoveryIsDue(pendingRecovery.event, recoveryObservedAt)
           ? {
@@ -424,7 +432,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     const policyValidation = validateCurrentMutationPolicy(policy, document)
-    if (Result.isFailure(policyValidation)) {
+    if (!drainOpenOrders && Result.isFailure(policyValidation)) {
       if (pendingRecovery !== undefined) {
         return mutationRecoveryIsDue(pendingRecovery.event, recoveryObservedAt)
           ? {
@@ -439,7 +447,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     const uncommittedIntents = preparedIntents.filter((prepared) => prepared.stored === undefined)
-    if (!allowSubmit && uncommittedIntents.length > 0) {
+    if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
       return { _tag: 'Wait', observedAt: recoveryObservedAt }
     }
     if (allowSubmit) {
@@ -458,12 +466,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         )
       }
     }
-    if (uncommittedIntents.length > 0) {
+    if (!drainOpenOrders && uncommittedIntents.length > 0) {
       const commitObservedAt = yield* dependencies.now
       const commitExpiresAt = uncommittedIntents.reduce(
         (expiresAt, prepared) =>
           executionSubmitExpiresAt(expiresAt, prepared.riskBinding.evaluation.decision.expiresAt),
-        document.expiresAt,
+        executionSubmitExpiresAt(document.expiresAt, submissionCutoffAt),
       )
       const expirationReason = expiredExecutionPlanTerminalReason(commitObservedAt, commitExpiresAt, submissionCutoffAt)
       if (expirationReason !== undefined) {
@@ -491,8 +499,9 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         failure: 'store',
       })
     }
+    const preparedIntentsToCommit = drainOpenOrders ? [] : preparedIntents
     yield* Effect.forEach(
-      preparedIntents,
+      preparedIntentsToCommit,
       (prepared) =>
         (input.mutationPhase === 'CLOSE' && intentStore.commitClosing !== undefined
           ? intentStore.commitClosing(prepared.intent, prepared.riskBinding.evaluation.decision)
@@ -526,12 +535,17 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           readonly observedAt: string
         }
       | undefined
+    const preparedIntentsToInspect = drainOpenOrders
+      ? preparedIntents.filter((prepared) => prepared.stored !== undefined)
+      : preparedIntents
     const hasFilledIntent = executionCycleHasFilledIntent({
-      intents: preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
+      intents: preparedIntentsToInspect.flatMap((prepared) =>
+        prepared.stored === undefined ? [] : [prepared.stored.intent],
+      ),
       orders: facts.reconciliation.brokerState.orders,
     })
     const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
-    for (const prepared of preparedIntents) {
+    for (const prepared of preparedIntentsToInspect) {
       const stored = yield* intentStore
         .read(prepared.intent.intentId)
         .pipe(
@@ -566,11 +580,13 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
           })
           if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
-            unsuccessfulIntentFound = true
-            yield* dependencies.restrictAuthority(
-              executionCycleRestrictionSubject,
-              `bound cycle ${cycle.identity.cycleId}: intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
-            )
+            if (!drainOpenOrders) {
+              unsuccessfulIntentFound = true
+              yield* dependencies.restrictAuthority(
+                executionCycleRestrictionSubject,
+                `bound cycle ${cycle.identity.cycleId}: intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
+              )
+            }
             continue
           }
           break
@@ -581,6 +597,14 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
           )
           if (observation._tag === 'StableOpen') {
+            if (drainOpenOrders) {
+              return {
+                _tag: 'Execute',
+                action: 'CANCEL',
+                intentId: prepared.intent.intentId,
+                observedAt: facts.evaluatedAt,
+              }
+            }
             pendingIntentFound = true
             continue
           }
@@ -603,6 +627,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               }
             : { _tag: 'Wait', observedAt: facts.evaluatedAt }
         case 'Submit': {
+          if (drainOpenOrders) continue
           if (entryHasTerminalUnsuccessfulIntent) continue
           if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
           const submitExpiresAt = executionSubmitExpiresAt(
@@ -654,6 +679,8 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         }
       }
     }
+
+    if (drainOpenOrders) return { _tag: 'Complete', observedAt: facts.evaluatedAt }
 
     if (pendingIntentFound) {
       if (deferredExpiration !== undefined) {
@@ -717,7 +744,8 @@ export const prepareMutationIntent = Pipeable.generic<
     document: ExecutionDecisionDocument,
     reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
     allowSubmit: boolean,
+    drainOpenOrders: boolean,
     dependencies: MutationPreparationDependencies<R, E, I, P>,
   ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
   typeof prepareMutationIntentDataFirst
->(8, prepareMutationIntentDataFirst)
+>(9, prepareMutationIntentDataFirst)

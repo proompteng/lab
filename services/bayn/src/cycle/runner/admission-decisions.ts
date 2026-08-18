@@ -15,6 +15,7 @@ import {
 import {
   runnerError,
   CycleNotDueReason,
+  isEverySessionCycleCadence,
   type CycleCandidate,
   type CycleRunContext,
   type CycleRunnerError,
@@ -58,7 +59,7 @@ export const selectCycleAcquisition = (
   material: CycleAcquireMaterial,
   acquiredAt: string,
 ): CycleCalendarCandidateDecision =>
-  cadence === 'CAPITAL_BOOTSTRAP' && acquiredAt >= material.draft.window.publicationDeadlineAt
+  isEverySessionCycleCadence(cadence) && acquiredAt >= material.draft.window.publicationDeadlineAt
     ? { _tag: 'NOT_DUE', result: staleExecutionBootstrapResult(material, acquiredAt) }
     : { _tag: 'ACQUIRE', material }
 
@@ -102,7 +103,7 @@ const selectCycleCalendarPublication = <R>(
         }
       }
       const material = { publication, draft, ...common }
-      if (context.cadence === 'CAPITAL_BOOTSTRAP' && knownMissedCapitalBootstrap) {
+      if (isEverySessionCycleCadence(context.cadence) && knownMissedCapitalBootstrap) {
         return { _tag: 'NOT_DUE', result: staleExecutionBootstrapResult(material, observedAt) }
       }
       return selectCycleAcquisition(context.cadence, material, observedAt)

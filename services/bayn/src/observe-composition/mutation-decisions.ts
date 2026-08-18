@@ -574,7 +574,7 @@ export type PreparedMutationCycleStep =
   | { readonly _tag: 'RunCycle' }
   | {
       readonly _tag: 'Execute'
-      readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL'
+      readonly action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL'
       readonly intentId: string
       readonly observedAt: string
     }
@@ -634,6 +634,7 @@ export type MutationIntentSettlementDecision =
 export const decideMutationIntentSettlement = (eventType: MutationEventType): MutationIntentSettlementDecision => {
   switch (eventType) {
     case MutationEventType.SubmitAccepted:
+    case MutationEventType.CancelAccepted:
     case MutationEventType.RecoveryFound:
       return { _tag: 'Settled', outcome: 'accepted' }
     case MutationEventType.SubmitRejected:

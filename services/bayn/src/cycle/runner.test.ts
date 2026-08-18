@@ -1458,6 +1458,7 @@ describe('autonomous cycle runner', () => {
         operation: 'market-calendar',
         failure: 'calendar-read',
         message: 'calendar failed',
+        cycleCadence: 'MONTHLY',
       },
     })
   })
@@ -1514,18 +1515,24 @@ describe('autonomous cycle runner', () => {
     })
   })
 
-  test('admits a PAPER bootstrap publication without weakening the default monthly cadence', () => {
+  test('admits every finalized session without weakening the default monthly cadence', () => {
     const executionSession = selectNextExecutionSession('2026-01-29', ordinaryNotDueCalendar)
-    if (executionSession === undefined) throw new Error('bootstrap fixture must have an execution session')
+    if (executionSession === undefined) throw new Error('every-session fixture must have an execution session')
     const monthly = makeDueCycleDraft(candidate('2026-01-29'), ordinaryNotDueCalendar, executionSession)
-    const bootstrap = makeDueCycleDraft(
+    const everySession = makeDueCycleDraft(
+      { ...candidate('2026-01-29'), cadence: 'EVERY_SESSION' },
+      ordinaryNotDueCalendar,
+      executionSession,
+    )
+    const legacy = makeDueCycleDraft(
       { ...candidate('2026-01-29'), cadence: 'CAPITAL_BOOTSTRAP' },
       ordinaryNotDueCalendar,
       executionSession,
     )
     expect(monthly).toEqual(Result.succeed(undefined))
-    expect(Result.isSuccess(bootstrap)).toBe(true)
-    if (Result.isSuccess(bootstrap)) expect(bootstrap.success?.identity.signalSessionDate).toBe('2026-01-29')
+    expect(Result.isSuccess(everySession)).toBe(true)
+    expect(Result.isSuccess(legacy)).toBe(true)
+    if (Result.isSuccess(everySession)) expect(everySession.success?.identity.signalSessionDate).toBe('2026-01-29')
   })
 
   test('does nothing when no finalized publication exists and never reads the broker', async () => {
@@ -1837,7 +1844,7 @@ describe('autonomous cycle runner', () => {
     expect(control.binds).toBe(0)
   })
 
-  test('skips an expired PAPER bootstrap without persistence and admits only a newer publication', async () => {
+  test('skips an expired every-session publication without persistence and admits only a newer publication', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
     let calendarReads = 0
@@ -1845,7 +1852,7 @@ describe('autonomous cycle runner', () => {
       calendarReads += 1
       return Effect.succeed({ value: monthEndCalendar, evidence })
     })
-    const capitalContext = { ...context(), cadence: 'CAPITAL_BOOTSTRAP' as const }
+    const capitalContext = { ...context(), cadence: 'EVERY_SESSION' as const }
     const missedPublication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
     const newerPublication = finalizedPublicationInspection('2026-01-30', '2026-01-30T21:15:00.000Z')
 
@@ -1892,7 +1899,7 @@ describe('autonomous cycle runner', () => {
     expect(control.binds).toBe(1)
   })
 
-  test('rechecks a PAPER bootstrap deadline immediately before acquisition without persisting the race loser', async () => {
+  test('rechecks an every-session deadline immediately before acquisition without persisting the race loser', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const times = [
       Date.parse('2026-02-02T13:57:59.998Z'),
@@ -1912,7 +1919,7 @@ describe('autonomous cycle runner', () => {
 
     const result = await Effect.runPromise(
       provide(
-        runAutonomousCyclePass({ ...context(), cadence: 'CAPITAL_BOOTSTRAP' }),
+        runAutonomousCyclePass({ ...context(), cadence: 'EVERY_SESSION' }),
         brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
         cycleStore(control),
         marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),

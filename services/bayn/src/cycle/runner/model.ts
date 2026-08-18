@@ -8,6 +8,15 @@ import type { CycleAcquireReceipt } from '../store'
 
 type SignalCycleSession = Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'close_time' | 'timezone'>
 
+/**
+ * `CAPITAL_BOOTSTRAP` is accepted only while pre-every-session callers are upgraded. New execution paths must use
+ * `EVERY_SESSION`; neither value is persisted in an autonomous-cycle row.
+ */
+export type CycleCadence = 'MONTHLY' | 'EVERY_SESSION' | 'CAPITAL_BOOTSTRAP'
+
+export const isEverySessionCycleCadence = (cadence: CycleCadence | undefined): boolean =>
+  cadence === 'EVERY_SESSION' || cadence === 'CAPITAL_BOOTSTRAP'
+
 export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuildError')<{
   readonly failure: 'contract' | 'database' | 'market-data' | 'operational' | 'store'
   readonly message: string
@@ -22,7 +31,7 @@ export class CycleNotDueReconciliationError extends Data.TaggedError('CycleNotDu
 
 export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
-  readonly cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
+  readonly cadence?: CycleCadence
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
@@ -34,7 +43,7 @@ export interface CycleRunContext<R = never> {
 
 export interface CycleCandidate {
   readonly qualificationRunId: string
-  readonly cadence?: 'MONTHLY' | 'CAPITAL_BOOTSTRAP'
+  readonly cadence?: CycleCadence
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly signalSession: SignalCycleSession

@@ -12,7 +12,12 @@ import { decideMutationIntentSettlement, type MutationIntentExecutionResult } fr
 import { Pipeable } from '../pipeable'
 
 export type ExecutionMutationExecutor<E, R> = {
-  readonly submit?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
+  readonly submit?: (
+    intentId: string,
+    consistencyDelayMs: number,
+    submitExpiresAt: string,
+  ) => Effect.Effect<MutationEvent, E, R>
+  readonly cancel?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
 
@@ -66,7 +71,7 @@ const submitDoesNotRequireRecovery = (eventType: MutationEvent['eventType']): bo
 export interface ExecuteMutationIntentInput<E, R> {
   readonly executor: ExecutionMutationExecutor<E, R>
   readonly intentId: string
-  readonly action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
+  readonly action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
   readonly submitExpiresAt?: string | undefined
   readonly now?: Effect.Effect<string, never, R>
 }
@@ -77,7 +82,8 @@ export const executeMutationIntentWithExecutor = <E, R>(
   const { executor, intentId, action, submitExpiresAt, now = currentUtcInstant } = input
   return Effect.gen(function* () {
     const store = yield* MutationStore
-    const operation = action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit
+    const operation =
+      action === 'CANCEL' || action === 'RECOVER_CANCEL' ? MutationOperation.Cancel : MutationOperation.Submit
     const existing = yield* store.latest(intentId, operation).pipe(
       Effect.mapError((cause) =>
         mutationRunnerError({
@@ -89,38 +95,52 @@ export const executeMutationIntentWithExecutor = <E, R>(
     )
     let event: MutationEvent
     if (existing === undefined) {
-      if (action !== 'SUBMIT') {
+      if (action === 'RECOVER_CANCEL' || action === 'RECOVER_SUBMIT') {
         return yield* mutationRunnerError({
           message: `lookup-only execution recovery lost its durable ${operation.toLowerCase()} evidence`,
           cause: { intentId, action, operation },
           failure: 'contract',
         })
       }
-      if (submitExpiresAt === undefined) {
+      if (action === 'CANCEL') {
+        if (executor.cancel === undefined) {
+          return yield* mutationRunnerError({
+            message: 'fresh broker cancellation is unavailable under OBSERVE recovery-only authority',
+            cause: undefined,
+            failure: 'contract',
+          })
+        }
+        event = yield* executor
+          .cancel(intentId, mutationConsistencyDelayMs)
+          .pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: 'guarded broker cancellation failed', cause })),
+          )
+      } else if (submitExpiresAt === undefined) {
         return yield* mutationRunnerError({
           message: 'fresh broker submit is missing its immutable submission cutoff',
           cause: undefined,
           failure: 'contract',
         })
+      } else {
+        const submitObservedAt = yield* now
+        if (submitObservedAt >= submitExpiresAt) {
+          return yield* mutationRunnerError({
+            message: 'fresh broker submit crossed its immutable submission cutoff before broker I/O',
+            cause: { intentId, submitObservedAt, submitExpiresAt },
+            failure: 'contract',
+          })
+        }
+        if (executor.submit === undefined) {
+          return yield* mutationRunnerError({
+            message: 'fresh broker submit is unavailable under OBSERVE recovery-only authority',
+            cause: undefined,
+            failure: 'contract',
+          })
+        }
+        event = yield* executor
+          .submit(intentId, mutationConsistencyDelayMs, submitExpiresAt)
+          .pipe(Effect.mapError((cause) => mutationRunnerError({ message: 'guarded broker submit failed', cause })))
       }
-      const submitObservedAt = yield* now
-      if (submitObservedAt >= submitExpiresAt) {
-        return yield* mutationRunnerError({
-          message: 'fresh broker submit crossed its immutable submission cutoff before broker I/O',
-          cause: { intentId, submitObservedAt, submitExpiresAt },
-          failure: 'contract',
-        })
-      }
-      if (executor.submit === undefined) {
-        return yield* mutationRunnerError({
-          message: 'fresh broker submit is unavailable under OBSERVE recovery-only authority',
-          cause: undefined,
-          failure: 'contract',
-        })
-      }
-      event = yield* executor
-        .submit(intentId, mutationConsistencyDelayMs)
-        .pipe(Effect.mapError((cause) => mutationRunnerError({ message: 'guarded broker submit failed', cause })))
     } else if (operation === MutationOperation.Submit && submitDoesNotRequireRecovery(existing.eventType)) {
       event = existing
     } else {
@@ -135,7 +155,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
     const settlement = decideMutationIntentSettlement(event.eventType)
     if (settlement._tag === 'Unresolved') {
       return yield* mutationRunnerError({
-        message: `guarded broker submit remains unresolved at ${settlement.eventType}`,
+        message: `guarded broker mutation remains unresolved at ${settlement.eventType}`,
         cause: event,
         failure: 'operational',
       })
@@ -152,12 +172,13 @@ export const executeMutationIntentWithExecutor = <E, R>(
 const executeMutationIntentDataFirst = (
   executionProgram: ExecutionProgram,
   intentId: string,
-  action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
+  action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
   submitExpiresAt?: string,
 ): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   executeMutationIntentWithExecutor({
     executor: {
       submit: executionProgram.submit,
+      cancel: executionProgram.cancel,
       recover: executionProgram.recover,
     },
     intentId,
@@ -169,7 +190,7 @@ const executeMutationIntentDataFirst = (
 export const executeMutationIntent = Pipeable.by<
   (
     intentId: string,
-    action: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
+    action: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT',
     submitExpiresAt?: string,
   ) => (executionProgram: ExecutionProgram) => ReturnType<typeof executeMutationIntentDataFirst>,
   typeof executeMutationIntentDataFirst

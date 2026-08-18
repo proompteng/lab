@@ -147,15 +147,19 @@ export const projectAutonomousCycleCadenceObservation = (input: {
   readonly lastPassResult: 'SUCCESS' | 'FAILURE' | null
   readonly lastPassOutcome: string | null
   readonly freshness: AutonomousCycleCadenceFreshness
+  readonly cadence?: 'MONTHLY' | 'EVERY_SESSION'
   readonly cadenceDecision?: MonthEndCadenceDecision
 }): AutonomousCycleCadenceObservation => {
   const common = { schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1' } as const
   const unavailable = unknownNextEligibility(MonthEndCadenceReason.FutureCalendarEvidenceUnavailable)
-  const retainedEvidence = {
-    signalSessionDate: input.cadenceDecision?.signalSessionDate ?? null,
-    executionSessionDate: input.cadenceDecision?.executionSessionDate ?? null,
-    nextEligibility: input.cadenceDecision?.nextEligibility ?? unavailable,
-  }
+  const retainedEvidence =
+    input.cadence === 'EVERY_SESSION'
+      ? { signalSessionDate: null, executionSessionDate: null, nextEligibility: unavailable }
+      : {
+          signalSessionDate: input.cadenceDecision?.signalSessionDate ?? null,
+          executionSessionDate: input.cadenceDecision?.executionSessionDate ?? null,
+          nextEligibility: input.cadenceDecision?.nextEligibility ?? unavailable,
+        }
   if (!input.configured) {
     return {
       ...common,
@@ -220,6 +224,16 @@ export const projectAutonomousCycleCadenceObservation = (input: {
       condition: MonthEndCadenceCondition.Unknown,
       reason: MonthEndCadenceReason.RunnerUnavailable,
       ...retainedEvidence,
+    }
+  }
+  if (input.cadence === 'EVERY_SESSION') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.NotApplicable,
+      reason: MonthEndCadenceReason.PassOutcomeNotApplicable,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
     }
   }
   if (input.cadenceDecision !== undefined) {

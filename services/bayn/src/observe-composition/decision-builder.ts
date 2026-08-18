@@ -7,6 +7,7 @@ import {
   CycleRunnerError,
   marketCalendarQueryForSignal,
   type CyclePassObservation,
+  type CycleRunContext,
 } from '../cycle/runner'
 import { CycleNotDueReconciliationError } from '../cycle/runner/model'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
@@ -985,7 +986,8 @@ export const buildClosingExecutionCycleDecision = (
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
   observation: CyclePassObservation,
+  cadence?: CycleRunContext['cadence'],
 ): Effect.Effect<AutonomousCyclePassObservation> => {
-  const retained = retainAutonomousCyclePassObservation(observation)
+  const retained = retainAutonomousCyclePassObservation(observation, cadence)
   return recordPass(retained).pipe(Effect.as(retained))
 }

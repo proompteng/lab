@@ -172,6 +172,41 @@ describe('month-end cadence observability decisions', () => {
     })
   })
 
+  test('does not describe every-session execution as month-end waiting', () => {
+    const cadenceDecision = decideMonthEndCadenceEligibility({
+      signalSessionDate: '2026-07-31',
+      executionSessionDate: '2026-08-03',
+    })
+    const project = (freshness: 'AVAILABLE' | 'STALE' | 'UNAVAILABLE') =>
+      projectAutonomousCycleCadenceObservation({
+        configured: true,
+        lastPassResult: 'SUCCESS',
+        lastPassOutcome: 'NOT_DUE',
+        freshness,
+        cadence: 'EVERY_SESSION',
+        cadenceDecision,
+      })
+
+    expect(project('AVAILABLE')).toMatchObject({
+      condition: MonthEndCadenceCondition.NotApplicable,
+      reason: MonthEndCadenceReason.PassOutcomeNotApplicable,
+    })
+    expect(project('STALE')).toMatchObject({
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: { status: 'UNKNOWN' },
+    })
+    expect(project('UNAVAILABLE')).toMatchObject({
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.RunnerUnavailable,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: { status: 'UNKNOWN' },
+    })
+  })
+
   test('reports a configured first-pass startup hang as stalled after runner classification', () => {
     expect(
       projectAutonomousCycleCadenceObservation({
