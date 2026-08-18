@@ -238,6 +238,7 @@ interface ScenarioInput {
   readonly proposedIntent?: Intent
   readonly persistedAtRead?: (positionReads: number) => GrantedCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
+  readonly maxNetExposureMicros?: string
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -327,7 +328,11 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           proposedIntent,
           snapshot,
           observedAt,
-          { closeOnly: false, maxBrokerStateAgeMs: 300_000 },
+          {
+            closeOnly: false,
+            maxBrokerStateAgeMs: 300_000,
+            maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
+          },
         )
         if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
         trace.push('authorize')
@@ -432,6 +437,38 @@ describe('final broker mutation authority', () => {
 
     expect(failureTag(observed.exit)).toBe('BuyingPowerExceeded')
     expect(observed.grantReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a buy when refreshed broker positions exceed the policy net-exposure cap', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position()],
+      maxNetExposureMicros: '199999999',
+    })
+
+    expect(failureTag(observed.exit)).toBe('NetExposureLimitExceeded')
+    expect(observed.grantReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('keeps a net-exposure-reducing sell eligible while the account remains above the policy cap', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position({ quantityMicros: '3000000', marketValueMicros: '300000000' })],
+      maxNetExposureMicros: '150000000',
+      proposedIntent: intent({ side: OrderSide.Sell }),
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('includes stable pending buys in the final policy net-exposure bound', async () => {
+    const observed = await runLiveSubmit({
+      openOrders: [order()],
+      maxNetExposureMicros: '199999999',
+    })
+
+    expect(failureTag(observed.exit)).toBe('NetExposureLimitExceeded')
     expect(observed.submits).toBe(0)
   })
 

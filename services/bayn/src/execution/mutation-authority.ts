@@ -142,6 +142,11 @@ export type ExecutionCapitalLimitFailure =
       readonly projectedMicros: string
     }
   | {
+      readonly _tag: 'NetExposureLimitExceeded'
+      readonly limitMicros: string
+      readonly projectedMicros: string
+    }
+  | {
       readonly _tag: 'DailyLossLimitExceeded'
       readonly limitMicros: string
       readonly observedMicros: string
@@ -218,6 +223,7 @@ export interface BrokerSubmitRefreshDependencies {
 export interface ExecutionCapitalLimitContext {
   readonly closeOnly: boolean
   readonly maxBrokerStateAgeMs: number
+  readonly maxNetExposureMicros: string
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>
 }
 
@@ -753,7 +759,19 @@ const validateExecutionCapitalLimitsDataFirst = (
   const currentGross = worstCaseGross(false)
   const projectedGross = worstCaseGross(true)
   const currentNet = [...currentBySymbol.values()].reduce((total, notional) => total + notional, 0n)
-  const projectedNet = currentNet + proposedSignedNotional
+  const pendingNetExposure = [...pendingBySymbol.values()].reduce(
+    (total, pending) => ({
+      buyMicros: total.buyMicros + pending.buyMicros,
+      sellMicros: total.sellMicros + pending.sellMicros,
+    }),
+    emptyPendingSymbolExposure,
+  )
+  const currentNetExposure = maximumAbsoluteExposureAcrossPendingFills(currentNet, pendingNetExposure, 0n)
+  const projectedNetExposure = maximumAbsoluteExposureAcrossPendingFills(
+    currentNet,
+    pendingNetExposure,
+    proposedSignedNotional,
+  )
   const projectedQuantity = minimumSymbolQuantityAfterPendingSells(intent, snapshot)
   if (Result.isFailure(projectedQuantity)) return Result.fail(projectedQuantity.failure)
   const exposureReducingClose =
@@ -765,7 +783,7 @@ const validateExecutionCapitalLimitsDataFirst = (
     projectedQuantity.success.afterIntentMicros < projectedQuantity.success.beforeIntentMicros &&
     projectedSymbol < currentSymbol &&
     projectedGross <= currentGross &&
-    absolute(projectedNet) <= absolute(currentNet)
+    projectedNetExposure <= currentNetExposure
 
   const enforcedOrderLimit = exposureReducingClose
     ? context.hardCloseLimits?.maxOrderNotionalMicros
@@ -807,6 +825,14 @@ const validateExecutionCapitalLimitsDataFirst = (
       _tag: 'GrossNotionalLimitExceeded',
       limitMicros: limits.maxGrossNotionalMicros,
       projectedMicros: projectedGross.toString(),
+    })
+  }
+
+  if (projectedNetExposure > BigInt(context.maxNetExposureMicros) && projectedNetExposure >= currentNetExposure) {
+    return Result.fail({
+      _tag: 'NetExposureLimitExceeded',
+      limitMicros: context.maxNetExposureMicros,
+      projectedMicros: projectedNetExposure.toString(),
     })
   }
 
