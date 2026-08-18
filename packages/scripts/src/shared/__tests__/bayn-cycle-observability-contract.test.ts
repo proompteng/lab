@@ -31,6 +31,10 @@ describe('Bayn cycle operations alert contract', () => {
     const rules = baynRules()
     expect(rules.map(({ alert }) => alert)).toEqual([
       'BaynMetricsUnavailable',
+      'BaynStatusReplicaTargetMissed',
+      'BaynEgressProxyReplicaTargetMissed',
+      'BaynExecutionWorkerUnavailable',
+      'BaynExecutionWorkerReplicaTargetMissed',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
       'BaynCycleStalled',
@@ -40,6 +44,15 @@ describe('Bayn cycle operations alert contract', () => {
 
     const expressions = Object.fromEntries(rules.map((rule) => [rule.alert, rule.expr]))
     expect(expressions.BaynMetricsUnavailable).toContain('up{')
+    expect(expressions.BaynStatusReplicaTargetMissed).toMatch(
+      /kube_deployment_status_replicas_available\{[^}]*namespace="bayn"[^}]*deployment="bayn"/s,
+    )
+    expect(expressions.BaynStatusReplicaTargetMissed).toContain('kube_deployment_spec_replicas{')
+    expect(expressions.BaynEgressProxyReplicaTargetMissed).toContain('deployment="bayn-egress-proxy"')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_replicaset_status_ready_replicas{')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('replicaset=~"bayn-execution-controller-.*"')
+    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_replicaset_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('> 1')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -57,6 +70,9 @@ describe('Bayn cycle operations alert contract', () => {
   test('collects bounded Bayn metrics and trace-correlated logs through the existing cluster collector', () => {
     const rules = baynRules()
     const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+    const kubeStateMetrics = YAML.parse(
+      readRepoFile('argocd/applications/observability/kube-state-metrics-values.yaml'),
+    ) as { readonly collectors: readonly string[] }
     const grafanaConfiguration = YAML.parse(
       readRepoFile('argocd/applications/observability/grafana-values.yaml'),
     ) as Record<string, any>
@@ -70,6 +86,9 @@ describe('Bayn cycle operations alert contract', () => {
     expect(alloy).toContain('targets         = discovery.relabel.bayn_metrics.output')
     expect(alloy).not.toContain('__meta_kubernetes_pod_ready')
     expect(alloy).toContain('regex         = "up|bayn_.*"')
+    expect(alloy).toContain('kube_replicaset_spec_replicas')
+    expect(alloy).toContain('kube_replicaset_status_ready_replicas')
+    expect(kubeStateMetrics.collectors).toContain('replicasets')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
     expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
     expect(alloy).toContain('regex         = "bayn|lifecycle|register"')
@@ -178,6 +197,7 @@ describe('Bayn cycle operations alert contract', () => {
       expect.arrayContaining([
         'Runtime readiness',
         'Autonomous loop',
+        'Workload replica availability',
         'Broker read binding',
         'Verified build',
         'Latest terminal reason',
@@ -200,6 +220,12 @@ describe('Bayn cycle operations alert contract', () => {
         'bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
+        'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn"}',
+        'kube_deployment_spec_replicas{namespace="bayn",deployment="bayn"}',
+        'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn-egress-proxy"}',
+        'kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-egress-proxy"}',
+        'sum(kube_replicaset_status_ready_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
+        'sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
       ]),
     )
     expect(kustomization).toContain('bayn-cycle-operations-dashboard-configmap.yaml')

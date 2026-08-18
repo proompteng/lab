@@ -660,6 +660,71 @@ data:
           ],
           "title": "Cycle and recovery ages",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 26
+          },
+          "id": 13,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available{namespace=\"bayn\",deployment=\"bayn\"}",
+              "legendFormat": "status available",
+              "refId": "A"
+            },
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=\"bayn\",deployment=\"bayn\"}",
+              "legendFormat": "status desired",
+              "refId": "B"
+            },
+            {
+              "expr": "kube_deployment_status_replicas_available{namespace=\"bayn\",deployment=\"bayn-egress-proxy\"}",
+              "legendFormat": "egress available",
+              "refId": "C"
+            },
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=\"bayn\",deployment=\"bayn-egress-proxy\"}",
+              "legendFormat": "egress desired",
+              "refId": "D"
+            },
+            {
+              "expr": "sum(kube_replicaset_status_ready_replicas{namespace=\"bayn\",replicaset=~\"bayn-execution-controller-.*\"})",
+              "legendFormat": "execution ready",
+              "refId": "E"
+            },
+            {
+              "expr": "sum(kube_replicaset_spec_replicas{namespace=\"bayn\",replicaset=~\"bayn-execution-controller-.*\"})",
+              "legendFormat": "execution desired",
+              "refId": "F"
+            }
+          ],
+          "title": "Workload replica availability",
+          "type": "timeseries"
         }
       ],
       "refresh": "30s",

@@ -9,6 +9,7 @@ collectors:
   - namespaces
   - nodes
   - pods
+  - replicasets
   - services
   - statefulsets
 
