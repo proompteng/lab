@@ -490,23 +490,6 @@ export const initializeNativeExecutionProjectionRuntime = <R, E>(
     ),
   )
 
-export const initializeNativeExecutionRuntime = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-): Effect.Effect<void, NativeExecutionRuntimeError> =>
-  Effect.promise((signal) =>
-    executionRunner.runPromiseExit(PublishedExecutionCycleDriver.pipe(Effect.asVoid), { signal }),
-  ).pipe(
-    Effect.flatMap((exit) =>
-      Exit.isSuccess(exit)
-        ? Effect.void
-        : Effect.failCause(
-            Cause.map(exit.cause, (cause) =>
-              runtimeError('initialize', 'native execution controller runtime bootstrap failed', cause),
-            ),
-          ),
-    ),
-  )
-
 export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
@@ -559,8 +542,11 @@ export const acquireNativeExecutionRuntime = (
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
+    // Restate must register the replacement endpoint before its operator drains the previous version. Keep the
+    // process-wide writer fence lazy until the first tick so a rolling replacement can become ready; the recovering
+    // adapter rebuilds the runtime while the previous owner is releasing the fence, and bootstrap waits for that
+    // first durable pass before activation succeeds.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
-    yield* initializeNativeExecutionRuntime(ScopedRef.getUnsafe(managed))
     const projectionManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
     )
