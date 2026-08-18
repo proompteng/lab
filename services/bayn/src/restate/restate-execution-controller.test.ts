@@ -15,7 +15,7 @@ import {
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
-  executionControllerFirstPassCompleted,
+  executionControllerSuccessorPassCompleted,
   executionControllerTickIdempotencyKey,
   executionControllerTickRetryPolicy,
   executionBootstrapAuthorizationHash,
@@ -483,9 +483,9 @@ describe('native Restate execution controller', () => {
     const completedState: ExecutionControllerState = {
       ...state,
       active: true,
-      nextSequence: 18,
+      nextSequence: 19,
       lastCompletion: {
-        sequence: 17,
+        sequence: 18,
         outcome: ExecutionControllerOutcome.Blocked,
         receiptHash: 'f'.repeat(64),
         completedAt: '2026-08-13T18:00:01.000Z',
@@ -631,8 +631,8 @@ describe('native Restate execution controller', () => {
       epoch: 5,
       planHash,
       sourceRevision,
-      lastCompletion: { sequence: 12, outcome: ExecutionControllerOutcome.Blocked },
-      nextSequence: 13,
+      lastCompletion: { sequence: 13, outcome: ExecutionControllerOutcome.Blocked },
+      nextSequence: 14,
     })
     expect(projectedStates).toHaveLength(2)
     expect(projectedStates[0]).toMatchObject({ active: false, epoch: 5, ...previousBinding })
@@ -646,14 +646,17 @@ describe('native Restate execution controller', () => {
       'advance-completed',
       'state-committed',
       'successor-scheduled',
+      'advance-completed',
+      'state-committed',
+      'successor-scheduled',
     ])
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
       delay: 30_000,
-      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
-      parameter: { epoch: 5, sequence: 13, attempt: 0 },
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
+      parameter: { epoch: 5, sequence: 14, attempt: 0 },
     })
-    expect(sleeps).toBe(1)
+    expect(sleeps).toBe(2)
     expect(genericCalls).toBe(0)
 
     await start(context, request)
@@ -668,29 +671,29 @@ describe('native Restate execution controller', () => {
       sequence: 12,
       attempt: 0,
     })
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
     expect(deliveries).toHaveLength(1)
-    expect(calls).toEqual([
-      {
+    expect(calls).toEqual(
+      [12, 13].map((sequence) => ({
         controllerKey,
         epoch: 5,
-        sequence: 12,
+        sequence,
         issuedAt: '2026-08-13T18:00:00.000Z',
         sourceRevision,
-      },
-    ])
+      })),
+    )
     expect(state).toMatchObject({
       active: true,
       epoch: 5,
-      nextSequence: 13,
-      lastCompletion: { sequence: 12, outcome: 'Blocked' },
+      nextSequence: 14,
+      lastCompletion: { sequence: 13, outcome: 'Blocked' },
       nextDueAt: '2026-08-13T18:00:31.000Z',
     })
     expect(deliveries).toHaveLength(1)
     expect(deliveries[0]).toMatchObject({
       delay: 30_000,
-      idempotencyKey: executionControllerTickIdempotencyKey(5, 13, 0),
-      parameter: { epoch: 5, sequence: 13, attempt: 0 },
+      idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
+      parameter: { epoch: 5, sequence: 14, attempt: 0 },
     })
     expect(events.at(-1)).toBe('activation-projected')
   })
@@ -747,6 +750,23 @@ describe('native Restate execution controller', () => {
     const events: string[] = []
     let genericCalls = 0
     let forwarded: unknown
+    let statusReads = 0
+    const successorState: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 0,
+      nextSequence: 2,
+      lastCompletion: {
+        sequence: 1,
+        outcome: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'e'.repeat(64),
+        completedAt: '2026-08-13T18:00:31.000Z',
+      },
+      nextDueAt: '2026-08-13T18:01:01.000Z',
+    }
     const controller = makeBaynExecutionController(config, {
       advance: () => Promise.reject(new Error('must not advance')),
       log: () => Promise.resolve(),
@@ -766,7 +786,8 @@ describe('native Restate execution controller', () => {
       objectClient: () => ({
         status: async () => {
           events.push('native-status')
-          return null
+          statusReads += 1
+          return statusReads === 1 ? null : successorState
         },
         activate: async (request: unknown) => {
           events.push('native-activate')
@@ -789,7 +810,9 @@ describe('native Restate execution controller', () => {
           }
         },
       }),
-      sleep: () => Promise.reject(new Error('completed activation must not poll')),
+      sleep: async () => {
+        events.push('native-sleep')
+      },
     } as unknown as Context
 
     await start(context, {
@@ -799,12 +822,12 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
 
-    expect(events).toEqual(['native-status', 'native-activate'])
+    expect(events).toEqual(['native-status', 'native-activate', 'native-sleep', 'native-status'])
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
     expect(genericCalls).toBe(0)
   })
 
-  test('waits for first-pass evidence and fails bootstrap when it never arrives', async () => {
+  test('waits for durable successor evidence and fails bootstrap when it never arrives', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
     const pending: ExecutionControllerState = {
@@ -855,11 +878,11 @@ describe('native Restate execution controller', () => {
     }
     expect(failure).toBeInstanceOf(Error)
     expect((failure as Error).message).toBe(
-      'execution controller bootstrap did not observe its first completed durable pass',
+      'execution controller bootstrap did not observe a completed durable successor pass',
     )
     expect(sleeps).toBe(executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs) - 1)
     expect(statusReads).toBe(executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs))
-    expect(executionControllerFirstPassCompleted(pending, activation)).toBe(false)
+    expect(executionControllerSuccessorPassCompleted(pending, activation)).toBe(false)
   })
 
   test('rejects unauthenticated bootstrap and caller-selected activation counters', async () => {

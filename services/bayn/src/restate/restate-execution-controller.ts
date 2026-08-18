@@ -292,7 +292,7 @@ export const executionControllerBootstrapCompletionMaximumAttempts = (operationT
       executionControllerBootstrapCompletionPollIntervalMs,
   ) + 1
 
-export const executionControllerFirstPassCompleted = (
+export const executionControllerSuccessorPassCompleted = (
   state: ExecutionControllerState | null,
   activation: ExecutionControllerActivation,
 ): state is ExecutionControllerState & {
@@ -304,7 +304,7 @@ export const executionControllerFirstPassCompleted = (
   state.planHash === activation.planHash &&
   state.sourceRevision === activation.sourceRevision &&
   state.lastCompletion !== undefined &&
-  state.lastCompletion.sequence >= activation.firstSequence &&
+  state.lastCompletion.sequence > activation.firstSequence &&
   state.nextSequence === state.lastCompletion.sequence + 1
 
 export const makeBaynExecutionController = (
@@ -500,9 +500,9 @@ export const makeBaynExecutionBootstrap = (
           let activated: ExecutionControllerState | null = await client.activate(activation)
           const maximumAttempts = executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs)
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-            if (executionControllerFirstPassCompleted(activated, activation)) return activated
+            if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
             if (attempt === maximumAttempts) {
-              throw new Error('execution controller bootstrap did not observe its first completed durable pass')
+              throw new Error('execution controller bootstrap did not observe a completed durable successor pass')
             }
             await ctx.sleep({ milliseconds: executionControllerBootstrapCompletionPollIntervalMs })
             activated = await client.status(undefined)
