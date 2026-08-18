@@ -29,6 +29,19 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
   If Bayn failed before HTTP startup, inspect startup logs and compare configured provenance with the embedded
   source revision, image digest, strategy behavior hash, and strategy parameter hash.
+- `BaynStatusReplicaTargetMissed`: compare the `bayn` Deployment's desired and available replicas. One surviving
+  READY status pod is not full read-plane availability. Restore the missing replica and hostname spread; do not
+  compensate by changing execution ownership or authority.
+- `BaynEgressProxyReplicaTargetMissed`: compare the `bayn-egress-proxy` Deployment's desired and available replicas.
+  Preserve both stateless proxy replicas and their hostname spread so one node loss does not remove broker read
+  connectivity. Do not bypass the proxy or broaden broker egress.
+- `BaynExecutionWorkerUnavailable`: inspect the Restate-managed `bayn-execution-controller-*` ReplicaSets and pods,
+  then the active Restate worker revision and controller projection. Keep trading fail-closed until at least one
+  configured worker is Ready; never create a second scheduler or bypass Restate to recover execution.
+- `BaynExecutionWorkerReplicaTargetMissed`: compare the summed desired and Ready replicas across the
+  Restate-managed `bayn-execution-controller-*` ReplicaSets. A healthy active controller with fewer Ready workers than
+  desired has lost failover capacity. Restore the missing worker while preserving Restate serialization and the
+  PostgreSQL writer fence; do not promote a pod to an independent writer.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,

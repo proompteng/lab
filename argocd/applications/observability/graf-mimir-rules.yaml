@@ -2921,6 +2921,135 @@ data:
               summary: Bayn metrics are unavailable
               description: The existing Bayn service cannot be scraped for two minutes.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynStatusReplicaTargetMissed
+            expr: |
+              (
+                kube_deployment_status_replicas_available{
+                  namespace="bayn",
+                  deployment="bayn"
+                }
+                <
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn"
+                }
+              )
+              and on(namespace, deployment)
+              (
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn"
+                } > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn status plane is below its replica target
+              description: Bayn has lost status/read-plane redundancy for two minutes even though at least one replica may still report READY.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynEgressProxyReplicaTargetMissed
+            expr: |
+              (
+                kube_deployment_status_replicas_available{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                }
+                <
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                }
+              )
+              and on(namespace, deployment)
+              (
+                kube_deployment_spec_replicas{
+                  namespace="bayn",
+                  deployment="bayn-egress-proxy"
+                } > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-egress-proxy
+              notify: email
+            annotations:
+              summary: Bayn broker egress proxy is below its replica target
+              description: Bayn has lost broker-proxy redundancy for two minutes while the Deployment still expects multiple replicas.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerUnavailable
+            expr: |
+              (
+                (
+                  sum(
+                    kube_replicaset_status_ready_replicas{
+                      namespace="bayn",
+                      replicaset=~"bayn-execution-controller-.*"
+                    }
+                  ) or vector(0)
+                ) < 1
+              )
+              and on()
+              (
+                (
+                  sum(
+                    kube_replicaset_spec_replicas{
+                      namespace="bayn",
+                      replicaset=~"bayn-execution-controller-.*"
+                    }
+                  ) or vector(0)
+                ) > 0
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn has no ready execution worker
+              description: The Restate-managed Bayn execution ReplicaSets expect a worker, but none has been Ready for one minute.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerReplicaTargetMissed
+            expr: |
+              (
+                sum(
+                  kube_replicaset_status_ready_replicas{
+                    namespace="bayn",
+                    replicaset=~"bayn-execution-controller-.*"
+                  }
+                )
+                <
+                sum(
+                  kube_replicaset_spec_replicas{
+                    namespace="bayn",
+                    replicaset=~"bayn-execution-controller-.*"
+                  }
+                )
+              )
+              and on()
+              (
+                sum(
+                  kube_replicaset_spec_replicas{
+                    namespace="bayn",
+                    replicaset=~"bayn-execution-controller-.*"
+                  }
+                ) > 1
+              )
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn execution worker pool is below its replica target
+              description: Bayn has lost execution-worker failover capacity for two minutes while the Restate-managed ReplicaSets expect multiple workers.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |
               bayn_cycle_observation_available{
