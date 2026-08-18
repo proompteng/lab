@@ -113,7 +113,7 @@ export type ExecutionCapability =
 export type ExecutionMutationLogContext = {
   readonly cycleId: string
   readonly intentId: string
-  readonly mutationAction: 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
+  readonly mutationAction: 'CANCEL' | 'RECOVER_SUBMIT' | 'RECOVER_CANCEL' | 'SUBMIT'
   readonly mutationPhase: 'CLOSE' | 'ENTRY'
 }
 

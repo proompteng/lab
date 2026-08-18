@@ -412,6 +412,7 @@ export interface PrepareNextMutationIntentInput {
   readonly document: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
   readonly allowSubmit?: boolean
+  readonly drainOpenOrders?: boolean
 }
 
 export const prepareNextMutationIntent = (
@@ -425,6 +426,7 @@ export const prepareNextMutationIntent = (
     request.document,
     request.reconcile,
     request.allowSubmit ?? true,
+    request.drainOpenOrders ?? false,
     {
       now: currentUtcInstant,
       readFacts:
@@ -467,46 +469,73 @@ const executeBoundExecutionCycle = (
         }),
       ),
     )
-    const closeDocument = yield* ensureExecutionCycleClosure(
-      input,
-      preparation,
-      policy,
-      cycle,
-      document,
-      closeWindow,
-      reconcile,
-    )
-    const closeOnly = closeDocument !== undefined
-    const phaseInput: ObserveAutonomousCycleInput = {
+    const entrySubmissionCutoffAt =
+      closeWindow === undefined ||
+      (input.executionMandateCutoffAt !== undefined && input.executionMandateCutoffAt < closeWindow.startAt)
+        ? input.executionMandateCutoffAt
+        : closeWindow.startAt
+    const entryPhaseInput: ObserveAutonomousCycleInput = {
       ...input,
-      ...(closeOnly && closeWindow !== undefined
-        ? {
-            mutationPhase: 'CLOSE' as const,
-            executionMandateCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
-            executionMandateExpiresAt: closeWindow.expiresAt,
-          }
-        : { mutationPhase: 'ENTRY' as const }),
+      mutationPhase: 'ENTRY',
+      ...(entrySubmissionCutoffAt === undefined ? {} : { executionMandateCutoffAt: entrySubmissionCutoffAt }),
     }
-    const activeDocument = closeDocument ?? document
-    const step = yield* prepareNextMutationIntent({
-      input: phaseInput,
-      preparation,
-      policy,
-      cycle,
-      document: activeDocument,
-      reconcile,
-      allowSubmit: executionMutationSubmissionAllowed({
-        capability: capability._tag,
-        closeOnly,
-        ...(phaseInput.executionMandateCutoffAt === undefined
-          ? {}
-          : { executionMandateCutoffAt: phaseInput.executionMandateCutoffAt }),
-        ...(phaseInput.executionMandateCloseSubmitCutoffAt === undefined
-          ? {}
-          : { executionMandateCloseSubmitCutoffAt: phaseInput.executionMandateCloseSubmitCutoffAt }),
-        observedAt,
-      }),
-    })
+    const closeDue = closeWindow !== undefined && observedAt >= closeWindow.startAt
+    let closeOnly = false
+    let phaseInput = entryPhaseInput
+    let step: PreparedMutationCycleStep | undefined
+
+    if (closeDue) {
+      const entryDrain = yield* prepareNextMutationIntent({
+        input: entryPhaseInput,
+        preparation,
+        policy,
+        cycle,
+        document,
+        reconcile,
+        allowSubmit: false,
+        drainOpenOrders: capability._tag === 'Mutation',
+      })
+      if (entryDrain._tag === 'Execute') {
+        step = entryDrain
+      } else if (entryDrain._tag !== 'Complete') {
+        return entryDrain
+      }
+    }
+
+    if (step === undefined) {
+      const closeDocument = closeDue
+        ? yield* ensureExecutionCycleClosure(input, preparation, policy, cycle, document, closeWindow, reconcile)
+        : undefined
+      closeOnly = closeDocument !== undefined
+      phaseInput =
+        closeOnly && closeWindow !== undefined
+          ? {
+              ...input,
+              mutationPhase: 'CLOSE',
+              executionMandateCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
+              executionMandateExpiresAt: closeWindow.expiresAt,
+            }
+          : entryPhaseInput
+      step = yield* prepareNextMutationIntent({
+        input: phaseInput,
+        preparation,
+        policy,
+        cycle,
+        document: closeDocument ?? document,
+        reconcile,
+        allowSubmit: executionMutationSubmissionAllowed({
+          capability: capability._tag,
+          closeOnly,
+          ...(phaseInput.executionMandateCutoffAt === undefined
+            ? {}
+            : { executionMandateCutoffAt: phaseInput.executionMandateCutoffAt }),
+          ...(phaseInput.executionMandateCloseSubmitCutoffAt === undefined
+            ? {}
+            : { executionMandateCloseSubmitCutoffAt: phaseInput.executionMandateCloseSubmitCutoffAt }),
+          observedAt,
+        }),
+      })
+    }
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryCutoffAt = closeWindow?.startAt

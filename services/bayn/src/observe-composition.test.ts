@@ -797,6 +797,7 @@ const prepareStoredExecutionStep = async (
   document: typeof fixture.document = fixture.document,
   reconciledPositions: readonly Position[] = [],
   effectiveAuthority: Authority = Authority.Execution,
+  drainOpenOrders = false,
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
@@ -838,6 +839,7 @@ const prepareStoredExecutionStep = async (
           ),
         ),
         allowSubmit,
+        drainOpenOrders,
       })
     }).pipe(
       Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
@@ -1011,6 +1013,75 @@ describe('OBSERVE runtime composition', () => {
       intentId: second.intentId,
       observedAt,
       submitExpiresAt: secondRisk.evaluation.decision.expiresAt,
+    })
+  })
+
+  test('caps a fresh entry submission at the daily close start', async () => {
+    const fixture = await executionLifecycleFixture()
+    const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
+    const dailyCloseStartAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Planned, fixture.document.createdAt),
+      undefined,
+      observedAt,
+      0,
+      () => undefined,
+      { ...fixture.input, executionMandateCutoffAt: dailyCloseStartAt },
+    )
+
+    expect(step).toMatchObject({
+      _tag: 'Execute',
+      action: 'SUBMIT',
+      intentId: fixture.intent.intentId,
+      submitExpiresAt: dailyCloseStartAt,
+    })
+  })
+
+  test('selects cancellation for a stable open entry order before close planning', async () => {
+    const fixture = await executionLifecycleFixture()
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'entry-order-to-cancel',
+      occurredAt: fixture.document.createdAt,
+    }
+    const pending = Result.getOrThrow(decidePreparedMutationIntent(fixture.intent, accepted))
+    if (pending._tag !== 'Pending') return expect.unreachable('accepted entry intent must be pending')
+    const observedAt = utcInstantFromEpochMillis(Date.parse(accepted.occurredAt) + accepted.consistencyDelayMs)
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, accepted.occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      { ...fixture.input, executionMandateCutoffAt: observedAt },
+      undefined,
+      false,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [{ ...pending.order, observedAt }],
+      fixture.document,
+      [],
+      Authority.Execution,
+      true,
+    )
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: 'CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
     })
   })
 
@@ -1471,6 +1542,14 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Unresolved',
       eventType: MutationEventType.SubmitUnknown,
     })
+    expect(decideMutationIntentSettlement(MutationEventType.CancelAccepted)).toEqual({
+      _tag: 'Settled',
+      outcome: 'accepted',
+    })
+    expect(decideMutationIntentSettlement(MutationEventType.CancelUnknown)).toEqual({
+      _tag: 'Unresolved',
+      eventType: MutationEventType.CancelUnknown,
+    })
   })
 
   test('waits the durable consistency window only after accepted submit settlement', () => {
@@ -1551,7 +1630,7 @@ describe('OBSERVE runtime composition', () => {
     expect(recoveries).toBe(0)
   })
 
-  test('recovers accepted and unknown submits and cancellations by lookup only without mutation dispatch', async () => {
+  test('dispatches one fresh cancellation while recovery actions remain lookup-only', async () => {
     const intentId = 'd'.repeat(64)
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -1630,6 +1709,10 @@ describe('OBSERVE runtime composition', () => {
     await Effect.runPromise(
       executeMutationIntent(program, intentId, 'RECOVER_SUBMIT').pipe(Effect.provideService(MutationStore, store)),
     )
+    latestSubmit = accepted
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'CANCEL').pipe(Effect.provideService(MutationStore, store)),
+    )
     latestCancel = cancelAccepted
     await Effect.runPromise(
       executeMutationIntent(program, intentId, 'RECOVER_CANCEL').pipe(Effect.provideService(MutationStore, store)),
@@ -1640,7 +1723,7 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(submits).toBe(0)
-    expect(cancels).toBe(0)
+    expect(cancels).toBe(1)
     expect(recoveries).toEqual([
       MutationOperation.Submit,
       MutationOperation.Submit,
@@ -1674,7 +1757,7 @@ describe('OBSERVE runtime composition', () => {
       message: 'lookup-only execution recovery lost its durable cancel evidence',
     })
     expect(submits).toBe(0)
-    expect(cancels).toBe(0)
+    expect(cancels).toBe(1)
   })
 
   test('classifies an identical stable recovery observation as read-only', async () => {
