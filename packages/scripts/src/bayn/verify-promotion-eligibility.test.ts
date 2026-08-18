@@ -308,7 +308,7 @@ describe('Bayn promotion eligibility', () => {
       applicationSet: readFileSync(new URL('../../../../argocd/applicationsets/product.yaml', import.meta.url), 'utf8'),
     })
 
-    expect(parsed.sourceSha).toBe('ed48b9d1df7dc9977bcccc14c21964b896304cf3')
+    expect(parsed.sourceSha).toBe('8f4602324111bbb3dd5d8695aabf199f4a5328fa')
   })
 
   test('rejects reintroduction of retired lifecycle runtime inputs', () => {
