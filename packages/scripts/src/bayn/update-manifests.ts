@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
@@ -14,6 +15,14 @@ const decimalPattern = /^[0-9]+$/
 const transportAddressesPattern = /^[A-Za-z0-9.[\]:_-]+(?:[ \t]*,[ \t]*[A-Za-z0-9.[\]:_-]+)*$/
 const maximumTigerBeetleClusterId = (1n << 128n) - 1n
 const maximumTigerBeetleLedger = 2 ** 32 - 1
+
+/**
+ * Restate's durable plan identifies the controller protocol, not a worker build.
+ * Keep this in lockstep with services/bayn/src/composition/native-execution-runtime.ts.
+ */
+export const baynExecutionControllerPlanHash = createHash('sha256')
+  .update('bayn.execution-controller-plan.v2')
+  .digest('hex')
 
 export interface BaynCandidateRuntime {
   readonly BAYN_SIGNAL_SNAPSHOT_ID: string
@@ -38,6 +47,7 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly candidateRuntime?: BaynCandidateRuntime
   readonly acceptedQualificationRunId?: string
+  readonly deployedDeploymentPath?: string
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
   readonly applicationSetPath?: string
@@ -51,7 +61,6 @@ export interface BaynManifestUpdate {
     | 'eligible'
     | 'strategy-identity-change-requires-fresh-snapshot'
     | 'research-capital-activation-refresh-required'
-    | 'native-execution-controller-refresh-required'
   readonly qualificationMode: 'preserve' | 'replace' | 'install' | 'research'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -73,6 +82,19 @@ const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string
   return source.replace(pattern, replacement)
 }
 
+const replaceExactly = (
+  source: string,
+  pattern: RegExp,
+  replacement: string,
+  expectedMatches: number,
+  name: string,
+): string => {
+  const globalPattern = new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`)
+  const matches = [...source.matchAll(globalPattern)]
+  if (matches.length !== expectedMatches) throw new Error(`expected exactly ${expectedMatches} ${name} values`)
+  return source.replace(globalPattern, replacement)
+}
+
 const environmentValue = (deployment: string, name: string): string => {
   const pattern = new RegExp(`            - name: ${name}\\n              value: ([^\\n]+)\\n`, 'g')
   const matches = [...deployment.matchAll(pattern)]
@@ -84,6 +106,7 @@ const environmentValue = (deployment: string, name: string): string => {
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
 const capitalActivationRequest = /            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n/
+const researchCapitalBuildContinuation = 'ResearchCapitalBuildContinuation'
 const qualificationIdentityNames = [
   'BAYN_SIGNAL_SNAPSHOT_ID',
   'BAYN_SIGNAL_PUBLICATION_ASOF',
@@ -112,16 +135,20 @@ const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_TIGERBEETLE_LEDGER: environmentValue(deployment, 'BAYN_TIGERBEETLE_LEDGER'),
 })
 
-interface NativeExecutionPins {
+interface NativeExecutionManifests {
+  readonly activation: string
+  readonly activationPath: string
+  readonly controller: string
+  readonly controllerPath: string
   readonly sourceSha: string
   readonly digest: string
 }
 
-const nativeExecutionPins = (
+const nativeExecutionManifests = (
   options: UpdateBaynManifestOptions,
   deploymentSourceSha: string,
   deploymentDigest: string,
-): NativeExecutionPins | undefined => {
+): NativeExecutionManifests | undefined => {
   const usesDefaultManifests =
     options.kustomizationPath === undefined &&
     options.deploymentPath === undefined &&
@@ -155,7 +182,53 @@ const nativeExecutionPins = (
   if (sourceSha !== deploymentSourceSha || digest !== deploymentDigest) {
     throw new Error('native execution controller is not bound to the deployed Bayn source and image')
   }
-  return { sourceSha, digest }
+  return { activation, activationPath, controller, controllerPath, sourceSha, digest }
+}
+
+const activationGeneration = (sourceSha: string, digest: string): string =>
+  createHash('sha256')
+    .update(['bayn.execution-controller-activation.v2', baynExecutionControllerPlanHash, sourceSha, digest].join('\0'))
+    .digest('hex')
+
+const replaceEnvironmentValue = (manifest: string, name: string, value: string): string =>
+  replaceExactlyOnce(
+    manifest,
+    new RegExp(`(            - name: ${name}\\n              value: )[^\\n]+`),
+    `$1${value}`,
+    `${name} value`,
+  )
+
+const updateNativeExecutionManifest = (
+  manifest: string,
+  options: UpdateBaynManifestOptions,
+  candidateRuntime: BaynCandidateRuntime,
+  previousPlanHash: string,
+  previousSourceRevision: string,
+): string => {
+  let updated = replaceExactlyOnce(
+    manifest,
+    /(          image: registry\.ide-newton\.ts\.net\/lab\/bayn:)[^\n]+/,
+    `$1sha-${options.sourceSha}@${options.digest}`,
+    'native Bayn image',
+  )
+  updated = replaceEnvironmentValue(updated, 'BAYN_CODE_REVISION', options.sourceSha)
+  updated = replaceEnvironmentValue(updated, 'BAYN_IMAGE_DIGEST', options.digest)
+  updated = replaceEnvironmentValue(updated, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH', JSON.stringify(previousPlanHash))
+  updated = replaceEnvironmentValue(updated, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION', previousSourceRevision)
+  updated = replaceEnvironmentValue(
+    updated,
+    'BAYN_STRATEGY_BEHAVIOR_HASH',
+    JSON.stringify(options.strategyBehaviorHash),
+  )
+  updated = replaceEnvironmentValue(
+    updated,
+    'BAYN_STRATEGY_PARAMETER_HASH',
+    JSON.stringify(options.strategyParameterHash),
+  )
+  for (const [name, value] of Object.entries(candidateRuntime)) {
+    updated = replaceEnvironmentValue(updated, name, JSON.stringify(value))
+  }
+  return updated
 }
 
 const validateIsoDate = (name: string, value: string): void => {
@@ -210,32 +283,22 @@ const validateCandidateRuntime = (runtime: BaynCandidateRuntime): void => {
   }
 }
 
-const transitionQualificationPin = (
-  deployment: string,
-  mode: BaynManifestUpdate['qualificationMode'],
-  hadQualificationPin: boolean,
-  acceptedQualificationRunId: string | undefined,
-): string => {
-  if (mode === 'preserve') {
-    if (!hadQualificationPin) throw new Error('cannot preserve a missing BAYN_QUALIFICATION_RUN_ID block')
-    return deployment
-  }
-  if (mode === 'replace') return hadQualificationPin ? deployment.replace(qualificationPin, '') : deployment
-  if (mode === 'research') {
-    if (hadQualificationPin || acceptedQualificationRunId !== undefined) {
-      throw new Error('research capital release cannot carry qualification state')
-    }
-    return deployment
-  }
-  if (acceptedQualificationRunId === undefined) {
-    throw new Error('cannot install a missing accepted qualification run ID')
-  }
+const qualificationRunIdFromDeployment = (deployment: string, role: 'candidate' | 'deployed'): string | null => {
+  const pins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
+  if (pins.length > 1) throw new Error(`expected at most one ${role} BAYN_QUALIFICATION_RUN_ID block`)
+  if (pins.length === 0) return null
+  const runId = environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID')
+  if (!hashPattern.test(runId)) throw new Error(`invalid ${role} BAYN_QUALIFICATION_RUN_ID`)
+  return runId
+}
+
+const transitionQualificationPin = (deployment: string, qualificationRunId: string | null): string => {
+  const withoutQualificationPin = deployment.replace(qualificationPin, '')
+  if (qualificationRunId === null) return withoutQualificationPin
   const block =
-    `            - name: BAYN_QUALIFICATION_RUN_ID\n` +
-    `              value: ${JSON.stringify(acceptedQualificationRunId)}\n`
-  if (hadQualificationPin) return deployment.replace(qualificationPin, block)
+    `            - name: BAYN_QUALIFICATION_RUN_ID\n` + `              value: ${JSON.stringify(qualificationRunId)}\n`
   return replaceExactlyOnce(
-    deployment,
+    withoutQualificationPin,
     /(            - name: BAYN_STRATEGY_PARAMETER_HASH\n              value: [^\n]+\n)/,
     `$1${block}`,
     'BAYN_STRATEGY_PARAMETER_HASH block',
@@ -262,29 +325,36 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const applicationSetPath = options.applicationSetPath ?? 'argocd/applicationsets/product.yaml'
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const deployment = readFileSync(deploymentPath, 'utf8')
+  const deployedDeployment =
+    options.deployedDeploymentPath === undefined ? deployment : readFileSync(options.deployedDeploymentPath, 'utf8')
   validateNativeBaynDeployment(deployment)
-  const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
-  if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
-  const hadQualificationPin = qualificationPins.length === 1
-  const capitalActivationRequests = [...deployment.matchAll(new RegExp(capitalActivationRequest.source, 'g'))]
+  validateNativeBaynDeployment(deployedDeployment)
+  const deployedQualificationRunId = qualificationRunIdFromDeployment(deployedDeployment, 'deployed')
+  qualificationRunIdFromDeployment(deployment, 'candidate')
+  const hadQualificationPin = deployedQualificationRunId !== null
+  const capitalActivationRequests = [...deployedDeployment.matchAll(new RegExp(capitalActivationRequest.source, 'g'))]
   if (capitalActivationRequests.length > 1) {
     throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST block')
   }
   const hasCapitalActivationRequest = capitalActivationRequests.length === 1
-  const deployedQualificationRunId = hadQualificationPin
-    ? environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID')
+  const capitalActivationKind = hasCapitalActivationRequest
+    ? environmentValue(deployment, 'BAYN_CAPITAL_ACTIVATION_KIND')
     : null
-  if (deployedQualificationRunId !== null && !hashPattern.test(deployedQualificationRunId)) {
-    throw new Error('invalid deployed BAYN_QUALIFICATION_RUN_ID')
+  if (
+    capitalActivationKind !== null &&
+    capitalActivationKind !== 'ResearchCapitalActivationRequest' &&
+    capitalActivationKind !== researchCapitalBuildContinuation
+  ) {
+    throw new Error(`invalid BAYN_CAPITAL_ACTIVATION_KIND: ${capitalActivationKind}`)
   }
-  const deployedRuntime = runtimeFromDeployment(deployment)
-  const candidateRuntime = options.candidateRuntime ?? deployedRuntime
+  const deployedRuntime = runtimeFromDeployment(deployedDeployment)
+  const candidateRuntime = options.candidateRuntime ?? runtimeFromDeployment(deployment)
   validateCandidateRuntime(candidateRuntime)
-  const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
-  const deployedImageDigest = environmentValue(deployment, 'BAYN_IMAGE_DIGEST')
-  const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
-  const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
-  const deployedSnapshotId = environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
+  const deployedSourceSha = environmentValue(deployedDeployment, 'BAYN_CODE_REVISION')
+  const deployedImageDigest = environmentValue(deployedDeployment, 'BAYN_IMAGE_DIGEST')
+  const deployedBehaviorHash = environmentValue(deployedDeployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
+  const deployedParameterHash = environmentValue(deployedDeployment, 'BAYN_STRATEGY_PARAMETER_HASH')
+  const deployedSnapshotId = environmentValue(deployedDeployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
   const candidateSnapshotId = candidateRuntime.BAYN_SIGNAL_SNAPSHOT_ID
   const snapshotChanged = deployedSnapshotId !== candidateSnapshotId
   const qualificationBindingsMatch = qualificationIdentityNames.every(
@@ -299,13 +369,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
-  const nativeExecution = nativeExecutionPins(options, deployedSourceSha, deployedImageDigest)
-  const nativeExecutionRefreshRequired =
-    nativeExecution !== undefined &&
-    (!activationBuildMatches ||
-      !strategyIdentityMatches ||
-      !candidateRuntimeMatchesDeployment ||
-      (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned))
+  const nativeExecution = nativeExecutionManifests(options, deployedSourceSha, deployedImageDigest)
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned && options.candidateRuntime === undefined) {
     throw new Error('installing an accepted qualification run requires an explicit candidate runtime')
   }
@@ -334,7 +398,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     !hadQualificationPin && !hasCapitalActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
-    !nativeExecutionRefreshRequired &&
     (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
   ) {
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
@@ -371,13 +434,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     candidateBehaviorHash: options.strategyBehaviorHash,
     candidateParameterHash: options.strategyParameterHash,
   } as const
-  if (nativeExecutionRefreshRequired) {
-    return {
-      promotionAction: 'hold',
-      promotionReason: 'native-execution-controller-refresh-required',
-      ...updateDetails,
-    }
-  }
   if (hadQualificationPin && !strategyIdentityMatches && qualificationBindingsMatch && !snapshotChanged) {
     return {
       promotionAction: 'hold',
@@ -387,7 +443,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   }
   if (
     researchCapitalRelease &&
-    (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
+    ((!activationBuildMatches && capitalActivationKind !== researchCapitalBuildContinuation) ||
+      !strategyIdentityMatches ||
+      !candidateRuntimeMatchesDeployment)
   ) {
     return {
       promotionAction: 'hold',
@@ -397,13 +455,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   }
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
-  }
-  if (researchCapitalRelease || unpinnedCandidateReplay) {
-    return {
-      promotionAction: 'promote',
-      promotionReason: 'eligible',
-      ...updateDetails,
-    }
   }
   const imageBlock =
     /(  - name: bayn-main\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
@@ -438,12 +489,14 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     `$1${JSON.stringify(options.strategyParameterHash)}`,
     'BAYN_STRATEGY_PARAMETER_HASH value',
   )
-  updatedDeployment = transitionQualificationPin(
-    updatedDeployment,
-    qualificationMode,
-    hadQualificationPin,
-    acceptedQualificationRunId,
-  )
+  if (nativeExecution !== undefined) {
+    updatedDeployment = replaceEnvironmentValue(
+      updatedDeployment,
+      'BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH',
+      JSON.stringify(baynExecutionControllerPlanHash),
+    )
+  }
+  updatedDeployment = transitionQualificationPin(updatedDeployment, candidateQualificationRunId)
   for (const [name, value] of Object.entries(candidateRuntime)) {
     updatedDeployment = replaceExactlyOnce(
       updatedDeployment,
@@ -467,9 +520,71 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     'Bayn ApplicationSet enabled state',
   )
 
+  let updatedExecutionController: string | undefined
+  let updatedExecutionActivation: string | undefined
+  if (nativeExecution !== undefined) {
+    const deployedPlanHash = environmentValue(deployedDeployment, 'BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')
+    const previousPlanHash =
+      deployedPlanHash === baynExecutionControllerPlanHash
+        ? environmentValue(nativeExecution.controller, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')
+        : deployedPlanHash
+    const previousSourceRevision =
+      deployedPlanHash === baynExecutionControllerPlanHash
+        ? environmentValue(nativeExecution.controller, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')
+        : deployedSourceSha
+    if (
+      environmentValue(nativeExecution.activation, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH') !==
+        environmentValue(nativeExecution.controller, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH') ||
+      environmentValue(nativeExecution.activation, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION') !==
+        environmentValue(nativeExecution.controller, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')
+    ) {
+      throw new Error('native execution controller and activation manifests have different previous bindings')
+    }
+    updatedExecutionController = updateNativeExecutionManifest(
+      nativeExecution.controller,
+      options,
+      candidateRuntime,
+      previousPlanHash,
+      previousSourceRevision,
+    )
+    updatedExecutionActivation = updateNativeExecutionManifest(
+      nativeExecution.activation,
+      options,
+      candidateRuntime,
+      previousPlanHash,
+      previousSourceRevision,
+    )
+    updatedExecutionActivation = replaceExactlyOnce(
+      updatedExecutionActivation,
+      /(  name: bayn-execution-activate-)[0-9a-f]{12}/,
+      `$1${options.sourceSha.slice(0, 12)}`,
+      'Bayn activation Job name',
+    )
+    updatedExecutionActivation = replaceExactly(
+      updatedExecutionActivation,
+      /(    app\.kubernetes\.io\/version: )[0-9a-f]{12}/,
+      `$1${options.sourceSha.slice(0, 12)}`,
+      2,
+      'Bayn activation version label',
+    )
+    updatedExecutionActivation = replaceExactlyOnce(
+      updatedExecutionActivation,
+      /(            - name: BAYN_EXECUTION_ACTIVATION_GENERATION\n(?:              # [^\n]+\n)*              value: )[^\n]+/,
+      `$1${JSON.stringify(activationGeneration(options.sourceSha, options.digest))}`,
+      'BAYN_EXECUTION_ACTIVATION_GENERATION value',
+    )
+  }
+
   writeFileSync(kustomizationPath, updatedKustomization)
   writeFileSync(deploymentPath, updatedDeployment)
   writeFileSync(applicationSetPath, updatedApplicationSet)
+  if (nativeExecution !== undefined) {
+    if (updatedExecutionController === undefined || updatedExecutionActivation === undefined) {
+      throw new Error('native execution manifests were not rendered')
+    }
+    writeFileSync(nativeExecution.controllerPath, updatedExecutionController)
+    writeFileSync(nativeExecution.activationPath, updatedExecutionActivation)
+  }
   return {
     promotionAction: 'promote',
     promotionReason: 'eligible',
@@ -506,6 +621,7 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
     ...requiredFlags,
     ...Object.keys(candidateRuntimeFlags),
     '--accepted-qualification-run-id',
+    '--deployed-deployment-path',
   ])
   for (let index = 0; index < argumentsToParse.length; index += 2) {
     const flag = argumentsToParse[index]
@@ -544,6 +660,9 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
   const acceptedQualificationRunId = values.has('--accepted-qualification-run-id')
     ? required('--accepted-qualification-run-id')
     : undefined
+  const deployedDeploymentPath = values.has('--deployed-deployment-path')
+    ? required('--deployed-deployment-path')
+    : undefined
   if (acceptedQualificationRunId !== undefined && candidateRuntime === undefined) {
     throw new Error('--accepted-qualification-run-id requires the complete candidate runtime')
   }
@@ -556,6 +675,7 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
     rolloutTimestamp: required('--rollout-timestamp'),
     ...(candidateRuntime === undefined ? {} : { candidateRuntime }),
     ...(acceptedQualificationRunId === undefined ? {} : { acceptedQualificationRunId }),
+    ...(deployedDeploymentPath === undefined ? {} : { deployedDeploymentPath }),
   }
 }
 

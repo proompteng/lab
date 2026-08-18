@@ -160,7 +160,7 @@ describe('native Restate execution activation', () => {
     expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBeLessThan(900_000)
   })
 
-  test('verifies only the exact active controller binding', () => {
+  test('verifies the active controller plan after the current worker completed a successor pass', () => {
     expect(Result.getOrThrow(verifyRestateExecutionActivation(config, activeState))).toEqual(activeState)
     for (const invalid of [
       { ...activeState, active: false },

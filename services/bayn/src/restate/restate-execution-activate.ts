@@ -155,7 +155,7 @@ export const verifyRestateExecutionActivation = (
         new RestateExecutionActivationError({
           operation: 'verify',
           message:
-            'native Restate activation did not prove the expected active controller binding and durable successor pass',
+            'native Restate activation did not prove the expected active controller plan and durable successor pass',
         }),
       )
 }

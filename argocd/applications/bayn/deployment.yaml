@@ -82,6 +82,8 @@ spec:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalBuildContinuation
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

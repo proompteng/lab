@@ -1471,22 +1471,20 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`, `activate:${successorGenerationHash}`])
   })
 
-  test('recovers the exact continuation after cutoff and rejects stale build or generation bindings', async () => {
+  test('recovers a generation-bound continuation across worker revisions and rejects another generation', async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-02T13:30:00.000Z'))
         const recovered = yield* recoverBuildContinuation()
         const mismatched = yield* recoverBuildContinuation(mismatchedResearchBuildContinuation).pipe(Effect.flip)
-        const stale = yield* recoverBuildContinuation(staleResearchBuildContinuation).pipe(Effect.flip)
+        const stale = yield* recoverBuildContinuation(staleResearchBuildContinuation)
         return { recovered, mismatched, stale }
       }).pipe(provideTestLayer(TestClock.layer())),
     )
 
     expect(result.recovered).toEqual(continuationGeneration)
-    expect(result.mismatched.message).toBe(
-      'research capital build continuation is not bound to the active generation and current build',
-    )
-    expect(result.stale.message).toBe('capital activation request is not bound to the current activation build')
+    expect(result.mismatched.message).toBe('research capital build continuation is not bound to the active generation')
+    expect(result.stale).toEqual(continuationGeneration)
   })
 
   test('persists one fresh reconciliation before activating a new research capital generation', async () => {

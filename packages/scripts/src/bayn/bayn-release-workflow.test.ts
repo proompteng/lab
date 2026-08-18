@@ -8,6 +8,10 @@ const buildPushWorkflow = readFileSync(
 )
 const baynCiWorkflow = readFileSync(new URL('../../../../.github/workflows/bayn-ci.yml', import.meta.url), 'utf8')
 const releaseWorkflow = readFileSync(new URL('../../../../.github/workflows/bayn-release.yml', import.meta.url), 'utf8')
+const productApplicationSet = readFileSync(
+  new URL('../../../../argocd/applicationsets/product.yaml', import.meta.url),
+  'utf8',
+)
 
 test('publishes the exact main push SHA without a post-merge review verifier', () => {
   expect(buildPushWorkflow).toContain('branches:\n      - main')
@@ -41,10 +45,45 @@ test('keeps the existing Bayn PR gate aggregation', () => {
   expect(baynCiWorkflow).not.toContain('verify-release-review')
 })
 
-test('holds release when the native runtime manifest contract changed after the built source', () => {
-  expect(releaseWorkflow).toContain('git diff --quiet "$source_sha..HEAD" --')
-  expect(releaseWorkflow).toContain('packages/scripts/src/bayn/native-runtime-manifest.ts \\')
-  expect(releaseWorkflow.split('packages/scripts/src/bayn/native-runtime-manifest.ts').length - 1).toBe(1)
+test('promotes only the exact current main build to an immutable GitOps branch', () => {
+  expect(releaseWorkflow).toContain('test "$(git rev-parse HEAD)" = "$source_sha"')
+  expect(releaseWorkflow).toContain('test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"')
+  expect(releaseWorkflow).toContain('DEPLOYMENT_BRANCH: codex/bayn-deploy')
+  expect(releaseWorkflow).toContain(
+    'git show "refs/remotes/origin/${DEPLOYMENT_BRANCH}:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"',
+  )
+  expect(releaseWorkflow).toContain('--deployed-deployment-path "$deployed_manifest"')
+  expect(releaseWorkflow.indexOf('> "$deployed_manifest"')).toBeLessThan(
+    releaseWorkflow.indexOf('git merge --no-edit "$SOURCE_SHA"'),
+  )
+  expect(releaseWorkflow).toContain('git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"')
+  expect(releaseWorkflow).not.toContain('create-pull-request')
+  expect(releaseWorkflow).not.toContain('pull-requests: write')
+  expect(releaseWorkflow).not.toContain('git push --force')
+})
+
+test('allows the renderer to change only the atomic Bayn deployment manifests', () => {
+  for (const path of [
+    'argocd/applications/bayn/kustomization.yaml',
+    'argocd/applications/bayn/deployment.yaml',
+    'argocd/applications/bayn/execution-controller.yaml',
+    'argocd/applications/bayn/execution-activation.yaml',
+    'argocd/applicationsets/product.yaml',
+  ]) {
+    expect(releaseWorkflow).toContain(path)
+  }
+  expect(releaseWorkflow).toContain('unexpected_paths="$(git diff --name-only "$SOURCE_SHA"')
+})
+
+test('points only Bayn at the generated deployment branch', () => {
+  expect(productApplicationSet).toContain(
+    '              - name: bayn\n                path: argocd/applications/bayn\n' +
+      "                # Bayn's reviewed main build writes immutable release pins here.",
+  )
+  expect(productApplicationSet).toContain('                targetRevision: codex/bayn-deploy')
+  expect(productApplicationSet).toContain(
+    `targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'`,
+  )
 })
 
 test('installs locked manifest renderer dependencies before executing the release renderer', () => {

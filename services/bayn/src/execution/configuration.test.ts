@@ -289,15 +289,9 @@ describe('execution policy configuration', () => {
       }),
     )
     expect(decodeCapitalActivationConfigurationResult(continuation)).toEqual(Result.succeed(continuation))
-    expect(
-      researchCapitalBuildContinuationIsBound(continuation, sourceGenerationHash, generation, currentActivation),
-    ).toEqual(Result.succeed(undefined))
-    expect(
-      researchCapitalBuildContinuationIsBound(continuation, sourceGenerationHash, generation, {
-        ...currentActivation,
-        imageDigest: `sha256:${'d'.repeat(64)}`,
-      }),
-    ).toMatchObject({ _tag: 'Failure' })
+    expect(researchCapitalBuildContinuationIsBound(continuation, sourceGenerationHash, generation)).toEqual(
+      Result.succeed(undefined),
+    )
     const wrongGenerationContinuation = Result.getOrThrow(
       makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
@@ -307,12 +301,7 @@ describe('execution policy configuration', () => {
       }),
     )
     expect(
-      researchCapitalBuildContinuationIsBound(
-        wrongGenerationContinuation,
-        sourceGenerationHash,
-        generation,
-        currentActivation,
-      ),
+      researchCapitalBuildContinuationIsBound(wrongGenerationContinuation, sourceGenerationHash, generation),
     ).toMatchObject({ _tag: 'Failure' })
     expect(
       decodeCapitalActivationConfigurationResult({

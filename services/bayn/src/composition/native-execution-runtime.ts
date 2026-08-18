@@ -29,7 +29,7 @@ import {
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
-import { canonicalHashV1Result, sha256 } from '../hash'
+import { sha256 } from '../hash'
 import {
   type RecoveryFirstCycleAdvance,
   type RecoveryFirstCycleDriver,
@@ -56,6 +56,12 @@ export interface NativeExecutionRuntimeResource {
 
 export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs: number): number =>
   operationTimeoutMs * 5
+
+/**
+ * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
+ * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
+ */
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v2')
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
@@ -90,49 +96,12 @@ const runtimeError = (
 export const executionControllerConfig = (
   plan: ApplicationPlanFor<'AutonomousService'>,
 ): Result.Result<ExecutionControllerConfig, NativeExecutionRuntimeError> =>
-  Result.mapError(
-    canonicalHashV1Result({
-      schemaVersion: 'bayn.execution-controller-plan.v1',
-      brokerIdentityHash: plan.config.alpaca.identity.identityHash,
-      sourceRevision: plan.config.build.sourceRevision,
-      imageDigest: plan.config.build.imageDigest,
-      strategy: plan.strategy.provenance.strategy,
-      strategyProtocolHash: plan.strategyProtocolHash,
-      qualificationRunId: plan.config.qualificationRunId ?? null,
-      marketData: {
-        snapshotId: plan.config.clickhouse.snapshotId,
-        publicationAsOf: plan.config.clickhouse.publicationAsOf,
-        calendarVersion: plan.config.clickhouse.calendarVersion,
-        bounds: plan.config.clickhouse.bounds,
-      },
-      capitalActivationRequestHash: sha256(plan.config.capitalActivationRequestJson ?? ''),
-      authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
-      executionPolicy: {
-        brokerAccess: plan.config.execution.brokerAccess,
-        capitalAuthority: plan.config.execution.capitalAuthority._tag,
-        persistedCapitalGrantHash:
-          'persistedGrantHash' in plan.config.execution.capitalAuthority
-            ? (plan.config.execution.capitalAuthority.persistedGrantHash ?? null)
-            : null,
-      },
-      accounting: {
-        tigerBeetleClusterId: plan.config.tigerBeetle.clusterId.toString(),
-        tigerBeetleLedger: plan.config.tigerBeetle.ledger,
-      },
-      cyclePollIntervalMs: plan.config.cyclePollIntervalMs,
-      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-      reconciliationStaleThresholdMs: plan.config.reconciliationStaleThresholdMs,
-      operationTimeoutMs: plan.config.operationTimeoutMs,
-    }),
-    (cause) => runtimeError('binding', 'native execution controller plan could not be hashed', cause),
-  ).pipe(
-    Result.map((planHash) => ({
-      controllerKey: plan.config.alpaca.identity.identityHash,
-      operationTimeoutMs: plan.config.operationTimeoutMs,
-      planHash,
-      sourceRevision: plan.config.build.sourceRevision,
-    })),
-  )
+  Result.succeed({
+    controllerKey: plan.config.alpaca.identity.identityHash,
+    operationTimeoutMs: plan.config.operationTimeoutMs,
+    planHash: executionControllerPlanHash,
+    sourceRevision: plan.config.build.sourceRevision,
+  })
 
 const bindRecoveryFirstCycleDriver = (
   driver: RecoveryFirstCycleDriver,
