@@ -156,6 +156,15 @@ export type ExecutionCapitalLimitFailure =
       readonly cause: unknown
     }
   | {
+      readonly _tag: 'BrokerOpenOrderSnapshotChanged'
+      readonly beforeHash: string
+      readonly afterHash: string
+    }
+  | {
+      readonly _tag: 'BrokerOpenOrderSnapshotInvalid'
+      readonly cause: unknown
+    }
+  | {
       readonly _tag: 'IncreasingSellUnsupported'
       readonly symbol: string
       readonly currentQuantityMicros: string
@@ -274,6 +283,49 @@ const validateStablePositionSnapshotDataFirst = (
 }
 
 export const validateStablePositionSnapshot = Pipeable.dual(2, validateStablePositionSnapshotDataFirst)
+
+const openOrderExposureIdentity = (orders: readonly Order[]) =>
+  orders
+    .map((order) => ({
+      accountId: order.accountId,
+      brokerOrderId: order.brokerOrderId,
+      symbol: order.symbol,
+      side: order.side,
+      orderType: order.orderType,
+      quantityMicros: order.quantityMicros ?? null,
+      notionalMicros: order.notionalMicros ?? null,
+      filledQuantityMicros: order.filledQuantityMicros,
+      filledAveragePriceMicros: order.filledAveragePriceMicros ?? null,
+      limitPriceMicros: order.limitPriceMicros ?? null,
+      stopPriceMicros: order.stopPriceMicros ?? null,
+      status: order.status,
+    }))
+    .sort((left, right) =>
+      left.brokerOrderId < right.brokerOrderId ? -1 : left.brokerOrderId > right.brokerOrderId ? 1 : 0,
+    )
+
+const validateStableOpenOrderSnapshotDataFirst = (
+  before: readonly Order[],
+  after: readonly Order[],
+): Result.Result<readonly Order[], ExecutionCapitalLimitFailure> => {
+  const beforeHash = canonicalHashV1Result(openOrderExposureIdentity(before))
+  if (Result.isFailure(beforeHash)) {
+    return Result.fail({ _tag: 'BrokerOpenOrderSnapshotInvalid', cause: beforeHash.failure })
+  }
+  const afterHash = canonicalHashV1Result(openOrderExposureIdentity(after))
+  if (Result.isFailure(afterHash)) {
+    return Result.fail({ _tag: 'BrokerOpenOrderSnapshotInvalid', cause: afterHash.failure })
+  }
+  return beforeHash.success === afterHash.success
+    ? Result.succeed(after)
+    : Result.fail({
+        _tag: 'BrokerOpenOrderSnapshotChanged',
+        beforeHash: beforeHash.success,
+        afterHash: afterHash.success,
+      })
+}
+
+const validateStableOpenOrderSnapshot = Pipeable.dual(2, validateStableOpenOrderSnapshotDataFirst)
 
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority.authorityGenerationHash
@@ -782,7 +834,7 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         mutationAuthorizationError('broker positions could not be refreshed before submit', cause),
       ),
     )
-    const openOrders = yield* dependencies.brokerRead
+    const openOrdersBefore = yield* dependencies.brokerRead
       .orders({
         status: OrderCollection.Open,
         limit: limits.maxOpenOrders,
@@ -804,13 +856,30 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         stablePositions.failure,
       )
     }
+    const openOrdersAfter = yield* dependencies.brokerRead
+      .orders({
+        status: OrderCollection.Open,
+        limit: limits.maxOpenOrders,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationAuthorizationError('broker open orders could not be confirmed after position refresh', cause),
+        ),
+      )
+    const stableOpenOrders = validateStableOpenOrderSnapshot(openOrdersBefore.value, openOrdersAfter.value)
+    if (Result.isFailure(stableOpenOrders)) {
+      return yield* mutationAuthorizationError(
+        'broker open-order snapshot changed during exposure refresh',
+        stableOpenOrders.failure,
+      )
+    }
     return {
       account: account.value,
       positions: stablePositions.success,
-      openOrders: openOrders.value,
+      openOrders: stableOpenOrders.success,
       accountObservedAt: account.evidence.observedAt,
       positionsObservedAt: positionsAfter.evidence.observedAt,
-      ordersObservedAt: openOrders.evidence.observedAt,
+      ordersObservedAt: openOrdersAfter.evidence.observedAt,
     }
   })
 

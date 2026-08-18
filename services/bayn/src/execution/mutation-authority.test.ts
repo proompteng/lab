@@ -233,6 +233,7 @@ interface ScenarioInput {
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
+  readonly orderSnapshots?: readonly (readonly Order[])[]
   readonly proposedIntent?: Intent
   readonly persistedAtRead?: (positionReads: number) => GrantedCapitalAuthority | undefined
   readonly finalSubmitAuthorization?: FinalSubmitAuthorization
@@ -245,6 +246,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   let submits = 0
   let grantReads = 0
   let positionReads = 0
+  let orderReads = 0
   let orderLimit: number | undefined
   const unusedRead = Effect.die(new Error('unused broker read in mutation authority test'))
   const brokerRead: BrokerReadShape = {
@@ -265,7 +267,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       Effect.sync(() => {
         trace.push('orders')
         orderLimit = query?.limit
-        return readResult(input.openOrders ?? [], input.ordersObservedAt)
+        const snapshots = input.orderSnapshots
+        const orders = snapshots?.[Math.min(orderReads, snapshots.length - 1)] ?? input.openOrders ?? []
+        orderReads += 1
+        return readResult(orders, input.ordersObservedAt)
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
@@ -329,7 +334,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     finalSubmitAuthorization,
   })
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
-  return { exit, grant, grantReads, orderLimit, positionReads, submits, trace }
+  return { exit, grant, grantReads, orderLimit, orderReads, positionReads, submits, trace }
 }
 
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
@@ -376,6 +381,34 @@ describe('final broker mutation authority', () => {
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
     expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
+  })
+
+  test('rejects an open order that appears while the final broker snapshot is collected', async () => {
+    const competingOrder = order({
+      brokerOrderId: '1d2811f4-f118-40a6-871f-7f1f0ac1fa1f',
+      clientOrderId: 'external-order',
+    })
+    const observed = await runLiveSubmit({ orderSnapshots: [[], [competingOrder]] })
+
+    expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
+    expect(observed.orderReads).toBe(2)
+    expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('accepts a stable open-order set when the broker changes response ordering', async () => {
+    const first = order({ brokerOrderId: '1d2811f4-f118-40a6-871f-7f1f0ac1fa1f', clientOrderId: 'external-a' })
+    const second = order({ brokerOrderId: '7df7fb90-5d60-472e-9c67-a6a1664d7b44', clientOrderId: 'external-b' })
+    const observed = await runLiveSubmit({
+      orderSnapshots: [
+        [first, second],
+        [second, first],
+      ],
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.orderReads).toBe(2)
+    expect(observed.submits).toBe(1)
   })
 
   test.each([
