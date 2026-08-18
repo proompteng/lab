@@ -292,16 +292,17 @@ const ensureExecutionCycleClosure = (
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
     })
-    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) {
-      return { _tag: 'Close', document: active.document }
+    const decision = decideExecutionCycleCloseDocument(document)
+    if (decision._tag !== 'Bind') {
+      return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt }
     }
     const closure = yield* Effect.fromResult(
       makeExecutionCycleClosure({
         schemaVersion: legacyCycleClosureSchemaVersion,
         cycleId: cycle.identity.cycleId,
         entryDecisionHash,
-        document,
-        createdAt: document.createdAt,
+        document: decision.document,
+        createdAt: decision.document.createdAt,
         expiresAt: closeWindow.expiresAt,
       }),
     ).pipe(

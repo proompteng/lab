@@ -2776,6 +2776,7 @@ describe('OBSERVE runtime composition', () => {
     expect(close.dispatchable).toBe(true)
     expect(noTradeClose.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
     expect(decideExecutionCycleCloseDocument(noTradeClose)).toEqual({ _tag: 'Complete' })
+    expect(decideExecutionCycleCloseDocument({ ...close, dispatchable: false })).toEqual({ _tag: 'Block' })
     expect(legacyClose.targetPlan.intentTargets).toEqual(close.targetPlan.intentTargets)
 
     const committedIntents = new Map<string, StoredIntent>()
