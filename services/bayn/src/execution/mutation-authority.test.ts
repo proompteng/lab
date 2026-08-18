@@ -230,6 +230,7 @@ interface ScenarioInput {
   readonly positionsObservedAt?: string
   readonly ordersObservedAt?: string
   readonly brokerAccount?: Account
+  readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
   readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
@@ -252,7 +253,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   const brokerRead: BrokerReadShape = {
     account: Effect.sync(() => {
       trace.push('account')
-      return readResult(input.brokerAccount ?? account(), input.accountObservedAt)
+      return readResult(
+        input.brokerAccountAtRead?.(orderReads) ?? input.brokerAccount ?? account(),
+        input.accountObservedAt,
+      )
     }),
     accountConfiguration: unusedRead,
     assetBySymbol: () => unusedRead,
@@ -380,7 +384,7 @@ describe('final broker mutation authority', () => {
     expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
-    expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
+    expect(observed.trace).toEqual(['positions', 'orders', 'positions'])
   })
 
   test('rejects an open order that appears while the final broker snapshot is collected', async () => {
@@ -393,6 +397,18 @@ describe('final broker mutation authority', () => {
     expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
     expect(observed.orderReads).toBe(2)
     expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('uses account safety state observed after exposure stabilization', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccountAtRead: (orderReads) =>
+        orderReads >= 2 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
+    expect(observed.orderReads).toBe(2)
+    expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
