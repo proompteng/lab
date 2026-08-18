@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
 import { NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
+import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { ExecutionControllerKeySchema } from './controller-key'
 
 const ControllerCounterSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
@@ -28,6 +29,7 @@ const ExecutionControllerStatusWithCompletionBase = Schema.Struct({
   lastReceiptHash: Sha256Schema,
   completedAt: UtcInstantSchema,
   nextDueAt: Schema.optionalKey(UtcInstantSchema),
+  lastPass: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
 })
 const ExecutionControllerStatusWithCompletionSchema = ExecutionControllerStatusWithCompletionBase.check(
   Schema.makeFilter((status) => status.nextSequence === status.lastSequence + 1, {

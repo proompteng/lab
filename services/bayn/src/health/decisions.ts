@@ -115,9 +115,15 @@ export const projectResearchCapitalBootstrapWaiting = (
     lastPass.outcome === 'NOT_DUE' &&
     lastPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
     observesMissedOrNewerBootstrap(last, cadence)
+  const controllerPass =
+    controller !== null && executionControllerStatusHasCompletion(controller) ? controller.lastPass : undefined
   const controllerPassProvesRecovery =
     (last?.terminalReason === CycleTerminalReason.MissedPublication ||
       last?.terminalReason === CycleTerminalReason.MissedSubmission) &&
+    controllerPass?.result === 'SUCCESS' &&
+    controllerPass.outcome === 'NOT_DUE' &&
+    controllerPass.notDueReason === CycleNotDueReason.StaleExecutionBootstrap &&
+    observesMissedOrNewerBootstrap(last, controllerPass.cadenceDecision) &&
     observesCompletedControllerPassAfter(last, controller)
   if (
     !enabled ||
@@ -337,6 +343,9 @@ const cycleLoopHealth = (
     if (!executionControllerStatusHasCompletion(status)) {
       return unavailable('Restate lifecycle has not completed its first durable pass')
     }
+    if (loop.lastPass?.result === 'FAILURE') {
+      return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
+    }
     const completedAtMs = Date.parse(status.completedAt)
     const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
     if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
@@ -401,6 +410,17 @@ const deriveExecutionControllerStatus = (
         checkedAt,
         error: result.error,
       }
+}
+
+const deriveAutonomousCycleLoop = (
+  current: AutonomousCycleLoopStatus,
+  controller: ExecutionControllerRuntimeStatus | undefined,
+): AutonomousCycleLoopStatus => {
+  if (current.owner !== 'Restate' || controller?.readAvailable !== true || controller.status === null) return current
+  const status = controller.status
+  return executionControllerStatusHasCompletion(status) && status.lastPass !== undefined
+    ? { ...current, lastPass: status.lastPass }
+    : { ...current, lastPass: null }
 }
 
 const deriveBrokerStatus = (
@@ -573,28 +593,33 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
           cause: input.clock.failure,
         })
       : null
-  const cycleRunner = cycleLoopHealth(
-    current.health.dependencies.cycleRunner,
-    current.autonomousCycleLoop,
-    current.executionController,
-    input.results.executionController,
-    input.cycleFiber,
-    input.clock,
-    input.config.cycleStallThresholdMs,
-    input.broker !== undefined,
-  )
   const cycleObservation = publicCycleObservation(input.results.cycle)
   const executionController = deriveExecutionControllerStatus(
     current.executionController,
     input.results.executionController,
     checkedAt,
   )
-  const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock, executionController)
+  const autonomousCycleLoop = deriveAutonomousCycleLoop(current.autonomousCycleLoop, executionController)
+  const cycleRunner = cycleLoopHealth(
+    current.health.dependencies.cycleRunner,
+    autonomousCycleLoop,
+    executionController,
+    input.results.executionController,
+    input.cycleFiber,
+    input.clock,
+    input.config.cycleStallThresholdMs,
+    input.broker !== undefined,
+  )
+  const projectedCurrent: RuntimeState =
+    executionController === undefined
+      ? { ...current, autonomousCycleLoop }
+      : { ...current, autonomousCycleLoop, executionController }
+  const cycle = deriveCycleStatus(cycleObservation, input.config, projectedCurrent, input.clock, executionController)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(
-    current,
+    projectedCurrent,
     input.evidenceAvailable,
     health,
     cycle,

@@ -43,6 +43,7 @@ import executionControllerStatus from '../../migrations/0040_execution_controlle
 import executionControllerActiveStatus from '../../migrations/0041_execution_controller_active_status'
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
+import executionControllerPassObservation from '../../migrations/0044_execution_controller_pass_observation'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -88,4 +89,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '41_execution_controller_active_status': executionControllerActiveStatus,
   '42_execution_controller_plan_status': executionControllerPlanStatus,
   '43_execution_controller_activation_projection': executionControllerActivationProjection,
+  '44_execution_controller_pass_observation': executionControllerPassObservation,
 })

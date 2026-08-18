@@ -2,6 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import type { AdvanceExecutionCommand } from './advance'
 import { ExecutionControllerOutcome } from './controller-status'
+import { RetainedAutonomousCyclePassObservationSchema } from '../cycle/runner/pass-observation'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const CounterSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
@@ -102,6 +103,7 @@ export type ExecutionControllerState = typeof ExecutionControllerStateSchema.Typ
 
 export const ExecutionAdvanceStepResultSchema = Schema.Struct({
   completedAt: UtcInstantSchema,
+  observation: Schema.optionalKey(RetainedAutonomousCyclePassObservationSchema),
   outcome: Schema.Struct({
     _tag: Schema.Enum(ExecutionControllerOutcome),
     receiptHash: Sha256Schema,
