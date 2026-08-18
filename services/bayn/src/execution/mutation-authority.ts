@@ -126,6 +126,11 @@ export type ExecutionCapitalLimitFailure =
       readonly proposedMicros: string
     }
   | {
+      readonly _tag: 'BuyingPowerExceeded'
+      readonly availableMicros: string
+      readonly proposedMicros: string
+    }
+  | {
       readonly _tag: 'PositionNotionalLimitExceeded'
       readonly symbol: string
       readonly limitMicros: string
@@ -769,6 +774,13 @@ const validateExecutionCapitalLimitsDataFirst = (
     return Result.fail({
       _tag: 'OrderNotionalLimitExceeded',
       limitMicros: enforcedOrderLimit,
+      proposedMicros: proposedOrderNotional.toString(),
+    })
+  }
+  if (intent.side === IntentOrderSide.Buy && proposedOrderNotional > BigInt(snapshot.account.buyingPowerMicros)) {
+    return Result.fail({
+      _tag: 'BuyingPowerExceeded',
+      availableMicros: snapshot.account.buyingPowerMicros,
       proposedMicros: proposedOrderNotional.toString(),
     })
   }
