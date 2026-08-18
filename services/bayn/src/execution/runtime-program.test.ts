@@ -492,6 +492,56 @@ describe('same-code execution program composition', () => {
     expect(posts).toBe(0)
   })
 
+  test('reuses one transaction-stable intent read across every final risk check', async () => {
+    const fixture = finalLiveFixture()
+    const trace: string[] = []
+    let intentReads = 0
+    let posts = 0
+    const brokerRead = stableBrokerRead()
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('transaction-stable-final-risk'),
+      brokerRead: {
+        ...brokerRead,
+        account: Effect.sync(() => trace.push('account')).pipe(Effect.andThen(brokerRead.account)),
+      },
+      intentStore: {
+        read: () =>
+          Effect.sync(() => {
+            intentReads += 1
+            trace.push('intent')
+            return Option.some(fixture.stored)
+          }),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        yield* authorizeFinalBrokerSubmit(
+          fixture.authority,
+          fixture.intent,
+          Effect.sync(() => {
+            trace.push('submit')
+            posts += 1
+          }),
+          testDependencies,
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(intentReads).toBe(1)
+    expect(trace).toEqual(['intent', 'account', 'submit'])
+    expect(posts).toBe(1)
+  })
+
   test('rejects a risk-policy binding mismatch before broker or grant I/O', async () => {
     const fixture = finalLiveFixture()
     const authority = Result.getOrThrow(
@@ -899,7 +949,8 @@ describe('same-code execution program composition', () => {
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
-    expect(reads).toBe(2)
+    expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
+    expect(reads).toBe(1)
     expect(locks).toBe(1)
     expect(posts).toBe(0)
   })
