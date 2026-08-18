@@ -241,6 +241,8 @@ interface ScenarioInput {
   readonly maxNetExposureMicros?: string
   readonly currentDailyTradedNotionalMicros?: string
   readonly maxDailyTradedNotionalMicros?: string
+  readonly peakEquityMicros?: string
+  readonly maxDrawdownMicros?: string
   readonly closeOnly?: boolean
 }
 
@@ -337,6 +339,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
             maxNetExposureMicros: input.maxNetExposureMicros ?? '1000000000',
             currentDailyTradedNotionalMicros: input.currentDailyTradedNotionalMicros ?? '0',
             maxDailyTradedNotionalMicros: input.maxDailyTradedNotionalMicros ?? '1000000000',
+            peakEquityMicros: input.peakEquityMicros ?? '1000000000',
+            maxDrawdownMicros: input.maxDrawdownMicros ?? '1000000000',
           },
         )
         if (Result.isFailure(validation)) return yield* Effect.fail(validation.failure)
@@ -464,6 +468,31 @@ describe('final broker mutation authority', () => {
 
     expect(failureTag(observed.exit)).toBe('DailyTradedNotionalLimitExceeded')
     expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a buy when refreshed broker equity exceeds the durable drawdown limit', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ equityMicros: '899999999', lastEquityMicros: '899999999' }),
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '100000000',
+    })
+
+    expect(failureTag(observed.exit)).toBe('DrawdownLimitExceeded')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('keeps a strictly exposure-reducing close eligible above the drawdown policy cap', async () => {
+    const observed = await runLiveSubmit({
+      brokerAccount: account({ equityMicros: '899999999', lastEquityMicros: '899999999' }),
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell }),
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '100000000',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
   })
 
   test('keeps a strictly exposure-reducing close eligible above the daily turnover policy cap', async () => {
