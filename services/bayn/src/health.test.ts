@@ -1678,6 +1678,75 @@ describe('Bayn continuous health', () => {
     })
   })
 
+  test('degrades when the latest durable Restate pass failed even while the controller schedule is current', () => {
+    const controllerKey = 'f'.repeat(64)
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: { configured: true, owner: 'Restate', startedAt: null, lastPass: null },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash: controllerPlanHash,
+        status: null,
+        readAvailable: null,
+        checkedAt: null,
+        error: null,
+      },
+    }
+    const lastPass = {
+      result: 'FAILURE' as const,
+      observedAt: '2026-07-20T00:00:00.000Z',
+      cadence: 'EVERY_SESSION' as const,
+      operation: 'run-cycle-pass' as const,
+      failure: 'operational' as const,
+      message: 'injected durable Restate pass failure',
+    }
+    const status = {
+      schemaVersion: 1 as const,
+      controllerKey,
+      planHash: controllerPlanHash,
+      active: true,
+      epoch: 4,
+      nextSequence: 13,
+      lastSequence: 12,
+      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastReceiptHash: 'e'.repeat(64),
+      completedAt: '2026-07-20T00:00:00.000Z',
+      nextDueAt: '2026-07-20T00:01:00.000Z',
+      lastPass,
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+        executionController: { _tag: 'Available', value: status },
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-20T00:00:30.000Z'),
+    })
+
+    expect(transition.next).toMatchObject({
+      status: 'DEGRADED',
+      autonomousCycleLoop: { lastPass },
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'run-cycle-pass/operational: injected durable Restate pass failure',
+          },
+        },
+      },
+      error: 'cycleRunner: run-cycle-pass/operational: injected durable Restate pass failure',
+    })
+  })
+
   test('fails closed when the Restate controller projection exceeds its due-time grace', () => {
     const controllerKey = 'f'.repeat(64)
     const current: RuntimeState = {

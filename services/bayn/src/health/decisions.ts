@@ -343,6 +343,9 @@ const cycleLoopHealth = (
     if (!executionControllerStatusHasCompletion(status)) {
       return unavailable('Restate lifecycle has not completed its first durable pass')
     }
+    if (loop.lastPass?.result === 'FAILURE') {
+      return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
+    }
     const completedAtMs = Date.parse(status.completedAt)
     const nextDueAtMs = status.nextDueAt === undefined ? Number.NaN : Date.parse(status.nextDueAt)
     if (!Number.isFinite(completedAtMs) || !Number.isFinite(nextDueAtMs) || nextDueAtMs < completedAtMs) {
@@ -590,16 +593,6 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
           cause: input.clock.failure,
         })
       : null
-  const cycleRunner = cycleLoopHealth(
-    current.health.dependencies.cycleRunner,
-    current.autonomousCycleLoop,
-    current.executionController,
-    input.results.executionController,
-    input.cycleFiber,
-    input.clock,
-    input.config.cycleStallThresholdMs,
-    input.broker !== undefined,
-  )
   const cycleObservation = publicCycleObservation(input.results.cycle)
   const executionController = deriveExecutionControllerStatus(
     current.executionController,
@@ -607,6 +600,16 @@ const deriveHealthTransitionDataFirst = (current: RuntimeState, input: HealthTra
     checkedAt,
   )
   const autonomousCycleLoop = deriveAutonomousCycleLoop(current.autonomousCycleLoop, executionController)
+  const cycleRunner = cycleLoopHealth(
+    current.health.dependencies.cycleRunner,
+    autonomousCycleLoop,
+    executionController,
+    input.results.executionController,
+    input.cycleFiber,
+    input.clock,
+    input.config.cycleStallThresholdMs,
+    input.broker !== undefined,
+  )
   const projectedCurrent: RuntimeState =
     executionController === undefined
       ? { ...current, autonomousCycleLoop }

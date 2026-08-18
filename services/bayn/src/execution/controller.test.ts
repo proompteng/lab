@@ -4,6 +4,7 @@ import { Result } from 'effect'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionAdvanceStepResult,
   decodeExecutionControllerBootstrap,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
@@ -217,6 +218,57 @@ describe('execution controller decisions', () => {
           epoch: 1,
           sequence: 0,
           attempt: 7,
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('rejects malformed retained session dates in durable pass evidence', () => {
+    const candidate = {
+      completedAt: '2026-08-13T18:00:00.000Z',
+      observation: {
+        result: 'SUCCESS',
+        observedAt: '2026-08-13T18:00:00.000Z',
+        outcome: 'NOT_DUE',
+        cadence: 'EVERY_SESSION',
+        notDueReason: 'STALE_CAPITAL_BOOTSTRAP',
+        cadenceDecision: {
+          schemaVersion: 'bayn.month-end-cadence-decision.v1',
+          condition: 'EXPECTED_WAIT',
+          reason: 'SIGNAL_AND_EXECUTION_SESSION_SAME_MONTH',
+          signalSessionDate: 'zzz',
+          executionSessionDate: 'zzzz',
+          nextEligibility: {
+            status: 'UNKNOWN',
+            reason: 'FUTURE_CALENDAR_EVIDENCE_UNAVAILABLE',
+          },
+        },
+      },
+      outcome: {
+        _tag: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'f'.repeat(64),
+        nextDelayMs: 30_000,
+      },
+    }
+
+    expect(Result.isFailure(decodeExecutionAdvanceStepResult(candidate))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeExecutionAdvanceStepResult({
+          ...candidate,
+          observation: {
+            ...candidate.observation,
+            cadenceDecision: {
+              ...candidate.observation.cadenceDecision,
+              signalSessionDate: '2026-08-12',
+              executionSessionDate: '2026-08-13',
+              nextEligibility: {
+                status: 'PROVEN',
+                sessionDate: 'not-a-date',
+                basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+              },
+            },
+          },
         }),
       ),
     ).toBe(true)

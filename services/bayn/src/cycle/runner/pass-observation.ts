@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 
 import { MonthEndCadenceCondition, MonthEndCadenceReason, type MonthEndCadenceDecision } from '../observability'
-import { UtcInstantSchema } from '../../schemas'
+import { IsoDateSchema, UtcInstantSchema } from '../../schemas'
 import { CycleNotDueReason, type CycleRunResult, type CycleRunnerError } from './model'
 
 export const MonthEndCadenceDecisionSchema = Schema.Struct({
@@ -16,12 +16,12 @@ export const MonthEndCadenceDecisionSchema = Schema.Struct({
     MonthEndCadenceReason.SignalToExecutionMonthTransition,
     MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
   ]),
-  signalSessionDate: Schema.NullOr(Schema.String),
-  executionSessionDate: Schema.NullOr(Schema.String),
+  signalSessionDate: Schema.NullOr(IsoDateSchema),
+  executionSessionDate: Schema.NullOr(IsoDateSchema),
   nextEligibility: Schema.Union([
     Schema.Struct({
       status: Schema.Literal('PROVEN'),
-      sessionDate: Schema.String,
+      sessionDate: IsoDateSchema,
       basis: Schema.Literal('EXECUTION_SESSION_MONTH_TRANSITION'),
     }),
     Schema.Struct({
