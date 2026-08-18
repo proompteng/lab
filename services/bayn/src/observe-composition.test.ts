@@ -1598,12 +1598,14 @@ describe('OBSERVE runtime composition', () => {
     const rejected = event(rejectedIntentId, MutationEventType.SubmitRejected)
     const accepted = event(laterIntentId, MutationEventType.SubmitAccepted)
     const submitted: string[] = []
+    const submitDeadlines: string[] = []
     let recoveries = 0
     const program: ExecutionProgram = {
       ...sandboxExecutionProgram(),
-      submit: (intentId) =>
+      submit: (intentId, _consistencyDelayMs, submitExpiresAt) =>
         Effect.sync(() => {
           submitted.push(intentId)
+          submitDeadlines.push(submitExpiresAt)
           return accepted
         }),
       recover: () =>
@@ -1628,6 +1630,7 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(submitted).toEqual([laterIntentId])
+    expect(submitDeadlines).toEqual(['9999-12-31T23:59:59.999Z'])
     expect(recoveries).toBe(0)
   })
 

@@ -12,7 +12,11 @@ import { decideMutationIntentSettlement, type MutationIntentExecutionResult } fr
 import { Pipeable } from '../pipeable'
 
 export type ExecutionMutationExecutor<E, R> = {
-  readonly submit?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
+  readonly submit?: (
+    intentId: string,
+    consistencyDelayMs: number,
+    submitExpiresAt: string,
+  ) => Effect.Effect<MutationEvent, E, R>
   readonly cancel?: (intentId: string, consistencyDelayMs: number) => Effect.Effect<MutationEvent, E, R>
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
@@ -134,7 +138,7 @@ export const executeMutationIntentWithExecutor = <E, R>(
           })
         }
         event = yield* executor
-          .submit(intentId, mutationConsistencyDelayMs)
+          .submit(intentId, mutationConsistencyDelayMs, submitExpiresAt)
           .pipe(Effect.mapError((cause) => mutationRunnerError({ message: 'guarded broker submit failed', cause })))
       }
     } else if (operation === MutationOperation.Submit && submitDoesNotRequireRecovery(existing.eventType)) {
