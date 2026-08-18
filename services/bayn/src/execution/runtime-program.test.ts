@@ -92,6 +92,7 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   mutationStore: {} as ExecutionProgramDependencies['mutationStore'],
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
   riskPolicy,
+  readDailyTradedNotionalMicros: () => Effect.succeed('0'),
   persistedCapitalGrants: {
     lockForSubmit: () =>
       Effect.die(new Error(`${label} persisted capital grant lock must not run during composition proof`)),
@@ -413,6 +414,59 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('NetExposureLimitExceeded')
+    expect(posts).toBe(0)
+  })
+
+  test('revalidates durable daily traded notional at the final writer fence', async () => {
+    const fixture = finalLiveFixture()
+    const boundedPolicy: Policy = { ...riskPolicy, maxDailyTradedNotionalMicros: '249999999' }
+    const policyHash = Result.getOrThrow(canonicalHashV1Result(boundedPolicy))
+    const intent: Intent = { ...fixture.intent, policyHash }
+    if (fixture.stored.decision === undefined) throw new Error('fixture requires an approved risk decision')
+    const stored: StoredIntent = {
+      ...fixture.stored,
+      intent,
+      decision: { ...fixture.stored.decision, policyHash },
+    }
+    let posts = 0
+    let turnoverReads = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('final-daily-turnover'),
+      riskPolicy: boundedPolicy,
+      readDailyTradedNotionalMicros: () =>
+        Effect.sync(() => {
+          turnoverReads += 1
+          return '150000000'
+        }),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        read: () => Effect.die(new Error('final authorization must use the locked grant read')),
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+    }
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* authorizeFinalBrokerSubmit(
+          fixture.authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('DailyTradedNotionalLimitExceeded')
+    expect(turnoverReads).toBe(1)
     expect(posts).toBe(0)
   })
 

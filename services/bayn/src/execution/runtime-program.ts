@@ -39,6 +39,7 @@ export interface ExecutionProgramDependencies {
   readonly writerFence: WriterFenceService
   readonly persistedCapitalGrants: Pick<PersistedCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly riskPolicy: Policy
+  readonly readDailyTradedNotionalMicros: (observedAt: string) => Effect.Effect<string, FinalSubmitAuthorizationFailure>
   readonly currentUtcInstant: Effect.Effect<string>
   /** The reviewed entry lease, checked at the final writer fence. */
   readonly entrySubmitExpiresAt?: string
@@ -121,6 +122,7 @@ const finalBrokerAuthorization = (
   return Effect.gen(function* () {
     const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
     const observedAt = yield* dependencies.currentUtcInstant
+    const currentDailyTradedNotionalMicros = yield* dependencies.readDailyTradedNotionalMicros(observedAt)
     const refreshedAuthority =
       capital.persistedAuthority === undefined
         ? Result.succeed(authority)
@@ -136,6 +138,8 @@ const finalBrokerAuthorization = (
         closeOnly,
         maxBrokerStateAgeMs: dependencies.riskPolicy.maxBrokerStateAgeMs,
         maxNetExposureMicros: dependencies.riskPolicy.maxNetExposureMicros,
+        currentDailyTradedNotionalMicros,
+        maxDailyTradedNotionalMicros: dependencies.riskPolicy.maxDailyTradedNotionalMicros,
         ...(capital.hardCloseLimits === undefined ? {} : { hardCloseLimits: capital.hardCloseLimits }),
       },
     )

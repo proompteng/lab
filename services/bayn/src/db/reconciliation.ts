@@ -140,6 +140,7 @@ const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
 const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256 })])
+const DailyTradedNotionalRow = Schema.Tuple([Schema.Struct({ daily_traded_notional_micros: UnsignedMicrosSchema })])
 const ReconciliationRiskContextRow = Schema.Tuple([
   Schema.Struct({
     trading_date: IsoDateSchema,
@@ -167,6 +168,7 @@ const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(AccountingTra
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconciliationRows, strictParseOptions)
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
+const decodeDailyTradedNotional = Schema.decodeUnknownEffect(DailyTradedNotionalRow, strictParseOptions)
 const decodeRiskContext = Schema.decodeUnknownEffect(ReconciliationRiskContextRow, strictParseOptions)
 const encodeDiscrepancies = Schema.encodeSync(Schema.fromJsonString(Schema.Array(DiscrepancySchema)))
 
@@ -278,6 +280,33 @@ const restrictAuthorityDataFirst = (
   )
 
 export const restrictAuthority = Pipeable.dual(3, restrictAuthorityDataFirst)
+
+const readDailyTradedNotionalMicrosDataFirst = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  observedAt: string,
+): Effect.Effect<string, ReconciliationStoreError> =>
+  runStore(
+    'risk-context',
+    Effect.gen(function* () {
+      const [row] = yield* sql<Record<string, unknown>>`
+        WITH boundary AS (
+          SELECT (${observedAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
+        )
+        SELECT coalesce((
+          SELECT sum(transaction.notional_micros)::text
+          FROM accounting_transactions AS transaction
+          WHERE transaction.account_id = ${accountId}
+            AND transaction.occurred_at <= ${observedAt}
+            AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
+        ), '0') AS daily_traded_notional_micros
+        FROM boundary
+      `.pipe(Effect.flatMap(decodeDailyTradedNotional))
+      return row.daily_traded_notional_micros
+    }),
+  )
+
+export const readDailyTradedNotionalMicros = Pipeable.dual(3, readDailyTradedNotionalMicrosDataFirst)
 
 const makeReconciliationDataFirst = (
   sql: PgClient.PgClient,
