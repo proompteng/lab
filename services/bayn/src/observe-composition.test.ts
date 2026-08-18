@@ -2674,7 +2674,7 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions[0]?.reason).toContain(`intent ${fixture.intent.intentId} ended REJECTED`)
   })
 
-  test('builds a deterministic close from persisted entry binding when signal services are unavailable', async () => {
+  test('builds a deterministic close and terminalizes an uncommitted close at its submit cutoff', async () => {
     const fixture = await executionLifecycleFixture((policy) => ({
       ...policy,
       maxBrokerStateAgeMs: 3_600_000,
@@ -2834,6 +2834,58 @@ describe('OBSERVE runtime composition', () => {
       action: 'SUBMIT',
       intentId: close.orderedIntentIds[0],
     })
+
+    const missedCloseSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
+    let missedCloseCommits = 0
+    const missedCloseIntentStore: IntentStoreService = {
+      commit: () => Effect.die(new Error('missed close admission must use commitClosing')),
+      commitClosing: () =>
+        Effect.sync(() => {
+          missedCloseCommits += 1
+          throw new Error('missed close cutoff must terminalize before durable intent commit')
+        }),
+      read: () => Effect.succeed(Option.none()),
+    }
+    const missedClose = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(missedCloseSubmitCutoffAt))
+        return yield* prepareNextMutationIntent({
+          input: {
+            ...fixture.input,
+            mutationPhase: 'CLOSE',
+            executionMandateCutoffAt: fixture.document.submissionCutoffAt,
+            executionMandateCloseSubmitCutoffAt: missedCloseSubmitCutoffAt,
+            executionMandateExpiresAt: closeExpiresAt,
+          },
+          preparation: fixture.preparation,
+          policy: fixture.policy,
+          cycle: fixture.boundCycle,
+          document: close,
+          reconcile: Effect.die(new Error('missed close cutoff must terminalize before broker reconciliation')),
+          allowSubmit: false,
+        })
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, missedCloseIntentStore),
+        Effect.provideService(MutationStore, closeMutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(missedClose).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.MissedSubmission,
+      observedAt: missedCloseSubmitCutoffAt,
+    })
+    expect(missedCloseCommits).toBe(0)
   })
 
   test('keeps a rejected execution close intent recoverable while reconciliation still shows an open position', async () => {

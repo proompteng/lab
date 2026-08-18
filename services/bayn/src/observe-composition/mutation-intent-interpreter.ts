@@ -447,25 +447,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     }
 
     const uncommittedIntents = preparedIntents.filter((prepared) => prepared.stored === undefined)
-    if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
-      return { _tag: 'Wait', observedAt: recoveryObservedAt }
-    }
-    if (allowSubmit) {
-      for (const prepared of preparedIntents) {
-        const requiresFreshSubmission =
-          prepared.stored === undefined ||
-          (prepared.stored.intent.state !== IntentState.Terminal && prepared.latestSubmit === undefined)
-        if (!requiresFreshSubmission) continue
-        yield* Effect.fromResult(
-          validateCurrentMutationExecutionTerms(
-            preparation,
-            prepared.targetIntent,
-            prepared.target,
-            prepared.riskBinding,
-          ),
-        )
-      }
-    }
     if (!drainOpenOrders && uncommittedIntents.length > 0) {
       const commitObservedAt = yield* dependencies.now
       const commitExpiresAt = uncommittedIntents.reduce(
@@ -489,6 +470,25 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           cause: undefined,
           failure: 'contract',
         })
+      }
+    }
+    if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
+      return { _tag: 'Wait', observedAt: recoveryObservedAt }
+    }
+    if (allowSubmit) {
+      for (const prepared of preparedIntents) {
+        const requiresFreshSubmission =
+          prepared.stored === undefined ||
+          (prepared.stored.intent.state !== IntentState.Terminal && prepared.latestSubmit === undefined)
+        if (!requiresFreshSubmission) continue
+        yield* Effect.fromResult(
+          validateCurrentMutationExecutionTerms(
+            preparation,
+            prepared.targetIntent,
+            prepared.target,
+            prepared.riskBinding,
+          ),
+        )
       }
     }
 
