@@ -365,7 +365,8 @@ describe('final broker mutation authority', () => {
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
-    expect(observed.positionReads).toBe(2)
+    expect(observed.positionReads).toBe(3)
+    expect(observed.orderReads).toBe(3)
     expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
@@ -407,8 +408,34 @@ describe('final broker mutation authority', () => {
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(2)
+    expect(observed.orderReads).toBe(3)
     expect(observed.grantReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects exposure drift observed after the final account safety read', async () => {
+    const observed = await runLiveSubmit({
+      positionSnapshots: [[], [], [position()]],
+    })
+
+    expect(failureTag(observed.exit)).toBe('BrokerPositionSnapshotChanged')
+    expect(observed.positionReads).toBe(3)
+    expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects open-order drift observed after the final account safety read', async () => {
+    const competingOrder = order({
+      brokerOrderId: 'fd3123e2-97bd-4cb8-821b-934ecad616ba',
+      clientOrderId: 'post-account-external-order',
+    })
+    const observed = await runLiveSubmit({
+      orderSnapshots: [[], [], [competingOrder]],
+    })
+
+    expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
+    expect(observed.orderReads).toBe(3)
+    expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
 
@@ -423,7 +450,7 @@ describe('final broker mutation authority', () => {
     })
 
     expect(observed.exit._tag).toBe('Success')
-    expect(observed.orderReads).toBe(2)
+    expect(observed.orderReads).toBe(3)
     expect(observed.submits).toBe(1)
   })
 

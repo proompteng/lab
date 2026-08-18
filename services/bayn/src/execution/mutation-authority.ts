@@ -873,13 +873,42 @@ const refreshExecutionBrokerSubmitSnapshotDataFirst = (
         mutationAuthorizationError('broker account could not be refreshed after exposure confirmation', cause),
       ),
     )
+    const positionsConfirmed = yield* dependencies.brokerRead.positions.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('broker positions could not be confirmed after account refresh', cause),
+      ),
+    )
+    const confirmedPositions = validateStablePositionSnapshot(stablePositions.success, positionsConfirmed.value)
+    if (Result.isFailure(confirmedPositions)) {
+      return yield* mutationAuthorizationError(
+        'broker position snapshot changed after account refresh',
+        confirmedPositions.failure,
+      )
+    }
+    const openOrdersConfirmed = yield* dependencies.brokerRead
+      .orders({
+        status: OrderCollection.Open,
+        limit: limits.maxOpenOrders,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationAuthorizationError('broker open orders could not be confirmed after account refresh', cause),
+        ),
+      )
+    const confirmedOpenOrders = validateStableOpenOrderSnapshot(stableOpenOrders.success, openOrdersConfirmed.value)
+    if (Result.isFailure(confirmedOpenOrders)) {
+      return yield* mutationAuthorizationError(
+        'broker open-order snapshot changed after account refresh',
+        confirmedOpenOrders.failure,
+      )
+    }
     return {
       account: account.value,
-      positions: stablePositions.success,
-      openOrders: stableOpenOrders.success,
+      positions: confirmedPositions.success,
+      openOrders: confirmedOpenOrders.success,
       accountObservedAt: account.evidence.observedAt,
-      positionsObservedAt: positionsAfter.evidence.observedAt,
-      ordersObservedAt: openOrdersAfter.evidence.observedAt,
+      positionsObservedAt: positionsConfirmed.evidence.observedAt,
+      ordersObservedAt: openOrdersConfirmed.evidence.observedAt,
     }
   })
 
