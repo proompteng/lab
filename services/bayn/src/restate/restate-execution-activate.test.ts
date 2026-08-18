@@ -29,9 +29,9 @@ const activeState = {
   planHash: config.planHash,
   sourceRevision: config.sourceRevision,
   initialSequence: 0,
-  nextSequence: 1,
+  nextSequence: 2,
   lastCompletion: {
-    sequence: 0,
+    sequence: 1,
     outcome: ExecutionControllerOutcome.Blocked,
     receiptHash: 'd'.repeat(64),
     completedAt: '2026-08-17T18:00:00.000Z',
@@ -167,7 +167,12 @@ describe('native Restate execution activation', () => {
       { ...activeState, planHash: 'd'.repeat(64) },
       { ...activeState, sourceRevision: 'e'.repeat(40) },
       { ...activeState, lastCompletion: undefined },
-      { ...activeState, nextSequence: 0 },
+      { ...activeState, nextSequence: 1 },
+      {
+        ...activeState,
+        nextSequence: 1,
+        lastCompletion: { ...activeState.lastCompletion, sequence: activeState.initialSequence },
+      },
       { active: true },
     ]) {
       expect(Result.isFailure(verifyRestateExecutionActivation(config, invalid))).toBe(true)
