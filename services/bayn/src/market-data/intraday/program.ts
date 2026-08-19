@@ -31,8 +31,10 @@ export const makeIntradayMarketData: Effect.Effect<
   return {
     captureVersion: (query) =>
       Effect.fromResult(verifyIntradaySnapshotQuery(query)).pipe(
-        Effect.flatMap((verified) => captureIntradayArchiveWatermarks(verified)),
-        Effect.flatMap((rows) => Effect.fromResult(verifyIntradayArchiveWatermarks(query, rows))),
+        Effect.flatMap((verified) =>
+          captureIntradayArchiveWatermarks(verified).pipe(Effect.map((rows) => ({ rows, verified }))),
+        ),
+        Effect.flatMap(({ rows, verified }) => Effect.fromResult(verifyIntradayArchiveWatermarks(verified, rows))),
         Effect.mapError(mapFailure),
       ),
     loadSnapshot: (request) =>
