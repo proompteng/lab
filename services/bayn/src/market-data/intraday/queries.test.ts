@@ -38,7 +38,7 @@ const makeSqlRecorder = (): ClickhouseClient.ClickhouseClient => {
 }
 
 describe('intraday archive queries', () => {
-  test('reads immutable bar revisions and caps every event stream at the snapshot range end', () => {
+  test('reads immutable opening bars and post-range quote/trade evidence through the observation', () => {
     const queries = makeIntradayMarketDataQueries(makeSqlRecorder())
     const capture = String(queries.captureIntradayArchiveWatermarks(request))
     const bars = String(queries.loadIntradayBars(request))
@@ -47,10 +47,11 @@ describe('intraday archive queries', () => {
 
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
+    expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
     for (const query of [quotes, trades]) {
-      expect(query).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
-      expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 3, 'UTC')`)
-      expect(query).not.toContain(`event_ts <= parseDateTime64BestEffort("${request.observedAt}", 3, 'UTC')`)
+      expect(query).toContain(`event_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
     }
   })
 })

@@ -1,6 +1,12 @@
 import { Result, Schema, pipe } from 'effect'
 
-import { DigitsSchema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from '../../schemas'
+import {
+  DigitsSchema,
+  StrictNonEmptyStringSchema,
+  UtcInstantSchema,
+  UtcOrderTimestampSchema,
+  strictParseOptions,
+} from '../../schemas'
 import { IntradaySnapshotFailure } from './model'
 
 const NumericSchema = Schema.Union([Schema.Finite, Schema.String])
@@ -16,8 +22,10 @@ const identityFields = {
   market_session: Schema.Literal('regular'),
   delay_class: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
   symbol: Schema.String,
-  event_at: UtcInstantSchema,
-  ingested_at: UtcInstantSchema,
+  // Bars use millisecond precision while raw SIP quotes and trades retain the
+  // provider's nanosecond ordering timestamp. Both remain canonical UTC wire values.
+  event_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
+  ingested_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
   source_topic: StrictNonEmptyStringSchema,
   source_partition: PartitionSchema,
   source_offset: DigitsSchema,

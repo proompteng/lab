@@ -1,6 +1,5 @@
-import { Context, Data, Effect } from 'effect'
+import { Data } from 'effect'
 
-import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
@@ -115,17 +114,6 @@ export interface IntradayMarketSnapshot {
   readonly latestQuotes: Readonly<Record<string, IntradayQuote>>
   readonly manifest: IntradaySnapshotManifest
 }
-
-export interface IntradayMarketDataService {
-  readonly captureVersion: (
-    query: IntradaySnapshotQuery,
-  ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
-  readonly loadSnapshot: (request: IntradaySnapshotRequest) => Effect.Effect<IntradayMarketSnapshot, OperationalError>
-}
-
-export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
-  '@proompteng/bayn/market-data/intraday/IntradayMarketData',
-) {}
 
 export type IntradaySnapshotFailureReason =
   | 'request'

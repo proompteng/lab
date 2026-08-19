@@ -20,7 +20,6 @@ export type {
   IntradayDelayClass,
   IntradayFeed,
   IntradayLineage,
-  IntradayMarketDataService,
   IntradayMarketSnapshot,
   IntradayQuote,
   IntradayRecordIdentity,
@@ -29,7 +28,7 @@ export type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './intraday/model'
-export { IntradayMarketData, IntradaySnapshotFailure } from './intraday/model'
+export { IntradaySnapshotFailure } from './intraday/model'
 export {
   renderMarketDataVerificationError,
   selectCyclePublicationManifests,
