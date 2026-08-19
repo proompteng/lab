@@ -9,7 +9,7 @@ import {
   type IntradaySnapshotRows,
 } from '../../market-data'
 import type { IsoDate } from '../../types'
-import { openingDriveBehaviorHash } from './decision'
+import { decideOpeningDrive, openingDriveBehaviorHash } from './decision'
 import type { OpeningDriveMarketContext } from './model'
 import { qualifyOpeningDrive } from './qualification'
 import { openingDriveOneSidedAlphaForOrdinal } from './qualification-analysis'
@@ -83,6 +83,7 @@ interface SnapshotRowsOptions {
   readonly quoteEventAt?: string
   readonly quoteIngestedAt?: string
   readonly observedAt?: string
+  readonly quoteMidpointBySymbol?: Readonly<Record<string, number>>
 }
 
 const rowsFor = (options: SnapshotRowsOptions): IntradaySnapshotRows => {
@@ -130,7 +131,8 @@ const rowsFor = (options: SnapshotRowsOptions): IntradaySnapshotRows => {
     const openingPrice = 100 + symbolIndex
     const openingMidpoint = openingPrice * (1 + openingMoveBySymbol(symbol))
     const move = symbol === 'AMD' || symbol === 'AVGO' || symbol === 'NVDA' ? candidateMove : benchmarkMove
-    const midpoint = phase === 'opening' ? openingMidpoint : openingMidpoint * (1 + move)
+    const midpoint =
+      options.quoteMidpointBySymbol?.[symbol] ?? (phase === 'opening' ? openingMidpoint : openingMidpoint * (1 + move))
     return {
       provider: 'alpaca',
       universe_id: defaultOpeningDriveProtocolDocument.universeId,
@@ -413,6 +415,30 @@ describe('opening-drive after-cost qualification', () => {
     )
     expect(subminimum.benchmark.executedSymbols).toEqual([])
     expect(subminimum.benchmark.entryNotionalMicros).toBe('0')
+
+    const boundaryInput = replayInput(0, 0.02)
+    const boundaryOpening = snapshotFor({
+      sessionDate: boundaryInput.opening.session.sessionDate,
+      phase: 'opening',
+      candidateMove: 0.02,
+      benchmarkMove: 0,
+      quoteMidpointBySymbol: { AMD: 111.09 },
+    })
+    const boundaryDecision = success(
+      decideOpeningDrive({ ...boundaryInput.opening, snapshot: boundaryOpening }, protocol),
+    )
+    expect(boundaryDecision.signals.find((signal) => signal.symbol === 'AMD')?.askPriceMicros).toBe('111100000')
+    const referenceBoundary = success(
+      replayOpeningDriveSession(
+        {
+          ...boundaryInput,
+          opening: { ...boundaryInput.opening, snapshot: boundaryOpening },
+        },
+        protocol,
+        { ...defaultOpeningDriveQualificationPolicy, allocationMicros: '10000000' },
+      ),
+    )
+    expect(referenceBoundary.candidate.executedSymbols).not.toContain('AMD')
   })
 
   test('rejects late opening observations at the immutable snapshot boundary', () => {

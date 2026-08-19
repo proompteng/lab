@@ -222,11 +222,14 @@ const replayPosition = (
     )
     if (quantity === 0n) return null
     const costMultiplier = BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS
+    const entryReferenceNotional = yield* Result.mapError(notionalMicros(quantity, values.entryAsk), (cause) =>
+      executionFailure(sessionDate, symbol, cause),
+    )
+    if (entryReferenceNotional < BigInt(replayExecutionModel.precision.minimumBuyNotionalMicros)) return null
     const entry = yield* Result.mapError(
       makeFillTerms('buy', quantity, values.entryAsk, replayExecutionModel, costMultiplier),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
-    if (entry.notionalMicros < BigInt(replayExecutionModel.precision.minimumBuyNotionalMicros)) return null
     const exitQuantity = yield* Result.mapError(
       quantizeDown(
         quantity < values.exitSize ? quantity : values.exitSize,
