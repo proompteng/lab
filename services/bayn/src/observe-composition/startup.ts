@@ -6,8 +6,9 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
+import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { strategyApplication, strategyDefinition, type StrategyRuntime } from '../strategy'
+import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
@@ -22,6 +23,32 @@ import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionB
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
+  const definition = strategyDefinition(input.strategy)
+  const parameterHash = canonicalHashV1Result(definition.parameters)
+  if (Result.isFailure(parameterHash)) {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'strategy definition parameters are not canonically hashable',
+        cause: parameterHash.failure,
+      }),
+    )
+  }
+  const parameterSchemaVersion = (definition.parameters as { readonly schemaVersion?: unknown }).schemaVersion
+  if (
+    definition.name !== input.strategy.provenance.strategy.name ||
+    parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
+    parameterHash.success !== input.strategy.provenance.strategy.parameterHash
+  ) {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'strategy definition does not match its runtime provenance',
+      }),
+    )
+  }
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
@@ -125,7 +152,7 @@ export const makeObserveAutonomousCycleStartup =
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       const policy = yield* loadObserveRiskPolicy(
         input.accountId,
-        strategyApplication(input.strategy).definition.parameters.universe,
+        strategyDefinition(input.strategy).parameters.universe,
       ).pipe(
         Effect.mapError((cause) =>
           operationalError({
@@ -160,7 +187,7 @@ export const makeMutationAutonomousCycleStartup =
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
       const policy = yield* loadObserveRiskPolicy(
         input.accountId,
-        strategyApplication(input.strategy).definition.parameters.universe,
+        strategyDefinition(input.strategy).parameters.universe,
       ).pipe(
         Effect.mapError((cause) =>
           operationalError({

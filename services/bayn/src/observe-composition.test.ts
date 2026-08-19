@@ -121,7 +121,7 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { openingDriveExecutionModel } from './strategy/opening-drive'
+import { openingDriveBehaviorHash, openingDriveExecutionModel } from './strategy/opening-drive'
 import { TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
@@ -3433,7 +3433,18 @@ describe('OBSERVE runtime composition', () => {
       holdingPeriod: 'INTRADAY',
       parameters: { ...fixtureProtocol, executionModel: openingDriveExecutionModel },
     } as const
-    const strategy = { definition, provenance: fixtureRuntime.provenance }
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: openingDriveBehaviorHash,
+          parameterHash: canonicalHashV1(definition.parameters),
+          parameterSchemaVersion: definition.parameters.schemaVersion,
+        },
+      },
+    }
     const input = {
       accountId,
       authorityGenerationHash: generationHash,
@@ -3449,6 +3460,15 @@ describe('OBSERVE runtime composition', () => {
       expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v4')
       expect(prepared.success.executionPolicy.schemaVersion).toBe('bayn.autonomous-cycle-execution-policy.v2')
     }
+
+    expect(
+      Result.isFailure(
+        prepareObserveStartup({
+          ...input,
+          strategy: { definition, provenance: fixtureRuntime.provenance },
+        }),
+      ),
+    ).toBe(true)
 
     const malformed = prepareObserveStartup({
       ...input,
