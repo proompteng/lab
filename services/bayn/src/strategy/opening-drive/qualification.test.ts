@@ -18,7 +18,11 @@ import {
   openingDriveRequiredQualificationSessions,
   validateOpeningDriveQualificationPolicy,
 } from './qualification-policy'
-import { openingDriveReplayCostModelDocument, replayOpeningDriveSession } from './qualification-replay'
+import {
+  hashOpeningDriveReplayCostModel,
+  openingDriveReplayCostModelDocument,
+  replayOpeningDriveSession,
+} from './qualification-replay'
 import { hashOpeningDriveReplayVersionGraphFromInputs } from './qualification-version'
 import {
   decodeDefaultOpeningDriveProtocol,
@@ -262,7 +266,7 @@ const binding = (
   strategyBehaviorHash: openingDriveBehaviorHash,
   protocolHash: defaultOpeningDriveProtocolHash,
   policyHash: canonicalHashV1(defaultOpeningDriveQualificationPolicy),
-  costModelHash: canonicalHashV1(openingDriveReplayCostModelDocument),
+  costModelHash: canonicalHashV1(openingDriveReplayCostModelDocument(defaultOpeningDriveProtocolDocument)),
   evaluationCalendarHash: calendar.contentHash,
   replayVersionGraphHash: success(hashOpeningDriveReplayVersionGraphFromInputs(sessions)),
   priorTrialReceiptHashes: Array.from({ length: priorTrialCount }, (_, ordinal) =>
@@ -393,6 +397,24 @@ describe('opening-drive after-cost qualification', () => {
 
     expect(spent).toBeLessThan(0.05)
     expect(spent).toBeGreaterThan(0.04999)
+  })
+
+  test('derives the replay cost-model hash from the exact protocol execution terms', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const higherSlippage = {
+      ...protocol,
+      executionModel: {
+        ...protocol.executionModel,
+        priceImpact: {
+          ...protocol.executionModel.priceImpact,
+          slippageBps: protocol.executionModel.priceImpact.slippageBps + 1,
+        },
+      },
+    }
+
+    expect(success(hashOpeningDriveReplayCostModel(higherSlippage))).not.toBe(
+      success(hashOpeningDriveReplayCostModel(protocol)),
+    )
   })
 
   test('rejects strategy, protocol, policy, or cost-model drift from the immutable binding before replay', () => {

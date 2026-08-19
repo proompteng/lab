@@ -1,5 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
+import { ExecutionModelV4Schema, type ExecutionModel } from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
 import { maximumIntradayObservationLagMs } from '../../market-data/intraday/verification'
 import {
@@ -9,6 +10,7 @@ import {
   SymbolSchema,
   strictParseOptions,
 } from '../../schemas'
+import { defaultExecutionModel } from '../execution-model/model'
 
 const PositiveUnitIntervalSchema = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const BasisPointsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000))
@@ -20,8 +22,33 @@ const coreUniverse = {
   symbolHash: '8c6b71d066bce38f6f61d5264bb7ebdd45f44ee0c606b92ecf6bc68b81e1d49d',
 } as const
 
-const OpeningDriveProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.opening-drive.protocol.v1'),
+export const openingDriveExecutionModel: Extract<
+  ExecutionModel,
+  { readonly schemaVersion: 'bayn.execution-model.v4' }
+> = Object.freeze({
+  ...defaultExecutionModel,
+  schemaVersion: 'bayn.execution-model.v4',
+  order: Object.freeze({
+    type: 'limit',
+    timeInForce: 'ioc',
+    extendedHours: false,
+    planAfter: 'verified-opening-range',
+    submitAfter: 'plan-committed',
+    submitBefore: 'intraday-entry-cutoff',
+    planningPriceReference: 'verified-adverse-top-of-book',
+    planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
+    fillPriceReference: 'limit-or-better',
+    buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
+    decisionAfterOpenMs: 5 * 60_000 + 1_000,
+    submissionCutoffAfterOpenMs: 30 * 60_000,
+  }),
+  precision: Object.freeze({
+    ...defaultExecutionModel.precision,
+    quantityIncrementMicros: '1000000',
+  }),
+})
+
+const OpeningDriveProtocolCommon = {
   universeId: Schema.Literal('torghut-core-equity-v1'),
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
@@ -43,9 +70,22 @@ const OpeningDriveProtocolBase = Schema.Struct({
   maximumSpreadBps: BasisPointsSchema,
   minimumOpeningDollarVolumeMicros: PositiveMicrosSchema,
   allocation: Schema.Literal('equal-weight'),
+} as const
+
+const OpeningDriveProtocolV1Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.opening-drive.protocol.v1'),
+  ...OpeningDriveProtocolCommon,
 })
 
-const protocolIssues = (protocol: typeof OpeningDriveProtocolBase.Type): readonly Schema.FilterIssue[] => {
+const OpeningDriveProtocolV2Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.opening-drive.protocol.v2'),
+  ...OpeningDriveProtocolCommon,
+  executionModel: ExecutionModelV4Schema,
+})
+
+type OpeningDriveProtocolEvidence = typeof OpeningDriveProtocolV1Base.Type | typeof OpeningDriveProtocolV2Base.Type
+
+const protocolIssues = (protocol: OpeningDriveProtocolEvidence): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   if (
@@ -93,13 +133,28 @@ const protocolIssues = (protocol: typeof OpeningDriveProtocolBase.Type): readonl
   if (protocol.hardFlatBeforeCloseMinutes >= protocol.flattenBeforeCloseMinutes) {
     issues.push({ path: ['hardFlatBeforeCloseMinutes'], issue: 'must follow the initial flatten boundary' })
   }
+  if (protocol.schemaVersion === 'bayn.opening-drive.protocol.v2') {
+    const expectedDecisionAfterOpenMs = protocol.openingRangeMinutes * 60_000 + protocol.decisionDelaySeconds * 1_000
+    const expectedSubmissionCutoffAfterOpenMs = protocol.entryCutoffMinutesAfterOpen * 60_000
+    if (
+      protocol.executionModel.order.decisionAfterOpenMs !== expectedDecisionAfterOpenMs ||
+      protocol.executionModel.order.submissionCutoffAfterOpenMs !== expectedSubmissionCutoffAfterOpenMs
+    ) {
+      issues.push({ path: ['executionModel', 'order'], issue: 'must bind the exact opening-drive decision window' })
+    }
+    if (protocol.executionModel.precision.quantityIncrementMicros !== '1000000') {
+      issues.push({ path: ['executionModel', 'precision'], issue: 'IOC equity execution requires whole-share sizing' })
+    }
+  }
   return issues
 }
 
-export const OpeningDriveProtocolSchema = OpeningDriveProtocolBase.check(Schema.makeFilter(protocolIssues))
+export const OpeningDriveProtocolV1Schema = OpeningDriveProtocolV1Base.check(Schema.makeFilter(protocolIssues))
+export const OpeningDriveProtocolSchema = OpeningDriveProtocolV2Base.check(Schema.makeFilter(protocolIssues))
+export type OpeningDriveProtocolV1 = typeof OpeningDriveProtocolV1Schema.Type
 export type OpeningDriveProtocol = typeof OpeningDriveProtocolSchema.Type
 
-export const defaultOpeningDriveProtocolDocument = {
+export const openingDriveProtocolV1Document = Object.freeze({
   schemaVersion: 'bayn.opening-drive.protocol.v1',
   universeId: coreUniverse.id,
   universeSymbolHash: coreUniverse.symbolHash,
@@ -122,9 +177,17 @@ export const defaultOpeningDriveProtocolDocument = {
   maximumSpreadBps: 15,
   minimumOpeningDollarVolumeMicros: '250000000000',
   allocation: 'equal-weight',
-} as const
+} as const)
 
-export const defaultOpeningDriveProtocolHash = '5e21b5eeea54756bad8c5861ce883da575654685b6629588fd086a2511d0165e'
+export const openingDriveProtocolV1Hash = '5e21b5eeea54756bad8c5861ce883da575654685b6629588fd086a2511d0165e'
+
+export const defaultOpeningDriveProtocolDocument = Object.freeze({
+  ...openingDriveProtocolV1Document,
+  schemaVersion: 'bayn.opening-drive.protocol.v2',
+  executionModel: openingDriveExecutionModel,
+} as const)
+
+export const defaultOpeningDriveProtocolHash = '4f2d4ba6c9ef6e997660f190db2ad23ee03e7c89b45021882efceff1c715269a'
 
 export class OpeningDriveProtocolDecodeError extends Data.TaggedError('OpeningDriveProtocolDecodeError')<{
   readonly message: string
@@ -132,6 +195,15 @@ export class OpeningDriveProtocolDecodeError extends Data.TaggedError('OpeningDr
 }> {}
 
 const decode = Schema.decodeUnknownResult(OpeningDriveProtocolSchema, strictParseOptions)
+const decodeV1 = Schema.decodeUnknownResult(OpeningDriveProtocolV1Schema, strictParseOptions)
+
+export const decodeOpeningDriveProtocolV1 = (
+  input: unknown,
+): Result.Result<OpeningDriveProtocolV1, OpeningDriveProtocolDecodeError> =>
+  Result.mapError(
+    decodeV1(input),
+    (cause) => new OpeningDriveProtocolDecodeError({ message: 'invalid opening-drive v1 parameters', cause }),
+  )
 
 export const decodeOpeningDriveProtocol = (
   input: unknown,
@@ -146,5 +218,6 @@ export const decodeDefaultOpeningDriveProtocol = (): Result.Result<
   OpeningDriveProtocolDecodeError
 > => decodeOpeningDriveProtocol(defaultOpeningDriveProtocolDocument)
 
-export const hashOpeningDriveProtocol = (protocol: OpeningDriveProtocol): Result.Result<string, CanonicalHashFailure> =>
-  canonicalHashV1Result(protocol)
+export const hashOpeningDriveProtocol = (
+  protocol: OpeningDriveProtocol | OpeningDriveProtocolV1,
+): Result.Result<string, CanonicalHashFailure> => canonicalHashV1Result(protocol)

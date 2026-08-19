@@ -7,9 +7,12 @@ import { decideOpeningDrive, makeOpeningDriveDefinition } from './decision'
 import {
   decodeDefaultOpeningDriveProtocol,
   decodeOpeningDriveProtocol,
+  decodeOpeningDriveProtocolV1,
   defaultOpeningDriveProtocolHash,
   defaultOpeningDriveProtocolDocument,
   hashOpeningDriveProtocol,
+  openingDriveProtocolV1Document,
+  openingDriveProtocolV1Hash,
 } from './protocol'
 
 const symbols = defaultOpeningDriveProtocolDocument.universe
@@ -143,8 +146,16 @@ const marketContext = (returnOverride?: number) => Object.freeze({ snapshot: sna
 describe('opening-drive momentum strategy', () => {
   test('decodes one frozen result-blind consolidated protocol', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const legacy = success(decodeOpeningDriveProtocolV1(openingDriveProtocolV1Document))
     expect(protocol).toEqual(defaultOpeningDriveProtocolDocument)
     expect(success(hashOpeningDriveProtocol(protocol))).toBe(defaultOpeningDriveProtocolHash)
+    expect(success(hashOpeningDriveProtocol(legacy))).toBe(openingDriveProtocolV1Hash)
+    expect(error(decodeOpeningDriveProtocol(openingDriveProtocolV1Document))).toMatchObject({
+      _tag: 'OpeningDriveProtocolDecodeError',
+    })
+    expect(error(decodeOpeningDriveProtocolV1(defaultOpeningDriveProtocolDocument))).toMatchObject({
+      _tag: 'OpeningDriveProtocolDecodeError',
+    })
     expect(
       error(decodeOpeningDriveProtocol({ ...defaultOpeningDriveProtocolDocument, maximumPositions: 11 })),
     ).toMatchObject({ _tag: 'OpeningDriveProtocolDecodeError' })

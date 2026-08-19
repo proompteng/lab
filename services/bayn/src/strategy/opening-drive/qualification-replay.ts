@@ -13,7 +13,7 @@ import {
   quantizeDown,
   referencePriceMicros,
 } from '../execution-model/fixed-point'
-import { defaultExecutionModel, MICROS, PPM } from '../execution-model/model'
+import { MICROS, PPM } from '../execution-model/model'
 import { decideOpeningDrive } from './decision'
 import {
   OpeningDriveQualificationFailure,
@@ -24,26 +24,28 @@ import {
 } from './qualification-model'
 import type { OpeningDriveProtocol } from './protocol'
 
-const replayExecutionModel: ExecutionModel = Object.freeze({
-  ...defaultExecutionModel,
-  priceImpact: Object.freeze({
-    halfSpreadBps: 0,
-    slippageBps: defaultExecutionModel.priceImpact.slippageBps,
-  }),
-})
+const replayExecutionModelFor = (protocol: OpeningDriveProtocol): ExecutionModel =>
+  Object.freeze({
+    ...protocol.executionModel,
+    priceImpact: Object.freeze({
+      halfSpreadBps: 0,
+      slippageBps: protocol.executionModel.priceImpact.slippageBps,
+    }),
+  })
 
-export const openingDriveReplayCostModelDocument = Object.freeze({
-  schemaVersion: 'bayn.opening-drive.replay-cost-model.v1',
-  entryPriceReference: 'verified-opening-ask',
-  exitPriceReference: 'verified-flatten-bid',
-  quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
-  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected',
-  adverseSlippageBps: defaultExecutionModel.priceImpact.slippageBps,
-  adverseSlippageMultiplier: defaultExecutionModel.doubleCostMultiplier,
-  regulatoryFeeMultiplier: defaultExecutionModel.doubleCostMultiplier,
-  precision: defaultExecutionModel.precision,
-  fees: defaultExecutionModel.fees,
-})
+export const openingDriveReplayCostModelDocument = (protocol: OpeningDriveProtocol) =>
+  Object.freeze({
+    schemaVersion: 'bayn.opening-drive.replay-cost-model.v1' as const,
+    entryPriceReference: 'verified-opening-ask' as const,
+    exitPriceReference: 'verified-flatten-bid' as const,
+    quotedSpreadCost: 'observed-top-of-book-midpoint-distance' as const,
+    liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected' as const,
+    adverseSlippageBps: protocol.executionModel.priceImpact.slippageBps,
+    adverseSlippageMultiplier: protocol.executionModel.doubleCostMultiplier,
+    regulatoryFeeMultiplier: protocol.executionModel.doubleCostMultiplier,
+    precision: Object.freeze({ ...protocol.executionModel.precision }),
+    fees: Object.freeze({ ...protocol.executionModel.fees }),
+  })
 
 const failure = (
   reason: OpeningDriveQualificationFailure['reason'],
@@ -181,15 +183,16 @@ const replayPosition = (
   opening: IntradayQuote,
   exitQuote: IntradayQuote,
   sessionDate: string,
+  executionModel: ExecutionModel,
   scalePpm: bigint,
 ): Result.Result<PositionReplay | null, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const values = yield* Result.mapError(
       Result.all({
-        entryBid: referencePriceMicros(opening.bidPrice, replayExecutionModel),
-        entryAsk: referencePriceMicros(opening.askPrice, replayExecutionModel),
-        exitBid: referencePriceMicros(exitQuote.bidPrice, replayExecutionModel),
-        exitAsk: referencePriceMicros(exitQuote.askPrice, replayExecutionModel),
+        entryBid: referencePriceMicros(opening.bidPrice, executionModel),
+        entryAsk: referencePriceMicros(opening.askPrice, executionModel),
+        exitBid: referencePriceMicros(exitQuote.bidPrice, executionModel),
+        exitAsk: referencePriceMicros(exitQuote.askPrice, executionModel),
         entrySize: numberToMicros(opening.askSize, 'entry ask size'),
         exitSize: numberToMicros(exitQuote.bidSize, 'exit bid size'),
       }),
@@ -199,41 +202,39 @@ const replayPosition = (
       Result.flatMap(
         makeFillTerms(
           'buy',
-          BigInt(replayExecutionModel.precision.quantityIncrementMicros),
+          BigInt(executionModel.precision.quantityIncrementMicros),
           values.entryAsk,
-          replayExecutionModel,
-          BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+          executionModel,
+          BigInt(executionModel.doubleCostMultiplier) * MICROS,
         ),
-        (minimumEntry) =>
-          desiredQuantityMicros(allocationMicros, weight, minimumEntry.fillPriceMicros, replayExecutionModel),
+        (minimumEntry) => desiredQuantityMicros(allocationMicros, weight, minimumEntry.fillPriceMicros, executionModel),
       ),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
-    const scaledDesired = yield* Result.mapError(
-      scaleQuantityMicros(desired, scalePpm, replayExecutionModel),
-      (cause) => executionFailure(sessionDate, symbol, cause),
+    const scaledDesired = yield* Result.mapError(scaleQuantityMicros(desired, scalePpm, executionModel), (cause) =>
+      executionFailure(sessionDate, symbol, cause),
     )
     const quantity = yield* Result.mapError(
       quantizeDown(
         scaledDesired < values.entrySize ? scaledDesired : values.entrySize,
-        BigInt(replayExecutionModel.precision.quantityIncrementMicros),
+        BigInt(executionModel.precision.quantityIncrementMicros),
       ),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     if (quantity === 0n) return null
-    const costMultiplier = BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS
+    const costMultiplier = BigInt(executionModel.doubleCostMultiplier) * MICROS
     const entryReferenceNotional = yield* Result.mapError(notionalMicros(quantity, values.entryAsk), (cause) =>
       executionFailure(sessionDate, symbol, cause),
     )
-    if (entryReferenceNotional < BigInt(replayExecutionModel.precision.minimumBuyNotionalMicros)) return null
+    if (entryReferenceNotional < BigInt(executionModel.precision.minimumBuyNotionalMicros)) return null
     const entry = yield* Result.mapError(
-      makeFillTerms('buy', quantity, values.entryAsk, replayExecutionModel, costMultiplier),
+      makeFillTerms('buy', quantity, values.entryAsk, executionModel, costMultiplier),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     const exitQuantity = yield* Result.mapError(
       quantizeDown(
         quantity < values.exitSize ? quantity : values.exitSize,
-        BigInt(replayExecutionModel.precision.quantityIncrementMicros),
+        BigInt(executionModel.precision.quantityIncrementMicros),
       ),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
@@ -241,7 +242,7 @@ const replayPosition = (
       exitQuantity === 0n
         ? null
         : yield* Result.mapError(
-            makeFillTerms('sell', exitQuantity, values.exitBid, replayExecutionModel, costMultiplier),
+            makeFillTerms('sell', exitQuantity, values.exitBid, executionModel, costMultiplier),
             (cause) => executionFailure(sessionDate, symbol, cause),
           )
     const entryMidpoint = (values.entryBid + values.entryAsk) / 2n
@@ -270,6 +271,7 @@ const replayPosition = (
 const entryFees = (
   positions: readonly PositionReplay[],
   sessionDate: string,
+  executionModel: ExecutionModel,
 ): Result.Result<bigint, OpeningDriveQualificationFailure> =>
   Result.map(
     Result.mapError(
@@ -279,8 +281,8 @@ const entryFees = (
           quantityMicros: position.entryQuantityMicros,
           notionalMicros: position.entry.notionalMicros,
         })),
-        replayExecutionModel,
-        BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+        executionModel,
+        BigInt(executionModel.doubleCostMultiplier) * MICROS,
       ),
       (cause) => executionFailure(sessionDate, 'portfolio-entry', cause),
     ),
@@ -307,6 +309,7 @@ const replayPortfolio = (
   allocationMicros: bigint,
   opening: IntradayMarketSnapshot,
   exit: IntradayMarketSnapshot,
+  executionModel: ExecutionModel,
 ): Result.Result<OpeningDrivePortfolioReplay, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const positionsAtScale = (scalePpm: bigint) =>
@@ -329,6 +332,7 @@ const replayPortfolio = (
                   entryQuote,
                   exitQuote,
                   opening.manifest.sessionDate,
+                  executionModel,
                   scalePpm,
                 )
           }),
@@ -338,14 +342,14 @@ const replayPortfolio = (
     const affordableScale = yield* maximumAffordableScale(0n, PPM, (scalePpm) =>
       Result.flatMap(positionsAtScale(scalePpm), (positions) =>
         Result.map(
-          entryFees(positions, opening.manifest.sessionDate),
+          entryFees(positions, opening.manifest.sessionDate, executionModel),
           (fees) => positions.reduce((sum, position) => sum + position.entry.notionalMicros, fees) <= allocationMicros,
         ),
       ),
     )
     const positions = yield* positionsAtScale(affordableScale)
     const entryNotional = positions.reduce((sum, position) => sum + position.entry.notionalMicros, 0n)
-    const entryFeeCost = yield* entryFees(positions, opening.manifest.sessionDate)
+    const entryFeeCost = yield* entryFees(positions, opening.manifest.sessionDate, executionModel)
     if (entryNotional + entryFeeCost > allocationMicros) {
       return yield* Result.fail(
         failure('execution-cost', 'modeled opening-drive entries and buy-side fees exceed the cash allocation', {
@@ -372,8 +376,8 @@ const replayPortfolio = (
                 },
               ]
         }),
-        replayExecutionModel,
-        BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+        executionModel,
+        BigInt(executionModel.doubleCostMultiplier) * MICROS,
       ),
       (cause) => executionFailure(opening.manifest.sessionDate, 'portfolio', cause),
     )
@@ -409,8 +413,13 @@ const replayPortfolio = (
     })
   })
 
-export const hashOpeningDriveReplayCostModel = (): Result.Result<string, OpeningDriveQualificationFailure> =>
-  canonicalHash(openingDriveReplayCostModelDocument, 'opening-drive replay cost model is not canonically hashable')
+export const hashOpeningDriveReplayCostModel = (
+  protocol: OpeningDriveProtocol,
+): Result.Result<string, OpeningDriveQualificationFailure> =>
+  canonicalHash(
+    openingDriveReplayCostModelDocument(protocol),
+    'opening-drive replay cost model is not canonically hashable',
+  )
 
 export const replayOpeningDriveSession = (
   input: OpeningDriveReplaySessionInput,
@@ -426,6 +435,7 @@ export const replayOpeningDriveSession = (
       }),
     )
     const allocationMicros = BigInt(policy.allocationMicros)
+    const executionModel = replayExecutionModelFor(protocol)
     const benchmarkWeight = 1 / protocol.universe.length
     const benchmarkWeights = Object.fromEntries(protocol.universe.map((symbol) => [symbol, benchmarkWeight]))
     const portfolios = yield* Result.all({
@@ -435,6 +445,7 @@ export const replayOpeningDriveSession = (
         allocationMicros,
         input.opening.snapshot,
         input.exit,
+        executionModel,
       ),
       benchmark: replayPortfolio(
         protocol.universe,
@@ -442,6 +453,7 @@ export const replayOpeningDriveSession = (
         allocationMicros,
         input.opening.snapshot,
         input.exit,
+        executionModel,
       ),
     })
     const decisionHash = yield* canonicalHash(

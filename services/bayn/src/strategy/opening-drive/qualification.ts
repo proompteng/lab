@@ -197,7 +197,7 @@ export const qualifyOpeningDrive = (
           }),
       ),
       policyHash: hashOpeningDriveQualificationPolicy(policy),
-      costModelHash: hashOpeningDriveReplayCostModel(),
+      costModelHash: hashOpeningDriveReplayCostModel(input.protocol),
       calendarHash: Result.succeed(calendarHash),
       replayVersionGraphHash: hashOpeningDriveReplayVersionGraphFromInputs(input.sessions),
     })

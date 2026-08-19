@@ -9,6 +9,7 @@ import {
 const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
 const SubmissionCutoffLeadMinutes = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
+const IntradayOrderOffsetMs = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
 
 const ExecutionModelCommon = {
   assetClass: Schema.Literal('us-equity'),
@@ -85,8 +86,32 @@ const ExecutionModelV3Base = Schema.Struct({
   order: ExecutionModelV2Base.fields.order,
 })
 
+const ExecutionModelV4Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v4'),
+  venue: Schema.Literal('alpaca-us-equity'),
+  ...ExecutionModelCommon,
+  order: Schema.Struct({
+    type: Schema.Literal('limit'),
+    timeInForce: Schema.Literal('ioc'),
+    extendedHours: Schema.Literal(false),
+    planAfter: Schema.Literal('verified-opening-range'),
+    submitAfter: Schema.Literal('plan-committed'),
+    submitBefore: Schema.Literal('intraday-entry-cutoff'),
+    planningPriceReference: Schema.Literal('verified-adverse-top-of-book'),
+    planningBrokerStateReference: Schema.Literal('reconciled-pre-plan-broker-state'),
+    fillPriceReference: Schema.Literal('limit-or-better'),
+    buyingPowerPolicy: Schema.Literal('pre-submit-cash-without-sell-proceeds'),
+    decisionAfterOpenMs: IntradayOrderOffsetMs,
+    submissionCutoffAfterOpenMs: IntradayOrderOffsetMs,
+  }),
+})
+
 const executionModelIssues = (
-  model: typeof ExecutionModelV1Base.Type | typeof ExecutionModelV2Base.Type | typeof ExecutionModelV3Base.Type,
+  model:
+    | typeof ExecutionModelV1Base.Type
+    | typeof ExecutionModelV2Base.Type
+    | typeof ExecutionModelV3Base.Type
+    | typeof ExecutionModelV4Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
@@ -98,18 +123,31 @@ const executionModelIssues = (
   if (model.partialFills.filledFractionPpm >= 1_000_000) {
     issues.push({ path: ['partialFills', 'filledFractionPpm'], issue: 'must describe a partial, not complete, fill' })
   }
+  if (
+    model.schemaVersion === 'bayn.execution-model.v4' &&
+    model.order.decisionAfterOpenMs >= model.order.submissionCutoffAfterOpenMs
+  ) {
+    issues.push({
+      path: ['order', 'submissionCutoffAfterOpenMs'],
+      issue: 'must follow the opening-drive decision boundary',
+    })
+  }
   return issues
 }
 
 export const ExecutionModelV1Schema = ExecutionModelV1Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV2Schema = ExecutionModelV2Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV3Schema = ExecutionModelV3Base.check(Schema.makeFilter(executionModelIssues))
-export const SupportedExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
+export const ExecutionModelV4Schema = ExecutionModelV4Base.check(Schema.makeFilter(executionModelIssues))
+export const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
+export const SupportedExecutionModelSchema = DailyExecutionModelSchema
 export const ExecutionModelSchema = Schema.Union([
   ExecutionModelV1Schema,
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
+  ExecutionModelV4Schema,
 ])
+export type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
 export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
 

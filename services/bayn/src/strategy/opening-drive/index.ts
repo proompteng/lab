@@ -47,10 +47,16 @@ export {
 export {
   decodeDefaultOpeningDriveProtocol,
   decodeOpeningDriveProtocol,
+  decodeOpeningDriveProtocolV1,
   defaultOpeningDriveProtocolHash,
   defaultOpeningDriveProtocolDocument,
   hashOpeningDriveProtocol,
+  openingDriveExecutionModel,
+  openingDriveProtocolV1Document,
+  openingDriveProtocolV1Hash,
   OpeningDriveProtocolDecodeError,
   OpeningDriveProtocolSchema,
+  OpeningDriveProtocolV1Schema,
   type OpeningDriveProtocol,
+  type OpeningDriveProtocolV1,
 } from './protocol'
