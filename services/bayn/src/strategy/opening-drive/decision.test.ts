@@ -242,7 +242,10 @@ describe('opening-drive momentum strategy', () => {
       archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
         watermark.source_topic === tradesTopic ? { ...watermark, inclusive_last_offset: latestOffset } : watermark,
       ),
-      trades: [...rows.trades, { ...amdTrade, source_offset: latestOffset, price: String(Number(amdTrade.price) * 0.95) }],
+      trades: [
+        ...rows.trades,
+        { ...amdTrade, source_offset: latestOffset, price: String(Number(amdTrade.price) * 0.95) },
+      ],
     }
     const tiedSnapshot = verifyIntradaySnapshot({ ...request, archiveWatermarks }, tiedRows)
     if (Result.isFailure(tiedSnapshot)) throw new Error(JSON.stringify(tiedSnapshot.failure))
@@ -262,6 +265,22 @@ describe('opening-drive momentum strategy', () => {
           {
             snapshot: snapshot(),
             session: { ...session, closeAt: '2026-08-18T14:05:00.000Z' },
+          },
+          protocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-window' })
+  })
+
+  test('rejects session-close timestamps without an explicit canonical UTC offset', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+
+    expect(
+      error(
+        decideOpeningDrive(
+          {
+            snapshot: snapshot(),
+            session: { ...session, closeAt: '2026-08-18T20:00:00.000' },
           },
           protocol,
         ),
@@ -310,20 +329,22 @@ describe('opening-drive momentum strategy', () => {
 
     const quote = market.latestQuotes['AMD']
     if (quote === undefined) throw new Error('AMD quote fixture is missing')
-    expect(
-      error(
-        decideOpeningDrive(
-          {
-            snapshot: {
-              ...market,
-              latestQuotes: { ...market.latestQuotes, AMD: { ...quote, askPrice: quote.askPrice + 0.01 } },
-            },
-            session,
+    const reverifiedFailure = error(
+      decideOpeningDrive(
+        {
+          snapshot: {
+            ...market,
+            latestQuotes: { ...market.latestQuotes, AMD: { ...quote, askPrice: quote.askPrice + 0.01 } },
           },
-          protocol,
-        ),
+          session,
+        },
+        protocol,
       ),
-    ).toMatchObject({ reason: 'snapshot-coverage' })
+    )
+    expect(reverifiedFailure).toMatchObject({
+      reason: 'snapshot-coverage',
+      cause: { _tag: 'IntradaySnapshotFailure' },
+    })
 
     expect(
       error(

@@ -104,6 +104,7 @@ const validateSnapshot = (
   const earliestDecision = rangeEnd + protocol.decisionDelaySeconds * 1_000
   const decisionWindowEnd = Math.min(entryCutoff, flattenAt)
   if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(session.closeAt) ||
     !Number.isFinite(rangeStart) ||
     !Number.isFinite(rangeEnd) ||
     !Number.isFinite(observed) ||
@@ -282,16 +283,19 @@ export const decideOpeningDrive = (
   Result.gen(function* () {
     const { session } = context
     yield* validateSnapshot(context, protocol)
-    const snapshot = yield* Result.mapError(reverifyIntradayMarketSnapshot(context.snapshot), (cause) =>
-      new OpeningDriveFailure({
-        reason:
-          cause.reason === 'identity'
-            ? 'snapshot-identity'
-            : cause.reason === 'request'
-              ? 'snapshot-window'
-              : 'snapshot-coverage',
-        message: `opening-drive snapshot failed authoritative re-verification: ${cause.message}`,
-      }),
+    const snapshot = yield* Result.mapError(
+      reverifyIntradayMarketSnapshot(context.snapshot),
+      (cause) =>
+        new OpeningDriveFailure({
+          reason:
+            cause.reason === 'identity'
+              ? 'snapshot-identity'
+              : cause.reason === 'request'
+                ? 'snapshot-window'
+                : 'snapshot-coverage',
+          message: `opening-drive snapshot failed authoritative re-verification: ${cause.message}`,
+          cause,
+        }),
     )
     const signals = yield* Result.all(
       protocol.universe.map((symbol) => {

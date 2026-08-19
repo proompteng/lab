@@ -59,6 +59,7 @@ export class OpeningDriveFailure extends Data.TaggedError('OpeningDriveFailure')
   readonly symbol?: string
   readonly field?: string
   readonly observed?: unknown
+  readonly cause?: unknown
 }> {}
 
 export type OpeningDriveStrategyDefinition = StrategyDefinition<
