@@ -60,7 +60,7 @@ const returnBySymbol: Readonly<Record<string, number>> = {
   NVDA: 0.014,
 }
 
-const makeRows = (returnOverride?: number, volumeOverride?: string): IntradaySnapshotRows => {
+const makeRows = (returnOverride?: number, volumeOverride?: string) => {
   let offset = 1
   const bars = symbols.flatMap((symbol, symbolIndex) => {
     const opening = 100 + symbolIndex

@@ -330,10 +330,14 @@ const deriveExecutionSessionWindow = (
 
 const deriveIntradaySubmissionWindow = (
   executionSession: ExecutionSession,
+  planningBrokerState: PlanningBrokerStateBinding,
   decisionAfterOpenMs: number,
   submissionCutoffAfterOpenMs: number,
 ): Result.Result<Omit<ExecutionSessionWindow, 'executionSession'>, ExecutionSessionBindingFailure> => {
-  const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(executionSession.openAt) + decisionAfterOpenMs)
+  const configuredOpenMs = Date.parse(executionSession.openAt) + decisionAfterOpenMs
+  const submissionOpenAt = utcInstantFromEpochMillis(
+    Math.max(configuredOpenMs, Date.parse(planningBrokerState.observedAt)),
+  )
   const submissionCutoffAt = utcInstantFromEpochMillis(
     Date.parse(executionSession.openAt) + submissionCutoffAfterOpenMs,
   )
@@ -364,6 +368,7 @@ const deriveIntradayExecutionSessionWindow = (
           Result.map(
             deriveIntradaySubmissionWindow(
               executionSession,
+              input.planningBrokerState,
               input.decisionAfterOpenMs,
               input.submissionCutoffAfterOpenMs,
             ),
@@ -446,7 +451,10 @@ const intradayBindingIssues = (binding: typeof ExecutionSessionBindingV2Base.Typ
       issues.push({ path: ['executionSession'], issue: 'must be the first post-signal exchange session' })
     }
     if (binding.submissionOpenAt !== expected.submissionOpenAt) {
-      issues.push({ path: ['submissionOpenAt'], issue: 'must equal execution open plus the decision offset' })
+      issues.push({
+        path: ['submissionOpenAt'],
+        issue: 'must equal the later of the decision offset and reconciled planning broker state',
+      })
     }
     if (binding.submissionCutoffAt !== expected.submissionCutoffAt) {
       issues.push({ path: ['submissionCutoffAt'], issue: 'must equal execution open plus the entry cutoff offset' })

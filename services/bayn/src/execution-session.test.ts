@@ -503,6 +503,45 @@ describe('causal execution-session binding', () => {
     }
   })
 
+  test('narrows an opening-drive submission window to later reconciled broker evidence', () => {
+    const cycle = makeActiveOpeningCycle()
+    const narrowed = bindCycleExecutionSessionSuccess({
+      cycle,
+      signal: {
+        sessionDate: cycle.identity.signalSessionDate,
+        finalizedAt: cycle.window.signalCloseAt,
+        contentHash: hash('7'),
+      },
+      planningBrokerState: {
+        observedAt: '2026-02-02T14:45:00.000Z',
+        contentHash: hash('8'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: openingDriveExecutionModel,
+    })
+
+    expect(narrowed.submissionOpenAt).toBe('2026-02-02T14:45:00.000Z')
+
+    const exhausted = bindCycleExecutionSession({
+      cycle,
+      signal: {
+        sessionDate: cycle.identity.signalSessionDate,
+        finalizedAt: cycle.window.signalCloseAt,
+        contentHash: hash('7'),
+      },
+      planningBrokerState: {
+        observedAt: '2026-02-02T15:00:00.000Z',
+        contentHash: hash('8'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: openingDriveExecutionModel,
+    })
+    expect(Result.isFailure(exhausted)).toBeTrue()
+    if (Result.isFailure(exhausted)) {
+      expect(String(exhausted.failure)).toContain('submissionOpenAt < submissionCutoffAt')
+    }
+  })
+
   test('binds cycle signal finalization only at or after the durable signal close boundary', () => {
     const cycle = makeActiveCycle()
     const atClose = bindCycle({
