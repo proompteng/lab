@@ -5688,7 +5688,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const sql = yield* PgClient.PgClient
         const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
-            (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
@@ -5828,7 +5828,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const sql = yield* PgClient.PgClient
         const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
-            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
