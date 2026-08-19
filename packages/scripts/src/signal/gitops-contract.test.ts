@@ -142,6 +142,9 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT, INSERT ON signal.exchange_sessions_v1',
       'GRANT INSERT ON signal.intraday_bars_1m_v1',
+      'GRANT INSERT ON signal.intraday_bars_1m_v2',
+      'GRANT INSERT ON signal.intraday_quotes_v1',
+      'GRANT INSERT ON signal.intraday_trades_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v2',
     ])
@@ -150,6 +153,9 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT ON signal.exchange_sessions_v1',
       'GRANT SELECT ON signal.intraday_bars_1m_v1',
+      'GRANT SELECT ON signal.intraday_bars_1m_v2',
+      'GRANT SELECT ON signal.intraday_quotes_v1',
+      'GRANT SELECT ON signal.intraday_trades_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -188,17 +194,21 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(shellSyntax).toMatchObject({ status: 0, stderr: '' })
     expect(schema.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('3')
     expect(migration).toContain('signal.intraday_bars_1m_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.intraday_bars_1m_v2 ON CLUSTER default')
+    expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
     expect(migration).toContain('ENGINE = ReplicatedReplacingMergeTree(')
     expect(migration).toContain('PARTITION BY toYYYYMM(event_ts)')
-    expect(migration).toContain('ORDER BY (universe_id, feed, symbol, event_ts)')
+    expect(migration).toContain('universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE')
+    expect(migration.match(/TTL toDateTime\(event_ts\) \+ INTERVAL 120 DAY DELETE/g)).toHaveLength(2)
     expect(migration).toContain('for host in "${hosts[@]}"; do')
     expect(migration).toContain('FROM system.tables')
     expect(migration).toContain('FROM system.columns')
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
   })
 
-  test('activates the archive for delayed SIP while overnight observation remains disabled', () => {
+  test('stages the compatible archive without prematurely activating the SIP rollout', () => {
     const torghutKustomization = parse(
       readFileSync(resolve(root, 'argocd/applications/torghut/kustomization.yaml'), 'utf8'),
     )
@@ -241,6 +251,10 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
     })
     expect(coreArchiveSymbols).toEqual([...new Set(csv(websocket.data.SYMBOLS))].sort())
+    expect(config.data.ARCHIVE_CORE_FEED).toBeUndefined()
+    expect(config.data.ARCHIVE_CORE_QUOTES_TOPIC).toBeUndefined()
+    expect(config.data.ARCHIVE_CORE_TRADES_TOPIC).toBeUndefined()
+    expect(websocket.data.ALPACA_FEED).toBe('iex')
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
       expect.arrayContaining([

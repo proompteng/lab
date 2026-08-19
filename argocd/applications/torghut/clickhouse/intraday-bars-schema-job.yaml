@@ -83,6 +83,102 @@ spec:
                 PARTITION BY toYYYYMM(event_ts)
                 ORDER BY (universe_id, feed, symbol, event_ts)
                 TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE;
+
+                CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v2 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  universe_id LowCardinality(String),
+                  universe_symbol_hash FixedString(64),
+                  feed LowCardinality(String),
+                  channel LowCardinality(String),
+                  market_session LowCardinality(String),
+                  delay_class LowCardinality(String),
+                  symbol LowCardinality(String),
+                  event_ts DateTime64(3, 'UTC'),
+                  ingest_ts DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  is_final UInt8,
+                  open Float64,
+                  high Float64,
+                  low Float64,
+                  close Float64,
+                  volume Float64,
+                  vwap Nullable(Float64),
+                  trade_count Nullable(UInt64),
+                  schema_version UInt32
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_intraday_bars_1m_v2',
+                  '{replica}',
+                  source_offset
+                )
+                PARTITION BY toYYYYMM(event_ts)
+                ORDER BY (
+                  universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset
+                )
+                TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE;
+
+                CREATE TABLE IF NOT EXISTS signal.intraday_quotes_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  universe_id LowCardinality(String),
+                  universe_symbol_hash FixedString(64),
+                  feed LowCardinality(String),
+                  market_session LowCardinality(String),
+                  delay_class LowCardinality(String),
+                  symbol LowCardinality(String),
+                  event_ts DateTime64(3, 'UTC'),
+                  ingest_ts DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  bid_price Float64,
+                  bid_size Float64,
+                  ask_price Float64,
+                  ask_size Float64,
+                  schema_version UInt32
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_intraday_quotes_v1',
+                  '{replica}',
+                  source_offset
+                )
+                PARTITION BY toYYYYMM(event_ts)
+                ORDER BY (
+                  universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset
+                )
+                TTL toDateTime(event_ts) + INTERVAL 120 DAY DELETE;
+
+                CREATE TABLE IF NOT EXISTS signal.intraday_trades_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  universe_id LowCardinality(String),
+                  universe_symbol_hash FixedString(64),
+                  feed LowCardinality(String),
+                  market_session LowCardinality(String),
+                  delay_class LowCardinality(String),
+                  symbol LowCardinality(String),
+                  event_ts DateTime64(3, 'UTC'),
+                  ingest_ts DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  price Float64,
+                  size Float64,
+                  schema_version UInt32
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_intraday_trades_v1',
+                  '{replica}',
+                  source_offset
+                )
+                PARTITION BY toYYYYMM(event_ts)
+                ORDER BY (
+                  universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset
+                )
+                TTL toDateTime(event_ts) + INTERVAL 120 DAY DELETE;
               "
 
               mapfile -t hosts < <(
@@ -127,7 +223,26 @@ spec:
 
                 "${replica_client[@]}" --query "
                   SELECT throwIf(
-                    count() != 22
+                    count() != 1
+                      OR countIf(engine = 'ReplicatedReplacingMergeTree') != 1
+                      OR countIf(
+                        sorting_key =
+                          'universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset'
+                      ) != 1
+                      OR countIf(partition_key = 'toYYYYMM(event_ts)') != 1
+                      OR countIf(position(engine_full, 'source_offset') > 0) != 1
+                      OR countIf(
+                        position(create_table_query, 'TTL toDateTime(event_ts) + toIntervalDay(400)') > 0
+                      ) != 1,
+                    'Signal immutable intraday-bars table engine, key, version, or TTL is incorrect'
+                  )
+                  FROM system.tables
+                  WHERE database = 'signal' AND name = 'intraday_bars_1m_v2'
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 44
                       OR arraySort(groupUniqArray(concat(name, ':', type))) != arraySort([
                         'provider:LowCardinality(String)',
                         'universe_id:LowCardinality(String)',
@@ -155,7 +270,80 @@ spec:
                     'Signal intraday-bars columns do not match the archive contract'
                   )
                   FROM system.columns
-                  WHERE database = 'signal' AND table = 'intraday_bars_1m_v1'
+                  WHERE database = 'signal' AND table IN ('intraday_bars_1m_v1', 'intraday_bars_1m_v2')
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 2
+                      OR countIf(engine = 'ReplicatedReplacingMergeTree') != 2
+                      OR countIf(
+                        sorting_key =
+                          'universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset'
+                      ) != 2
+                      OR countIf(partition_key = 'toYYYYMM(event_ts)') != 2
+                      OR countIf(position(engine_full, 'source_offset') > 0) != 2
+                      OR countIf(
+                        position(create_table_query, 'TTL toDateTime(event_ts) + toIntervalDay(120)') > 0
+                      ) != 2,
+                    'Signal intraday quote/trade table engine, keys, version, or TTL are incorrect'
+                  )
+                  FROM system.tables
+                  WHERE database = 'signal' AND name IN ('intraday_quotes_v1', 'intraday_trades_v1')
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 17
+                      OR arraySort(groupUniqArray(concat(name, ':', type))) != arraySort([
+                        'provider:LowCardinality(String)',
+                        'universe_id:LowCardinality(String)',
+                        'universe_symbol_hash:FixedString(64)',
+                        'feed:LowCardinality(String)',
+                        'market_session:LowCardinality(String)',
+                        'delay_class:LowCardinality(String)',
+                        'symbol:LowCardinality(String)',
+                        'event_ts:DateTime64(3, \'UTC\')',
+                        'ingest_ts:DateTime64(3, \'UTC\')',
+                        'source_topic:LowCardinality(String)',
+                        'source_partition:UInt32',
+                        'source_offset:UInt64',
+                        'bid_price:Float64',
+                        'bid_size:Float64',
+                        'ask_price:Float64',
+                        'ask_size:Float64',
+                        'schema_version:UInt32'
+                      ]),
+                    'Signal intraday-quotes columns do not match the archive contract'
+                  )
+                  FROM system.columns
+                  WHERE database = 'signal' AND table = 'intraday_quotes_v1'
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 15
+                      OR arraySort(groupUniqArray(concat(name, ':', type))) != arraySort([
+                        'provider:LowCardinality(String)',
+                        'universe_id:LowCardinality(String)',
+                        'universe_symbol_hash:FixedString(64)',
+                        'feed:LowCardinality(String)',
+                        'market_session:LowCardinality(String)',
+                        'delay_class:LowCardinality(String)',
+                        'symbol:LowCardinality(String)',
+                        'event_ts:DateTime64(3, \'UTC\')',
+                        'ingest_ts:DateTime64(3, \'UTC\')',
+                        'source_topic:LowCardinality(String)',
+                        'source_partition:UInt32',
+                        'source_offset:UInt64',
+                        'price:Float64',
+                        'size:Float64',
+                        'schema_version:UInt32'
+                      ]),
+                    'Signal intraday-trades columns do not match the archive contract'
+                  )
+                  FROM system.columns
+                  WHERE database = 'signal' AND table = 'intraday_trades_v1'
                 "
               done
           env:

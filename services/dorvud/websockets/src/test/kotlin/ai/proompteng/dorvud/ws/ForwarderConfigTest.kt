@@ -77,6 +77,24 @@ class ForwarderConfigTest {
   }
 
   @Test
+  fun `keeps consolidated sip core data separate from delayed observation data`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_FEED" to "sip",
+          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
+        ) + authoritativeUniverse + observationTopics,
+      )
+
+    val runtimes = cfg.marketDataFeedConfigs()
+    assertEquals(listOf("sip", "delayed_sip"), runtimes.map { it.feed })
+    assertEquals(listOf(true, false), runtimes.map { it.core })
+    assertEquals(MarketDataDelayClass.RealTimeConsolidated, marketDataDelayClass(EquityFeed.Sip, "quotes"))
+  }
+
+  @Test
   fun `keeps core trading symbols separate from the observation universe`() {
     val coreSymbols = listOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "WDC")
     val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
@@ -119,7 +137,7 @@ class ForwarderConfigTest {
       }.message,
     )
     assertEquals(
-      "ALPACA_FEED must be iex when ALPACA_OBSERVATION_FEEDS is enabled",
+      "ALPACA_OBSERVATION_FEEDS cannot duplicate the core delayed_sip feed",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(base + ("ALPACA_FEED" to "delayed_sip"))
       }.message,
@@ -157,7 +175,7 @@ class ForwarderConfigTest {
     )
     val oversizedUniverse = ('A'..'K').map { it.toString() }
     assertEquals(
-      "configured market-data feeds require 33 symbol subscriptions; Alpaca Basic allows 30",
+      "configured market-data feeds require 33 symbol subscriptions; maximum is 30",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(
           base +
