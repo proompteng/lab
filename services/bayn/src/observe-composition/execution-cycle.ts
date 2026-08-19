@@ -67,6 +67,7 @@ import {
   type ReconciliationPassError,
 } from './decision-builder'
 import { resolveExecutionCycleCloseWindow, type ExecutionCycleCloseWindow } from './execution-window'
+import { strategyAllowsMutationCadence } from './strategy-cadence'
 
 export const isPostMutationReconciliation = (
   result: RecoveryFirstCyclePassResult,
@@ -507,6 +508,13 @@ const executeBoundExecutionCycle = (
       ...(entrySubmissionCutoffAt === undefined ? {} : { executionMandateCutoffAt: entrySubmissionCutoffAt }),
     }
     const closeDue = closeWindow !== undefined && observedAt >= closeWindow.startAt
+    if (
+      capability._tag === 'Mutation' &&
+      !closeDue &&
+      !strategyAllowsMutationCadence(input.strategy, input.cycleCadence)
+    ) {
+      return { _tag: 'Wait', observedAt }
+    }
     let closeOnly = false
     let phaseInput = entryPhaseInput
     let step: PreparedMutationCycleStep | undefined

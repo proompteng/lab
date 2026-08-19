@@ -1,9 +1,47 @@
 import { expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { runRestateAdvanceWithinTimeout } from './recovery-driver'
+import type { AutonomousCycle } from '../cycle'
+import { fixtureRuntime } from '../app-test-support'
+import type { Policy } from '../risk'
+import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
+import { mutationDecisionBuilder, runRestateAdvanceWithinTimeout } from './recovery-driver'
+
+test('an every-session mutation rejects the multi-session strategy before reconciliation or decision I/O', async () => {
+  let reconciled = false
+  const input = {
+    accountId: 'account-1',
+    authorityGenerationHash: 'a'.repeat(64),
+    pollIntervalMs: 30_000,
+    reconciliationIntervalMs: 30_000,
+    reconciliationPassTimeoutMs: 30_000,
+    strategy: fixtureRuntime,
+    cycleCadence: 'EVERY_SESSION',
+  } satisfies ObserveAutonomousCycleInput
+
+  const error = await Effect.runPromise(
+    mutationDecisionBuilder(
+      input,
+      {} as ObserveStartupPreparation,
+      {} as Policy,
+    )(
+      {} as AutonomousCycle,
+      Effect.sync(() => {
+        reconciled = true
+        throw new Error('incompatible strategy must fail before reconciliation')
+      }),
+    ).pipe(Effect.flip, Effect.provide(Context.empty() as Context.Context<ObserveDecisionRuntime>)),
+  )
+
+  expect(error).toMatchObject({
+    _tag: 'CycleDecisionBuildError',
+    failure: 'contract',
+    message: 'every-session mutation requires an INTRADAY strategy; risk-balanced-trend is MULTI_SESSION',
+  })
+  expect(reconciled).toBe(false)
+})
 
 test('the aggregate lifecycle budget interrupts stalled maintenance before cycle work', async () => {
   let cycleRuns = 0
