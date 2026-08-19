@@ -75,16 +75,17 @@ export const advanceRestrictedGenerationRecovery = <A, E, R>(
   advance.pipe(
     Effect.flatMap((advanced) =>
       settle.pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            settlementNeedsMutationRecovery(error)
-              ? Effect.succeed({ _tag: 'Waiting' as const, advance: advanced })
-              : Effect.fail(error),
-          onSuccess: (receipt) =>
+        Effect.map(
+          (receipt): RestrictedGenerationRecoveryAdvance<A> =>
             receipt._tag === 'RolledOver'
-              ? Effect.succeed({ _tag: 'RolledOver' as const, advance: advanced, receipt })
-              : Effect.fail(recoveryError('restricted generation recovery found no terminal generation to roll over')),
-        }),
+              ? { _tag: 'RolledOver', advance: advanced, receipt }
+              : { _tag: 'Waiting', advance: advanced },
+        ),
+        Effect.catch((error) =>
+          settlementNeedsMutationRecovery(error)
+            ? Effect.succeed<RestrictedGenerationRecoveryAdvance<A>>({ _tag: 'Waiting', advance: advanced })
+            : Effect.fail(error),
+        ),
       ),
     ),
   )
