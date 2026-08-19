@@ -21,7 +21,7 @@ import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { CycleDecisionDocument } from '../shadow-decision-contract'
-import { strategyDefinition } from '../strategy'
+import { strategyApplication } from '../strategy'
 import { restrictMutationLoopFailure } from './mutation-interpreter'
 import type {
   ExecutionCapability,
@@ -236,13 +236,9 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.map((observation) => ({ observation })),
       )
     const advanceCycle = Effect.gen(function* () {
-      const strategyName = strategyDefinition(input.strategy).name
       const context: CycleRunContext<ObserveDecisionRuntime> = {
         qualificationRunId: startup.qualificationRunId,
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
-        ...(strategyName === 'risk-balanced-trend' || strategyName === 'opening-drive-momentum'
-          ? { strategyName }
-          : {}),
         strategyProtocolHash: preparation.strategyProtocolHash,
         accountId: input.accountId,
         executionPolicy: preparation.executionPolicy,
@@ -384,7 +380,7 @@ export const mutationDecisionBuilder =
       return Effect.fail(
         new CycleDecisionBuildError({
           failure: 'contract',
-          message: `every-session mutation requires an INTRADAY strategy; ${strategyDefinition(input.strategy).name} is MULTI_SESSION`,
+          message: `every-session mutation requires an INTRADAY strategy; ${strategyApplication(input.strategy).definition.name} is MULTI_SESSION`,
         }),
       )
     }

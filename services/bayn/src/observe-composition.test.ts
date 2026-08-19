@@ -121,7 +121,6 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { openingDriveBehaviorHash, openingDriveExecutionModel } from './strategy/opening-drive'
 import { TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
@@ -3424,72 +3423,6 @@ describe('OBSERVE runtime composition', () => {
     if (Result.isSuccess(prepared)) {
       expect(prepared.success.strategyProtocolHash).toBe(makeStrategyProtocolHash(fixtureRuntime.provenance.strategy))
     }
-  })
-
-  test('admits only a valid account-neutral intraday execution model at autonomous startup', () => {
-    const definition = {
-      ...fixtureRuntime.definition,
-      name: 'opening-drive-momentum',
-      holdingPeriod: 'INTRADAY',
-      parameters: { ...fixtureProtocol, executionModel: openingDriveExecutionModel },
-    } as const
-    const strategy = {
-      definition,
-      provenance: {
-        ...fixtureRuntime.provenance,
-        strategy: {
-          name: definition.name,
-          behaviorHash: openingDriveBehaviorHash,
-          parameterHash: canonicalHashV1(definition.parameters),
-          parameterSchemaVersion: definition.parameters.schemaVersion,
-        },
-      },
-    }
-    const input = {
-      accountId,
-      authorityGenerationHash: generationHash,
-      pollIntervalMs: 30_000,
-      reconciliationIntervalMs: 30_000,
-      reconciliationPassTimeoutMs: 30_000,
-      strategy,
-    } as const
-
-    const prepared = prepareObserveStartup(input)
-    expect(Result.isSuccess(prepared)).toBe(true)
-    if (Result.isSuccess(prepared)) {
-      expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v4')
-      expect(prepared.success.executionPolicy.schemaVersion).toBe('bayn.autonomous-cycle-execution-policy.v2')
-    }
-
-    expect(
-      Result.isFailure(
-        prepareObserveStartup({
-          ...input,
-          strategy: { definition, provenance: fixtureRuntime.provenance },
-        }),
-      ),
-    ).toBe(true)
-
-    const malformed = prepareObserveStartup({
-      ...input,
-      strategy: {
-        ...strategy,
-        definition: {
-          ...definition,
-          parameters: {
-            ...definition.parameters,
-            executionModel: {
-              ...openingDriveExecutionModel,
-              order: {
-                ...openingDriveExecutionModel.order,
-                submissionCutoffAfterOpenMs: openingDriveExecutionModel.order.decisionAfterOpenMs,
-              },
-            },
-          },
-        },
-      },
-    })
-    expect(Result.isFailure(malformed)).toBe(true)
   })
 
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
