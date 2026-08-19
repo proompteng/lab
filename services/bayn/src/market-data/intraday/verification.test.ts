@@ -194,6 +194,16 @@ describe('immutable intraday market snapshot', () => {
     ).toMatchObject({ reason: 'request' })
     expect(
       error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          archiveWatermarks: request.archiveWatermarks.map((watermark, index) =>
+            index === 0 ? { ...watermark, inclusiveLastOffset: '18446744073709551616' } : watermark,
+          ),
+        }),
+      ),
+    ).toMatchObject({ reason: 'watermark' })
+    expect(
+      error(
         verifyIntradaySnapshot(
           {
             ...request,
@@ -252,6 +262,44 @@ describe('immutable intraday market snapshot', () => {
     const snapshot = success(verifyIntradaySnapshot(request, { ...rows, quotes, trades }))
     expect(snapshot.quotes[0]?.eventAt).toBe('2026-08-18T13:35:15.123456789Z')
     expect(snapshot.trades[0]?.eventAt).toBe('2026-08-18T13:34:58.123456789Z')
+  })
+
+  test('enforces causal and observation ordering at nanosecond precision', () => {
+    const rows = makeRows()
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          quotes: [
+            {
+              ...firstQuote,
+              event_at: '2026-08-18T13:35:15.123456789Z',
+              ingested_at: '2026-08-18T13:35:15.123456788Z',
+            },
+            ...rows.quotes.slice(1),
+          ],
+        }),
+      ),
+    ).toMatchObject({ reason: 'ordering' })
+
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          quotes: [
+            {
+              ...firstQuote,
+              event_at: '2026-08-18T13:35:30.000000001Z',
+              ingested_at: '2026-08-18T13:35:30.000000001Z',
+            },
+            ...rows.quotes.slice(1),
+          ],
+        }),
+      ),
+    ).toMatchObject({ reason: 'ordering' })
   })
 
   test('fails closed on stale quotes and missing trades', () => {
