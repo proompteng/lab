@@ -180,7 +180,6 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
-              OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
             ) AS requires_blocked_cycle,
             state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
