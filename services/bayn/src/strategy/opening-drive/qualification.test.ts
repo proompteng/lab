@@ -19,6 +19,7 @@ import {
   validateOpeningDriveQualificationPolicy,
 } from './qualification-policy'
 import { openingDriveReplayCostModelDocument, replayOpeningDriveSession } from './qualification-replay'
+import { hashOpeningDriveReplayVersionGraphFromInputs } from './qualification-version'
 import {
   decodeDefaultOpeningDriveProtocol,
   defaultOpeningDriveProtocolDocument,
@@ -252,13 +253,18 @@ const calendarFor = (sessions: readonly ReturnType<typeof replayInput>[]) => {
   return Object.freeze({ ...material, contentHash: canonicalHashV1(material) })
 }
 
-const binding = (calendar: ReturnType<typeof calendarFor>, priorTrialCount = 0) => ({
+const binding = (
+  calendar: ReturnType<typeof calendarFor>,
+  sessions: readonly ReturnType<typeof replayInput>[],
+  priorTrialCount = 0,
+) => ({
   sourceRevision: 'a'.repeat(40),
   strategyBehaviorHash: openingDriveBehaviorHash,
   protocolHash: defaultOpeningDriveProtocolHash,
   policyHash: canonicalHashV1(defaultOpeningDriveQualificationPolicy),
   costModelHash: canonicalHashV1(openingDriveReplayCostModelDocument),
   evaluationCalendarHash: calendar.contentHash,
+  replayVersionGraphHash: success(hashOpeningDriveReplayVersionGraphFromInputs(sessions)),
   priorTrialReceiptHashes: Array.from({ length: priorTrialCount }, (_, ordinal) =>
     sha256(`prior-${ordinal}`),
   ).toSorted(),
@@ -294,17 +300,18 @@ describe('opening-drive after-cost qualification', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const sessions = Array.from({ length: sufficientlyPoweredSessionCount }, (_, ordinal) => replayInput(ordinal, 0.02))
     const calendar = calendarFor(sessions)
-    const first = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))
+    const first = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar, sessions) }))
     const second = success(
       qualifyOpeningDrive({
         sessions: structuredClone(sessions),
         calendar: structuredClone(calendar),
         protocol,
-        binding: binding(calendar),
+        binding: binding(calendar, sessions),
       }),
     )
 
     expect(second).toEqual(first)
+    expect(sufficientlyPoweredSessionCount).toBe(88)
     expect(first.receipt).toMatchObject({
       verdict: 'QUALIFIED',
       sessionCount: sufficientlyPoweredSessionCount,
@@ -333,7 +340,7 @@ describe('opening-drive after-cost qualification', () => {
       replayInput(ordinal, 0.02),
     )
     const calendar = calendarFor(sessions)
-    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))
+    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar, sessions) }))
 
     expect(sufficientlyPoweredSessionCount).toBeGreaterThan(defaultOpeningDriveQualificationPolicy.minimumSessions)
     expect(result.receipt).toMatchObject({
@@ -357,7 +364,7 @@ describe('opening-drive after-cost qualification', () => {
         sessions,
         calendar,
         protocol,
-        binding: binding(calendar, 20),
+        binding: binding(calendar, sessions, 20),
       }),
     )
 
@@ -371,6 +378,12 @@ describe('opening-drive after-cost qualification', () => {
       reasonCodes: ['session-count', 'statistical-power-session-count', 'bootstrap-tail-resolution'],
     })
     expect(result.receipt.adjustedOneSidedAlpha).toBeCloseTo(0.05 / (21 * 22), 12)
+    expect(
+      openingDriveRequiredQualificationSessions(
+        defaultOpeningDriveQualificationPolicy,
+        openingDriveOneSidedAlphaForOrdinal(0.05, 21),
+      ),
+    ).toBeGreaterThan(sufficientlyPoweredSessionCount)
   })
 
   test('spends no more than the precommitted family-wise alpha across sequential trials', () => {
@@ -386,7 +399,7 @@ describe('opening-drive after-cost qualification', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const sessions = [replayInput(0, 0.02)]
     const calendar = calendarFor(sessions)
-    const frozen = binding(calendar)
+    const frozen = binding(calendar, sessions)
 
     expect(
       error(
@@ -395,6 +408,16 @@ describe('opening-drive after-cost qualification', () => {
           calendar,
           protocol,
           binding: { ...frozen, strategyBehaviorHash: sha256('different-opening-drive-implementation') },
+        }),
+      ),
+    ).toMatchObject({ reason: 'trial-lineage' })
+    expect(
+      error(
+        qualifyOpeningDrive({
+          sessions,
+          calendar,
+          protocol,
+          binding: { ...frozen, replayVersionGraphHash: sha256('different-replay-version-graph') },
         }),
       ),
     ).toMatchObject({ reason: 'trial-lineage' })
@@ -511,7 +534,7 @@ describe('opening-drive after-cost qualification', () => {
         sessions,
         calendar,
         protocol,
-        binding: binding(calendar),
+        binding: binding(calendar, sessions),
       }),
     )
 
@@ -540,7 +563,7 @@ describe('opening-drive after-cost qualification', () => {
           sessions: [mutated],
           calendar: mutatedCalendar,
           protocol,
-          binding: binding(mutatedCalendar),
+          binding: binding(mutatedCalendar, [mutated]),
         }),
       ),
     ).toMatchObject({
@@ -563,7 +586,7 @@ describe('opening-drive after-cost qualification', () => {
           sessions: [selfRehashed],
           calendar: selfRehashedCalendar,
           protocol,
-          binding: binding(selfRehashedCalendar),
+          binding: binding(selfRehashedCalendar, [selfRehashed]),
         }),
       ),
     ).toMatchObject({ reason: 'snapshot-binding', cause: { reason: 'coverage' } })
@@ -574,7 +597,7 @@ describe('opening-drive after-cost qualification', () => {
           sessions: [first, first],
           calendar: duplicateCalendar,
           protocol,
-          binding: binding(duplicateCalendar),
+          binding: binding(duplicateCalendar, [first, first]),
         }),
       ),
     ).toMatchObject({ reason: 'session-order' })
@@ -586,7 +609,7 @@ describe('opening-drive after-cost qualification', () => {
           sessions: reversed,
           calendar: reversedCalendar,
           protocol,
-          binding: binding(reversedCalendar),
+          binding: binding(reversedCalendar, reversed),
         }),
       ),
     ).toMatchObject({ reason: 'session-order' })
@@ -598,7 +621,7 @@ describe('opening-drive after-cost qualification', () => {
           calendar: firstCalendar,
           protocol,
           binding: {
-            ...binding(firstCalendar),
+            ...binding(firstCalendar, [first]),
             priorTrialReceiptHashes: ['f'.repeat(64), '0'.repeat(64)],
           },
         }),
@@ -615,7 +638,9 @@ describe('opening-drive after-cost qualification', () => {
     const incompleteSessions = sessions.filter((_, ordinal) => ordinal !== 17)
 
     expect(
-      error(qualifyOpeningDrive({ sessions: incompleteSessions, calendar, protocol, binding: binding(calendar) })),
+      error(
+        qualifyOpeningDrive({ sessions: incompleteSessions, calendar, protocol, binding: binding(calendar, sessions) }),
+      ),
     ).toMatchObject({ reason: 'session-order' })
     expect(
       error(
@@ -623,7 +648,10 @@ describe('opening-drive after-cost qualification', () => {
           sessions,
           calendar,
           protocol,
-          binding: { ...binding(calendar), evaluationCalendarHash: sha256('different-finalized-calendar') },
+          binding: {
+            ...binding(calendar, sessions),
+            evaluationCalendarHash: sha256('different-finalized-calendar'),
+          },
         }),
       ),
     ).toMatchObject({ reason: 'session-order' })
@@ -644,7 +672,7 @@ describe('opening-drive after-cost qualification', () => {
             sessions,
             calendar: forged as never,
             protocol,
-            binding: binding(calendar),
+            binding: binding(calendar, sessions),
           }),
         ),
       ).toMatchObject({
@@ -660,7 +688,7 @@ describe('opening-drive after-cost qualification', () => {
       replayInput(ordinal, 0.02, 0, ordinal === 9 ? { quoteBidSize: 0 } : {}),
     )
     const calendar = calendarFor(sessions)
-    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))
+    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar, sessions) }))
     const constrained = result.sessions[9]
 
     expect(constrained?.candidate.executedSymbols).toHaveLength(3)
@@ -683,7 +711,9 @@ describe('opening-drive after-cost qualification', () => {
     ]
     const calendar = calendarFor(sessions)
 
-    expect(error(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))).toMatchObject({
+    expect(
+      error(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar, sessions) })),
+    ).toMatchObject({
       reason: 'snapshot-binding',
     })
   })

@@ -40,6 +40,8 @@ export interface OpeningDriveQualificationBinding {
   readonly costModelHash: string
   /** Hash frozen in the qualification lock before any replay snapshot is inspected. */
   readonly evaluationCalendarHash: string
+  /** Complete query and archive-watermark graph frozen before replay rows are loaded. */
+  readonly replayVersionGraphHash: string
   readonly priorTrialReceiptHashes: readonly string[]
 }
 

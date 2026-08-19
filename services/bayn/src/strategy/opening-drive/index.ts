@@ -26,6 +26,12 @@ export {
 } from './qualification-replay'
 export { qualifyOpeningDrive, type QualifyOpeningDriveInput } from './qualification'
 export {
+  hashOpeningDriveReplayVersionGraph,
+  hashOpeningDriveReplayVersionGraphFromInputs,
+  makeOpeningDriveReplayVersionSession,
+  type OpeningDriveReplayVersionSession,
+} from './qualification-version'
+export {
   OpeningDriveQualificationFailure,
   type OpeningDrivePortfolioReplay,
   type OpeningDriveQualificationBinding,

@@ -17,6 +17,7 @@ import {
 } from './qualification-policy'
 import { analyzeOpeningDriveQualification } from './qualification-analysis'
 import { hashOpeningDriveReplayCostModel, replayOpeningDriveSession } from './qualification-replay'
+import { hashOpeningDriveReplayVersionGraphFromInputs } from './qualification-version'
 import { hashOpeningDriveProtocol, type OpeningDriveProtocol } from './protocol'
 
 const canonicalInstant = (value: string): boolean => {
@@ -198,7 +199,16 @@ export const qualifyOpeningDrive = (
       policyHash: hashOpeningDriveQualificationPolicy(policy),
       costModelHash: hashOpeningDriveReplayCostModel(),
       calendarHash: Result.succeed(calendarHash),
+      replayVersionGraphHash: hashOpeningDriveReplayVersionGraphFromInputs(input.sessions),
     })
+    if (hashes.replayVersionGraphHash !== input.binding.replayVersionGraphHash) {
+      return yield* Result.fail(
+        new OpeningDriveQualificationFailure({
+          reason: 'trial-lineage',
+          message: 'opening-drive replay inputs do not match the precommitted archive version graph',
+        }),
+      )
+    }
     yield* validatePrecommittedHashes(input.binding, hashes)
     const sessions = Object.freeze(
       yield* Result.all(input.sessions.map((session) => replayOpeningDriveSession(session, input.protocol, policy))),

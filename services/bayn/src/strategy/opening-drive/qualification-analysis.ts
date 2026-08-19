@@ -296,7 +296,15 @@ export const analyzeOpeningDriveQualification = (
       maximumDrawdown: round(maximumDrawdown(candidateReturns)),
     })
     const tradeSessionCount = sessions.filter((session) => session.candidate.executedSymbols.length > 0).length
-    const requiredSessions = openingDriveRequiredQualificationSessions(policy)
+    const requiredSessions = openingDriveRequiredQualificationSessions(
+      policy,
+      openingDriveOneSidedAlphaForOrdinal(policy.bootstrap.familyOneSidedAlpha, candidateOrdinal),
+    )
+    if (!Number.isSafeInteger(requiredSessions) || requiredSessions <= 0) {
+      return yield* Result.fail(
+        failure('statistic', 'opening-drive adjusted trial alpha does not produce a finite safe power requirement'),
+      )
+    }
     const candidateNetPnl = sumMicros(sessions, 'netPnlMicros')
     const candidateUnclosedQuantity = sumMicros(sessions, 'unclosedQuantityMicros')
     const benchmarkUnclosedQuantity = sumBenchmarkMicros(sessions, 'unclosedQuantityMicros')

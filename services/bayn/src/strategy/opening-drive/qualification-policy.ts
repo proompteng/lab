@@ -94,13 +94,45 @@ export const validateOpeningDriveQualificationPolicy = (
   return Result.succeed(policy)
 }
 
-const zOneSided95 = 1.6448536269514722
 const zPower80 = 0.8416212335729143
 
-export const openingDriveRequiredQualificationSessions = (policy: OpeningDriveQualificationPolicy): number => {
+// Peter J. Acklam's rational approximation, evaluated in the lower tail so
+// very small family-wise alphas do not lose precision through `1 - alpha`.
+const upperNormalCriticalValue = (oneSidedAlpha: number): number => {
+  if (!Number.isFinite(oneSidedAlpha) || oneSidedAlpha <= 0 || oneSidedAlpha >= 0.5) return Number.NaN
+  const a = [
+    -3.969683028665376e1, 2.209460984245205e2, -2.759285104469687e2, 1.38357751867269e2, -3.066479806614716e1,
+    2.506628277459239,
+  ] as const
+  const b = [
+    -5.447609879822406e1, 1.615858368580409e2, -1.556989798598866e2, 6.680131188771972e1, -1.328068155288572e1,
+  ] as const
+  const c = [
+    -7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838, -2.549732539343734, 4.374664141464968,
+    2.938163982698783,
+  ] as const
+  const q = Math.sqrt(-2 * Math.log(oneSidedAlpha))
+  const numerator = ((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]
+  const denominator =
+    (((7.784695709041462e-3 * q + 3.224671290700398e-1) * q + 2.445134137142996) * q + 3.754408661907416) * q + 1
+  if (oneSidedAlpha < 0.02425) return -(numerator / denominator)
+  const centered = oneSidedAlpha - 0.5
+  const squared = centered * centered
+  const centralNumerator =
+    (((((a[0] * squared + a[1]) * squared + a[2]) * squared + a[3]) * squared + a[4]) * squared + a[5]) * centered
+  const centralDenominator =
+    ((((b[0] * squared + b[1]) * squared + b[2]) * squared + b[3]) * squared + b[4]) * squared + 1
+  return -(centralNumerator / centralDenominator)
+}
+
+export const openingDriveRequiredQualificationSessions = (
+  policy: OpeningDriveQualificationPolicy,
+  adjustedOneSidedAlpha = policy.bootstrap.familyOneSidedAlpha / 2,
+): number => {
   const standardizedEffect =
     policy.power.minimumDetectableAnnualizedExcessReturn / policy.power.assumedAnnualizedTrackingVolatility
-  return Math.max(policy.minimumSessions, Math.ceil(((zOneSided95 + zPower80) / standardizedEffect) ** 2))
+  const alphaCriticalValue = upperNormalCriticalValue(adjustedOneSidedAlpha)
+  return Math.max(policy.minimumSessions, Math.ceil(((alphaCriticalValue + zPower80) / standardizedEffect) ** 2))
 }
 
 export const hashOpeningDriveQualificationPolicy = (
