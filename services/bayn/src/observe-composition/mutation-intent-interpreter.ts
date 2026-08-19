@@ -6,14 +6,7 @@ import { CycleRunnerError } from '../cycle/runner'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
-import {
-  Authority,
-  IntentState,
-  KillState,
-  TerminalOutcome,
-  type AuthorityState,
-  type Intent,
-} from '../execution/contracts'
+import { Authority, IntentState, KillState, type AuthorityState, type Intent } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
@@ -24,6 +17,7 @@ import { TargetPlanStatus } from '../target-planner'
 import type { CausalProtocol } from '../protocol'
 import {
   decideExecutionCycleCompletion,
+  decideExecutionIntentTerminalDisposition,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
   decidePendingMutationObservation,
@@ -379,14 +373,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       preparedIntents.push({ ...lookup, intent })
     }
 
-    const entryHasTerminalUnsuccessfulIntent =
-      input.mutationPhase !== 'CLOSE' &&
-      preparedIntents.some(
-        (prepared) =>
-          prepared.stored?.intent.state === IntentState.Terminal &&
-          prepared.stored.intent.terminalOutcome !== TerminalOutcome.Filled,
-      )
-
     const recoveryObservedAt = yield* dependencies.now
     let pendingRecovery: { readonly intentId: string; readonly event: MutationEvent } | undefined
     for (const prepared of preparedIntents) {
@@ -526,6 +512,24 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       })
     }
 
+    const mutationPhase = input.mutationPhase === 'CLOSE' ? 'CLOSE' : 'ENTRY'
+    const entryHasTerminalUnsuccessfulIntent =
+      mutationPhase === 'ENTRY' &&
+      preparedIntents.some((prepared) => {
+        const intent = prepared.stored?.intent
+        return (
+          intent?.state === IntentState.Terminal &&
+          decideExecutionIntentTerminalDisposition({
+            phase: mutationPhase,
+            intent,
+            ...(prepared.latestSubmit?.brokerOrderId === undefined
+              ? {}
+              : { acceptedBrokerOrderId: prepared.latestSubmit.brokerOrderId }),
+            orders: facts.reconciliation.brokerState.orders,
+          }) === 'UNSUCCESSFUL'
+        )
+      })
+
     const terminalEvidence: ExecutionCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
     let unsuccessfulIntentFound = entryHasTerminalUnsuccessfulIntent
@@ -572,14 +576,21 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
       switch (decision._tag) {
-        case 'SkipTerminal':
+        case 'SkipTerminal': {
+          const disposition = decideExecutionIntentTerminalDisposition({
+            phase: mutationPhase,
+            intent: record.intent,
+            ...(latest?.brokerOrderId === undefined ? {} : { acceptedBrokerOrderId: latest.brokerOrderId }),
+            orders: facts.reconciliation.brokerState.orders,
+          })
           terminalEvidence.push({
             state: record.intent.state,
             ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
+            ...(disposition === 'BENIGN_ZERO_FILL_IOC' ? { benignZeroFillIoc: true as const } : {}),
           })
-          if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
+          if (disposition === 'UNSUCCESSFUL') {
             if (!drainOpenOrders) {
               unsuccessfulIntentFound = true
               yield* dependencies.restrictAuthority(
@@ -590,6 +601,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             continue
           }
           break
+        }
         case 'Pending': {
           const observation = yield* Effect.fromResult(
             decidePendingMutationObservation(decision.order, facts.reconciliation.brokerState.orders),
