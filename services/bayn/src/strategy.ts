@@ -25,6 +25,26 @@ export {
   makeRiskBalancedTrendDefinition,
   riskBalancedTrendContextAtSignal,
 } from './strategy/risk-balanced-trend'
+export {
+  decideOpeningDrive,
+  decodeDefaultOpeningDriveProtocol,
+  decodeOpeningDriveProtocol,
+  defaultOpeningDriveProtocolHash,
+  defaultOpeningDriveProtocolDocument,
+  hashOpeningDriveProtocol,
+  makeOpeningDriveDefinition,
+  OpeningDriveFailure,
+  OpeningDriveProtocolDecodeError,
+  OpeningDriveProtocolSchema,
+  type OpeningDriveFailureReason,
+  type OpeningDriveMarketContext,
+  type OpeningDriveProtocol,
+  type OpeningDriveRejectionReason,
+  type OpeningDriveSessionBinding,
+  type OpeningDriveSignal,
+  type OpeningDriveStrategyDefinition,
+  type OpeningDriveTargetPortfolio,
+} from './strategy/opening-drive'
 
 /** The application root composes exactly one reviewed strategy implementation. */
 export const makeActiveStrategyApplication = makeRiskBalancedTrendApplication
