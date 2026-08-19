@@ -1643,6 +1643,17 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(advances).toBe(1)
   })
 
+  test('keeps the durable driver advancing while a restricted generation has not terminalized yet', async () => {
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.succeed('advanced-before-terminal' as const),
+        Effect.succeed({ _tag: 'NotRequired' as const }),
+      ),
+    )
+
+    expect(waiting).toEqual({ _tag: 'Waiting', advance: 'advanced-before-terminal' })
+  })
+
   test('keeps activation disabled when the fresh reconciliation fails', async () => {
     const operations: string[] = []
     const reconciliationFailure = new Error('read-only reconciliation failed')
