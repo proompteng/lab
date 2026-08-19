@@ -27,6 +27,15 @@ const policyFailure = (message: string): OpeningDriveQualificationFailure =>
 export const validateOpeningDriveQualificationPolicy = (
   policy: OpeningDriveQualificationPolicy,
 ): Result.Result<OpeningDriveQualificationPolicy, OpeningDriveQualificationFailure> => {
+  if (
+    policy.schemaVersion !== 'bayn.opening-drive.qualification-policy.v1' ||
+    policy.annualizationSessions !== 252 ||
+    policy.bootstrap.method !== 'paired-circular-session-blocks' ||
+    policy.bootstrap.familyOneSidedAlpha !== 0.05 ||
+    policy.bootstrap.seedNamespace !== 'bayn-opening-drive-qualification-v1'
+  ) {
+    return Result.fail(policyFailure('qualification fixed protocol parameters do not match the reviewed policy'))
+  }
   const allocation = /^[0-9]+$/.test(policy.allocationMicros) ? BigInt(policy.allocationMicros) : 0n
   const positiveIntegers = [
     policy.minimumSessions,

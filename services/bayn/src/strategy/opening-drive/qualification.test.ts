@@ -13,7 +13,7 @@ import { openingDriveBehaviorHash } from './decision'
 import type { OpeningDriveMarketContext } from './model'
 import { qualifyOpeningDrive } from './qualification'
 import { openingDriveOneSidedAlphaForOrdinal } from './qualification-analysis'
-import { defaultOpeningDriveQualificationPolicy } from './qualification-policy'
+import { defaultOpeningDriveQualificationPolicy, validateOpeningDriveQualificationPolicy } from './qualification-policy'
 import { openingDriveReplayCostModelDocument, replayOpeningDriveSession } from './qualification-replay'
 import {
   decodeDefaultOpeningDriveProtocol,
@@ -256,6 +256,24 @@ const binding = (calendar: ReturnType<typeof calendarFor>, priorTrialCount = 0) 
 })
 
 describe('opening-drive after-cost qualification', () => {
+  test('rejects runtime drift in every fixed qualification-policy literal', () => {
+    const fixedDrift = [
+      { ...defaultOpeningDriveQualificationPolicy, annualizationSessions: 365 },
+      {
+        ...defaultOpeningDriveQualificationPolicy,
+        bootstrap: { ...defaultOpeningDriveQualificationPolicy.bootstrap, familyOneSidedAlpha: 1 },
+      },
+      {
+        ...defaultOpeningDriveQualificationPolicy,
+        bootstrap: { ...defaultOpeningDriveQualificationPolicy.bootstrap, method: 'unpaired-bootstrap' },
+      },
+    ]
+
+    for (const policy of fixedDrift) {
+      expect(Result.isFailure(validateOpeningDriveQualificationPolicy(policy as never))).toBe(true)
+    }
+  })
+
   test('qualifies deterministic positive replay only after conservative quote, slippage, fee, and sample gates', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const sessions = Array.from({ length: 60 }, (_, ordinal) => replayInput(ordinal, 0.02))
@@ -397,30 +415,28 @@ describe('opening-drive after-cost qualification', () => {
     expect(subminimum.benchmark.entryNotionalMicros).toBe('0')
   })
 
-  test('rejects late opening observations before replaying either portfolio', () => {
+  test('rejects late opening observations at the immutable snapshot boundary', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const sessionDate = dateAt(0)
     const times = timesFor(sessionDate)
     const observedAt = new Date(Date.parse(times.open) + protocol.entryCutoffMinutesAfterOpen * 60_000).toISOString()
-    const input = replayInput(0, 0.02)
-    const lateOpening = snapshotFor({
+    const options = {
       sessionDate,
-      phase: 'opening',
+      phase: 'opening' as const,
       candidateMove: 0.02,
       benchmarkMove: 0,
       observedAt,
       quoteEventAt: observedAt,
       quoteIngestedAt: observedAt,
-    })
-    const lateInput = Object.freeze({
-      ...input,
-      opening: Object.freeze({ ...input.opening, snapshot: lateOpening }),
-    })
-    const calendar = calendarFor([lateInput])
+    }
+    const verified = verifyIntradaySnapshot(
+      requestFor(sessionDate, times.open, times.openingEnd, observedAt),
+      rowsFor(options),
+    )
 
-    expect(
-      error(qualifyOpeningDrive({ sessions: [lateInput], calendar, protocol, binding: binding(calendar) })),
-    ).toMatchObject({ reason: 'strategy-decision', cause: { reason: 'snapshot-window' } })
+    const failure = error(verified)
+    expect(failure.reason).toBe('request')
+    expect(failure.message).toContain('twenty minutes')
   })
 
   test('rejects a sufficiently observed strategy that loses after all modeled costs', () => {
