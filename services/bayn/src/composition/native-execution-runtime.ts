@@ -21,6 +21,7 @@ import {
   ExecutionControllerStatusStore,
   executionControllerStatusHasCompletion,
   type ExecutionControllerStatus,
+  type ExecutionControllerStatusStoreError,
   type ExecutionControllerStatusStoreShape,
 } from '../execution/controller-status'
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
@@ -271,6 +272,43 @@ const replayProjectedAdvance = (
   )
 }
 
+const readProjectedAdvance = (
+  command: AdvanceExecutionCommand,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+): Effect.Effect<ExecutionAdvanceStepResult | null, TransientExecutionFailure> =>
+  statusStore.read(command.controllerKey).pipe(
+    Effect.mapError(projectionFailure),
+    Effect.flatMap((status) => Effect.fromResult(replayProjectedAdvance(command, status, planHash))),
+  )
+
+const recoverPersistedProjectionWinner = (
+  command: AdvanceExecutionCommand,
+  statusStore: ExecutionControllerStatusStoreShape,
+  planHash: string,
+  cause: ExecutionControllerStatusStoreError,
+): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> => {
+  if (cause.failure !== 'conflict' && cause.failure !== 'query') {
+    return Effect.fail(projectionFailure(cause))
+  }
+  return readProjectedAdvance(command, statusStore, planHash).pipe(
+    Effect.flatMap((replayed) =>
+      replayed === null
+        ? Effect.fail(projectionFailure(cause))
+        : Effect.logWarning('Bayn execution replay adopted the persisted completion winner').pipe(
+            Effect.annotateLogs({
+              controllerKey: command.controllerKey,
+              epoch: command.epoch,
+              sequence: command.sequence,
+              sourceRevision: command.sourceRevision,
+              receiptHash: replayed.outcome.receiptHash,
+            }),
+            Effect.as(replayed),
+          ),
+    ),
+  )
+}
+
 const advanceAndProject = (
   command: AdvanceExecutionCommand,
   driver: BoundRecoveryFirstCycleDriver,
@@ -292,7 +330,7 @@ const advanceAndProject = (
         },
       }),
     ),
-    Effect.tap(({ completedAt, outcome }) =>
+    Effect.flatMap(({ completedAt, outcome, step }) =>
       statusStore
         .project({
           schemaVersion: 1,
@@ -312,12 +350,13 @@ const advanceAndProject = (
           Effect.flatMap((projection) =>
             projection._tag === 'Stale'
               ? Effect.fail(projectionFailure('controller status rejected a stale execution completion'))
-              : Effect.void,
+              : Effect.succeed(step),
           ),
-          Effect.mapError(projectionFailure),
+          Effect.catchTag('ExecutionControllerStatusStoreError', (cause) =>
+            recoverPersistedProjectionWinner(command, statusStore, planHash, cause),
+          ),
         ),
     ),
-    Effect.map(({ step }) => step),
   )
 
 export const executeNativeExecutionAdvance = (
@@ -326,9 +365,7 @@ export const executeNativeExecutionAdvance = (
   statusStore: ExecutionControllerStatusStoreShape,
   planHash: string,
 ): Effect.Effect<ExecutionAdvanceStepResult, TransientExecutionFailure> =>
-  statusStore.read(command.controllerKey).pipe(
-    Effect.mapError(projectionFailure),
-    Effect.flatMap((status) => Effect.fromResult(replayProjectedAdvance(command, status, planHash))),
+  readProjectedAdvance(command, statusStore, planHash).pipe(
     Effect.flatMap((replayed) =>
       replayed === null ? advanceAndProject(command, driver, statusStore, planHash) : Effect.succeed(replayed),
     ),

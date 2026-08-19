@@ -985,14 +985,13 @@ describe('native execution runtime', () => {
         ),
     }
 
-    const first = await Effect.runPromiseExit(
+    const first = await Effect.runPromise(
       executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
     )
     const replay = await Effect.runPromise(
       executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
     )
 
-    expect(first._tag).toBe('Failure')
     expect(advanceCount).toBe(1)
     expect(projectCount).toBe(1)
     const committed = persistence.current
@@ -1009,6 +1008,96 @@ describe('native execution runtime', () => {
         nextDelayMs: 30_000,
       },
     })
+    expect(first).toEqual(replay)
+  })
+
+  test('adopts the persisted winner when a replay loses the same-command projection race', async () => {
+    let advanceCount = 0
+    let projectCount = 0
+    let readCount = 0
+    const authoritative = status({
+      lastReceiptHash: hash('a'),
+      lastPass: staleBootstrapObservation,
+    })
+    if (!executionControllerStatusHasCompletion(authoritative)) {
+      throw new Error('projection-race fixture requires completion evidence')
+    }
+    const racingStore: ExecutionControllerStatusStoreShape = {
+      read: () =>
+        Effect.sync(() => {
+          readCount += 1
+          return readCount === 1 ? null : authoritative
+        }),
+      project: () => {
+        projectCount += 1
+        return Effect.fail(
+          new ExecutionControllerStatusStoreError({
+            operation: 'project',
+            failure: 'conflict',
+            message: 'controller epoch and sequence were reused with different evidence',
+          }),
+        )
+      },
+    }
+    const replayDriver = {
+      ...staleBootstrapDriver,
+      advance: Effect.sync(() => {
+        advanceCount += 1
+        return { observation: staleBootstrapObservation }
+      }),
+    }
+
+    const observed = await Effect.runPromise(
+      executeNativeExecutionAdvance(command, replayDriver, racingStore, controllerPlanHash),
+    )
+
+    expect(advanceCount).toBe(1)
+    expect(projectCount).toBe(1)
+    expect(readCount).toBe(2)
+    expect(observed).toEqual({
+      completedAt: authoritative.completedAt,
+      observation: staleBootstrapObservation,
+      outcome: {
+        _tag: authoritative.lastOutcome,
+        receiptHash: authoritative.lastReceiptHash,
+        nextDelayMs: 30_000,
+      },
+    })
+  })
+
+  test('fails closed when a projection conflict resolves to a different controller command', async () => {
+    let advanceCount = 0
+    let readCount = 0
+    const conflictingStore: ExecutionControllerStatusStoreShape = {
+      read: () =>
+        Effect.sync(() => {
+          readCount += 1
+          return readCount === 1 ? null : status({ planHash: hash('8') })
+        }),
+      project: () =>
+        Effect.fail(
+          new ExecutionControllerStatusStoreError({
+            operation: 'project',
+            failure: 'conflict',
+            message: 'controller epoch and sequence were reused with different evidence',
+          }),
+        ),
+    }
+    const replayDriver = {
+      ...driver,
+      advance: Effect.sync(() => {
+        advanceCount += 1
+      }).pipe(Effect.andThen(driver.advance)),
+    }
+
+    const failure = await Effect.runPromise(
+      executeNativeExecutionAdvance(command, replayDriver, conflictingStore, controllerPlanHash).pipe(Effect.flip),
+    )
+
+    expect(advanceCount).toBe(1)
+    expect(readCount).toBe(2)
+    expect(failure).toBeInstanceOf(TransientExecutionFailure)
+    expect(failure.message).toBe('execution controller status projection did not complete')
   })
 
   test('binds the reserved legacy plan on the first not-ahead post-migration advance', async () => {
