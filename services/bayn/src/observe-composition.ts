@@ -35,6 +35,7 @@ export { executeMutationIntent } from './observe-composition/mutation-interprete
 
 export {
   buildClosingExecutionCycleDecision,
+  makeClosingDecisionPlan,
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,

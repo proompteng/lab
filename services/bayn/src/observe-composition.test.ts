@@ -71,6 +71,7 @@ import {
 import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
+  makeClosingDecisionPlan,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
@@ -2961,6 +2962,28 @@ describe('OBSERVE runtime composition', () => {
       observedAt: missedCloseSubmitCutoffAt,
     })
     expect(missedCloseCommits).toBe(0)
+  })
+
+  test('builds an intraday close as a same-session flat execution target', () => {
+    const close = Result.getOrThrow(
+      makeClosingDecisionPlan(
+        {
+          strategyName: 'opening-drive-momentum',
+          signalSessionDate: signalDate,
+          executionSessionDate: executionDate,
+        },
+        ['NVDA', 'AMD', 'NVDA'],
+      ),
+    )
+
+    expect(close).toEqual({
+      schemaVersion: 'bayn.execution-flat-target.v1',
+      strategyName: 'opening-drive-momentum',
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0, NVDA: 0 },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close',
+    })
   })
 
   test('keeps a rejected execution close intent recoverable while reconciliation still shows an open position', async () => {
