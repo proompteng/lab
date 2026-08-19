@@ -1650,11 +1650,11 @@ const buildPlannedExecutionDecision = (
     return { document, reconciliation }
   })
 
-const activatePlannedPaperAuthority = (document: ExecutionDecisionDocument) =>
+const activatePlannedPaperAuthority = (generationHash: string, updatedAt: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const observeGenerationHash = '9'.repeat(64)
-    const observeActivatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1_000)
+    const observeActivatedAt = utcInstantFromEpochMillis(Date.parse(updatedAt) - 1_000)
     yield* sql`
       INSERT INTO authority_state (
         schema_version, generation_hash, maximum, effective, kill_state,
@@ -1667,11 +1667,11 @@ const activatePlannedPaperAuthority = (document: ExecutionDecisionDocument) =>
     yield* sql`
       UPDATE authority_state
       SET
-        generation_hash = ${document.bindings.authorityGenerationHash},
+        generation_hash = ${generationHash},
         maximum = 'PAPER',
         effective = 'PAPER',
         version = 2,
-        updated_at = ${document.createdAt}
+        updated_at = ${updatedAt}
       WHERE singleton
     `
   })
@@ -1701,6 +1701,7 @@ const makeValidWindowBroker = (
     contentHash: canonicalHashV1({ identity, observedAt: at }),
     observedAt: at,
   })
+  const observedOrder = (order: BrokerOrder, at = latestObservedAt()): BrokerOrder => ({ ...order, observedAt: at })
   const brokerPosition = (): BrokerPosition => {
     const quantityMicros = control.positionQuantityMicros.toString()
     const marketValueMicros = roundedNotional(BigInt(quantityMicros), control.marketPriceMicros).toString()
@@ -1795,17 +1796,25 @@ const makeValidWindowBroker = (
       evidence: evidence('positions'),
     })),
     orders: (query) =>
-      Effect.sync(() => ({
-        value: query?.status === OrderCollection.Open ? [] : control.filledOrders,
-        evidence: evidence('orders'),
-      })),
+      Effect.sync(() => {
+        const at = latestObservedAt()
+        return {
+          value:
+            query?.status === OrderCollection.Open ? [] : control.filledOrders.map((order) => observedOrder(order, at)),
+          evidence: evidence('orders', at),
+        }
+      }),
     orderById: (brokerOrderId) => {
       const order = control.filledOrders.find((candidate) => candidate.brokerOrderId === brokerOrderId)
-      return order === undefined ? unused : Effect.succeed({ value: order, evidence: evidence('order-by-id') })
+      if (order === undefined) return unused
+      const at = latestObservedAt()
+      return Effect.succeed({ value: observedOrder(order, at), evidence: evidence('order-by-id', at) })
     },
     orderByClientId: (clientOrderId) => {
       const order = control.filledOrders.find((candidate) => candidate.clientOrderId === clientOrderId)
-      return order === undefined ? unused : Effect.succeed({ value: order, evidence: evidence('order-by-client-id') })
+      if (order === undefined) return unused
+      const at = latestObservedAt()
+      return Effect.succeed({ value: observedOrder(order, at), evidence: evidence('order-by-client-id', at) })
     },
     fillActivities: () =>
       Effect.sync(() => {
@@ -5434,36 +5443,11 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        const initialReconciliation = plannedPaperReconciliation(activated.cycle, evaluatedAt)
-        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
-          decision: plannedExecutionDecisionPlan(activated.cycle),
-          evaluatedAt,
-          reconciliation: initialReconciliation,
-          snapshotFinalizedAt: snapshotBoundAt,
-        })
-        if (
-          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
-          planned.document.riskBlock !== undefined ||
-          planned.document.orderedIntentIds.length !== 1
-        ) {
-          return yield* Effect.die(new Error('valid-window execution fixture requires one dispatchable sell intent'))
-        }
-        yield* insertReconciliation(planned.reconciliation)
-        yield* insertQualifiedPaperLineage(planned.document)
-        yield* activatePlannedPaperAuthority(planned.document)
-        const bound = yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
-        const forceCloseAt = utcInstantFromEpochMillis(Date.parse(evaluatedAt) + 2_000)
-        const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 60_000)
-        const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 120_000)
+        yield* activatePlannedPaperAuthority(plannedPaperGenerationHash, evaluatedAt)
         return {
-          bound: bound.cycle,
-          closeExpiresAt,
-          closeSubmitCutoffAt,
+          activated: activated.cycle,
           draft,
           evaluatedAt,
-          forceCloseAt,
-          initialReconciliation,
-          planned,
           snapshotBoundAt,
         }
       }).pipe(Effect.provide(TestClock.layer())),
@@ -5507,6 +5491,48 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               strategy: dueStrategy,
             }),
           )
+          const baseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (baseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(new Error('valid-window execution requires an exact production broker baseline'))
+          }
+          const baselineAuthority = baseline.riskContext.authority
+          const baselineAuthorityObservedAt = baseline.riskContext.authorityObservedAt
+          if (
+            baselineAuthority === null ||
+            baselineAuthority.generationHash !== plannedPaperGenerationHash ||
+            baselineAuthority.maximum !== Authority.Execution ||
+            baselineAuthority.effective !== Authority.Execution ||
+            baselineAuthorityObservedAt === null
+          ) {
+            return yield* Effect.die(
+              new Error(
+                'valid-window planning requires the production reconciler to observe executable PAPER authority',
+              ),
+            )
+          }
+          const planningAt = utcInstantFromEpochMillis(
+            Math.max(Date.parse(setup.evaluatedAt), Date.parse(baselineAuthorityObservedAt)),
+          )
+          yield* TestClock.setTime(Date.parse(planningAt))
+          const planned = yield* buildPlannedExecutionDecision(setup.activated, snapshotB, {
+            decision: plannedExecutionDecisionPlan(setup.activated),
+            evaluatedAt: planningAt,
+            reconciliation: baseline,
+            snapshotFinalizedAt: setup.snapshotBoundAt,
+          })
+          if (
+            planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+            planned.document.riskBlock !== undefined ||
+            planned.document.orderedIntentIds.length !== 1
+          ) {
+            return yield* Effect.die(new Error('valid-window execution fixture requires one dispatchable buy intent'))
+          }
+          yield* insertQualifiedPaperLineage(planned.document)
+          const cycleStore = yield* CycleStore
+          const bound = yield* cycleStore.bindDecision(setup.draft.identity.cycleId, planned.document, planningAt)
+          const forceCloseAt = utcInstantFromEpochMillis(Date.parse(planningAt) + 2_000)
+          const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 60_000)
+          const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 120_000)
           const authority = yield* Effect.fromResult(
             makeExecutionAuthority({
               brokerIdentity: Result.getOrThrow(
@@ -5520,7 +5546,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               brokerAccess: BrokerAccess.Mutation,
               capitalAuthority: grantedCapitalAuthority(plannedPaperGenerationHash),
               strategy: dueStrategy.provenance.strategy,
-              observedAt: setup.evaluatedAt,
+              observedAt: planningAt,
             }),
           )
           const executionProgram = yield* Effect.fromResult(
@@ -5539,8 +5565,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
                   Effect.die(new Error('sandbox valid-window proof must not lock a persisted capital grant')),
               },
               currentUtcInstant,
-              entrySubmitExpiresAt: setup.forceCloseAt,
-              closeSubmitExpiresAt: setup.closeExpiresAt,
+              entrySubmitExpiresAt: forceCloseAt,
+              closeSubmitExpiresAt: closeExpiresAt,
               isCloseOnlyIntent: (candidateIntentId) =>
                 executionCycleClosureStore.containsIntent(candidateIntentId).pipe(Effect.orElseSucceed(() => false)),
             }),
@@ -5554,14 +5580,14 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             strategy: dueStrategy,
             executionCycleClosureStore,
             blockedCycleIntentStore,
-            executionMandateCutoffAt: setup.forceCloseAt,
-            executionMandateCloseSubmitCutoffAt: setup.closeSubmitCutoffAt,
-            executionMandateExpiresAt: setup.closeExpiresAt,
+            executionMandateCutoffAt: forceCloseAt,
+            executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
+            executionMandateExpiresAt: closeExpiresAt,
           }
           const recoveryContext: CycleRunContext = {
-            qualificationRunId: setup.bound.identity.qualificationRunId,
-            strategyProtocolHash: setup.bound.identity.strategyProtocolHash,
-            accountId: setup.bound.identity.accountId,
+            qualificationRunId: bound.cycle.identity.qualificationRunId,
+            strategyProtocolHash: bound.cycle.identity.strategyProtocolHash,
+            accountId: bound.cycle.identity.accountId,
             executionPolicy,
             buildDecision: () =>
               Effect.die(new Error('bound valid-window recovery must not rebuild its immutable entry decision')),
@@ -5595,18 +5621,14 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               Effect.provideService(BrokerRead, broker.read),
               Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
             )
-          const baseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
-          if (baseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
-            return yield* Effect.die(new Error('valid-window execution requires an exact production broker baseline'))
-          }
           const entryAdvance = yield* productionRecoveryPass()
           if (!('_tag' in entryAdvance) || entryAdvance._tag !== 'PostMutationReconciliation') {
             return yield* Effect.die(
               new Error(`valid-window production entry selected ${JSON.stringify(entryAdvance)} instead of mutation`),
             )
           }
-          const entryIntentId = setup.planned.document.orderedIntentIds[0]
-          if (entryIntentId === undefined || setup.planned.document.orderedIntentIds.length !== 1) {
+          const entryIntentId = planned.document.orderedIntentIds[0]
+          if (entryIntentId === undefined || planned.document.orderedIntentIds.length !== 1) {
             return yield* Effect.die(new Error('valid-window production entry requires one deterministic intent'))
           }
           const stored = Option.getOrUndefined(yield* intentStore.read(entryIntentId))
@@ -5614,7 +5636,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const latest = yield* mutationStore.latest(entryIntentId, MutationOperation.Submit)
           if (latest === undefined) return yield* Effect.die(new Error('executed submit has no durable mutation event'))
 
-          yield* TestClock.setTime(Date.parse(setup.evaluatedAt) + 1_000)
+          yield* TestClock.adjust(1_000)
           const reconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(
@@ -5632,7 +5654,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             )
           }
 
-          yield* TestClock.setTime(Date.parse(setup.forceCloseAt) + 1)
+          const beforeCloseAt = yield* currentUtcInstant
+          yield* TestClock.setTime(Math.max(Date.parse(beforeCloseAt), Date.parse(forceCloseAt) + 1))
           const closeAdvance = yield* productionCloseRecoveryPass()
           if (!('_tag' in closeAdvance) || closeAdvance._tag !== 'PostMutationReconciliation') {
             return yield* Effect.die(
@@ -5683,6 +5706,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           `
           return {
             baseline,
+            closeExpiresAt,
+            closeSubmitCutoffAt,
             closeAdvance,
             closeDocument,
             closeStored,
@@ -5691,7 +5716,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             entryAdvance,
             entrySettled,
             flatReconciliation,
+            forceCloseAt,
             latest,
+            planned,
+            planningAt,
             reconciliation,
             stored,
           }
@@ -5700,8 +5728,17 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
       intentId = first.stored.intent.intentId
       closeIntentId = first.closeStored.intent.intentId
-      submitExpiresAt = setup.forceCloseAt
+      submitExpiresAt = first.forceCloseAt
       expect(first.baseline.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(first.baseline.report.metrics).toMatchObject({
+        accountingExact: true,
+        discrepancyCount: 0,
+      })
+      expect(first.planned.reconciliation).toEqual(first.baseline)
+      expect(first.planned.document.bindings.reconciliationId).toBe(
+        first.baseline.report.reconciliation.reconciliationId,
+      )
+      expect(first.planned.document.bindings.reconciliationHash).toBe(first.baseline.report.reconciliation.contentHash)
       expect(first.entryAdvance).toMatchObject({
         _tag: 'PostMutationReconciliation',
         logContext: { mutationAction: 'SUBMIT', mutationPhase: 'ENTRY' },
@@ -5748,7 +5785,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       mutationRuntime = makeMutationPersistenceRuntime(journal)
       const replayed = await mutationRuntime.runPromise(
         Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(setup.closeExpiresAt) + 1)
+          yield* TestClock.setTime(Date.parse(first.closeExpiresAt) + 1)
           const intentStore = yield* IntentStore
           const mutationStore = yield* MutationStore
           const writerFence = yield* WriterFence
@@ -5768,7 +5805,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               brokerAccess: BrokerAccess.Mutation,
               capitalAuthority: grantedCapitalAuthority(plannedPaperGenerationHash),
               strategy: dueStrategy.provenance.strategy,
-              observedAt: setup.evaluatedAt,
+              observedAt: first.planningAt,
             }),
           )
           const executionProgram = yield* Effect.fromResult(
@@ -5786,8 +5823,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
                 lockForSubmit: () => Effect.die(new Error('sandbox replay must not lock a persisted capital grant')),
               },
               currentUtcInstant,
-              entrySubmitExpiresAt: setup.forceCloseAt,
-              closeSubmitExpiresAt: setup.closeExpiresAt,
+              entrySubmitExpiresAt: first.forceCloseAt,
+              closeSubmitExpiresAt: first.closeExpiresAt,
               isCloseOnlyIntent: (candidateIntentId) =>
                 executionCycleClosureStore.containsIntent(candidateIntentId).pipe(Effect.orElseSucceed(() => false)),
             }),
@@ -5800,7 +5837,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             executionProgram,
             closeIntentId,
             'SUBMIT',
-            setup.closeSubmitCutoffAt,
+            first.closeSubmitCutoffAt,
           )
           return { close, entry }
         }).pipe(Effect.provide(TestClock.layer())),
