@@ -265,6 +265,49 @@ describe('opening-drive momentum strategy', () => {
     expect(decision.signals.find((signal) => signal.symbol === 'AMD')?.rejectionReasons).toContain('breakout')
   })
 
+  test('rejects latest-trade timestamp ties across Kafka partitions', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const rows = makeRows()
+    const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
+    if (amdTrade === undefined) throw new Error('AMD trade fixture is missing')
+    const partitionOneWatermark = {
+      sourceTopic: tradesTopic,
+      sourcePartition: 1,
+      inclusiveLastOffset: '1',
+    } as const
+    const archiveWatermarks = [...request.archiveWatermarks, partitionOneWatermark]
+    const market = success(
+      verifyIntradaySnapshot(
+        { ...request, archiveWatermarks },
+        {
+          ...rows,
+          archiveWatermarks: [
+            ...rows.archiveWatermarks,
+            {
+              source_topic: partitionOneWatermark.sourceTopic,
+              source_partition: String(partitionOneWatermark.sourcePartition),
+              inclusive_last_offset: partitionOneWatermark.inclusiveLastOffset,
+            },
+          ],
+          trades: [
+            ...rows.trades,
+            {
+              ...amdTrade,
+              source_partition: String(partitionOneWatermark.sourcePartition),
+              source_offset: partitionOneWatermark.inclusiveLastOffset,
+              price: String(Number(amdTrade.price) * 0.95),
+            },
+          ],
+        },
+      ),
+    )
+
+    expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
+      reason: 'snapshot-coverage',
+      symbol: 'AMD',
+    })
+  })
+
   test('orders mixed-precision trade timestamps by their nanosecond instant', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const rows = makeRows()

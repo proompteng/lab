@@ -219,7 +219,19 @@ const validateSnapshot = (
     ) {
       return fail('snapshot-coverage', 'opening-drive decision lacks a fresh post-range quote', { symbol })
     }
-    const latestTrade = snapshot.trades.filter((trade) => trade.symbol === symbol).toSorted(compareLatestTrade)[0]
+    const symbolTrades = snapshot.trades.filter((trade) => trade.symbol === symbol).toSorted(compareLatestTrade)
+    const latestTrade = symbolTrades[0]
+    if (
+      latestTrade !== undefined &&
+      symbolTrades.some(
+        (trade) =>
+          trade !== latestTrade &&
+          compareIntradayInstants(trade.eventAt, latestTrade.eventAt) === 0 &&
+          (trade.sourceTopic !== latestTrade.sourceTopic || trade.sourcePartition !== latestTrade.sourcePartition),
+      )
+    ) {
+      return fail('snapshot-coverage', 'opening-drive latest trade is ambiguous across Kafka partitions', { symbol })
+    }
     const tradeEvent = latestTrade === undefined ? Number.NaN : Date.parse(latestTrade.eventAt)
     if (
       latestTrade === undefined ||
