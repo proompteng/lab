@@ -92,7 +92,14 @@ import {
 } from '../../execution/intents'
 import { MutationStore, MutationStoreLive } from '../../execution/mutations'
 import { canonicalHashV1, sha256 } from '../../hash'
-import { Journal, type JournalService } from '../../ledger'
+import {
+  assembleAccountPlan,
+  Journal,
+  JournalValidationError,
+  reconcileLedgerPlan,
+  type JournalService,
+  type LedgerPlan,
+} from '../../ledger'
 import {
   MarketData,
   type FinalizedPublicationInspection,
@@ -366,6 +373,76 @@ const autonomousJournal: JournalService = {
   checkRun: () => Effect.void,
 }
 
+interface StatefulAutonomousJournalControl {
+  readonly accounts: Map<bigint, LedgerPlan['accounts'][number]>
+  readonly transfers: Map<bigint, LedgerPlan['transfers'][number]>
+  postCalls: number
+  verificationCalls: number
+}
+
+const makeStatefulAutonomousJournalControl = (): StatefulAutonomousJournalControl => ({
+  accounts: new Map(),
+  transfers: new Map(),
+  postCalls: 0,
+  verificationCalls: 0,
+})
+
+const makeStatefulAutonomousJournal = (control: StatefulAutonomousJournalControl): JournalService => ({
+  post: (plan) =>
+    Effect.sync(() => {
+      control.postCalls += 1
+      for (const account of plan.accounts) {
+        if (!control.accounts.has(account.id)) {
+          control.accounts.set(account.id, {
+            ...account,
+            debits_pending: 0n,
+            debits_posted: 0n,
+            credits_pending: 0n,
+            credits_posted: 0n,
+          })
+        }
+      }
+      for (const transfer of plan.transfers) {
+        if (control.transfers.has(transfer.id)) continue
+        const debit = control.accounts.get(transfer.debit_account_id)
+        const credit = control.accounts.get(transfer.credit_account_id)
+        if (debit === undefined || credit === undefined) {
+          throw new Error(`stateful journal transfer ${transfer.id} references an unposted account`)
+        }
+        control.transfers.set(transfer.id, transfer)
+        if (debit.id === credit.id) {
+          control.accounts.set(debit.id, {
+            ...debit,
+            debits_posted: debit.debits_posted + transfer.amount,
+            credits_posted: debit.credits_posted + transfer.amount,
+          })
+        } else {
+          control.accounts.set(debit.id, { ...debit, debits_posted: debit.debits_posted + transfer.amount })
+          control.accounts.set(credit.id, { ...credit, credits_posted: credit.credits_posted + transfer.amount })
+        }
+      }
+    }),
+  verifyAccount: (accountId, plans) =>
+    Effect.gen(function* () {
+      control.verificationCalls += 1
+      const expected = yield* Effect.fromResult(assembleAccountPlan(accountId, plans)).pipe(
+        Effect.mapError((validation) => new JournalValidationError(validation)),
+      )
+      const expectedAccountIds = new Set(expected.accounts.map((account) => account.id))
+      const expectedTransferIds = new Set(expected.transfers.map((transfer) => transfer.id))
+      const actualAccounts = [...control.accounts.values()]
+        .filter((account) => expectedAccountIds.has(account.id))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      const actualTransfers = [...control.transfers.values()]
+        .filter((transfer) => expectedTransferIds.has(transfer.id))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      return Result.isSuccess(reconcileLedgerPlan(expected, actualAccounts, actualTransfers, 'verify-account'))
+    }),
+  journalAndReconcile: () => Effect.die(new Error('valid-window execution proof must not run simulation journaling')),
+  check: Effect.void,
+  checkRun: () => Effect.void,
+})
+
 const makeAutonomousRuntime = () =>
   ManagedRuntime.make(
     Layer.mergeAll(CycleStoreLive, ExecutionStoreLive(autonomousRuntimeConfig), BlockedCycleIntentStoreLive).pipe(
@@ -376,7 +453,7 @@ const makeAutonomousRuntime = () =>
     ),
   )
 
-const makeMutationPersistenceRuntime = () => {
+const makeMutationPersistenceRuntime = (journal: JournalService = autonomousJournal) => {
   const postgres = PostgresClientLive(autonomousRuntimeConfig)
   const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
   return ManagedRuntime.make(
@@ -389,7 +466,7 @@ const makeMutationPersistenceRuntime = () => {
       ExecutionCycleClosureStoreLive,
     ).pipe(
       Layer.provideMerge(writerFence),
-      Layer.provideMerge(Layer.succeed(Journal, autonomousJournal)),
+      Layer.provideMerge(Layer.succeed(Journal, journal)),
       Layer.provideMerge(postgres),
       Layer.provide(NodeServices.layer),
     ),
@@ -1942,12 +2019,10 @@ const makeValidWindowBroker = (
           control.positionQuantityMicros += quantityMicros
           control.positionCostMicros += notionalMicros
           control.cashMicros -= notionalMicros
-          control.marketPriceMicros = fillPriceMicros
         } else {
           control.positionQuantityMicros -= quantityMicros
           control.positionCostMicros = control.positionQuantityMicros === 0n ? 0n : control.positionCostMicros
           control.cashMicros += notionalMicros
-          control.marketPriceMicros = fillPriceMicros
         }
         control.filledOrders.push(filled)
         return {
@@ -5827,8 +5902,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       positionQuantityMicros: 0n,
     }
     const broker = makeValidWindowBroker(setup.draft, brokerControl, setup.evaluatedAt)
+    const journalControl = makeStatefulAutonomousJournalControl()
+    const journal = makeStatefulAutonomousJournal(journalControl)
     let mutationRuntime: ReturnType<typeof makeMutationPersistenceRuntime> | undefined =
-      makeMutationPersistenceRuntime()
+      makeMutationPersistenceRuntime(journal)
     let intentId: string | undefined
     let closeIntentId: string | undefined
     let submitExpiresAt: string | undefined
@@ -6090,9 +6167,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         first.stored.intent.clientOrderId,
         first.closeStored.intent.clientOrderId,
       ])
+      expect(journalControl.postCalls).toBeGreaterThan(0)
+      expect(journalControl.verificationCalls).toBeGreaterThan(0)
+      expect(journalControl.transfers.size).toBeGreaterThan(0)
 
       await mutationRuntime.dispose()
-      mutationRuntime = makeMutationPersistenceRuntime()
+      mutationRuntime = makeMutationPersistenceRuntime(journal)
       const replayed = await mutationRuntime.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(setup.forceCloseAt) + 3_000)
