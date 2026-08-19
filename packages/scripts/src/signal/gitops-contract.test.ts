@@ -197,6 +197,8 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('signal.intraday_bars_1m_v2 ON CLUSTER default')
     expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
     expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
+    expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(2)
+    expect(migration.match(/ingest_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(2)
     expect(migration).toContain('ENGINE = ReplicatedReplacingMergeTree(')
     expect(migration).toContain('PARTITION BY toYYYYMM(event_ts)')
     expect(migration).toContain('universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset')
@@ -205,6 +207,9 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('for host in "${hosts[@]}"; do')
     expect(migration).toContain('FROM system.tables')
     expect(migration).toContain('FROM system.columns')
+    expect(migration).toContain('FROM signal.intraday_bars_1m_v1 FINAL AS src')
+    expect(migration).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
+    expect(migration).toContain('Signal immutable intraday-bars backfill is incomplete')
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
   })
 

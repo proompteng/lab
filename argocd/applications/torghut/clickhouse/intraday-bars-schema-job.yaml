@@ -129,8 +129,8 @@ spec:
                   market_session LowCardinality(String),
                   delay_class LowCardinality(String),
                   symbol LowCardinality(String),
-                  event_ts DateTime64(3, 'UTC'),
-                  ingest_ts DateTime64(3, 'UTC'),
+                  event_ts DateTime64(9, 'UTC'),
+                  ingest_ts DateTime64(9, 'UTC'),
                   source_topic LowCardinality(String),
                   source_partition UInt32,
                   source_offset UInt64,
@@ -160,8 +160,8 @@ spec:
                   market_session LowCardinality(String),
                   delay_class LowCardinality(String),
                   symbol LowCardinality(String),
-                  event_ts DateTime64(3, 'UTC'),
-                  ingest_ts DateTime64(3, 'UTC'),
+                  event_ts DateTime64(9, 'UTC'),
+                  ingest_ts DateTime64(9, 'UTC'),
                   source_topic LowCardinality(String),
                   source_partition UInt32,
                   source_offset UInt64,
@@ -179,6 +179,39 @@ spec:
                   universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset
                 )
                 TTL toDateTime(event_ts) + INTERVAL 120 DAY DELETE;
+              "
+
+              # The archive Flink job keeps its existing Kafka consumer group and last-state offsets when
+              # it rotates to the immutable v2 sink. Seed the latest visible v1 bar for every historical
+              # minute before that rotation so the new table does not begin at the current Kafka offset.
+              "${client[@]}" --query "
+                INSERT INTO signal.intraday_bars_1m_v2
+                SELECT src.*
+                FROM signal.intraday_bars_1m_v1 FINAL AS src
+                LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst
+                  ON src.universe_id = dst.universe_id
+                  AND src.feed = dst.feed
+                  AND src.symbol = dst.symbol
+                  AND src.event_ts = dst.event_ts
+                  AND src.source_topic = dst.source_topic
+                  AND src.source_partition = dst.source_partition
+                  AND src.source_offset = dst.source_offset
+              "
+
+              "${client[@]}" --query "
+                SELECT throwIf(
+                  count() != 0,
+                  'Signal immutable intraday-bars backfill is incomplete'
+                )
+                FROM signal.intraday_bars_1m_v1 FINAL AS src
+                LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst
+                  ON src.universe_id = dst.universe_id
+                  AND src.feed = dst.feed
+                  AND src.symbol = dst.symbol
+                  AND src.event_ts = dst.event_ts
+                  AND src.source_topic = dst.source_topic
+                  AND src.source_partition = dst.source_partition
+                  AND src.source_offset = dst.source_offset
               "
 
               mapfile -t hosts < <(
@@ -303,8 +336,8 @@ spec:
                         'market_session:LowCardinality(String)',
                         'delay_class:LowCardinality(String)',
                         'symbol:LowCardinality(String)',
-                        'event_ts:DateTime64(3, \'UTC\')',
-                        'ingest_ts:DateTime64(3, \'UTC\')',
+                        'event_ts:DateTime64(9, \'UTC\')',
+                        'ingest_ts:DateTime64(9, \'UTC\')',
                         'source_topic:LowCardinality(String)',
                         'source_partition:UInt32',
                         'source_offset:UInt64',
@@ -331,8 +364,8 @@ spec:
                         'market_session:LowCardinality(String)',
                         'delay_class:LowCardinality(String)',
                         'symbol:LowCardinality(String)',
-                        'event_ts:DateTime64(3, \'UTC\')',
-                        'ingest_ts:DateTime64(3, \'UTC\')',
+                        'event_ts:DateTime64(9, \'UTC\')',
+                        'ingest_ts:DateTime64(9, \'UTC\')',
                         'source_topic:LowCardinality(String)',
                         'source_partition:UInt32',
                         'source_offset:UInt64',
