@@ -14,21 +14,6 @@ export type {
 export type { SignalBarRow, SignalManifestRow, SignalSessionRow, SnapshotRows } from './rows'
 export { marketDataOperationError } from './errors'
 export { makeMarketData, MarketDataLive } from './program'
-export type {
-  IntradayArchiveWatermark,
-  IntradayBar,
-  IntradayDelayClass,
-  IntradayFeed,
-  IntradayLineage,
-  IntradayMarketSnapshot,
-  IntradayQuote,
-  IntradayRecordIdentity,
-  IntradaySnapshotManifest,
-  IntradaySnapshotQuery,
-  IntradaySnapshotRequest,
-  IntradayTrade,
-} from './intraday/model'
-export { IntradaySnapshotFailure } from './intraday/model'
 export {
   renderMarketDataVerificationError,
   selectCyclePublicationManifests,
