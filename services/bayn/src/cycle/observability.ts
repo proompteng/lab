@@ -336,6 +336,7 @@ export enum CycleOperationsReason {
   AwaitingSignalPublication = 'AWAITING_SIGNAL_PUBLICATION',
   AwaitingSubmissionOpen = 'AWAITING_SUBMISSION_OPEN',
   AwaitingActivation = 'AWAITING_ACTIVATION',
+  AwaitingDecision = 'AWAITING_DECISION',
   Active = 'ACTIVE',
   LastCycleCompleted = 'LAST_CYCLE_COMPLETED',
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
@@ -480,6 +481,15 @@ const lifecycleCondition = (
   }
 
   if (current.phase === CycleState.Active) {
+    if (current.decisionHash === null) {
+      if (nowMs >= Date.parse(current.submissionCutoffAt)) {
+        return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedSubmissionCutoff]
+      }
+      if (nowMs < Date.parse(current.submissionOpenAt)) {
+        return [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSubmissionOpen]
+      }
+      return [CycleOperationsCondition.Running, CycleOperationsReason.AwaitingDecision]
+    }
     if (nowMs >= Date.parse(current.executionCloseAt)) {
       return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedExecutionClose]
     }
@@ -508,6 +518,13 @@ const decideCycleOperationsCondition = (
 ): readonly [CycleOperationsCondition, CycleOperationsReason] => {
   if (projection.unfinishedCycleCount > 1) {
     return [CycleOperationsCondition.Failed, CycleOperationsReason.MultipleUnfinishedCycles]
+  }
+  if (
+    projection.current?.phase === CycleState.Active &&
+    projection.current.decisionHash === null &&
+    nowMs >= Date.parse(projection.current.submissionCutoffAt)
+  ) {
+    return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedSubmissionCutoff]
   }
   if (facts.authorityMissing) return [CycleOperationsCondition.Failed, CycleOperationsReason.AuthorityMissing]
   if (facts.authorityMaximumMismatch) {

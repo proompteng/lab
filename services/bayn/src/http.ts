@@ -23,7 +23,7 @@ import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { databaseOperation, withinDeadline } from './operations'
-import { Authority } from './execution/contracts'
+import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { makeQualificationDiagnosisResult } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
@@ -608,6 +608,28 @@ const epochSeconds = (instant: string | null | undefined): number =>
 
 const booleanMetric = (value: boolean | null): number => (value === true ? 1 : 0)
 
+export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean => {
+  const current = state.cycle.current
+  const controller = state.executionController
+  return (
+    runtimeReady &&
+    current !== null &&
+    current.phase === CycleState.Active &&
+    current.snapshotId !== null &&
+    state.capitalActivation?._tag === 'Realized' &&
+    state.cycle.authority?.maximum === Authority.Execution &&
+    state.cycle.authority.effective === Authority.Execution &&
+    state.cycle.authority.kill === KillState.Clear &&
+    state.cycle.reconciliation?.status === ReconciliationStatus.Exact &&
+    state.cycle.reconciliationCoversLatestMutation === true &&
+    state.cycle.mutations.unresolvedCount === 0 &&
+    state.broker?.readAvailable === true &&
+    state.broker.accountBound === true &&
+    controller?.readAvailable === true &&
+    controller.status?.active === true
+  )
+}
+
 const renderPrometheusMetricsDataFirst = (
   state: RuntimeState,
   config: Pick<
@@ -635,6 +657,9 @@ const renderPrometheusMetricsDataFirst = (
   ]
   const cycleTerminalReason =
     cycleObservationAvailable === false ? 'unknown' : (state.cycle.last?.terminalReason?.toLowerCase() ?? 'none')
+  const cycleDecisionBound =
+    state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined
+  const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
   const notDueReasons = ['unknown', 'none', ...Object.values(CycleNotDueReason).map((reason) => reason.toLowerCase())]
@@ -713,9 +738,18 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
           '# TYPE bayn_cycle_attempt_age_seconds gauge',
           `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
+          '# HELP bayn_cycle_decision_bound Whether the current durable cycle has an immutable decision binding.',
+          '# TYPE bayn_cycle_decision_bound gauge',
+          `bayn_cycle_decision_bound ${cycleDecisionBound ? 1 : 0}`,
+          '# HELP bayn_cycle_submission_open_timestamp_seconds Bound broker submission-open time.',
+          '# TYPE bayn_cycle_submission_open_timestamp_seconds gauge',
+          `bayn_cycle_submission_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionOpenAt))}`,
           '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
           '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
           `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionCutoffAt))}`,
+          '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
+          '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
+          `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionOpenAt))}`,
           '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
           '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
           `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionCloseAt))}`,
@@ -915,6 +949,9 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_capital_activation_recovery_only Whether the realized capital runtime is restricted to recovery and close operations.',
     '# TYPE bayn_capital_activation_recovery_only gauge',
     `bayn_capital_activation_recovery_only ${capitalActivationRecoveryOnly ? 1 : 0}`,
+    '# HELP bayn_execution_session_preflight_ready Whether durable execution, authority, reconciliation, broker, and controller prerequisites are ready for the current active session.',
+    '# TYPE bayn_execution_session_preflight_ready gauge',
+    `bayn_execution_session_preflight_ready ${sessionPreflightReady ? 1 : 0}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

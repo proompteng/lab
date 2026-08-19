@@ -1974,6 +1974,7 @@ describe('Bayn continuous health', () => {
               signalSessionDate: '2026-07-20',
               executionSessionDate: '2026-07-21',
               phase: CycleState.Active,
+              decisionHash: '5'.repeat(64),
               submissionOpenAt: '2026-07-21T12:45:00.000Z',
               submissionCutoffAt: '2026-07-21T13:15:00.000Z',
               executionOpenAt: '2026-07-21T13:30:00.000Z',

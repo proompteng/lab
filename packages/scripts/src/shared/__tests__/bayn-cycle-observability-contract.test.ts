@@ -37,6 +37,8 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
       'BaynExecutionSessionAdmissionMissed',
+      'BaynExecutionWindowUnready',
+      'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
       'BaynCycleStalled',
@@ -64,6 +66,16 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('reason="stale_capital_bootstrap"')
     expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('bayn_capital_activation_state{')
     expect(expressions.BaynExecutionSessionAdmissionMissed).toContain('state="realized"')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('+ 120')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -210,6 +222,8 @@ describe('Bayn cycle operations alert contract', () => {
         'Runtime readiness',
         'Autonomous loop',
         'Workload replica availability',
+        'Execution session readiness',
+        'Execution window deadlines',
         'Broker read binding',
         'Verified build',
         'Latest terminal reason',
@@ -233,6 +247,12 @@ describe('Bayn cycle operations alert contract', () => {
         'bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
         'bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
+        'max by (job, namespace, service) (bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (job, namespace, service) (bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (job, namespace, service) (bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
+        'max by (job, namespace, service) (bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
+        'max by (job, namespace, service) (bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
+        'max by (job, namespace, service) (bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
         'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn"}',
         'kube_deployment_spec_replicas{namespace="bayn",deployment="bayn"}',
         'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn-egress-proxy"}',
