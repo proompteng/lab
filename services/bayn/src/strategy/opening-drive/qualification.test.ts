@@ -13,7 +13,11 @@ import { decideOpeningDrive, openingDriveBehaviorHash } from './decision'
 import type { OpeningDriveMarketContext } from './model'
 import { qualifyOpeningDrive } from './qualification'
 import { openingDriveOneSidedAlphaForOrdinal } from './qualification-analysis'
-import { defaultOpeningDriveQualificationPolicy, validateOpeningDriveQualificationPolicy } from './qualification-policy'
+import {
+  defaultOpeningDriveQualificationPolicy,
+  openingDriveRequiredQualificationSessions,
+  validateOpeningDriveQualificationPolicy,
+} from './qualification-policy'
 import { openingDriveReplayCostModelDocument, replayOpeningDriveSession } from './qualification-replay'
 import {
   decodeDefaultOpeningDriveProtocol,
@@ -27,6 +31,9 @@ const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
+const sufficientlyPoweredSessionCount = openingDriveRequiredQualificationSessions(
+  defaultOpeningDriveQualificationPolicy,
+)
 
 const dateAt = (ordinal: number): IsoDate =>
   new Date(Date.UTC(2026, 0, 2 + ordinal)).toISOString().slice(0, 10) as IsoDate
@@ -269,6 +276,13 @@ describe('opening-drive after-cost qualification', () => {
         ...defaultOpeningDriveQualificationPolicy,
         bootstrap: { ...defaultOpeningDriveQualificationPolicy.bootstrap, method: 'unpaired-bootstrap' },
       },
+      {
+        ...defaultOpeningDriveQualificationPolicy,
+        power: {
+          ...defaultOpeningDriveQualificationPolicy.power,
+          minimumDetectableAnnualizedExcessReturn: Number.MIN_VALUE,
+        },
+      },
     ]
 
     for (const policy of fixedDrift) {
@@ -278,7 +292,7 @@ describe('opening-drive after-cost qualification', () => {
 
   test('qualifies deterministic positive replay only after conservative quote, slippage, fee, and sample gates', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
-    const sessions = Array.from({ length: 60 }, (_, ordinal) => replayInput(ordinal, 0.02))
+    const sessions = Array.from({ length: sufficientlyPoweredSessionCount }, (_, ordinal) => replayInput(ordinal, 0.02))
     const calendar = calendarFor(sessions)
     const first = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))
     const second = success(
@@ -293,8 +307,8 @@ describe('opening-drive after-cost qualification', () => {
     expect(second).toEqual(first)
     expect(first.receipt).toMatchObject({
       verdict: 'QUALIFIED',
-      sessionCount: 60,
-      tradeSessionCount: 60,
+      sessionCount: sufficientlyPoweredSessionCount,
+      tradeSessionCount: sufficientlyPoweredSessionCount,
       candidateOrdinal: 1,
       priorTrialCount: 0,
       reasonCodes: [],
@@ -311,6 +325,27 @@ describe('opening-drive after-cost qualification', () => {
       true,
     )
     expect(first.sessions.every((session) => session.candidate.flat && session.benchmark.flat)).toBe(true)
+  })
+
+  test('reports an otherwise positive replay as insufficient when it is below the precommitted power requirement', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const sessions = Array.from({ length: defaultOpeningDriveQualificationPolicy.minimumSessions }, (_, ordinal) =>
+      replayInput(ordinal, 0.02),
+    )
+    const calendar = calendarFor(sessions)
+    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar) }))
+
+    expect(sufficientlyPoweredSessionCount).toBeGreaterThan(defaultOpeningDriveQualificationPolicy.minimumSessions)
+    expect(result.receipt).toMatchObject({
+      verdict: 'INSUFFICIENT',
+      reasonCodes: ['statistical-power-session-count'],
+    })
+    expect(result.receipt.gates).toContainEqual({
+      name: 'statistical-power-session-count',
+      passed: false,
+      actual: defaultOpeningDriveQualificationPolicy.minimumSessions,
+      required: sufficientlyPoweredSessionCount,
+    })
   })
 
   test('reports the current 24-session horizon as insufficient without erasing multiplicity', () => {
@@ -333,7 +368,7 @@ describe('opening-drive after-cost qualification', () => {
       candidateOrdinal: 21,
       priorTrialCount: 20,
       bootstrapTailSamples: 1,
-      reasonCodes: ['session-count', 'bootstrap-tail-resolution'],
+      reasonCodes: ['session-count', 'statistical-power-session-count', 'bootstrap-tail-resolution'],
     })
     expect(result.receipt.adjustedOneSidedAlpha).toBeCloseTo(0.05 / (21 * 22), 12)
   })
@@ -467,7 +502,9 @@ describe('opening-drive after-cost qualification', () => {
 
   test('rejects a sufficiently observed strategy that loses after all modeled costs', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
-    const sessions = Array.from({ length: 60 }, (_, ordinal) => replayInput(ordinal, -0.02))
+    const sessions = Array.from({ length: sufficientlyPoweredSessionCount }, (_, ordinal) =>
+      replayInput(ordinal, -0.02),
+    )
     const calendar = calendarFor(sessions)
     const result = success(
       qualifyOpeningDrive({
@@ -571,7 +608,9 @@ describe('opening-drive after-cost qualification', () => {
 
   test('rejects omitted finalized sessions and a calendar not frozen in the qualification binding', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
-    const sessions = Array.from({ length: 60 }, (_, ordinal) => replayInput(ordinal, ordinal === 17 ? -0.03 : 0.02))
+    const sessions = Array.from({ length: sufficientlyPoweredSessionCount }, (_, ordinal) =>
+      replayInput(ordinal, ordinal === 17 ? -0.03 : 0.02),
+    )
     const calendar = calendarFor(sessions)
     const incompleteSessions = sessions.filter((_, ordinal) => ordinal !== 17)
 
@@ -590,9 +629,34 @@ describe('opening-drive after-cost qualification', () => {
     ).toMatchObject({ reason: 'session-order' })
   })
 
+  test('rejects forged qualification calendar schema and source literals before replay', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const sessions = [replayInput(0, 0.02)]
+    const calendar = calendarFor(sessions)
+
+    for (const forged of [
+      { ...calendar, schemaVersion: 'bayn.opening-drive.qualification-calendar.v2' },
+      { ...calendar, source: 'unreviewed.exchange_sessions' },
+    ]) {
+      expect(
+        error(
+          qualifyOpeningDrive({
+            sessions,
+            calendar: forged as never,
+            protocol,
+            binding: binding(calendar),
+          }),
+        ),
+      ).toMatchObject({
+        reason: 'session-order',
+        message: 'opening-drive qualification calendar schema and source do not match the reviewed contract',
+      })
+    }
+  })
+
   test('keeps entry-time quantity when exit liquidity is unavailable and rejects the unclosed position', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
-    const sessions = Array.from({ length: 60 }, (_, ordinal) =>
+    const sessions = Array.from({ length: sufficientlyPoweredSessionCount }, (_, ordinal) =>
       replayInput(ordinal, 0.02, 0, ordinal === 9 ? { quoteBidSize: 0 } : {}),
     )
     const calendar = calendarFor(sessions)

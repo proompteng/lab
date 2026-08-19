@@ -37,6 +37,12 @@ const validateQualificationCalendar = (
         ...(sessionDate === undefined ? {} : { sessionDate }),
       }),
     )
+  if (
+    calendar.schemaVersion !== 'bayn.opening-drive.qualification-calendar.v1' ||
+    calendar.source !== 'signal.exchange_sessions_v1'
+  ) {
+    return fail('opening-drive qualification calendar schema and source do not match the reviewed contract')
+  }
   if (calendar.sessions.length === 0 || calendar.calendarVersion.trim().length === 0) {
     return fail('opening-drive qualification requires a non-empty finalized exchange calendar')
   }

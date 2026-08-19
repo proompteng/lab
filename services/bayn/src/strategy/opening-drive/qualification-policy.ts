@@ -9,6 +9,13 @@ export const defaultOpeningDriveQualificationPolicy: OpeningDriveQualificationPo
   annualizationSessions: 252,
   minimumSessions: 60,
   minimumTradeSessions: 20,
+  power: Object.freeze({
+    method: 'normal-approximation-independent-sessions',
+    oneSidedAlpha: 0.05,
+    targetPower: 0.8,
+    minimumDetectableAnnualizedExcessReturn: 0.03,
+    assumedAnnualizedTrackingVolatility: 0.1,
+  }),
   bootstrap: Object.freeze({
     method: 'paired-circular-session-blocks',
     samples: 10_000,
@@ -30,6 +37,9 @@ export const validateOpeningDriveQualificationPolicy = (
   if (
     policy.schemaVersion !== 'bayn.opening-drive.qualification-policy.v1' ||
     policy.annualizationSessions !== 252 ||
+    policy.power.method !== 'normal-approximation-independent-sessions' ||
+    policy.power.oneSidedAlpha !== 0.05 ||
+    policy.power.targetPower !== 0.8 ||
     policy.bootstrap.method !== 'paired-circular-session-blocks' ||
     policy.bootstrap.familyOneSidedAlpha !== 0.05 ||
     policy.bootstrap.seedNamespace !== 'bayn-opening-drive-qualification-v1'
@@ -62,6 +72,18 @@ export const validateOpeningDriveQualificationPolicy = (
     return Result.fail(policyFailure('chronological fold count must not exceed minimum sessions'))
   }
   if (
+    !Number.isFinite(policy.power.minimumDetectableAnnualizedExcessReturn) ||
+    policy.power.minimumDetectableAnnualizedExcessReturn <= 0 ||
+    !Number.isFinite(policy.power.assumedAnnualizedTrackingVolatility) ||
+    policy.power.assumedAnnualizedTrackingVolatility <= 0
+  ) {
+    return Result.fail(policyFailure('qualification power assumptions must be positive and finite'))
+  }
+  const requiredSessions = openingDriveRequiredQualificationSessions(policy)
+  if (!Number.isSafeInteger(requiredSessions) || requiredSessions <= 0) {
+    return Result.fail(policyFailure('qualification power assumptions must produce a finite safe session count'))
+  }
+  if (
     policy.chronologicalFolds.minimumPositiveFraction <= 0 ||
     policy.chronologicalFolds.minimumPositiveFraction > 1 ||
     policy.maximumDrawdown < 0 ||
@@ -70,6 +92,15 @@ export const validateOpeningDriveQualificationPolicy = (
     return Result.fail(policyFailure('qualification fractions must remain within their closed unit domains'))
   }
   return Result.succeed(policy)
+}
+
+const zOneSided95 = 1.6448536269514722
+const zPower80 = 0.8416212335729143
+
+export const openingDriveRequiredQualificationSessions = (policy: OpeningDriveQualificationPolicy): number => {
+  const standardizedEffect =
+    policy.power.minimumDetectableAnnualizedExcessReturn / policy.power.assumedAnnualizedTrackingVolatility
+  return Math.max(policy.minimumSessions, Math.ceil(((zOneSided95 + zPower80) / standardizedEffect) ** 2))
 }
 
 export const hashOpeningDriveQualificationPolicy = (

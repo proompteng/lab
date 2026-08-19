@@ -10,6 +10,13 @@ export interface OpeningDriveQualificationPolicy {
   readonly annualizationSessions: 252
   readonly minimumSessions: number
   readonly minimumTradeSessions: number
+  readonly power: {
+    readonly method: 'normal-approximation-independent-sessions'
+    readonly oneSidedAlpha: 0.05
+    readonly targetPower: 0.8
+    readonly minimumDetectableAnnualizedExcessReturn: number
+    readonly assumedAnnualizedTrackingVolatility: number
+  }
   readonly bootstrap: {
     readonly method: 'paired-circular-session-blocks'
     readonly samples: number

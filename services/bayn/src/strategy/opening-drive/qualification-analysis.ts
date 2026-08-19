@@ -9,6 +9,7 @@ import {
   type OpeningDriveQualificationReceipt,
   type OpeningDriveSessionReplay,
 } from './qualification-model'
+import { openingDriveRequiredQualificationSessions } from './qualification-policy'
 
 interface QualificationHashes {
   readonly protocolHash: string
@@ -295,11 +296,13 @@ export const analyzeOpeningDriveQualification = (
       maximumDrawdown: round(maximumDrawdown(candidateReturns)),
     })
     const tradeSessionCount = sessions.filter((session) => session.candidate.executedSymbols.length > 0).length
+    const requiredSessions = openingDriveRequiredQualificationSessions(policy)
     const candidateNetPnl = sumMicros(sessions, 'netPnlMicros')
     const candidateUnclosedQuantity = sumMicros(sessions, 'unclosedQuantityMicros')
     const benchmarkUnclosedQuantity = sumBenchmarkMicros(sessions, 'unclosedQuantityMicros')
     const gates = Object.freeze([
       gate('session-count', sessions.length >= policy.minimumSessions, sessions.length, policy.minimumSessions),
+      gate('statistical-power-session-count', sessions.length >= requiredSessions, sessions.length, requiredSessions),
       gate(
         'trade-session-count',
         tradeSessionCount >= policy.minimumTradeSessions,
@@ -348,6 +351,7 @@ export const analyzeOpeningDriveQualification = (
     ])
     const sufficiencyGateNames = new Set([
       'session-count',
+      'statistical-power-session-count',
       'trade-session-count',
       'bootstrap-tail-resolution',
       'chronological-fold-count',
