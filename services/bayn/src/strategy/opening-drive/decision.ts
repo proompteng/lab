@@ -1,7 +1,12 @@
 import { Result } from 'effect'
 
 import { sha256 } from '../../hash'
-import type { IntradayBar, IntradayQuote, IntradayTrade } from '../../market-data'
+import {
+  reverifyIntradayMarketSnapshot,
+  type IntradayBar,
+  type IntradayQuote,
+  type IntradayTrade,
+} from '../../market-data'
 import type { VerifiedStrategyContext } from '../core'
 import {
   OpeningDriveFailure,
@@ -275,8 +280,19 @@ export const decideOpeningDrive = (
   protocol: OpeningDriveProtocol,
 ): Result.Result<OpeningDriveTargetPortfolio, OpeningDriveFailure> =>
   Result.gen(function* () {
-    const { session, snapshot } = context
+    const { session } = context
     yield* validateSnapshot(context, protocol)
+    const snapshot = yield* Result.mapError(reverifyIntradayMarketSnapshot(context.snapshot), (cause) =>
+      new OpeningDriveFailure({
+        reason:
+          cause.reason === 'identity'
+            ? 'snapshot-identity'
+            : cause.reason === 'request'
+              ? 'snapshot-window'
+              : 'snapshot-coverage',
+        message: `opening-drive snapshot failed authoritative re-verification: ${cause.message}`,
+      }),
+    )
     const signals = yield* Result.all(
       protocol.universe.map((symbol) => {
         const quote = snapshot.latestQuotes[symbol]

@@ -46,7 +46,7 @@ const returnBySymbol: Readonly<Record<string, number>> = {
   NVDA: 0.014,
 }
 
-const makeRows = (returnOverride?: number): IntradaySnapshotRows => {
+const makeRows = (returnOverride?: number) => {
   let offset = 1
   const bars = symbols.flatMap((symbol, symbolIndex) => {
     const opening = 100 + symbolIndex
@@ -128,7 +128,7 @@ const makeRows = (returnOverride?: number): IntradaySnapshotRows => {
     source_partition: String(watermark.sourcePartition),
     inclusive_last_offset: watermark.inclusiveLastOffset,
   }))
-  return { archiveWatermarks, bars, quotes, trades }
+  return { archiveWatermarks, bars, quotes, trades } satisfies IntradaySnapshotRows
 }
 
 const snapshot = (returnOverride?: number) => success(verifyIntradaySnapshot(request, makeRows(returnOverride)))
@@ -153,6 +153,14 @@ describe('opening-drive momentum strategy', () => {
         decodeOpeningDriveProtocol({
           ...defaultOpeningDriveProtocolDocument,
           entryCutoffMinutesAfterOpen: defaultOpeningDriveProtocolDocument.openingRangeMinutes,
+        }),
+      ),
+    ).toMatchObject({ _tag: 'OpeningDriveProtocolDecodeError' })
+    expect(
+      error(
+        decodeOpeningDriveProtocol({
+          ...defaultOpeningDriveProtocolDocument,
+          maximumSymbolWeight: 0.0000001,
         }),
       ),
     ).toMatchObject({ _tag: 'OpeningDriveProtocolDecodeError' })
@@ -213,23 +221,24 @@ describe('opening-drive momentum strategy', () => {
 
   test('uses the highest Kafka offset when trade timestamps tie', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
-    const market = snapshot()
-    const amdTrade = market.trades.find((trade) => trade.symbol === 'AMD')
+    const rows = makeRows()
+    const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
     if (amdTrade === undefined) throw new Error('AMD trade fixture is missing')
-    const trades = [...market.trades, { ...amdTrade, sourceOffset: '999', price: amdTrade.price * 0.95 }]
-    const decision = success(
-      decideOpeningDrive(
-        {
-          snapshot: {
-            ...market,
-            trades,
-            manifest: { ...market.manifest, tradeCount: trades.length },
-          },
-          session,
-        },
-        protocol,
-      ),
+    const latestOffset = String(symbols.length * 7 + 1)
+    const archiveWatermarks = request.archiveWatermarks.map((watermark) =>
+      watermark.sourceTopic === tradesTopic ? { ...watermark, inclusiveLastOffset: latestOffset } : watermark,
     )
+    const tiedRows = {
+      ...rows,
+      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
+        watermark.source_topic === tradesTopic ? { ...watermark, inclusive_last_offset: latestOffset } : watermark,
+      ),
+      trades: [...rows.trades, { ...amdTrade, source_offset: latestOffset, price: String(Number(amdTrade.price) * 0.95) }],
+    }
+    const tiedSnapshot = verifyIntradaySnapshot({ ...request, archiveWatermarks }, tiedRows)
+    if (Result.isFailure(tiedSnapshot)) throw new Error(JSON.stringify(tiedSnapshot.failure))
+    const market = tiedSnapshot.success
+    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
 
     expect(decision.selectedSymbols).not.toContain('AMD')
     expect(decision.signals.find((signal) => signal.symbol === 'AMD')?.rejectionReasons).toContain('breakout')
@@ -298,14 +307,14 @@ describe('opening-drive momentum strategy', () => {
           {
             snapshot: {
               ...market,
-              latestQuotes: { ...market.latestQuotes, AMD: { ...quote, askPrice: Number.NaN } },
+              latestQuotes: { ...market.latestQuotes, AMD: { ...quote, askPrice: quote.askPrice + 0.01 } },
             },
             session,
           },
           protocol,
         ),
       ),
-    ).toMatchObject({ reason: 'market-value', symbol: 'AMD', field: 'quote-ask' })
+    ).toMatchObject({ reason: 'snapshot-coverage' })
 
     expect(
       error(
@@ -320,7 +329,7 @@ describe('opening-drive momentum strategy', () => {
           protocol,
         ),
       ),
-    ).toMatchObject({ reason: 'market-value', symbol: 'AMD', field: 'bar-vwap' })
+    ).toMatchObject({ reason: 'snapshot-coverage' })
   })
 
   test('exports one intraday long-only strategy definition over the same pure decision', () => {

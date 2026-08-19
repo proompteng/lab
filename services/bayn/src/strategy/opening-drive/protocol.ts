@@ -80,6 +80,15 @@ const protocolIssues = (protocol: typeof OpeningDriveProtocolBase.Type): readonl
   if (protocol.maximumSymbolWeight > protocol.maximumGrossWeight) {
     issues.push({ path: ['maximumSymbolWeight'], issue: 'must not exceed maximum gross weight' })
   }
+  if (
+    Math.floor(protocol.maximumSymbolWeight * 1_000_000) < 1 ||
+    Math.floor((protocol.maximumGrossWeight * 1_000_000) / protocol.maximumPositions) < 1
+  ) {
+    issues.push({
+      path: ['maximumSymbolWeight'],
+      issue: 'must preserve at least one part-per-million of executable target weight after portfolio rounding',
+    })
+  }
   if (protocol.hardFlatBeforeCloseMinutes >= protocol.flattenBeforeCloseMinutes) {
     issues.push({ path: ['hardFlatBeforeCloseMinutes'], issue: 'must follow the initial flatten boundary' })
   }
