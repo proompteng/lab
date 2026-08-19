@@ -1,0 +1,50 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: bayn-db-proof-20260819t131313z
+  labels:
+    app.kubernetes.io/name: bayn-db-proof-20260819t131313z
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/component: recovery-drill
+    bayn.proompteng.ai/backup: bayn-db-proof-20260819t131313z
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  description: Ephemeral Bayn PostgreSQL recovery drill from the 2026-08-19 named proof backup
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219
+  imagePullPolicy: IfNotPresent
+  enablePDB: false
+  enableSuperuserAccess: false
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                  - amd64
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 10Gi
+  bootstrap:
+    recovery:
+      backup:
+        name: bayn-db-proof-20260819t131313z
+      database: bayn
+      owner: bayn_app
+      recoveryTarget:
+        backupID: "20260819T131409"
+        targetImmediate: true
+  postgresql:
+    parameters:
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3
