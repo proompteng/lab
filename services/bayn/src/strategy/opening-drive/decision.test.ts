@@ -198,6 +198,13 @@ describe('opening-drive momentum strategy', () => {
           ...defaultOpeningDriveProtocolDocument,
           decisionDelaySeconds: 30,
           maximumQuoteAgeMs: 1_000,
+          executionModel: {
+            ...defaultOpeningDriveProtocolDocument.executionModel,
+            order: {
+              ...defaultOpeningDriveProtocolDocument.executionModel.order,
+              decisionAfterOpenMs: defaultOpeningDriveProtocolDocument.openingRangeMinutes * 60_000 + 30_000,
+            },
+          },
         }),
       ),
     ).toMatchObject({ decisionDelaySeconds: 30, maximumQuoteAgeMs: 1_000 })
