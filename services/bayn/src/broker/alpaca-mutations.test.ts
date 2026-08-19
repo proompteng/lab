@@ -295,9 +295,30 @@ describe('Alpaca broker mutations', () => {
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
       }),
+    ).toMatchObject(Result.fail({ failure: 'invalid-order' }))
+  })
+
+  test('preserves an exact verified IOC limit price and rejects broker-increment drift instead of rounding it', () => {
+    expect(
+      orderRequestBody({
+        ...intent,
+        quantityMicros: '1000000',
+        notionalLimitMicros: '101240000',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+      }),
     ).toMatchObject(
-      Result.succeed({ type: 'limit', time_in_force: 'ioc', qty: '3', limit_price: '33.33', side: 'buy' }),
+      Result.succeed({ type: 'limit', time_in_force: 'ioc', qty: '1', limit_price: '101.24', side: 'buy' }),
     )
+    expect(
+      orderRequestBody({
+        ...intent,
+        quantityMicros: '1000000',
+        notionalLimitMicros: '101235000',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+      }),
+    ).toMatchObject(Result.fail({ failure: 'invalid-order' }))
   })
 
   test('quantizes BUY notionals down to broker cent precision and rejects sub-dollar requests', () => {

@@ -64,6 +64,11 @@ import { WriterFence, WriterFenceError, type WriterFenceService } from './execut
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
+  decodeDefaultOpeningDriveProtocol,
+  makeOpeningDriveDefinition,
+  openingDriveBehaviorHash,
+} from './strategy/opening-drive'
+import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
   buildObserveCycleDecision,
@@ -3422,6 +3427,36 @@ describe('OBSERVE runtime composition', () => {
     expect(Result.isSuccess(prepared)).toBe(true)
     if (Result.isSuccess(prepared)) {
       expect(prepared.success.strategyProtocolHash).toBe(makeStrategyProtocolHash(fixtureRuntime.provenance.strategy))
+    }
+  })
+
+  test('admits the opening-drive v4 execution model into a post-open autonomous cycle policy', () => {
+    const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
+    const definition = makeOpeningDriveDefinition(protocol)
+    const prepared = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: {
+        definition,
+        provenance: {
+          ...fixtureRuntime.provenance,
+          strategy: {
+            name: definition.name,
+            behaviorHash: openingDriveBehaviorHash,
+            parameterHash: canonicalHashV1(definition.parameters),
+            parameterSchemaVersion: definition.parameters.schemaVersion,
+          },
+        },
+      } as unknown as ObserveAutonomousCycleInput['strategy'],
+    })
+
+    expect(Result.isSuccess(prepared)).toBe(true)
+    if (Result.isSuccess(prepared)) {
+      expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v4')
+      expect(prepared.success.executionPolicy.schemaVersion).toBe('bayn.autonomous-cycle-execution-policy.v2')
     }
   })
 

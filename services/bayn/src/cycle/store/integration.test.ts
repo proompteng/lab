@@ -93,6 +93,7 @@ import {
   type ExecutionDecisionDocument,
 } from '../../shadow-decision-contract'
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
+import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
@@ -912,6 +913,37 @@ const makePlannedDraft = (accountId: string, executionPolicy: CycleExecutionPoli
     executionOpenAt: '2026-04-01T13:30:00.000Z',
     executionCloseAt: '2026-04-01T20:00:00.000Z',
   })
+
+const makeIntradayDraft = (accountId = 'paper-account-intraday'): CycleDraft => {
+  const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  const executionCalendar = Result.getOrThrow(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-03-09',
+      openAt: '2026-03-09T13:30:00.000Z',
+      closeAt: '2026-03-09T20:00:00.000Z',
+    }),
+  )
+  const identity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId: '1'.repeat(64),
+      strategyProtocolHash: defaultOpeningDriveProtocolHash,
+      accountId,
+      signalSessionDate: '2026-03-06',
+      signalCalendarVersion,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = Result.getOrThrow(makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
+  return Result.getOrThrow(makeCycleDraft(identity, window))
+}
 
 const monthEndExecutionWindow = (
   evaluatedAt: string,
@@ -2615,6 +2647,56 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
 
     expect(observed.count).toBe(1)
+  })
+
+  test('persists and recovers the versioned intraday cycle without changing legacy rows', async () => {
+    const draft = makeIntradayDraft()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const receipt = yield* store.acquire(draft, acquireAt)
+        const sql = yield* PgClient.PgClient
+        const [row] = yield* sql<{
+          schema_version: string
+          execution_policy_schema_version: string
+          submission_cutoff_before_open_ms: number
+        }>`
+          SELECT
+            schema_version,
+            execution_policy_schema_version,
+            submission_cutoff_before_open_ms
+          FROM autonomous_cycles
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        return { receipt, row }
+      }),
+    )
+
+    expect(observed.receipt).toMatchObject({
+      created: true,
+      cycle: {
+        schemaVersion: 'bayn.autonomous-cycle.v2',
+        identity: {
+          schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+          strategyName: 'opening-drive-momentum',
+          executionPolicy: {
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
+            submissionCutoffAfterOpenMs: 1_800_000,
+          },
+        },
+        window: {
+          schemaVersion: 'bayn.autonomous-cycle-window.v2',
+          publicationDeadlineAt: '2026-03-09T13:30:00.000Z',
+          submissionOpenAt: '2026-03-09T13:35:01.000Z',
+          submissionCutoffAt: '2026-03-09T14:00:00.000Z',
+        },
+      },
+    })
+    expect(observed.row).toEqual({
+      schema_version: 'bayn.autonomous-cycle.v2',
+      execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v2',
+      submission_cutoff_before_open_ms: 1_800_000,
+    })
   })
 
   test('fences standalone cycle mutations across ready execution runtimes and hands ownership off', async () => {

@@ -417,15 +417,38 @@ export const limitIocOrderRequestBody = (
       }),
     )
   }
-  const priceBoundary = orderPriceBoundaryMicros(intent)
-  if (Result.isFailure(priceBoundary)) return Result.fail(priceBoundary.failure)
+  const notional = notionalMicros(intent.notionalLimitMicros)
+  if (Result.isFailure(notional)) return Result.fail(notional.failure)
+  const priceNumerator = notional.success * 1_000_000n
+  if (priceNumerator % quantity.success !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC price boundary must be exactly reconstructible from durable intent facts',
+        quantityMicros: intent.quantityMicros,
+        notionalLimitMicros: intent.notionalLimitMicros,
+      }),
+    )
+  }
+  const priceBoundary = priceNumerator / quantity.success
+  const increment = alpacaLimitPriceIncrementMicros(priceBoundary)
+  if (priceBoundary <= 0n || priceBoundary % increment !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC price boundary must already match the broker price increment',
+        quantityMicros: intent.quantityMicros,
+        notionalLimitMicros: intent.notionalLimitMicros,
+      }),
+    )
+  }
   return Result.succeed({
     symbol: intent.symbol,
     qty: microsToDecimal(quantity.success),
     side: side(intent.side),
     type: OrderType.Limit,
     time_in_force: TimeInForce.ImmediateOrCancel,
-    limit_price: microsToDecimal(priceBoundary.success),
+    limit_price: microsToDecimal(priceBoundary),
     client_order_id: intent.clientOrderId,
     extended_hours: false,
   })
