@@ -353,6 +353,25 @@ const autonomousRuntimeConfig: RuntimeConfig = {
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
 }
 
+const validWindowObserveGenerationHash = 'e'.repeat(64)
+const validWindowRuntimeConfig: RuntimeConfig = {
+  ...autonomousRuntimeConfig,
+  alpaca: {
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    identity: dueBrokerIdentity,
+    baseUrl: 'https://paper-api.alpaca.markets',
+    expectedAccountId: dueAccountId,
+    authorityGenerationHash: validWindowObserveGenerationHash,
+    key: Redacted.make('unused'),
+    secret: Redacted.make('unused'),
+    proxyUrl: 'http://bayn-egress-proxy.invalid',
+    operationTimeoutMs: autonomousRuntimeConfig.operationTimeoutMs,
+    retryAttempts: 0,
+    reconciliationIntervalMs: 30_000,
+  },
+}
+
 const autonomousJournal: JournalService = {
   post: () => Effect.void,
   verifyAccount: () => Effect.succeed(true),
@@ -442,12 +461,12 @@ const makeAutonomousRuntime = () =>
   )
 
 const makeMutationPersistenceRuntime = (journal: JournalService = autonomousJournal) => {
-  const postgres = PostgresClientLive(autonomousRuntimeConfig)
+  const postgres = PostgresClientLive(validWindowRuntimeConfig)
   const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
   return ManagedRuntime.make(
     Layer.mergeAll(
       WriterFencedCycleStoreLive,
-      ExecutionStoreLive(autonomousRuntimeConfig),
+      ExecutionStoreLive(validWindowRuntimeConfig),
       BlockedCycleIntentStoreLive,
       IntentStoreLive,
       MutationStoreLive,
@@ -5487,7 +5506,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             )
           }
           const observeAuthority = yield* readOrInitializeObserveAuthority({
-            generationHash: 'e'.repeat(64),
+            generationHash: validWindowObserveGenerationHash,
             maximum: Authority.Observe,
           })
           yield* syncClockAfter(observeAuthority.updatedAt)
