@@ -49,11 +49,11 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-0e1f6200f726
+  name: bayn-execution-activate-090392735a5d
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: 0e1f6200f726
+    app.kubernetes.io/version: 090392735a5d
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -67,7 +67,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: 0e1f6200f726
+        app.kubernetes.io/version: 090392735a5d
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -81,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn:sha-0e1f6200f726c364eb5886396cfb365e46ad54e5@sha256:9de1b6fbc2e8006902099cabbc5b5e48321efe08c347585f7c40549d83c9b153
+          image: registry.ide-newton.ts.net/lab/bayn:sha-090392735a5dd54466781c565785d9d7552ec4a8@sha256:ab9eccd7892fce3112064d53a765486d5dc637019ee5bea8005f28d16c768a87
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -90,13 +90,13 @@ spec:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
               # canonicalHashV1(bayn.execution-controller-activation.v1,
               # controller key, plan hash, source revision, and image digest)
-              value: "c870a593a2c16f8586e6be3822233b5c091884a4f0b207fccaacef3614914f53"
+              value: "e098e68b449d9a33908a810baa02a1535c21adec0fd8339e7aa7b753f176f3d0"
             - name: BAYN_CODE_REVISION
-              value: 0e1f6200f726c364eb5886396cfb365e46ad54e5
+              value: 090392735a5dd54466781c565785d9d7552ec4a8
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:9de1b6fbc2e8006902099cabbc5b5e48321efe08c347585f7c40549d83c9b153
+              value: sha256:ab9eccd7892fce3112064d53a765486d5dc637019ee5bea8005f28d16c768a87
             - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
               value: "d75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0"
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
