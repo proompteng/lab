@@ -284,6 +284,11 @@ const validateBindings = (
   }
   const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
   const executionMarketData = input.executionMarketData
+  if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
+    return Result.fail(
+      error('binding', 'opening-drive decision calendar must match the immutable cycle execution calendar'),
+    )
+  }
   if (
     intradayEntry !== (executionMarketData !== undefined) ||
     (executionMarketData !== undefined && executionMarketData.sessionDate !== cycle.identity.executionSessionDate) ||

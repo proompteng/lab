@@ -7,6 +7,7 @@ import {
   CycleState,
   makeCycleDraft,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
@@ -36,6 +37,7 @@ import {
   decodeObserveShadowDecisionDocument,
   makeObserveShadowDecisionDocument,
   ShadowDecisionContractFailure,
+  type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
 import {
@@ -45,6 +47,8 @@ import {
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
 import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
+import type { OpeningDriveTargetPortfolio } from './strategy/opening-drive/model'
+import { openingDriveExecutionModel } from './strategy/opening-drive/protocol'
 import { TargetPlanReason, TargetPlanStatus, planTargets, type TargetPlannerInput } from './target-planner'
 import type { DecisionPlan } from './types'
 
@@ -147,6 +151,53 @@ const makeCycle = (): AutonomousCycle => {
     stateVersion: 3,
     createdAt: '2026-07-22T11:45:00.000Z',
     updatedAt: '2026-07-22T12:45:00.000Z',
+  })
+}
+
+const makeOpeningDriveCycle = (): AutonomousCycle => {
+  const executionPolicy = resultValue(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
+    throw new Error('opening-drive fixture requires an intraday execution policy')
+  }
+  const executionCalendar = makeExecutionCalendarObservationSuccess({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    date: executionDate,
+    openAt: '2026-07-22T13:30:00.000Z',
+    closeAt: '2026-07-22T20:00:00.000Z',
+  })
+  const identity = makeCycleIdentitySuccess({
+    schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+    strategyName: 'opening-drive-momentum',
+    qualificationRunId: hash('1'),
+    strategyProtocolHash: hash('4'),
+    accountId,
+    signalSessionDate: signalDate,
+    signalCalendarVersion: 'XNYS-v1',
+    executionSessionDate: executionDate,
+    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.executionCalendarSource,
+    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionPolicy,
+  })
+  const window = makeCycleWindowSuccess(
+    {
+      calendar_version: 'XNYS-v1',
+      session_date: signalDate,
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    },
+    executionCalendar,
+    executionPolicy,
+  )
+  const draft = makeCycleDraftSuccess(identity, window)
+  return decodeCycle({
+    ...draft,
+    state: CycleState.Active,
+    bindings: { snapshotId },
+    stateVersion: 3,
+    createdAt: '2026-07-22T11:45:00.000Z',
+    updatedAt: window.submissionOpenAt,
   })
 }
 
@@ -407,10 +458,106 @@ const makeInput = (
   }
 }
 
+const openingDriveDecision = (calendarHash: string): OpeningDriveTargetPortfolio => ({
+  schemaVersion: 'bayn.opening-drive.target.v1',
+  strategy: 'opening-drive-momentum',
+  sessionDate: executionDate,
+  snapshotId,
+  observedAt: '2026-07-22T13:35:01.000Z',
+  calendarHash,
+  selectedSymbols: [],
+  targetWeights: { AMD: 0, NVDA: 0 },
+  signals: ['AMD', 'NVDA'].map((symbol) => ({
+    symbol,
+    openingPriceMicros: '100000000',
+    rangeHighPriceMicros: '101000000',
+    rangeLowPriceMicros: '99000000',
+    bidPriceMicros: '100000000',
+    askPriceMicros: '100100000',
+    quoteObservedAt: '2026-07-22T13:35:00.500Z',
+    breakoutTradePriceMicros: '100000000',
+    breakoutTradeObservedAt: '2026-07-22T13:35:00.500Z',
+    openingReturnBps: 0,
+    breakoutBps: -100,
+    rangeLocationPpm: 500_000,
+    spreadBps: 10,
+    openingDollarVolumeMicros: '100000000',
+    eligible: false,
+    rejectionReasons: ['opening-return', 'breakout'] as const,
+    rank: null,
+  })),
+})
+
+const makeOpeningDriveInput = (calendarHash?: string): ObserveShadowDecisionInput => {
+  const cycle = makeOpeningDriveCycle()
+  const compiledDecision = openingDriveDecision(calendarHash ?? cycle.window.executionCalendarHash)
+  const policy = makePolicy()
+  const plannerInput: TargetPlannerInput = {
+    ...makePlannerInput(cycle, makeDecision({ AMD: 0, NVDA: 0 }), policy, 3_600_000, []),
+    strategyName: 'opening-drive-momentum',
+    decisionHash: canonicalHashV1(compiledDecision),
+    targetWeights: compiledDecision.targetWeights,
+    submissionCutoffAt: cycle.window.submissionCutoffAt,
+    observedAt: cycle.window.submissionOpenAt,
+  }
+  const executionMarketData: ExecutionMarketDataBinding = {
+    schemaVersion: 'bayn.execution-market-data-binding.v1',
+    snapshotSchemaVersion: 'bayn.intraday-market-snapshot.v1',
+    sessionDate: executionDate,
+    rangeStartAt: cycle.window.executionOpenAt,
+    rangeEndAt: '2026-07-22T13:35:00.000Z',
+    observedAt: cycle.window.submissionOpenAt,
+    universeId: 'opening-drive-fixture-v1',
+    universeSymbolHash: hash('7'),
+    sourceTopics: {
+      bars: 'market.alpaca.sip.bars.v1',
+      quotes: 'market.alpaca.sip.quotes.v1',
+      trades: 'market.alpaca.sip.trades.v1',
+    },
+    archiveWatermarks: [
+      {
+        sourceTopic: 'market.alpaca.sip.bars.v1',
+        sourcePartition: 0,
+        inclusiveLastOffset: '10',
+      },
+    ],
+    barsContentHash: hash('8'),
+    quotesContentHash: hash('9'),
+    tradesContentHash: hash('a'),
+    contentHash: snapshotContentHash,
+    snapshotId,
+  }
+  return {
+    cycle,
+    snapshot: {
+      snapshotId,
+      contentHash: snapshotContentHash,
+      finalizedAt: snapshotFinalizedAt,
+    },
+    compiledDecision,
+    plannerInput,
+    targetPlan: planTargetsSuccess(plannerInput),
+    policy,
+    riskInputs: [],
+    executionMarketData,
+  }
+}
+
 const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecisionDocument> =>
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
+    const accepted = await build(makeOpeningDriveInput())
+    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(snapshotId)
+
+    const failure = await Effect.runPromise(Effect.flip(buildObserveShadowDecision(makeOpeningDriveInput(hash('f')))))
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'opening-drive decision calendar must match the immutable cycle execution calendar',
+    })
+  })
+
   test('binds each decision variant to its strategy and validates exact flat-close weights', () => {
     const decision = makeDecision({ AMD: 0.4, NVDA: 0.6 })
     expect(runtimeDecisionMatchesStrategy(decision, 'risk-balanced-trend')).toBe(true)
