@@ -14,7 +14,7 @@ import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
-import type { CausalProtocol } from '../protocol'
+import type { CycleExecutionModel } from '../execution-model-contract'
 import {
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
@@ -54,7 +54,7 @@ export type MutationIntentInput = {
 }
 
 export type MutationPreparation = {
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
 }
 
 export type MutationPreparationFactsRequest<

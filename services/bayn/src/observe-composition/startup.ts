@@ -1,11 +1,13 @@
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle'
 import { AuthorityGenerationStore } from '../db/execution-store'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
-import { strategyApplication } from '../strategy'
+import { CycleExecutionModelSchema } from '../execution-model-contract'
+import { strictParseOptions } from '../schemas'
+import { strategyApplication, strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
@@ -20,13 +22,18 @@ import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionB
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const executionModel = strategyApplication(input.strategy).definition.parameters.executionModel
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v3') {
+  const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
+  if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
+  const executionModel = decodedExecutionModel.success
+  if (
+    executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
+    executionModel.schemaVersion !== 'bayn.execution-model.v4'
+  ) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require the account-neutral v3 execution model',
+        message: 'autonomous cycles require an account-neutral v3 or v4 execution model',
       }),
     )
   }
@@ -56,6 +63,21 @@ export const prepareObserveStartup = (
       ),
   )
 }
+
+export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
+  Result.mapError(
+    Schema.decodeUnknownResult(
+      CycleExecutionModelSchema,
+      strictParseOptions,
+    )((strategyDefinition(strategy).parameters as { readonly executionModel?: unknown }).executionModel),
+    (cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: 'strategy execution model is invalid',
+        cause,
+      }),
+  )
 
 const validateObserveAuthorityInitialization = (
   authority: AuthorityState,

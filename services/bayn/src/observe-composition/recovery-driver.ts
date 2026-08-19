@@ -236,9 +236,13 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.map((observation) => ({ observation })),
       )
     const advanceCycle = Effect.gen(function* () {
+      const strategyName = input.strategy.provenance.strategy.name
       const context: CycleRunContext<ObserveDecisionRuntime> = {
         qualificationRunId: startup.qualificationRunId,
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
+        ...(strategyName === 'risk-balanced-trend' || strategyName === 'opening-drive-momentum'
+          ? { strategyName }
+          : {}),
         strategyProtocolHash: preparation.strategyProtocolHash,
         accountId: input.accountId,
         executionPolicy: preparation.executionPolicy,

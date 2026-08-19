@@ -2,7 +2,7 @@ import { Data, Effect } from 'effect'
 
 import type { SignalSessionRow } from '../../market-data'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
+import type { AutonomousCycle, CycleExecutionPolicy, CycleIdentity } from '../model'
 import type { CyclePublicationReadiness } from '../readiness'
 import type { CycleAcquireReceipt } from '../store'
 
@@ -32,6 +32,7 @@ export class CycleNotDueReconciliationError extends Data.TaggedError('CycleNotDu
 export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
   readonly cadence?: CycleCadence
+  readonly strategyName?: CycleIdentity['strategyName']
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
@@ -44,6 +45,7 @@ export interface CycleRunContext<R = never> {
 export interface CycleCandidate {
   readonly qualificationRunId: string
   readonly cadence?: CycleCadence
+  readonly strategyName?: CycleIdentity['strategyName']
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly signalSession: SignalCycleSession

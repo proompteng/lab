@@ -29,7 +29,7 @@ import {
   legacyTargetPlannerInputV1SchemaVersion,
   legacyTargetPlannerInputV2SchemaVersion,
 } from '../execution/legacy-wire'
-import type { CausalProtocol } from '../protocol'
+import type { CycleExecutionModel } from '../execution-model-contract'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
@@ -150,7 +150,7 @@ export const runMutationPassWithinTimeout = <A, E, R>(
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
   readonly cycle: AutonomousCycle
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
   readonly policy: Policy
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly strategy: ObserveStrategy
@@ -562,7 +562,7 @@ const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
   readonly authorityObservation: ObserveAuthorityObservation
   readonly executionSession: ExecutionSessionBinding

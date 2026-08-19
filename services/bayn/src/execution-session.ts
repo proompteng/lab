@@ -8,7 +8,7 @@ import {
   type ExecutionCalendarObservation,
 } from './cycle'
 import { canonicalHashV1Result } from './hash'
-import { SupportedExecutionModelSchema, type ExecutionModel } from './protocol'
+import { ExecutionModelV2Schema, ExecutionModelV3Schema } from './protocol'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -48,6 +48,8 @@ const ExecutionSessionSchema = Schema.Struct({
 })
 
 const SubmissionCutoffLeadMinutesSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
+const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
+type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
 
 const ExecutionSessionBindingBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-session-binding.v1'),
@@ -365,7 +367,7 @@ export interface BindExecutionSessionInput {
     readonly contentHash: string
   }
   readonly calendar: MarketCalendarObservation
-  readonly executionModel: ExecutionModel
+  readonly executionModel: DailyExecutionModel
 }
 
 export interface BindCycleExecutionSessionInput extends BindExecutionSessionInput {
@@ -376,7 +378,7 @@ const BindExecutionSessionInputSchema = Schema.Struct({
   signal: SignalBindingSchema,
   planningBrokerState: PlanningBrokerStateBindingSchema,
   calendar: CalendarIdentitySchema,
-  executionModel: SupportedExecutionModelSchema,
+  executionModel: DailyExecutionModelSchema,
 })
 
 const BindCycleExecutionSessionInputSchema = Schema.Struct({
@@ -536,6 +538,14 @@ const validateCycleExecutionPolicy = (
   input: DecodedBindCycleExecutionSessionInput,
   binding: ExecutionSessionBinding,
 ): Result.Result<void, ExecutionSessionBindingFailure> => {
+  if (input.cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v1') {
+    return Result.fail(
+      bindCycleFailure('cycle-policy', 'daily execution-session binding requires a pre-open cycle policy', {
+        cycleId: input.cycle.identity.cycleId,
+        executionPolicySchemaVersion: input.cycle.identity.executionPolicy.schemaVersion,
+      }),
+    )
+  }
   const executionModelHash = Result.mapError(canonicalHashV1Result(input.executionModel), (cause) =>
     bindCycleFailure(
       'hash',

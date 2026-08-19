@@ -124,7 +124,11 @@ const makeCycleMutationPrimitivesDataFirst = (
         ${candidate.identity.executionPolicy.executionPolicyHash},
         ${candidate.identity.executionPolicy.strategyExecutionModelHash},
         ${candidate.identity.executionPolicy.submissionWindowMs},
-        ${candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs},
+        ${
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
+            ? candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs
+            : candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
+        },
         ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
         ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
         ${candidate.window.executionSessionDate},

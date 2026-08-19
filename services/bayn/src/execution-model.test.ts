@@ -16,7 +16,11 @@ import {
   scaleQuantityMicros,
   type ExecutionModelFailure,
 } from './execution-model'
-import { ExecutionModelSchema, SupportedExecutionModelSchema } from './execution-model-contract'
+import {
+  CycleExecutionModelSchema,
+  ExecutionModelSchema,
+  SupportedExecutionModelSchema,
+} from './execution-model-contract'
 import { strictParseOptions } from './schemas'
 import { openingDriveExecutionModel } from './strategy/opening-drive'
 
@@ -36,6 +40,7 @@ describe('explicit execution model', () => {
   test('uses one environment-neutral model while decoding immutable legacy models', () => {
     const decodeExecutionModel = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
     const decodeSupportedExecutionModel = Schema.decodeUnknownResult(SupportedExecutionModelSchema, strictParseOptions)
+    const decodeCycleExecutionModel = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
     const legacy = {
       ...defaultExecutionModel,
       schemaVersion: 'bayn.execution-model.v2',
@@ -49,8 +54,8 @@ describe('explicit execution model', () => {
     expect(Result.isSuccess(decodeExecutionModel(legacy))).toBeTrue()
     expect(Result.isSuccess(decodeSupportedExecutionModel(legacy))).toBeTrue()
     expect(Result.isSuccess(decodeSupportedExecutionModel(defaultExecutionModel))).toBeTrue()
-    expect(Result.isSuccess(decodeExecutionModel(openingDriveExecutionModel))).toBeTrue()
     expect(Result.isFailure(decodeSupportedExecutionModel(openingDriveExecutionModel))).toBeTrue()
+    expect(Result.isSuccess(decodeCycleExecutionModel(openingDriveExecutionModel))).toBeTrue()
     expect(Result.isFailure(decodeExecutionModel({ ...defaultExecutionModel, venue: 'alpaca-paper' }))).toBeTrue()
   })
 

@@ -141,6 +141,11 @@ export const ExecutionModelV3Schema = ExecutionModelV3Base.check(Schema.makeFilt
 export const ExecutionModelV4Schema = ExecutionModelV4Base.check(Schema.makeFilter(executionModelIssues))
 export const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
 export const SupportedExecutionModelSchema = DailyExecutionModelSchema
+export const CycleExecutionModelSchema = Schema.Union([
+  ExecutionModelV2Schema,
+  ExecutionModelV3Schema,
+  ExecutionModelV4Schema,
+])
 export const ExecutionModelSchema = Schema.Union([
   ExecutionModelV1Schema,
   ExecutionModelV2Schema,
@@ -149,6 +154,7 @@ export const ExecutionModelSchema = Schema.Union([
 ])
 export type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
 export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
+export type CycleExecutionModel = typeof CycleExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
 
 export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
