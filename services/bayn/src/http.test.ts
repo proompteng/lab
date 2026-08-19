@@ -35,6 +35,7 @@ import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import {
   fallbackResponseDecision,
+  executionSessionPreflightReady,
   historicalEvidenceResponseDecision,
   historicalReadFailureDecision,
   HttpServerLive,
@@ -466,6 +467,133 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_execution_controller_epoch 3')
     expect(metrics).toContain('bayn_execution_controller_last_sequence 17')
     expect(metrics).not.toContain(controllerKey)
+  })
+
+  test('publishes bounded execution-session preflight, decision binding, and immutable window timing', () => {
+    const controllerKey = 'f'.repeat(64)
+    const planHash = 'd'.repeat(64)
+    const generationHash = 'b'.repeat(64)
+    const active = {
+      cycleId: '1'.repeat(64),
+      accountId: 'paper-account-1',
+      signalSessionDate: '2026-08-18',
+      executionSessionDate: '2026-08-19',
+      phase: CycleState.Active,
+      snapshotId: '2'.repeat(64),
+      decisionHash: null,
+      terminalReason: null,
+      submissionOpenAt: '2026-08-19T12:45:00.000Z',
+      submissionCutoffAt: '2026-08-19T13:15:00.000Z',
+      executionOpenAt: '2026-08-19T13:30:00.000Z',
+      executionCloseAt: '2026-08-19T20:00:00.000Z',
+      createdAt: '2026-08-18T22:30:30.000Z',
+      updatedAt: '2026-08-18T22:31:02.000Z',
+      terminalAt: null,
+    } as const
+    const base = readyState()
+    const state: RuntimeState = {
+      ...base,
+      cycle: {
+        ...base.cycle,
+        current: active,
+        unfinishedCycleCount: 1,
+        condition: CycleOperationsCondition.Waiting,
+        reason: CycleOperationsReason.AwaitingSubmissionOpen,
+        authority: {
+          generationHash,
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+          reason: null,
+          updatedAt: active.updatedAt,
+        },
+        reconciliation: {
+          accountId: active.accountId,
+          reconciliationId: '3'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt: active.updatedAt,
+          coversLatestMutation: true,
+        },
+        reconciliationCoversLatestMutation: true,
+      },
+      broker: {
+        configured: true,
+        expectedAccountId: active.accountId,
+        accountId: active.accountId,
+        accountBound: true,
+        readAvailable: true,
+        checkedAt: active.updatedAt,
+        executionEligible: true,
+        executionDisabledReason: null,
+        error: null,
+      },
+      executionController: {
+        configured: true,
+        controllerKey,
+        planHash,
+        readAvailable: true,
+        checkedAt: active.updatedAt,
+        error: null,
+        status: {
+          schemaVersion: 1,
+          controllerKey,
+          planHash,
+          active: true,
+          epoch: 15,
+          nextSequence: 2,
+          lastSequence: 1,
+          lastOutcome: ExecutionControllerOutcome.Blocked,
+          lastReceiptHash: '4'.repeat(64),
+          completedAt: active.updatedAt,
+          nextDueAt: '2026-08-18T22:31:32.000Z',
+        },
+      },
+      capitalActivation: {
+        _tag: 'Realized',
+        requestHash: '5'.repeat(64),
+        generationHash,
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+
+    expect(executionSessionPreflightReady(state)).toBe(true)
+    const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+    expect(metrics).toContain('bayn_execution_session_preflight_ready 1')
+    expect(renderPrometheusMetrics(state, config, provenance, 'embedded', false)).toContain(
+      'bayn_execution_session_preflight_ready 0',
+    )
+    expect(metrics).toContain('bayn_cycle_decision_bound 0')
+    expect(metrics).toContain(
+      `bayn_cycle_submission_open_timestamp_seconds ${Date.parse(active.submissionOpenAt) / 1_000}`,
+    )
+    expect(metrics).toContain(
+      `bayn_cycle_submission_cutoff_timestamp_seconds ${Date.parse(active.submissionCutoffAt) / 1_000}`,
+    )
+    expect(metrics).toContain(
+      `bayn_cycle_execution_open_timestamp_seconds ${Date.parse(active.executionOpenAt) / 1_000}`,
+    )
+    expect(metrics).toContain(
+      `bayn_cycle_execution_close_timestamp_seconds ${Date.parse(active.executionCloseAt) / 1_000}`,
+    )
+
+    const bound: RuntimeState = {
+      ...state,
+      cycle: { ...state.cycle, current: { ...active, decisionHash: '6'.repeat(64) } },
+    }
+    expect(renderPrometheusMetrics(bound, config, provenance, 'embedded')).toContain('bayn_cycle_decision_bound 1')
+
+    const controllerUnavailable: RuntimeState = {
+      ...state,
+      executionController: { ...state.executionController!, readAvailable: false },
+    }
+    expect(executionSessionPreflightReady(controllerUnavailable)).toBe(false)
+    expect(renderPrometheusMetrics(controllerUnavailable, config, provenance, 'embedded')).toContain(
+      'bayn_execution_session_preflight_ready 0',
+    )
   })
 
   test('publishes durable activation without fabricated completion evidence', () => {

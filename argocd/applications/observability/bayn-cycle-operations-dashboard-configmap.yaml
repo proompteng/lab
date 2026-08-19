@@ -755,6 +755,107 @@ data:
           ],
           "title": "Workload replica availability",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "max": 1,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 34
+          },
+          "id": 14,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (job, namespace, service) (bayn_execution_session_preflight_ready{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "legendFormat": "preflight ready",
+              "refId": "A"
+            },
+            {
+              "expr": "max by (job, namespace, service) (bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "legendFormat": "decision bound",
+              "refId": "B"
+            }
+          ],
+          "title": "Execution session readiness",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "unit": "dateTimeAsIso"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 8,
+            "y": 34
+          },
+          "id": 15,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "expr": "max by (job, namespace, service) (bayn_cycle_submission_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000",
+              "legendFormat": "submission open",
+              "refId": "A"
+            },
+            {
+              "expr": "max by (job, namespace, service) (bayn_cycle_submission_cutoff_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000",
+              "legendFormat": "submission cutoff",
+              "refId": "B"
+            },
+            {
+              "expr": "max by (job, namespace, service) (bayn_cycle_execution_open_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000",
+              "legendFormat": "execution open",
+              "refId": "C"
+            },
+            {
+              "expr": "max by (job, namespace, service) (bayn_cycle_execution_close_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) * 1000",
+              "legendFormat": "execution close",
+              "refId": "D"
+            }
+          ],
+          "title": "Execution window deadlines",
+          "type": "timeseries"
         }
       ],
       "refresh": "30s",
