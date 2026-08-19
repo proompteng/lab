@@ -48,6 +48,8 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
+    expect(bars).toContain('ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC')
+    expect(bars).not.toContain('ORDER BY source_offset DESC\n')
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
       expect(query).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)

@@ -97,7 +97,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             )),
             0
           )
-        ORDER BY source_offset DESC
+        ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC
         LIMIT 1 BY universe_id, feed, symbol, event_ts
       )
       ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
