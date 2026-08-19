@@ -49,7 +49,28 @@ const IntradayBarRowSchema = Schema.Struct({
   volume: NumericSchema,
   vwap: Schema.NullOr(NumericSchema),
   trade_count: Schema.NullOr(DigitsSchema),
-})
+}).check(
+  Schema.makeFilter(
+    (row) => {
+      const open = numericValue(row.open)
+      const high = numericValue(row.high)
+      const low = numericValue(row.low)
+      const close = numericValue(row.close)
+      const vwap = row.vwap === null ? null : numericValue(row.vwap)
+      return (
+        open > 0 &&
+        high > 0 &&
+        low > 0 &&
+        close > 0 &&
+        high >= Math.max(open, close, low) &&
+        low <= Math.min(open, close, high) &&
+        numericValue(row.volume) >= 0 &&
+        (vwap === null || vwap > 0)
+      )
+    },
+    { expected: 'positive consistent OHLC, non-negative volume, and positive nullable VWAP' },
+  ),
+)
 
 const IntradayQuoteRowSchema = Schema.Struct({
   ...identityFields,
