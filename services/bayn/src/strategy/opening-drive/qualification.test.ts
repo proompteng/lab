@@ -26,8 +26,10 @@ import {
 import { hashOpeningDriveReplayVersionGraphFromInputs } from './qualification-version'
 import {
   decodeDefaultOpeningDriveProtocol,
+  decodeOpeningDriveProtocol,
   defaultOpeningDriveProtocolDocument,
   defaultOpeningDriveProtocolHash,
+  hashOpeningDriveProtocol,
 } from './protocol'
 
 const symbols = defaultOpeningDriveProtocolDocument.universe
@@ -521,28 +523,55 @@ describe('opening-drive after-cost qualification', () => {
     expect(referenceBoundary.candidate.executedSymbols).not.toContain('AMD')
   })
 
-  test('rejects late opening observations at the immutable snapshot boundary', () => {
-    const protocol = success(decodeDefaultOpeningDriveProtocol())
+  test('rejects late opening observations before replaying either portfolio', () => {
+    const entryCutoffMinutesAfterOpen = 10
+    const protocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        entryCutoffMinutesAfterOpen,
+        executionModel: {
+          ...defaultOpeningDriveProtocolDocument.executionModel,
+          order: {
+            ...defaultOpeningDriveProtocolDocument.executionModel.order,
+            submissionCutoffAfterOpenMs: entryCutoffMinutesAfterOpen * 60_000,
+          },
+        },
+      }),
+    )
     const sessionDate = dateAt(0)
     const times = timesFor(sessionDate)
     const observedAt = new Date(Date.parse(times.open) + protocol.entryCutoffMinutesAfterOpen * 60_000).toISOString()
-    const options = {
+    const input = replayInput(0, 0.02)
+    const lateOpening = snapshotFor({
       sessionDate,
-      phase: 'opening' as const,
+      phase: 'opening',
       candidateMove: 0.02,
       benchmarkMove: 0,
       observedAt,
       quoteEventAt: observedAt,
       quoteIngestedAt: observedAt,
-    }
-    const verified = verifyIntradaySnapshot(
-      requestFor(sessionDate, times.open, times.openingEnd, observedAt),
-      rowsFor(options),
-    )
+    })
+    const lateInput = Object.freeze({
+      ...input,
+      opening: Object.freeze({ ...input.opening, snapshot: lateOpening }),
+    })
+    const calendar = calendarFor([lateInput])
+    const frozen = binding(calendar)
 
-    const failure = error(verified)
-    expect(failure.reason).toBe('request')
-    expect(failure.message).toContain('twenty minutes')
+    expect(
+      error(
+        qualifyOpeningDrive({
+          sessions: [lateInput],
+          calendar,
+          protocol,
+          binding: {
+            ...frozen,
+            protocolHash: success(hashOpeningDriveProtocol(protocol)),
+            costModelHash: success(hashOpeningDriveReplayCostModel(protocol)),
+          },
+        }),
+      ),
+    ).toMatchObject({ reason: 'strategy-decision', cause: { reason: 'snapshot-window' } })
   })
 
   test('rejects a sufficiently observed strategy that loses after all modeled costs', () => {
