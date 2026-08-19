@@ -65,7 +65,21 @@ export interface SellQuantityMarketOrderRequestBody {
   readonly extended_hours: false
 }
 
-export type OrderRequestBody = BuyNotionalMarketOrderRequestBody | SellQuantityMarketOrderRequestBody
+export interface LimitIocOrderRequestBody {
+  readonly symbol: string
+  readonly qty: string
+  readonly side: OrderSide
+  readonly type: OrderType.Limit
+  readonly time_in_force: TimeInForce.ImmediateOrCancel
+  readonly limit_price: string
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export type OrderRequestBody =
+  | BuyNotionalMarketOrderRequestBody
+  | SellQuantityMarketOrderRequestBody
+  | LimitIocOrderRequestBody
 
 type MarketOrderRequestCommon = Omit<BuyNotionalMarketOrderRequestBody, 'notional'>
 
@@ -379,6 +393,44 @@ export const legacyBoundedLimitOrderRequestBody = (
   })
 }
 
+export const limitIocOrderRequestBody = (
+  intent: OrderRequestIntent,
+): Result.Result<LimitIocOrderRequestBody, OrderRequestError> => {
+  if (intent.orderType !== DomainOrderType.Limit || intent.timeInForce !== DomainTimeInForce.ImmediateOrCancel) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound Bayn orders require LIMIT with IOC time in force',
+        orderType: intent.orderType,
+        timeInForce: intent.timeInForce,
+      }),
+    )
+  }
+  const quantity = quantityMicros(intent.quantityMicros)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  if (quantity.success % 1_000_000n !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC orders require a whole-share quantity',
+        quantityMicros: intent.quantityMicros,
+      }),
+    )
+  }
+  const priceBoundary = orderPriceBoundaryMicros(intent)
+  if (Result.isFailure(priceBoundary)) return Result.fail(priceBoundary.failure)
+  return Result.succeed({
+    symbol: intent.symbol,
+    qty: microsToDecimal(quantity.success),
+    side: side(intent.side),
+    type: OrderType.Limit,
+    time_in_force: TimeInForce.ImmediateOrCancel,
+    limit_price: microsToDecimal(priceBoundary.success),
+    client_order_id: intent.clientOrderId,
+    extended_hours: false,
+  })
+}
+
 const validateMarketOrderRequest = (
   intent: OrderRequestIntent,
 ): Result.Result<ValidatedMarketOrderRequest, OrderRequestError> => {
@@ -417,6 +469,7 @@ const validateMarketOrderRequest = (
 }
 
 export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  if (intent.orderType === DomainOrderType.Limit) return limitIocOrderRequestBody(intent)
   const validated = validateMarketOrderRequest(intent)
   if (Result.isFailure(validated)) return Result.fail(validated.failure)
   const { common, notional, quantity } = validated.success
@@ -639,6 +692,8 @@ const normalizeAcceptedOrder = (
   )
 
 const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean => {
+  const expectedLimitPriceMicros =
+    'limit_price' in facts.request ? decimalToMicros(facts.request.limit_price) : undefined
   const commonMatches =
     order.accountId === facts.intent.accountId &&
     order.assetClass === AssetClass.UsEquity &&
@@ -647,7 +702,7 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
     order.side === facts.request.side &&
     order.orderType === facts.request.type &&
     order.timeInForce === facts.request.time_in_force &&
-    order.limitPriceMicros === undefined &&
+    order.limitPriceMicros === expectedLimitPriceMicros &&
     !order.extendedHours
   if (!commonMatches) return false
   return 'notional' in facts.request

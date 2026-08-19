@@ -30,6 +30,7 @@ import {
   isAuthorityNotGrantedReason,
   orderedRiskGateDefinitions,
   PolicySchema,
+  executionRiskPolicySchemaVersion,
   Reason,
   RiskEvaluationFailure,
   StateSchema,
@@ -400,6 +401,8 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['NVDA', 'AMD'] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['AMD', 'AMD'] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Limit] })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Market] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '01' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '9223372036854775808' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOpenOrders: 0 })).toThrow()
@@ -516,6 +519,22 @@ describe('bounded execution risk', () => {
       aggregateBuyingPowerMicros: '100000000',
       unresolvedOrderCount: 0,
     })
+  })
+
+  test('approves quote-bound LIMIT/IOC only when the policy explicitly allows both terms', () => {
+    const limitIntent = makeIntent({
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    })
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+
+    expect(evaluateSuccess(limitIntent, makeState(), policy).decision.outcome).toBe(RiskOutcome.Approved)
+    expect(() => decodePolicy({ ...policy, schemaVersion: 'bayn.paper-risk-policy.v2' })).toThrow()
   })
 
   test('permits only the bounded sell close through an active kill', () => {

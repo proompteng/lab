@@ -18,6 +18,7 @@ import {
 } from './execution-model'
 import { ExecutionModelSchema, SupportedExecutionModelSchema } from './execution-model-contract'
 import { strictParseOptions } from './schemas'
+import { openingDriveExecutionModel } from './strategy/opening-drive'
 
 const success = <A>(result: Result.Result<A, ExecutionModelFailure>): A => {
   expect(Result.isSuccess(result)).toBe(true)
@@ -48,7 +49,37 @@ describe('explicit execution model', () => {
     expect(Result.isSuccess(decodeExecutionModel(legacy))).toBeTrue()
     expect(Result.isSuccess(decodeSupportedExecutionModel(legacy))).toBeTrue()
     expect(Result.isSuccess(decodeSupportedExecutionModel(defaultExecutionModel))).toBeTrue()
+    expect(Result.isSuccess(decodeExecutionModel(openingDriveExecutionModel))).toBeTrue()
+    expect(Result.isFailure(decodeSupportedExecutionModel(openingDriveExecutionModel))).toBeTrue()
     expect(Result.isFailure(decodeExecutionModel({ ...defaultExecutionModel, venue: 'alpaca-paper' }))).toBeTrue()
+  })
+
+  test('binds opening-drive execution to a bounded post-open LIMIT/IOC window', () => {
+    const decodeExecutionModel = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
+
+    expect(openingDriveExecutionModel).toMatchObject({
+      schemaVersion: 'bayn.execution-model.v4',
+      venue: 'alpaca-us-equity',
+      order: {
+        type: 'limit',
+        timeInForce: 'ioc',
+        planAfter: 'verified-opening-range',
+        decisionAfterOpenMs: 301_000,
+        submissionCutoffAfterOpenMs: 1_800_000,
+      },
+      precision: { quantityIncrementMicros: '1000000' },
+    })
+    expect(
+      Result.isFailure(
+        decodeExecutionModel({
+          ...openingDriveExecutionModel,
+          order: {
+            ...openingDriveExecutionModel.order,
+            decisionAfterOpenMs: openingDriveExecutionModel.order.submissionCutoffAfterOpenMs,
+          },
+        }),
+      ),
+    ).toBeTrue()
   })
 
   test('rounds price adversely and separates spread from slippage', () => {

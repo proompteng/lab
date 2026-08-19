@@ -3,9 +3,11 @@ import { Data, Schema } from 'effect'
 import {
   AccountSnapshotSchema,
   DiscrepancySchema,
+  OrderType,
   OrderSchema,
   PositionSchema,
   ReconciliationStatus,
+  TimeInForce,
 } from '../execution/contracts'
 import {
   legacyReconciliationSchemaVersion,
@@ -32,6 +34,19 @@ export const SignalSessionReferencePricesSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.signal-session-reference-prices.v1'),
   signalDate: IsoDateSchema,
   observedAt: UtcInstantSchema,
+  contentHash: Sha256Schema,
+  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+})
+
+export const intradaySnapshotReferencePricesSchemaVersion = 'bayn.intraday-snapshot-reference-prices.v1' as const
+
+export const IntradaySnapshotReferencePricesSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(intradaySnapshotReferencePricesSchemaVersion),
+  signalDate: IsoDateSchema,
+  observedAt: UtcInstantSchema,
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
   contentHash: Sha256Schema,
   priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
 })
@@ -77,6 +92,16 @@ const TargetPlannerInputFields = {
   observedAt: UtcInstantSchema,
 } as const
 
+export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-input.quote-bound.v1' as const
+
+export const QuoteBoundExecutionTermsSchema = Schema.Struct({
+  orderType: Schema.Literal(OrderType.Limit),
+  timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
+  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+})
+
 export const TargetPlannerInputV1Schema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
   ...TargetPlannerInputFields,
@@ -88,12 +113,47 @@ export const TargetPlannerInputV2Schema = Schema.Struct({
   allocationCapitalMicros: UnsignedMicrosSchema,
 })
 
-export const TargetPlannerInputSchema = Schema.Union([TargetPlannerInputV1Schema, TargetPlannerInputV2Schema])
+const QuoteBoundTargetPlannerInputBase = Schema.Struct({
+  schemaVersion: Schema.Literal(quoteBoundTargetPlannerInputSchemaVersion),
+  ...TargetPlannerInputFields,
+  referencePrices: IntradaySnapshotReferencePricesSchema,
+  precision: Schema.Struct({
+    quantityIncrementMicros: Schema.Literal('1000000'),
+    priceIncrementMicros: PositiveMicrosSchema,
+    minimumBuyNotionalMicros: PositiveMicrosSchema,
+  }),
+  allocationCapitalMicros: UnsignedMicrosSchema,
+  executionTerms: QuoteBoundExecutionTermsSchema,
+})
+
+const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] =>
+  input.executionTerms.snapshotId === input.referencePrices.snapshotId &&
+  input.executionTerms.snapshotContentHash === input.referencePrices.snapshotContentHash
+    ? []
+    : [
+        {
+          path: ['executionTerms'],
+          issue: 'must bind the same verified intraday snapshot as its reference prices',
+        },
+      ]
+
+export const QuoteBoundTargetPlannerInputSchema = QuoteBoundTargetPlannerInputBase.check(
+  Schema.makeFilter(quoteBoundInputIssues),
+)
+
+export const TargetPlannerInputSchema = Schema.Union([
+  TargetPlannerInputV1Schema,
+  TargetPlannerInputV2Schema,
+  QuoteBoundTargetPlannerInputSchema,
+])
 
 export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
+export type IntradaySnapshotReferencePrices = typeof IntradaySnapshotReferencePricesSchema.Type
 export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
 export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
 export type TargetPlannerInputV2 = typeof TargetPlannerInputV2Schema.Type
+export type QuoteBoundExecutionTerms = typeof QuoteBoundExecutionTermsSchema.Type
+export type QuoteBoundTargetPlannerInput = typeof QuoteBoundTargetPlannerInputSchema.Type
 export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 
 export interface PlannedTargetQuantity {
@@ -243,8 +303,10 @@ export const ReferenceTargetIntentSchema = Schema.Struct({
   createdAt: IntentPlanSchema.fields.createdAt,
 })
 
+export const referenceTargetPlanSchemaVersion = 'bayn.reference-target-plan.v2' as const
+
 export const TargetPlanResultFields = {
-  schemaVersion: Schema.Literal(legacyReferenceTargetPlanSchemaVersion),
+  schemaVersion: Schema.Literals([legacyReferenceTargetPlanSchemaVersion, referenceTargetPlanSchemaVersion]),
   inputHash: Sha256Schema,
   outputHash: Sha256Schema,
   targets: Schema.Array(PlannedTargetQuantitySchema),

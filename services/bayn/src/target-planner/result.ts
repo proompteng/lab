@@ -1,6 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
@@ -13,6 +14,7 @@ import {
   TargetPlanResultFields,
   TargetPlanStatus,
   blockedTargetPlanReasons,
+  referenceTargetPlanSchemaVersion,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
   type TargetPlannerFailure,
@@ -155,6 +157,12 @@ const plannedIntentIssues = (
   if (result.status !== TargetPlanStatus.Planned) return []
   const issues: Schema.FilterIssue[] = []
   const firstIntent = result.intentTargets[0]
+  const supportedExecutionTerms = (intent: ReferenceTargetIntent): boolean =>
+    result.schemaVersion === legacyReferenceTargetPlanSchemaVersion
+      ? intent.orderType === OrderType.Market && intent.timeInForce === TimeInForce.Day
+      : result.schemaVersion === referenceTargetPlanSchemaVersion &&
+        intent.orderType === OrderType.Limit &&
+        intent.timeInForce === TimeInForce.ImmediateOrCancel
   for (const { delta, index, intent, target } of facts.deltas) {
     if (delta === 0n && intent !== undefined) {
       issues.push({ path: ['intentTargets'], issue: `must not retain a zero delta for ${target.symbol}` })
@@ -168,8 +176,7 @@ const plannedIntentIssues = (
       intent !== undefined &&
       (intent.side !== (delta > 0n ? OrderSide.Buy : OrderSide.Sell) ||
         BigInt(intent.quantityMicros) !== (delta < 0n ? -delta : delta) ||
-        intent.orderType !== OrderType.Market ||
-        intent.timeInForce !== TimeInForce.Day)
+        !supportedExecutionTerms(intent))
     ) {
       issues.push({ path: ['intentTargets', index], issue: 'must exactly encode the target quantity delta' })
     }
@@ -181,6 +188,8 @@ const plannedIntentIssues = (
         intent.decisionHash !== firstIntent.decisionHash ||
         intent.policyHash !== firstIntent.policyHash ||
         intent.accountId !== firstIntent.accountId ||
+        intent.orderType !== firstIntent.orderType ||
+        intent.timeInForce !== firstIntent.timeInForce ||
         intent.createdAt !== firstIntent.createdAt)
     ) {
       issues.push({ path: ['intentTargets', index], issue: 'must share one target-plan identity and creation time' })

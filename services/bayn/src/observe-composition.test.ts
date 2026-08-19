@@ -87,6 +87,7 @@ import {
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
+  loadQuoteBoundExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
@@ -3370,6 +3371,20 @@ describe('OBSERVE runtime composition', () => {
       maxDailyLossMicros: '5000000000',
       maxDrawdownMicros: '5000000000',
       maxOpenOrders: fixtureProtocol.universe.length,
+    })
+  })
+
+  test('decodes a versioned quote-bound LIMIT/IOC policy for intraday execution', async () => {
+    const policy = await Effect.runPromise(
+      loadQuoteBoundExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()),
+    )
+
+    expect(policy).toMatchObject({
+      schemaVersion: 'bayn.execution-risk-policy.v3',
+      accountId,
+      allowedSymbols: fixtureProtocol.universe,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     })
   })
 

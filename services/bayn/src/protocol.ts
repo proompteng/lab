@@ -2,11 +2,7 @@ import { Data, Effect, Result, Schema } from 'effect'
 
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './strategy/execution-model/model'
-import {
-  ExecutionModelV1Schema,
-  ExecutionModelV2Schema,
-  SupportedExecutionModelSchema,
-} from './execution-model-contract'
+import { DailyExecutionModelSchema, ExecutionModelV1Schema, ExecutionModelV2Schema } from './execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from './hash'
 import {
   IsoDateSchema,
@@ -37,8 +33,11 @@ export {
   ExecutionModelV1Schema,
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
+  ExecutionModelV4Schema,
+  DailyExecutionModelSchema,
   ExecutionModelSchema,
   SupportedExecutionModelSchema,
+  type DailyExecutionModel,
   type ExecutionModel,
   type SupportedExecutionModel,
 } from './execution-model-contract'
@@ -98,7 +97,7 @@ const ProtocolV4Base = Schema.Struct({
     minimumPositiveHorizons: PositiveInteger,
     allocation: Schema.Literal('conviction-inverse-volatility'),
   }),
-  executionModel: SupportedExecutionModelSchema,
+  executionModel: DailyExecutionModelSchema,
 })
 
 const protocolIssues = (

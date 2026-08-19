@@ -10,13 +10,12 @@ import {
   Authority,
   IntentState,
   KillState,
-  OrderSide,
   TerminalOutcome,
   type AuthorityState,
   type Intent,
 } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations'
-import { makeFillTerms, MICROS } from '../execution-model'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
@@ -203,23 +202,24 @@ const validateCurrentMutationExecutionTerms = (
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
 ): Result.Result<void, CycleRunnerError> => {
-  const fillTerms = makeFillTerms(
-    targetIntent.side === OrderSide.Buy ? 'buy' : 'sell',
-    BigInt(targetIntent.quantityMicros),
-    BigInt(target.referencePriceMicros),
-    preparation.executionModel,
-    MICROS,
-  )
-  if (Result.isFailure(fillTerms)) {
+  const pricing = deriveExecutionIntentPricing({
+    side: targetIntent.side,
+    orderType: targetIntent.orderType,
+    timeInForce: targetIntent.timeInForce,
+    quantityMicros: BigInt(targetIntent.quantityMicros),
+    referencePriceMicros: BigInt(target.referencePriceMicros),
+    executionModel: preparation.executionModel,
+  })
+  if (Result.isFailure(pricing)) {
     return Result.fail(
       mutationRunnerError({
         message: 'mutation execution terms are invalid',
-        cause: fillTerms.failure,
+        cause: pricing.failure,
         failure: 'contract',
       }),
     )
   }
-  return fillTerms.success.notionalMicros.toString() === riskBinding.notionalLimitMicros
+  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros
     ? Result.succeed(undefined)
     : Result.fail(
         mutationRunnerError({
