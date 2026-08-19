@@ -132,7 +132,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
-        AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
         AND event_ts < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
         AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
@@ -173,7 +173,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
-        AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
         AND event_ts < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
         AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
