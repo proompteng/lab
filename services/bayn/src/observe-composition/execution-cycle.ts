@@ -508,18 +508,33 @@ const executeBoundExecutionCycle = (
       ...(entrySubmissionCutoffAt === undefined ? {} : { executionMandateCutoffAt: entrySubmissionCutoffAt }),
     }
     const closeDue = closeWindow !== undefined && observedAt >= closeWindow.startAt
-    if (
-      capability._tag === 'Mutation' &&
-      !closeDue &&
-      !strategyAllowsMutationCadence(input.strategy, input.cycleCadence)
-    ) {
-      return { _tag: 'Wait', observedAt }
-    }
+    const drainIncompatibleEntry =
+      capability._tag === 'Mutation' && !strategyAllowsMutationCadence(input.strategy, input.cycleCadence)
     let closeOnly = false
     let phaseInput = entryPhaseInput
     let step: PreparedMutationCycleStep | undefined
 
-    if (closeDue) {
+    if (drainIncompatibleEntry && !closeDue) {
+      const entryDrain = yield* prepareNextMutationIntent({
+        input: entryPhaseInput,
+        preparation,
+        policy,
+        cycle,
+        document,
+        reconcile,
+        allowSubmit: false,
+        drainOpenOrders: true,
+      })
+      if (entryDrain._tag === 'Execute') {
+        step = entryDrain
+      } else if (entryDrain._tag !== 'Complete') {
+        return entryDrain
+      } else {
+        return { _tag: 'Wait', observedAt: entryDrain.observedAt }
+      }
+    }
+
+    if (step === undefined && closeDue) {
       const entryDrain = yield* prepareNextMutationIntent({
         input: entryPhaseInput,
         preparation,
