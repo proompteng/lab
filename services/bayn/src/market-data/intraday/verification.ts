@@ -23,6 +23,7 @@ import {
   decodeIntradayQuoteRows,
   decodeIntradayTradeRows,
 } from './rows'
+import { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './time'
 
 const minuteMs = 60_000
 const maximumWindowMs = 30 * minuteMs
@@ -32,7 +33,6 @@ const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
 const isIsoDate = Schema.is(IsoDateSchema)
 const maximumUInt64 = 18_446_744_073_709_551_615n
-const nanosPerMillisecond = 1_000_000n
 
 // ClickHouse orders String values by their binary representation. Source topics
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
@@ -55,19 +55,6 @@ const failure = (
   })
 
 const epoch = (value: string): number => Date.parse(value)
-const instantNanos = (value: string): bigint => {
-  const withoutZulu = value.slice(0, -1)
-  const separator = withoutZulu.lastIndexOf('.')
-  const seconds = withoutZulu.slice(0, separator)
-  const fractional = withoutZulu.slice(separator + 1).padEnd(9, '0')
-  return BigInt(Date.parse(`${seconds}.000Z`)) * nanosPerMillisecond + BigInt(fractional)
-}
-
-const compareInstants = (left: string, right: string): number => {
-  const leftNanos = instantNanos(left)
-  const rightNanos = instantNanos(right)
-  return leftNanos < rightNanos ? -1 : leftNanos > rightNanos ? 1 : 0
-}
 const isCanonicalInstant = (value: string): boolean => {
   const parsed = epoch(value)
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
@@ -348,7 +335,7 @@ const compareRecords = (
   left: IntradayBar | IntradayQuote | IntradayTrade,
   right: IntradayBar | IntradayQuote | IntradayTrade,
 ): number =>
-  compareInstants(left.eventAt, right.eventAt) ||
+  compareIntradayInstants(left.eventAt, right.eventAt) ||
   compareCanonicalText(left.symbol, right.symbol) ||
   compareCanonicalText(left.sourceTopic, right.sourceTopic) ||
   left.sourcePartition - right.sourcePartition ||
@@ -367,9 +354,9 @@ const validateIdentity = (
       BigInt(watermark.inclusiveLastOffset),
     ]),
   )
-  const start = instantNanos(request.rangeStartAt)
-  const eventEnd = instantNanos(eventWindowEndAt)
-  const observed = instantNanos(request.observedAt)
+  const start = intradayInstantNanos(request.rangeStartAt)
+  const eventEnd = intradayInstantNanos(eventWindowEndAt)
+  const observed = intradayInstantNanos(request.observedAt)
   for (const record of records) {
     if (
       record.universeId !== request.universeId ||
@@ -387,8 +374,8 @@ const validateIdentity = (
         }),
       )
     }
-    const eventAt = instantNanos(record.eventAt)
-    const ingestedAt = instantNanos(record.ingestedAt)
+    const eventAt = intradayInstantNanos(record.eventAt)
+    const ingestedAt = intradayInstantNanos(record.ingestedAt)
     const eventAfterWindow = inclusiveEnd ? eventAt > eventEnd : eventAt >= eventEnd
     const watermark = watermarkByPartition.get(`${record.sourceTopic}\u0000${record.sourcePartition}`)
     if (
@@ -533,9 +520,8 @@ const latestQuotes = (
     const quote = latest[symbol]
     if (
       quote === undefined ||
-      instantNanos(quote.eventAt) < instantNanos(request.rangeEndAt) ||
-      instantNanos(request.observedAt) - instantNanos(quote.ingestedAt) >
-        BigInt(request.maximumQuoteAgeMs) * nanosPerMillisecond
+      intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) ||
+      intradayAgeNanos(request.observedAt, quote.ingestedAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
     ) {
       return Result.fail(
         failure('freshness', 'intraday snapshot lacks a fresh post-range quote for every symbol', {
