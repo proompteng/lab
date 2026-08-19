@@ -783,6 +783,7 @@ const prepareStoredExecutionStep = async (
   unknownMutationCount = 0,
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
   input: typeof fixture.input & {
+    readonly cycleCadence?: NonNullable<ObserveAutonomousCycleInput['cycleCadence']>
     readonly mutationPhase?: 'ENTRY' | 'CLOSE'
     readonly executionMandateCutoffAt?: string
     readonly executionMandateCloseSubmitCutoffAt?: string
@@ -1039,7 +1040,7 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('selects cancellation for a stable open entry order before close planning', async () => {
+  test('drains a legacy open entry order when every-session execution rejects its multi-session strategy', async () => {
     const fixture = await executionLifecycleFixture()
     const accepted: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -1064,7 +1065,7 @@ describe('OBSERVE runtime composition', () => {
       observedAt,
       0,
       () => undefined,
-      { ...fixture.input, executionMandateCutoffAt: observedAt },
+      { ...fixture.input, cycleCadence: 'EVERY_SESSION' },
       undefined,
       false,
       fixture.policy,
