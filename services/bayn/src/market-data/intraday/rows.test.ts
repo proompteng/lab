@@ -42,6 +42,7 @@ describe('intraday archive row decoding', () => {
     expect(Result.isFailure(decodeIntradayBarRows([{ ...bar, low: '100.01' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayBarRows([{ ...bar, volume: '-1' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayBarRows([{ ...bar, vwap: '0' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayBarRows([{ ...bar, delay_class: 'delayed_15m_consolidated' }]))).toBe(true)
   })
 
   test('accepts finite numeric strings and rejects non-finite market values', () => {
@@ -61,6 +62,9 @@ describe('intraday archive row decoding', () => {
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_size: '-1' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, ask_size: '-1' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_price: '100.03' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, delay_class: 'delayed_15m_consolidated' }]))).toBe(
+      true,
+    )
 
     const trade = {
       ...identity,
@@ -72,5 +76,6 @@ describe('intraday archive row decoding', () => {
     expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, price: '-Infinity' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, price: '0' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, size: '-1' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, delay_class: 'real_time_exchange_only' }]))).toBe(true)
   })
 })

@@ -16,6 +16,13 @@ const FiniteNumericStringSchema = Schema.String.check(
 )
 const NumericSchema = Schema.Union([Schema.Finite, FiniteNumericStringSchema])
 const numericValue = (value: number | string): number => (typeof value === 'number' ? value : Number(value))
+const hasExpectedDelayClass = (row: {
+  readonly feed: 'iex' | 'sip' | 'delayed_sip'
+  readonly delay_class: string
+}): boolean =>
+  (row.feed === 'iex' && row.delay_class === 'real_time_exchange_only') ||
+  (row.feed === 'sip' && row.delay_class === 'real_time_consolidated') ||
+  (row.feed === 'delayed_sip' && row.delay_class === 'delayed_15m_consolidated')
 const BooleanIntegerSchema = Schema.Union([Schema.Literals([0, 1]), Schema.Literals(['0', '1'])])
 const PartitionSchema = Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), DigitsSchema])
 const SchemaVersionSchema = Schema.Union([Schema.Literal(1), Schema.Literal('1')])
@@ -58,6 +65,7 @@ const IntradayBarRowSchema = Schema.Struct({
       const close = numericValue(row.close)
       const vwap = row.vwap === null ? null : numericValue(row.vwap)
       return (
+        hasExpectedDelayClass(row) &&
         open > 0 &&
         high > 0 &&
         low > 0 &&
@@ -81,6 +89,7 @@ const IntradayQuoteRowSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (row) =>
+      hasExpectedDelayClass(row) &&
       numericValue(row.bid_price) > 0 &&
       numericValue(row.ask_price) > 0 &&
       numericValue(row.bid_size) >= 0 &&
@@ -95,7 +104,7 @@ const IntradayTradeRowSchema = Schema.Struct({
   price: NumericSchema,
   size: NumericSchema,
 }).check(
-  Schema.makeFilter((row) => numericValue(row.price) > 0 && numericValue(row.size) > 0, {
+  Schema.makeFilter((row) => hasExpectedDelayClass(row) && numericValue(row.price) > 0 && numericValue(row.size) > 0, {
     expected: 'positive trade price and size',
   }),
 )
