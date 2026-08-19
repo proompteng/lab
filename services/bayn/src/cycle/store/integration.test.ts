@@ -79,7 +79,7 @@ import {
   type CycleRunResult,
 } from '../runner'
 import { runAutonomousCycleUntilSettled } from '../runner/program'
-import { AuthorityGenerationStore, ExecutionStoreLive } from '../../db/execution-store'
+import { AuthorityGenerationStore, CapitalGrantLifecycleStore, ExecutionStoreLive } from '../../db/execution-store'
 import { ExecutionCycleClosureStore } from '../../db/execution-cycle-closure'
 import { ExecutionCycleClosureStoreLive } from '../../db/execution-cycle-closure-postgres'
 import { readFinalExecutionRiskContext } from '../../db/reconciliation'
@@ -1789,6 +1789,7 @@ const buildPlannedExecutionDecision = (
   cycle: AutonomousCycle,
   boundSnapshotId: string,
   options: {
+    readonly authorityGenerationHash?: string
     readonly decision?: DecisionPlan
     readonly evaluatedAt?: string
     readonly reconciliation?: ReconciliationPassResult
@@ -1806,9 +1807,10 @@ const buildPlannedExecutionDecision = (
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
     const reconciliation = options.reconciliation ?? plannedPaperReconciliation(legacyCycle, evaluatedAt)
     const decision = options.decision ?? plannedExecutionDecisionPlan(legacyCycle)
+    const authorityGenerationHash = options.authorityGenerationHash ?? plannedPaperGenerationHash
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildMutationShadowCycleDecision({
-      authorityGenerationHash: plannedPaperGenerationHash,
+      authorityGenerationHash,
       cycle: legacyCycle,
       executionModel: fixtureProtocol.executionModel,
       policy,
@@ -1825,32 +1827,6 @@ const buildPlannedExecutionDecision = (
       ),
     )
     return { document, reconciliation }
-  })
-
-const activatePlannedPaperAuthority = (generationHash: string, updatedAt: string) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    const observeGenerationHash = '9'.repeat(64)
-    const observeActivatedAt = utcInstantFromEpochMillis(Date.parse(updatedAt) - 1_000)
-    yield* sql`
-      INSERT INTO authority_state (
-        schema_version, generation_hash, maximum, effective, kill_state,
-        reason, version, updated_at
-      ) VALUES (
-        'bayn.paper-authority.v1', ${observeGenerationHash},
-        'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, ${observeActivatedAt}
-      )
-    `
-    yield* sql`
-      UPDATE authority_state
-      SET
-        generation_hash = ${generationHash},
-        maximum = 'PAPER',
-        effective = 'PAPER',
-        version = 2,
-        updated_at = ${updatedAt}
-      WHERE singleton
-    `
   })
 
 interface ValidWindowBrokerControl {
@@ -5851,7 +5827,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           signalSessionDate,
           snapshotBoundAt,
         } = monthEndExecutionWindow(clock.evaluated_at)
-        const draft = makeDraft('paper-account-valid-window-execution', {
+        const draft = makeDraft(dueAccountId, {
           executionPolicy,
           executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
           executionOpenAt,
@@ -5869,7 +5845,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        yield* activatePlannedPaperAuthority(plannedPaperGenerationHash, evaluatedAt)
         return {
           activated: activated.cycle,
           draft,
@@ -5905,18 +5880,81 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const writerFence = yield* WriterFence
           const executionCycleClosureStore = yield* ExecutionCycleClosureStore
           const blockedCycleIntentStore = yield* BlockedCycleIntentStore
+          const authorityGenerationStore = yield* AuthorityGenerationStore
+          const capitalGrantLifecycleStore = yield* CapitalGrantLifecycleStore
           const sql = yield* PgClient.PgClient
           const policy = yield* loadObserveRiskPolicy(setup.draft.identity.accountId, fixtureProtocol.universe)
-          const preparation = yield* Effect.fromResult(
-            prepareObserveStartup({
+          const syncClockAfter = (minimumAt: string) =>
+            Effect.gen(function* () {
+              yield* sql`
+                SELECT pg_sleep(
+                  GREATEST(
+                    0::double precision,
+                    EXTRACT(EPOCH FROM (${minimumAt}::timestamptz - clock_timestamp()))::double precision + 0.005
+                  )
+                )
+              `
+              const [clock] = yield* sql<{ observed_at: string }>`
+                SELECT to_char(
+                  clock_timestamp() AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                ) AS observed_at
+              `
+              if (clock === undefined || Date.parse(clock.observed_at) <= Date.parse(minimumAt)) {
+                return yield* Effect.die(new Error('database clock did not advance beyond valid-window evidence'))
+              }
+              yield* TestClock.setTime(Date.parse(clock.observed_at))
+              return clock.observed_at
+            })
+          const readOrInitializeObserveAuthority = authorityGenerationStore.readOrInitializeObserveAuthority
+          if (readOrInitializeObserveAuthority === undefined) {
+            return yield* Effect.die(
+              new Error('valid-window research activation requires OBSERVE authority initialization'),
+            )
+          }
+          const observeAuthority = yield* readOrInitializeObserveAuthority({
+            generationHash: 'e'.repeat(64),
+            maximum: Authority.Observe,
+          })
+          yield* syncClockAfter(observeAuthority.updatedAt)
+          const observeBaseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (observeBaseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(
+              new Error('valid-window research activation requires an exact production OBSERVE reconciliation'),
+            )
+          }
+          const researchPlanHash = canonicalHashV1({
+            schemaVersion: 'bayn.valid-window-research-plan.v1',
+            cycleId: setup.draft.identity.cycleId,
+          })
+          const activatedAuthority = yield* capitalGrantLifecycleStore.activateResearchCapitalGrant(
+            {
+              schemaVersion: 'bayn.research-paper-grant-proof.v1',
+              grant: { _tag: 'Research', planHash: researchPlanHash },
+              activationSourceRevision: autonomousRuntimeConfig.build.sourceRevision,
+              activationImageRepository: autonomousRuntimeConfig.build.imageRepository,
+              activationImageDigest: autonomousRuntimeConfig.build.imageDigest,
+              strategyName: dueStrategy.provenance.strategy.name,
+              strategyBehaviorHash: dueStrategy.provenance.strategy.behaviorHash,
+              strategyParameterHash: dueStrategy.provenance.strategy.parameterHash,
+              strategyParameterSchemaVersion: dueStrategy.provenance.strategy.parameterSchemaVersion,
+              strategyProtocolHash: setup.draft.identity.strategyProtocolHash,
               accountId: setup.draft.identity.accountId,
-              authorityGenerationHash: plannedPaperGenerationHash,
-              pollIntervalMs: 30_000,
-              reconciliationIntervalMs: 30_000,
-              reconciliationPassTimeoutMs: 30_000,
-              strategy: dueStrategy,
-            }),
+              brokerIdentityHash: dueBrokerIdentity.identityHash,
+              riskPolicyHash: canonicalHashV1(policy),
+              proofPlanHash: researchPlanHash,
+            },
+            observeAuthority.generationHash,
           )
+          if (
+            activatedAuthority.maximum !== Authority.Execution ||
+            activatedAuthority.effective !== Authority.Execution
+          ) {
+            return yield* Effect.die(
+              new Error('valid-window research activation did not produce clear executable PAPER authority'),
+            )
+          }
+          yield* syncClockAfter(activatedAuthority.updatedAt)
           const baseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (baseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(new Error('valid-window execution requires an exact production broker baseline'))
@@ -5925,7 +5963,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const baselineAuthorityObservedAt = baseline.riskContext.authorityObservedAt
           if (
             baselineAuthority === null ||
-            baselineAuthority.generationHash !== plannedPaperGenerationHash ||
+            baselineAuthority.generationHash !== activatedAuthority.generationHash ||
             baselineAuthority.maximum !== Authority.Execution ||
             baselineAuthority.effective !== Authority.Execution ||
             baselineAuthorityObservedAt === null
@@ -5936,11 +5974,9 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               ),
             )
           }
-          const planningAt = utcInstantFromEpochMillis(
-            Math.max(Date.parse(setup.evaluatedAt), Date.parse(baselineAuthorityObservedAt)),
-          )
-          yield* TestClock.setTime(Date.parse(planningAt))
+          const planningAt = yield* syncClockAfter(baselineAuthorityObservedAt)
           const planned = yield* buildPlannedExecutionDecision(setup.activated, snapshotB, {
+            authorityGenerationHash: activatedAuthority.generationHash,
             decision: plannedExecutionDecisionPlan(setup.activated),
             evaluatedAt: planningAt,
             reconciliation: baseline,
@@ -5953,12 +5989,21 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           ) {
             return yield* Effect.die(new Error('valid-window execution fixture requires one dispatchable buy intent'))
           }
-          yield* insertQualifiedPaperLineage(planned.document)
           const cycleStore = yield* CycleStore
           const bound = yield* cycleStore.bindDecision(setup.draft.identity.cycleId, planned.document, planningAt)
-          const forceCloseAt = utcInstantFromEpochMillis(Date.parse(planningAt) + 2_000)
+          const forceCloseAt = utcInstantFromEpochMillis(Date.parse(planningAt) + 100)
           const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 60_000)
           const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 120_000)
+          const preparation = yield* Effect.fromResult(
+            prepareObserveStartup({
+              accountId: setup.draft.identity.accountId,
+              authorityGenerationHash: activatedAuthority.generationHash,
+              pollIntervalMs: 30_000,
+              reconciliationIntervalMs: 30_000,
+              reconciliationPassTimeoutMs: 30_000,
+              strategy: dueStrategy,
+            }),
+          )
           const authority = yield* Effect.fromResult(
             makeExecutionAuthority({
               brokerIdentity: Result.getOrThrow(
@@ -5970,7 +6015,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
                 }),
               ),
               brokerAccess: BrokerAccess.Mutation,
-              capitalAuthority: grantedCapitalAuthority(plannedPaperGenerationHash),
+              capitalAuthority: grantedCapitalAuthority(activatedAuthority.generationHash),
               strategy: dueStrategy.provenance.strategy,
               observedAt: planningAt,
             }),
@@ -5999,7 +6044,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           )
           const input = {
             accountId: setup.draft.identity.accountId,
-            authorityGenerationHash: plannedPaperGenerationHash,
+            authorityGenerationHash: activatedAuthority.generationHash,
             pollIntervalMs: 30_000,
             reconciliationIntervalMs: 30_000,
             reconciliationPassTimeoutMs: 30_000,
@@ -6062,7 +6107,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const latest = yield* mutationStore.latest(entryIntentId, MutationOperation.Submit)
           if (latest === undefined) return yield* Effect.die(new Error('executed submit has no durable mutation event'))
 
-          yield* TestClock.adjust(1_000)
           const reconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(
@@ -6080,8 +6124,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             )
           }
 
-          const beforeCloseAt = yield* currentUtcInstant
-          yield* TestClock.setTime(Math.max(Date.parse(beforeCloseAt), Date.parse(forceCloseAt) + 1))
+          yield* syncClockAfter(forceCloseAt)
           const closeAdvance = yield* productionCloseRecoveryPass()
           if (!('_tag' in closeAdvance) || closeAdvance._tag !== 'PostMutationReconciliation') {
             return yield* Effect.die(
@@ -6104,7 +6147,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             return yield* Effect.die(new Error('production close intent disappeared from PostgreSQL'))
           }
 
-          yield* TestClock.adjust(1_000)
+          const closeMutationAt = yield* currentUtcInstant
+          yield* syncClockAfter(closeMutationAt)
           const flatReconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (flatReconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(
@@ -6113,7 +6157,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               ),
             )
           }
-          yield* TestClock.adjust(1_000)
           const completed = yield* productionRecoveryPass()
           if (!('outcome' in completed) || completed.outcome !== 'RECOVERED' || completed.action !== 'COMPLETED') {
             return yield* Effect.die(
@@ -6131,6 +6174,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               ) AS mutations
           `
           return {
+            authorityGenerationHash: activatedAuthority.generationHash,
             baseline,
             closeExpiresAt,
             closeSubmitCutoffAt,
@@ -6229,7 +6273,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
                 }),
               ),
               brokerAccess: BrokerAccess.Mutation,
-              capitalAuthority: grantedCapitalAuthority(plannedPaperGenerationHash),
+              capitalAuthority: grantedCapitalAuthority(first.authorityGenerationHash),
               strategy: dueStrategy.provenance.strategy,
               observedAt: first.planningAt,
             }),
