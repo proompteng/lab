@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
 import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
+import { strictParseOptions } from '../../schemas'
 import { decideOpeningDrive, makeOpeningDriveDefinition } from './decision'
+import { OpeningDriveTargetPortfolioSchema } from './model'
 import {
   decodeDefaultOpeningDriveProtocol,
   decodeOpeningDriveProtocol,
@@ -58,7 +60,7 @@ const returnBySymbol: Readonly<Record<string, number>> = {
   NVDA: 0.014,
 }
 
-const makeRows = (returnOverride?: number) => {
+const makeRows = (returnOverride?: number, volumeOverride?: string): IntradaySnapshotRows => {
   let offset = 1
   const bars = symbols.flatMap((symbol, symbolIndex) => {
     const opening = 100 + symbolIndex
@@ -84,7 +86,7 @@ const makeRows = (returnOverride?: number) => {
         high: String(opening * 1.011),
         low: String(opening * 0.995),
         close: String(opening * (1 + minute * 0.001)),
-        volume: '1000',
+        volume: volumeOverride ?? '1000',
         vwap: String(opening),
         trade_count: '100',
       }
@@ -263,6 +265,22 @@ describe('opening-drive momentum strategy', () => {
     expect(decision.selectedSymbols).toEqual([])
     expect(Object.values(decision.targetWeights).every((weight) => weight === 0)).toBe(true)
     expect(decision.signals.every((signal) => signal.rejectionReasons.includes('opening-return'))).toBe(true)
+  })
+
+  test('retains valid zero-dollar-volume rejection evidence in the runtime decision contract', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const decision = success(
+      decideOpeningDrive(
+        { snapshot: success(verifyIntradaySnapshot(request, makeRows(undefined, '0'))), session },
+        protocol,
+      ),
+    )
+
+    expect(decision.signals.every((signal) => signal.openingDollarVolumeMicros === '0')).toBe(true)
+    expect(decision.signals.every((signal) => signal.rejectionReasons.includes('dollar-volume'))).toBe(true)
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(OpeningDriveTargetPortfolioSchema, strictParseOptions)(decision)),
+    ).toBe(true)
   })
 
   test('does not enter on opening momentum without a confirmed range breakout', () => {

@@ -8,7 +8,7 @@ import {
   type ExecutionCalendarObservation,
 } from './cycle'
 import { canonicalHashV1Result } from './hash'
-import { ExecutionModelV2Schema, ExecutionModelV3Schema } from './protocol'
+import { CycleExecutionModelSchema, type CycleExecutionModel } from './execution-model-contract'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -48,10 +48,9 @@ const ExecutionSessionSchema = Schema.Struct({
 })
 
 const SubmissionCutoffLeadMinutesSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
-const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
-type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
+const IntradayOrderOffsetMsSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
 
-const ExecutionSessionBindingBase = Schema.Struct({
+const ExecutionSessionBindingV1Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-session-binding.v1'),
   signal: SignalBindingSchema,
   planningBrokerState: PlanningBrokerStateBindingSchema,
@@ -60,6 +59,19 @@ const ExecutionSessionBindingBase = Schema.Struct({
   submissionOpenAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
   submissionCutoffLeadMinutes: SubmissionCutoffLeadMinutesSchema,
+  bindingHash: Sha256Schema,
+})
+
+const ExecutionSessionBindingV2Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-session-binding.v2'),
+  signal: SignalBindingSchema,
+  planningBrokerState: PlanningBrokerStateBindingSchema,
+  calendar: CalendarIdentitySchema,
+  executionSession: ExecutionSessionSchema,
+  submissionOpenAt: UtcInstantSchema,
+  submissionCutoffAt: UtcInstantSchema,
+  decisionAfterOpenMs: IntradayOrderOffsetMsSchema,
+  submissionCutoffAfterOpenMs: IntradayOrderOffsetMsSchema,
   bindingHash: Sha256Schema,
 })
 
@@ -141,6 +153,14 @@ interface ExecutionSessionWindowInput {
   readonly planningBrokerState: PlanningBrokerStateBinding
   readonly calendar: CalendarIdentity
   readonly submissionCutoffLeadMinutes: number
+}
+
+interface IntradayExecutionSessionWindowInput {
+  readonly signal: SignalBinding
+  readonly planningBrokerState: PlanningBrokerStateBinding
+  readonly calendar: CalendarIdentity
+  readonly decisionAfterOpenMs: number
+  readonly submissionCutoffAfterOpenMs: number
 }
 
 interface ExecutionSessionWindow {
@@ -308,7 +328,66 @@ const deriveExecutionSessionWindow = (
     ),
   )
 
-const bindingIssues = (binding: typeof ExecutionSessionBindingBase.Type): readonly Schema.FilterIssue[] => {
+const deriveIntradaySubmissionWindow = (
+  executionSession: ExecutionSession,
+  decisionAfterOpenMs: number,
+  submissionCutoffAfterOpenMs: number,
+): Result.Result<Omit<ExecutionSessionWindow, 'executionSession'>, ExecutionSessionBindingFailure> => {
+  const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(executionSession.openAt) + decisionAfterOpenMs)
+  const submissionCutoffAt = utcInstantFromEpochMillis(
+    Date.parse(executionSession.openAt) + submissionCutoffAfterOpenMs,
+  )
+  if (submissionOpenAt >= submissionCutoffAt || submissionCutoffAt >= executionSession.closeAt) {
+    return Result.fail(
+      deriveWindowFailure(
+        'submission-window',
+        'intraday execution-session binding must produce open < submissionOpenAt < submissionCutoffAt < close',
+        {
+          executionOpenAt: executionSession.openAt,
+          executionCloseAt: executionSession.closeAt,
+          submissionOpenAt,
+          submissionCutoffAt,
+        },
+      ),
+    )
+  }
+  return Result.succeed({ submissionOpenAt, submissionCutoffAt })
+}
+
+const deriveIntradayExecutionSessionWindow = (
+  input: IntradayExecutionSessionWindowInput,
+): Result.Result<ExecutionSessionWindow, ExecutionSessionBindingFailure> =>
+  Result.flatMap(validateCalendarHash(input.calendar), () =>
+    Result.flatMap(validateCalendarRangeAndSignal(input.calendar, input.signal), () =>
+      Result.flatMap(validateCalendarSessions(input.calendar), () =>
+        Result.flatMap(selectExecutionSession(input.calendar, input.signal), (executionSession) =>
+          Result.map(
+            deriveIntradaySubmissionWindow(
+              executionSession,
+              input.decisionAfterOpenMs,
+              input.submissionCutoffAfterOpenMs,
+            ),
+            (submissionWindow) => ({ executionSession, ...submissionWindow }),
+          ),
+        ),
+      ),
+    ),
+  )
+
+const bindingHashIssues = (
+  binding: typeof ExecutionSessionBindingV1Base.Type | typeof ExecutionSessionBindingV2Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const { bindingHash, ...material } = binding
+  const expectedBindingHash = canonicalHashV1Result(material)
+  if (Result.isFailure(expectedBindingHash)) {
+    return [{ path: ['bindingHash'], issue: 'execution-session material must be canonicalizable' }]
+  }
+  return bindingHash === expectedBindingHash.success
+    ? []
+    : [{ path: ['bindingHash'], issue: 'must match the causal execution-session material' }]
+}
+
+const dailyBindingIssues = (binding: typeof ExecutionSessionBindingV1Base.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const derived = deriveExecutionSessionWindow({
     signal: binding.signal,
@@ -343,17 +422,46 @@ const bindingIssues = (binding: typeof ExecutionSessionBindingBase.Type): readon
       })
     }
   }
-  const { bindingHash, ...material } = binding
-  const expectedBindingHash = canonicalHashV1Result(material)
-  if (Result.isFailure(expectedBindingHash)) {
-    issues.push({ path: ['bindingHash'], issue: 'execution-session material must be canonicalizable' })
-  } else if (bindingHash !== expectedBindingHash.success) {
-    issues.push({ path: ['bindingHash'], issue: 'must match the causal execution-session material' })
-  }
-  return issues
+  return [...issues, ...bindingHashIssues(binding)]
 }
 
-export const ExecutionSessionBindingSchema = ExecutionSessionBindingBase.check(Schema.makeFilter(bindingIssues))
+const intradayBindingIssues = (binding: typeof ExecutionSessionBindingV2Base.Type): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const derived = deriveIntradayExecutionSessionWindow({
+    signal: binding.signal,
+    planningBrokerState: binding.planningBrokerState,
+    calendar: binding.calendar,
+    decisionAfterOpenMs: binding.decisionAfterOpenMs,
+    submissionCutoffAfterOpenMs: binding.submissionCutoffAfterOpenMs,
+  })
+  if (Result.isFailure(derived)) {
+    issues.push({ path: ['calendar'], issue: derived.failure.message })
+  } else {
+    const expected = derived.success
+    if (
+      expected.executionSession.date !== binding.executionSession.date ||
+      expected.executionSession.openAt !== binding.executionSession.openAt ||
+      expected.executionSession.closeAt !== binding.executionSession.closeAt
+    ) {
+      issues.push({ path: ['executionSession'], issue: 'must be the first post-signal exchange session' })
+    }
+    if (binding.submissionOpenAt !== expected.submissionOpenAt) {
+      issues.push({ path: ['submissionOpenAt'], issue: 'must equal execution open plus the decision offset' })
+    }
+    if (binding.submissionCutoffAt !== expected.submissionCutoffAt) {
+      issues.push({ path: ['submissionCutoffAt'], issue: 'must equal execution open plus the entry cutoff offset' })
+    }
+  }
+  return [...issues, ...bindingHashIssues(binding)]
+}
+
+const ExecutionSessionBindingV1Schema = ExecutionSessionBindingV1Base.check(Schema.makeFilter(dailyBindingIssues))
+const ExecutionSessionBindingV2Schema = ExecutionSessionBindingV2Base.check(Schema.makeFilter(intradayBindingIssues))
+
+export const ExecutionSessionBindingSchema = Schema.Union([
+  ExecutionSessionBindingV1Schema,
+  ExecutionSessionBindingV2Schema,
+])
 export type ExecutionSessionBinding = typeof ExecutionSessionBindingSchema.Type
 
 export interface BindExecutionSessionInput {
@@ -367,7 +475,7 @@ export interface BindExecutionSessionInput {
     readonly contentHash: string
   }
   readonly calendar: MarketCalendarObservation
-  readonly executionModel: DailyExecutionModel
+  readonly executionModel: CycleExecutionModel
 }
 
 export interface BindCycleExecutionSessionInput extends BindExecutionSessionInput {
@@ -378,7 +486,7 @@ const BindExecutionSessionInputSchema = Schema.Struct({
   signal: SignalBindingSchema,
   planningBrokerState: PlanningBrokerStateBindingSchema,
   calendar: CalendarIdentitySchema,
-  executionModel: DailyExecutionModelSchema,
+  executionModel: CycleExecutionModelSchema,
 })
 
 const BindCycleExecutionSessionInputSchema = Schema.Struct({
@@ -406,21 +514,40 @@ const bindDecodedExecutionSession = (
   input: DecodedBindExecutionSessionInput,
 ): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure> =>
   Result.flatMap(
-    deriveExecutionSessionWindow({
-      signal: input.signal,
-      planningBrokerState: input.planningBrokerState,
-      calendar: input.calendar,
-      submissionCutoffLeadMinutes: input.executionModel.order.submissionCutoffLeadMinutes,
-    }),
+    input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+      ? deriveIntradayExecutionSessionWindow({
+          signal: input.signal,
+          planningBrokerState: input.planningBrokerState,
+          calendar: input.calendar,
+          decisionAfterOpenMs: input.executionModel.order.decisionAfterOpenMs,
+          submissionCutoffAfterOpenMs: input.executionModel.order.submissionCutoffAfterOpenMs,
+        })
+      : deriveExecutionSessionWindow({
+          signal: input.signal,
+          planningBrokerState: input.planningBrokerState,
+          calendar: input.calendar,
+          submissionCutoffLeadMinutes: input.executionModel.order.submissionCutoffLeadMinutes,
+        }),
     (derived) => {
-      const material = {
-        schemaVersion: 'bayn.execution-session-binding.v1',
-        signal: input.signal,
-        planningBrokerState: input.planningBrokerState,
-        calendar: input.calendar,
-        ...derived,
-        submissionCutoffLeadMinutes: input.executionModel.order.submissionCutoffLeadMinutes,
-      } as const
+      const material =
+        input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+          ? ({
+              schemaVersion: 'bayn.execution-session-binding.v2',
+              signal: input.signal,
+              planningBrokerState: input.planningBrokerState,
+              calendar: input.calendar,
+              ...derived,
+              decisionAfterOpenMs: input.executionModel.order.decisionAfterOpenMs,
+              submissionCutoffAfterOpenMs: input.executionModel.order.submissionCutoffAfterOpenMs,
+            } as const)
+          : ({
+              schemaVersion: 'bayn.execution-session-binding.v1',
+              signal: input.signal,
+              planningBrokerState: input.planningBrokerState,
+              calendar: input.calendar,
+              ...derived,
+              submissionCutoffLeadMinutes: input.executionModel.order.submissionCutoffLeadMinutes,
+            } as const)
       return Result.flatMap(
         Result.mapError(canonicalHashV1Result(material), (cause) =>
           bindFailure('hash', 'execution-session binding material is not canonicalizable', {}, cause),
@@ -538,11 +665,16 @@ const validateCycleExecutionPolicy = (
   input: DecodedBindCycleExecutionSessionInput,
   binding: ExecutionSessionBinding,
 ): Result.Result<void, ExecutionSessionBindingFailure> => {
-  if (input.cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v1') {
+  const intraday = input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+  const expectedPolicyVersion = intraday
+    ? 'bayn.autonomous-cycle-execution-policy.v2'
+    : 'bayn.autonomous-cycle-execution-policy.v1'
+  if (input.cycle.identity.executionPolicy.schemaVersion !== expectedPolicyVersion) {
     return Result.fail(
-      bindCycleFailure('cycle-policy', 'daily execution-session binding requires a pre-open cycle policy', {
+      bindCycleFailure('cycle-policy', 'execution-session binding and cycle policy versions do not match', {
         cycleId: input.cycle.identity.cycleId,
         executionPolicySchemaVersion: input.cycle.identity.executionPolicy.schemaVersion,
+        executionModelSchemaVersion: input.executionModel.schemaVersion,
       }),
     )
   }
@@ -565,14 +697,64 @@ const validateCycleExecutionPolicy = (
       }),
     )
   }
-  const observedCutoffLeadMs = binding.submissionCutoffLeadMinutes * 60_000
-  if (observedCutoffLeadMs !== input.cycle.identity.executionPolicy.submissionCutoffBeforeOpenMs) {
+  if (
+    binding.schemaVersion === 'bayn.execution-session-binding.v2' &&
+    input.executionModel.schemaVersion === 'bayn.execution-model.v4' &&
+    input.cycle.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+  ) {
+    const policyDecisionAfterOpenMs =
+      input.cycle.identity.executionPolicy.submissionCutoffAfterOpenMs -
+      input.cycle.identity.executionPolicy.submissionWindowMs
+    const mismatch = [
+      {
+        field: 'decisionAfterOpenMs',
+        expected: policyDecisionAfterOpenMs,
+        observed: binding.decisionAfterOpenMs,
+      },
+      {
+        field: 'submissionCutoffAfterOpenMs',
+        expected: input.cycle.identity.executionPolicy.submissionCutoffAfterOpenMs,
+        observed: binding.submissionCutoffAfterOpenMs,
+      },
+    ].find(({ expected, observed }) => expected !== observed)
+    if (mismatch !== undefined) {
+      return Result.fail(
+        bindCycleFailure(
+          'cycle-policy',
+          'execution-session binding does not match the durable cycle execution policy',
+          {
+            cycleId: input.cycle.identity.cycleId,
+            ...mismatch,
+          },
+        ),
+      )
+    }
+  } else if (
+    binding.schemaVersion === 'bayn.execution-session-binding.v1' &&
+    input.executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
+    input.cycle.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
+  ) {
+    const observed = binding.submissionCutoffLeadMinutes * 60_000
+    const expected = input.cycle.identity.executionPolicy.submissionCutoffBeforeOpenMs
+    if (observed !== expected) {
+      return Result.fail(
+        bindCycleFailure(
+          'cycle-policy',
+          'execution-session binding does not match the durable cycle execution policy',
+          {
+            cycleId: input.cycle.identity.cycleId,
+            field: 'submissionCutoffBeforeOpenMs',
+            expected,
+            observed,
+          },
+        ),
+      )
+    }
+  } else {
     return Result.fail(
       bindCycleFailure('cycle-policy', 'execution-session binding does not match the durable cycle execution policy', {
         cycleId: input.cycle.identity.cycleId,
-        field: 'submissionCutoffBeforeOpenMs',
-        expected: input.cycle.identity.executionPolicy.submissionCutoffBeforeOpenMs,
-        observed: observedCutoffLeadMs,
+        field: 'submission-offset-schema',
       }),
     )
   }

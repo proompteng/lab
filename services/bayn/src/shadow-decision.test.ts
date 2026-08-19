@@ -44,6 +44,7 @@ import {
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
+import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
 import { TargetPlanReason, TargetPlanStatus, planTargets, type TargetPlannerInput } from './target-planner'
 import type { DecisionPlan } from './types'
 
@@ -410,6 +411,30 @@ const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecision
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('binds each decision variant to its strategy and validates exact flat-close weights', () => {
+    const decision = makeDecision({ AMD: 0.4, NVDA: 0.6 })
+    expect(runtimeDecisionMatchesStrategy(decision, 'risk-balanced-trend')).toBe(true)
+    expect(runtimeDecisionMatchesStrategy(decision, 'opening-drive-momentum')).toBe(false)
+
+    const decodeFlatTarget = Schema.decodeUnknownResult(FlatExecutionTargetSchema, strictParseOptions)
+    const flatTarget = {
+      schemaVersion: 'bayn.execution-flat-target.v1',
+      strategyName: 'opening-drive-momentum',
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0, NVDA: 0 },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close',
+    }
+    const decoded = decodeFlatTarget(flatTarget)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(runtimeDecisionMatchesStrategy(decoded.success, 'opening-drive-momentum')).toBe(true)
+      expect(runtimeDecisionMatchesStrategy(decoded.success, 'risk-balanced-trend')).toBe(false)
+    }
+    expect(Result.isFailure(decodeFlatTarget({ ...flatTarget, targetWeights: { AMD: 0.1, NVDA: 0 } }))).toBe(true)
+    expect(Result.isFailure(decodeFlatTarget({ ...flatTarget, targetWeights: { AMD: 0 } }))).toBe(true)
+  })
+
   test('binds exact final target deltas and cumulative v3 risk without any dispatchable intent state', async () => {
     const input = makeInput()
     const first = await build(input)
@@ -691,24 +716,26 @@ describe('OBSERVE shadow decision', () => {
 
   test('rejects incomplete, malformed covariance and signal evidence, and excess compiled-decision fields', async () => {
     const input = makeInput()
-    const { estimatedAnnualizedPortfolioVolatility: _missingVolatility, ...missingField } = input.compiledDecision
+    const compiled = input.compiledDecision
+    if (compiled.schemaVersion !== 'bayn.risk-balanced-trend-decision-plan.v1') {
+      throw new Error('daily shadow-decision fixture must retain the risk-balanced decision contract')
+    }
+    const { estimatedAnnualizedPortfolioVolatility: _missingVolatility, ...missingField } = compiled
     const malformedDecisions = [
       missingField,
       {
-        ...input.compiledDecision,
+        ...compiled,
         covarianceWindow: {
-          ...input.compiledDecision.covarianceWindow,
+          ...compiled.covarianceWindow,
           returnCount: 0,
         },
       },
       {
-        ...input.compiledDecision,
-        signals: input.compiledDecision.signals.map((signal, index) =>
-          index === 0 ? { ...signal, horizons: [] } : signal,
-        ),
+        ...compiled,
+        signals: compiled.signals.map((signal, index) => (index === 0 ? { ...signal, horizons: [] } : signal)),
       },
       {
-        ...input.compiledDecision,
+        ...compiled,
         unexpectedFutureEvidence: true,
       },
     ]

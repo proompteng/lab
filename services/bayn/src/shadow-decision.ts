@@ -1,7 +1,6 @@
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
-import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
 import {
   intentIdForPlan,
   clientOrderIdForIntentId,
@@ -33,13 +32,20 @@ import {
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
+  ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   type CycleDecisionDocument,
   type DeltaRiskEvaluation,
+  type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
   type ExecutionDecisionDocument,
 } from './shadow-decision-contract'
+import {
+  RuntimeStrategyDecisionSchema,
+  runtimeDecisionMatchesStrategy,
+  type RuntimeStrategyDecision,
+} from './strategy/runtime-decision'
 import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
@@ -71,7 +77,8 @@ export interface ShadowDeltaRiskInput {
 export interface ObserveShadowDecisionInput {
   readonly cycle: AutonomousCycle
   readonly snapshot: ShadowSnapshotBinding
-  readonly compiledDecision: DecisionPlan
+  readonly compiledDecision: RuntimeStrategyDecision
+  readonly executionMarketData?: ExecutionMarketDataBinding
   readonly plannerInput: TargetPlannerInput
   readonly targetPlan: TargetPlanResult
   readonly policy: Policy
@@ -114,6 +121,7 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   cycle: AutonomousCycleSchema,
   snapshot: ShadowSnapshotBindingSchema,
   compiledDecision: Schema.Unknown,
+  executionMarketData: Schema.optionalKey(Schema.Unknown),
   plannerInput: TargetPlannerInputSchema,
   targetPlan: TargetPlanResultSchema,
   policy: PolicySchema,
@@ -125,7 +133,14 @@ const decodeObserveShadowDecisionInputResult = Schema.decodeUnknownResult(
   ObserveShadowDecisionInputSchema,
   strictParseOptions,
 )
-const decodeDecisionPlanResult = Schema.decodeUnknownResult(DecisionPlanSchema, strictParseOptions)
+const decodeRuntimeStrategyDecisionResult = Schema.decodeUnknownResult(
+  RuntimeStrategyDecisionSchema,
+  strictParseOptions,
+)
+const decodeExecutionMarketDataBindingResult = Schema.decodeUnknownResult(
+  ExecutionMarketDataBindingSchema,
+  strictParseOptions,
+)
 const decodeIntentPlanResult = Schema.decodeUnknownResult(IntentPlanSchema, strictParseOptions)
 const decodeCumulativeStateResult = Schema.decodeUnknownResult(StateSchema, strictParseOptions)
 
@@ -220,8 +235,8 @@ const hashValue = (
 ): Result.Result<string, ShadowDecisionError> =>
   Result.mapError(canonicalHashV1Result(value), (cause) => error(failure, message, cause))
 
-const compiledDecisionOf = (input: unknown): Result.Result<DecisionPlan, ShadowDecisionError> =>
-  Result.mapError(decodeDecisionPlanResult(input), (cause) =>
+const compiledDecisionOf = (input: unknown): Result.Result<RuntimeStrategyDecision, ShadowDecisionError> =>
+  Result.mapError(decodeRuntimeStrategyDecisionResult(input), (cause) =>
     error('contract', 'compiled strategy decision is invalid', cause),
   )
 
@@ -254,10 +269,28 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'target planner decision and policy must match the compiled shadow inputs'))
   }
-  if (input.compiledDecision.signalDate !== plannerInput.signalDate) {
-    return Result.fail(
-      error('binding', 'compiled strategy decision must match the target planner weights and signal session'),
-    )
+  const decision = input.compiledDecision
+  if (!runtimeDecisionMatchesStrategy(decision, cycle.identity.strategyName)) {
+    return Result.fail(error('binding', 'compiled decision variant must match the immutable cycle strategy'))
+  }
+  const expectedDecisionSessionDate =
+    decision.schemaVersion === 'bayn.risk-balanced-trend-decision-plan.v1'
+      ? cycle.identity.signalSessionDate
+      : cycle.identity.executionSessionDate
+  const decisionSessionDate =
+    decision.schemaVersion === 'bayn.risk-balanced-trend-decision-plan.v1' ? decision.signalDate : decision.sessionDate
+  if (decisionSessionDate !== expectedDecisionSessionDate) {
+    return Result.fail(error('binding', 'compiled strategy decision must match the immutable cycle session'))
+  }
+  const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
+  const executionMarketData = input.executionMarketData
+  if (
+    intradayEntry !== (executionMarketData !== undefined) ||
+    (executionMarketData !== undefined && executionMarketData.sessionDate !== cycle.identity.executionSessionDate) ||
+    (decision.schemaVersion === 'bayn.opening-drive.target.v1' &&
+      executionMarketData?.snapshotId !== decision.snapshotId)
+  ) {
+    return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const compiledWeightsHash = hashValue(
     input.compiledDecision.targetWeights,
@@ -306,8 +339,9 @@ const validateRiskState = (
   if (state.marketDataSymbol !== riskInput.symbol) {
     return Result.fail(error('binding', 'shadow risk market symbol must match its target delta'))
   }
-  if (state.marketDataHash !== snapshot.contentHash) {
-    return Result.fail(error('binding', 'shadow risk data must match the finalized snapshot content'))
+  const decisionMarketDataHash = input.executionMarketData?.contentHash ?? snapshot.contentHash
+  if (state.marketDataHash !== decisionMarketDataHash) {
+    return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
   if (
     state.executionSession.signal.sessionDate !== cycle.identity.signalSessionDate ||
@@ -534,10 +568,18 @@ const decodeShadowDecisionContext = (
   if (Result.isFailure(decoded)) return Result.fail(decoded.failure)
   const compiledDecision = compiledDecisionOf(decoded.success.compiledDecision)
   if (Result.isFailure(compiledDecision)) return Result.fail(compiledDecision.failure)
-  const { submissionCutoffAt, ...decodedInput } = decoded.success
+  const executionMarketData =
+    decoded.success.executionMarketData === undefined
+      ? Result.succeed(undefined)
+      : Result.mapError(decodeExecutionMarketDataBindingResult(decoded.success.executionMarketData), (cause) =>
+          error('contract', 'execution market-data binding is invalid', cause),
+        )
+  if (Result.isFailure(executionMarketData)) return Result.fail(executionMarketData.failure)
+  const { submissionCutoffAt, executionMarketData: _, ...decodedInput } = decoded.success
   const input: ObserveShadowDecisionInput = {
     ...decodedInput,
     compiledDecision: compiledDecision.success,
+    ...(executionMarketData.success === undefined ? {} : { executionMarketData: executionMarketData.success }),
     ...(submissionCutoffAt === undefined ? {} : { submissionCutoffAt }),
   }
   const strategyDecisionHash = hashValue(
@@ -697,6 +739,7 @@ const assembleShadowDecisionDocument = (
         planningBrokerStateHash: planningBrokerStateHash.success,
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
+        ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
@@ -768,6 +811,7 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
+        ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
       executionSession,
       targetPlan: input.targetPlan,
@@ -792,6 +836,7 @@ export const buildExecutionDecision = (
         cycle: input.cycle,
         snapshot: input.snapshot,
         compiledDecision: input.compiledDecision,
+        ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
         plannerInput: input.plannerInput,
         targetPlan: input.targetPlan,
         policy: input.policy,

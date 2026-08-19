@@ -25,6 +25,7 @@ import {
 } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
+import { openingDriveExecutionModel } from './strategy/opening-drive'
 
 const hash = (character: string): string => character.repeat(64)
 const resultValue = <A, E>(result: Result.Result<A, E>): A => {
@@ -141,6 +142,58 @@ const makeActiveCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle
     bindings: { snapshotId: hash('3') },
     stateVersion: 3,
     createdAt: '2026-01-30T21:15:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  }
+}
+
+const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle => {
+  const executionSession = monthEndCalendar.sessions[1]
+  if (executionSession === undefined) throw new Error('opening cycle fixture requires the post-signal session')
+  const executionCalendar = resultValue(
+    makeExecutionCalendarObservation({
+      schemaVersion: monthEndCalendar.schemaVersion,
+      source: monthEndCalendar.source,
+      ...executionSession,
+    }),
+  )
+  const executionPolicy = policyOverride ?? resultValue(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
+    throw new Error('opening cycle fixture requires the post-open execution policy')
+  }
+  const identity = resultValue(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId: hash('4'),
+      strategyProtocolHash: hash('5'),
+      accountId: 'paper-account-1',
+      signalSessionDate: '2026-01-30',
+      signalCalendarVersion: 'signal-calendar-v1',
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = resultValue(
+    makeCycleWindow(
+      {
+        calendar_version: 'signal-calendar-v1',
+        session_date: '2026-01-30',
+        close_time: '16:00',
+        timezone: 'America/New_York',
+      },
+      executionCalendar,
+      executionPolicy,
+    ),
+  )
+  return {
+    ...resultValue(makeCycleDraft(identity, window)),
+    state: CycleState.Active,
+    bindings: { snapshotId: hash('6') },
+    stateVersion: 3,
+    createdAt: '2026-01-30T21:00:00.000Z',
     updatedAt: window.submissionOpenAt,
   }
 }
@@ -380,6 +433,74 @@ describe('causal execution-session binding', () => {
       submissionCutoffAt: '2026-02-02T14:15:00.000Z',
       submissionCutoffLeadMinutes: 15,
     })
+  })
+
+  test('binds the opening-drive cycle to its exact post-open decision and cutoff offsets', () => {
+    const cycle = makeActiveOpeningCycle()
+    const binding = bindCycleExecutionSessionSuccess({
+      cycle,
+      signal: {
+        sessionDate: cycle.identity.signalSessionDate,
+        finalizedAt: cycle.window.signalCloseAt,
+        contentHash: hash('7'),
+      },
+      planningBrokerState: {
+        observedAt: cycle.window.submissionOpenAt,
+        contentHash: hash('8'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: openingDriveExecutionModel,
+    })
+
+    expect(binding).toMatchObject({
+      schemaVersion: 'bayn.execution-session-binding.v2',
+      executionSession: {
+        date: '2026-02-02',
+        openAt: '2026-02-02T14:30:00.000Z',
+        closeAt: '2026-02-02T21:00:00.000Z',
+      },
+      submissionOpenAt: '2026-02-02T14:35:01.000Z',
+      submissionCutoffAt: '2026-02-02T15:00:00.000Z',
+      decisionAfterOpenMs: 301_000,
+      submissionCutoffAfterOpenMs: 1_800_000,
+    })
+
+    const policy = cycle.identity.executionPolicy
+    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') return expect.unreachable()
+    const inconsistentPolicy = resultValue(
+      makeCycleExecutionPolicy({
+        schemaVersion: policy.schemaVersion,
+        strategyExecutionModelHash: policy.strategyExecutionModelHash,
+        submissionWindowMs: policy.submissionWindowMs - 1,
+        submissionCutoffAfterOpenMs: policy.submissionCutoffAfterOpenMs,
+      }),
+    )
+    const mismatch = bindCycleExecutionSession({
+      cycle: makeActiveOpeningCycle(inconsistentPolicy),
+      signal: {
+        sessionDate: cycle.identity.signalSessionDate,
+        finalizedAt: cycle.window.signalCloseAt,
+        contentHash: hash('7'),
+      },
+      planningBrokerState: {
+        observedAt: cycle.window.submissionOpenAt,
+        contentHash: hash('8'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: openingDriveExecutionModel,
+    })
+    expect(Result.isFailure(mismatch)).toBeTrue()
+    if (Result.isFailure(mismatch)) {
+      expect(mismatch.failure).toMatchObject({
+        operation: 'bind-cycle',
+        reason: 'cycle-policy',
+        facts: {
+          field: 'decisionAfterOpenMs',
+          expected: 301_001,
+          observed: 301_000,
+        },
+      })
+    }
   })
 
   test('binds cycle signal finalization only at or after the durable signal close boundary', () => {

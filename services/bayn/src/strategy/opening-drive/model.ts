@@ -1,6 +1,16 @@
-import { Data } from 'effect'
+import { Data, Schema } from 'effect'
 
 import type { IntradayMarketSnapshot } from '../../market-data'
+import {
+  IsoDateSchema,
+  PositiveIntegerSchema,
+  PositiveMicrosSchema,
+  Sha256Schema,
+  SymbolSchema,
+  UnitIntervalSchema,
+  UtcInstantSchema,
+  UnsignedMicrosSchema,
+} from '../../schemas'
 import type { IsoDate } from '../../types'
 import type { StrategyDefinition, TargetPortfolio } from '../core'
 import type { OpeningDriveProtocol } from './protocol'
@@ -12,6 +22,34 @@ export type OpeningDriveRejectionReason =
   | 'spread'
   | 'dollar-volume'
   | 'displayed-liquidity'
+
+const OpeningDriveRejectionReasonSchema = Schema.Literals([
+  'opening-return',
+  'breakout',
+  'range-location',
+  'spread',
+  'dollar-volume',
+])
+
+export const OpeningDriveSignalSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  openingPriceMicros: PositiveMicrosSchema,
+  rangeHighPriceMicros: PositiveMicrosSchema,
+  rangeLowPriceMicros: PositiveMicrosSchema,
+  bidPriceMicros: PositiveMicrosSchema,
+  askPriceMicros: PositiveMicrosSchema,
+  quoteObservedAt: UtcInstantSchema,
+  breakoutTradePriceMicros: PositiveMicrosSchema,
+  breakoutTradeObservedAt: UtcInstantSchema,
+  openingReturnBps: Schema.Int,
+  breakoutBps: Schema.Int,
+  rangeLocationPpm: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 })),
+  spreadBps: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10_000 })),
+  openingDollarVolumeMicros: UnsignedMicrosSchema,
+  eligible: Schema.Boolean,
+  rejectionReasons: Schema.Array(OpeningDriveRejectionReasonSchema).check(Schema.isUnique()),
+  rank: Schema.NullOr(PositiveIntegerSchema),
+})
 
 export interface OpeningDriveSignal {
   readonly symbol: string
@@ -43,6 +81,18 @@ export interface OpeningDriveTargetPortfolio extends TargetPortfolio {
   readonly selectedSymbols: readonly string[]
   readonly signals: readonly OpeningDriveSignal[]
 }
+
+export const OpeningDriveTargetPortfolioSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.opening-drive.target.v1'),
+  strategy: Schema.Literal('opening-drive-momentum'),
+  sessionDate: IsoDateSchema,
+  snapshotId: Sha256Schema,
+  observedAt: UtcInstantSchema,
+  calendarHash: Sha256Schema,
+  selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
+  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  signals: Schema.Array(OpeningDriveSignalSchema).check(Schema.isMinLength(1)),
+})
 
 /** Minimal, caller-verified exchange-calendar fact required by the pure strategy. */
 export interface OpeningDriveSessionBinding {

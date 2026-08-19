@@ -11,8 +11,45 @@ import {
   legacyObserveAuthorityToken,
 } from './execution/legacy-wire'
 import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
-import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  UnsignedMicrosSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
+
+export const ExecutionMarketDataBindingSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v1'),
+  snapshotSchemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
+  sessionDate: IsoDateSchema,
+  rangeStartAt: UtcInstantSchema,
+  rangeEndAt: UtcInstantSchema,
+  observedAt: UtcInstantSchema,
+  universeId: StrictNonEmptyStringSchema,
+  universeSymbolHash: Sha256Schema,
+  sourceTopics: Schema.Struct({
+    bars: StrictNonEmptyStringSchema,
+    quotes: StrictNonEmptyStringSchema,
+    trades: StrictNonEmptyStringSchema,
+  }),
+  archiveWatermarks: Schema.Array(
+    Schema.Struct({
+      sourceTopic: StrictNonEmptyStringSchema,
+      sourcePartition: NonNegativeIntegerSchema,
+      inclusiveLastOffset: UnsignedMicrosSchema,
+    }),
+  ).check(Schema.isMinLength(1)),
+  barsContentHash: Sha256Schema,
+  quotesContentHash: Sha256Schema,
+  tradesContentHash: Sha256Schema,
+  contentHash: Sha256Schema,
+  snapshotId: Sha256Schema,
+})
+export type ExecutionMarketDataBinding = typeof ExecutionMarketDataBindingSchema.Type
 
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
@@ -27,6 +64,7 @@ const ShadowDecisionBindingsSchema = Schema.Struct({
   planningBrokerStateHash: Sha256Schema,
   reconciliationId: Sha256Schema,
   reconciliationHash: Sha256Schema,
+  executionMarketData: Schema.optionalKey(ExecutionMarketDataBindingSchema),
 })
 export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 

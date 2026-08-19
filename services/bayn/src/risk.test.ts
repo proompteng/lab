@@ -78,9 +78,13 @@ type InvalidRiskFailurePair = Exclude<(typeof riskFailurePairs)[number], RiskFai
 const riskFailurePairCoverage: [MissingRiskFailurePair, InvalidRiskFailurePair] extends [never, never] ? true : never =
   true
 
-const rehashExecutionSession = (
-  binding: Omit<State['executionSession'], 'bindingHash'>,
-): State['executionSession'] => ({
+type ExecutionSessionWithoutHash = State['executionSession'] extends infer Binding
+  ? Binding extends { readonly bindingHash: string }
+    ? Omit<Binding, 'bindingHash'>
+    : never
+  : never
+
+const rehashExecutionSession = (binding: ExecutionSessionWithoutHash): State['executionSession'] => ({
   ...binding,
   bindingHash: canonicalHashV1(binding),
 })
@@ -89,6 +93,7 @@ const changeExecutionWindow = (
   binding: State['executionSession'],
   overrides: Partial<Pick<State['executionSession'], 'submissionOpenAt' | 'submissionCutoffAt'>>,
 ): State['executionSession'] => {
+  if (binding.schemaVersion !== 'bayn.execution-session-binding.v1') return binding
   const { bindingHash: _, ...material } = binding
   if (overrides.submissionCutoffAt === undefined) {
     return rehashExecutionSession({
