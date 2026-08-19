@@ -26,6 +26,7 @@ import {
 
 const minuteMs = 60_000
 const maximumWindowMs = 30 * minuteMs
+const maximumObservationLagMs = 20 * minuteMs
 const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
@@ -37,6 +38,8 @@ const nanosPerMillisecond = 1_000_000n
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
 // exact in-process equivalent and cannot vary with the host locale.
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+const isCanonicalUInt64 = (value: string): boolean =>
+  /^\d+$/.test(value) && String(BigInt(value)) === value && BigInt(value) <= maximumUInt64
 
 const failure = (
   reason: IntradaySnapshotFailureReason,
@@ -105,6 +108,9 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'snapshot observation must follow its bounded archive watermark'))
   }
+  if (observed - end > maximumObservationLagMs) {
+    return Result.fail(failure('request', 'snapshot observation must remain within twenty minutes of the range end'))
+  }
   if (
     !Number.isSafeInteger(request.maximumQuoteAgeMs) ||
     request.maximumQuoteAgeMs < 1_000 ||
@@ -149,7 +155,14 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
 
 export const verifyIntradaySnapshotQuery = (
   query: IntradaySnapshotQuery,
-): Result.Result<IntradaySnapshotQuery, IntradaySnapshotFailure> => validateQuery(query)
+): Result.Result<IntradaySnapshotQuery, IntradaySnapshotFailure> =>
+  Result.map(validateQuery(query), (verified) =>
+    Object.freeze({
+      ...verified,
+      universe: Object.freeze([...verified.universe]),
+      sourceTopics: Object.freeze({ ...verified.sourceTopics }),
+    }),
+  )
 
 const numberValue = (
   value: string | number,
@@ -173,7 +186,7 @@ const normalizeWatermark = (
   if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > 4_294_967_295) {
     return Result.fail(failure('watermark', 'intraday archive watermark partition is outside UInt32'))
   }
-  if (!/^\d+$/.test(offset) || String(BigInt(offset)) !== offset || BigInt(offset) > maximumUInt64) {
+  if (!isCanonicalUInt64(offset)) {
     return Result.fail(failure('watermark', 'intraday archive watermark offset must be a canonical UInt64'))
   }
   return Result.succeed(
@@ -203,9 +216,7 @@ const validateWatermarks = (
       !Number.isSafeInteger(watermark.sourcePartition) ||
       watermark.sourcePartition < 0 ||
       watermark.sourcePartition > 4_294_967_295 ||
-      !/^\d+$/.test(watermark.inclusiveLastOffset) ||
-      String(BigInt(watermark.inclusiveLastOffset)) !== watermark.inclusiveLastOffset ||
-      BigInt(watermark.inclusiveLastOffset) > maximumUInt64
+      !isCanonicalUInt64(watermark.inclusiveLastOffset)
     ) {
       return Result.fail(failure('watermark', 'intraday archive watermark is outside its canonical domain'))
     }
@@ -239,7 +250,12 @@ export const verifyIntradaySnapshotRequest = (
   Result.gen(function* () {
     yield* validateQuery(request)
     yield* validateWatermarks(request, request.archiveWatermarks)
-    return request
+    return Object.freeze({
+      ...request,
+      universe: Object.freeze([...request.universe]),
+      sourceTopics: Object.freeze({ ...request.sourceTopics }),
+      archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
+    })
   })
 
 const recordIdentity = (
@@ -249,11 +265,7 @@ const recordIdentity = (
   if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > 4_294_967_295) {
     return Result.fail(failure('lineage', 'intraday source partition must be an unsigned 32-bit integer'))
   }
-  if (
-    !/^\d+$/.test(row.source_offset) ||
-    String(BigInt(row.source_offset)) !== row.source_offset ||
-    BigInt(row.source_offset) > maximumUInt64
-  ) {
+  if (!isCanonicalUInt64(row.source_offset)) {
     return Result.fail(failure('lineage', 'intraday source offset must be a canonical UInt64'))
   }
   return Result.succeed({
@@ -282,6 +294,9 @@ const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradayS
     const close = yield* numberValue(row.close, 'bar close', true)
     const volume = yield* numberValue(row.volume, 'bar volume', false)
     const vwap = row.vwap === null ? null : yield* numberValue(row.vwap, 'bar VWAP', true)
+    if (row.trade_count !== null && !isCanonicalUInt64(row.trade_count)) {
+      return yield* Result.fail(failure('rows', 'intraday bar trade count must be a canonical UInt64'))
+    }
     if (high < Math.max(open, low, close) || low > Math.min(open, high, close)) {
       return yield* Result.fail(failure('rows', 'intraday bar OHLC values are inconsistent'))
     }
@@ -591,9 +606,9 @@ export const verifyIntradaySnapshot = (
   rows: IntradaySnapshotRows,
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    yield* verifyIntradaySnapshotRequest(request)
-    const actualWatermarks = yield* verifyIntradayArchiveWatermarks(request, rows.archiveWatermarks)
-    yield* validateArchiveProgress(request.archiveWatermarks, actualWatermarks)
+    const verifiedRequest = yield* verifyIntradaySnapshotRequest(request)
+    const actualWatermarks = yield* verifyIntradayArchiveWatermarks(verifiedRequest, rows.archiveWatermarks)
+    yield* validateArchiveProgress(verifiedRequest.archiveWatermarks, actualWatermarks)
     const decoded = yield* Result.all({
       bars: decodeIntradayBarRows(rows.bars),
       quotes: decodeIntradayQuoteRows(rows.quotes),
@@ -603,33 +618,33 @@ export const verifyIntradaySnapshot = (
     const quotes = Object.freeze((yield* Result.all(decoded.quotes.map(normalizeQuote))).toSorted(compareRecords))
     const trades = Object.freeze((yield* Result.all(decoded.trades.map(normalizeTrade))).toSorted(compareRecords))
     const allRecords = [...bars, ...quotes, ...trades].toSorted(compareRecords)
-    yield* validateSourceTopics(request, bars, quotes, trades)
-    yield* validateIdentity(request, bars, request.rangeEndAt, false)
-    yield* validateIdentity(request, [...quotes, ...trades], request.observedAt, true)
-    yield* validateBarCoverage(request, bars)
-    const latest = yield* latestQuotes(request, quotes, trades)
+    yield* validateSourceTopics(verifiedRequest, bars, quotes, trades)
+    yield* validateIdentity(verifiedRequest, bars, verifiedRequest.rangeEndAt, false)
+    yield* validateIdentity(verifiedRequest, [...quotes, ...trades], verifiedRequest.observedAt, true)
+    yield* validateBarCoverage(verifiedRequest, bars)
+    const latest = yield* latestQuotes(verifiedRequest, quotes, trades)
     const lineage = yield* lineageOf(allRecords)
     const barsContentHash = yield* hash(bars, 'bars')
     const quotesContentHash = yield* hash(quotes, 'quotes')
     const tradesContentHash = yield* hash(trades, 'trades')
     const archiveWatermarks = Object.freeze(
-      request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark })),
+      verifiedRequest.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark })),
     )
     const material = {
       schemaVersion: 'bayn.intraday-market-snapshot.v1',
-      sessionDate: request.sessionDate,
-      rangeStartAt: request.rangeStartAt,
-      rangeEndAt: request.rangeEndAt,
-      observedAt: request.observedAt,
-      universeId: request.universeId,
-      universeSymbolHash: request.universeSymbolHash,
-      symbols: Object.freeze([...request.universe]),
-      feed: request.feed,
-      delayClass: request.delayClass,
-      sourceTopics: Object.freeze({ ...request.sourceTopics }),
+      sessionDate: verifiedRequest.sessionDate,
+      rangeStartAt: verifiedRequest.rangeStartAt,
+      rangeEndAt: verifiedRequest.rangeEndAt,
+      observedAt: verifiedRequest.observedAt,
+      universeId: verifiedRequest.universeId,
+      universeSymbolHash: verifiedRequest.universeSymbolHash,
+      symbols: Object.freeze([...verifiedRequest.universe]),
+      feed: verifiedRequest.feed,
+      delayClass: verifiedRequest.delayClass,
+      sourceTopics: Object.freeze({ ...verifiedRequest.sourceTopics }),
       archiveWatermarks,
-      maximumQuoteAgeMs: request.maximumQuoteAgeMs,
-      minimumWatermarkLagMs: request.minimumWatermarkLagMs,
+      maximumQuoteAgeMs: verifiedRequest.maximumQuoteAgeMs,
+      minimumWatermarkLagMs: verifiedRequest.minimumWatermarkLagMs,
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,

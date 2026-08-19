@@ -46,9 +46,9 @@ export const makeIntradayMarketData: Effect.Effect<
               trades: loadIntradayTrades(verified),
             },
             { concurrency: 4 },
-          ),
+          ).pipe(Effect.map((rows) => ({ rows, verified }))),
         ),
-        Effect.flatMap((rows) => Effect.fromResult(verifyIntradaySnapshot(request, rows))),
+        Effect.flatMap(({ rows, verified }) => Effect.fromResult(verifyIntradaySnapshot(verified, rows))),
         Effect.mapError(mapFailure),
       ),
   }

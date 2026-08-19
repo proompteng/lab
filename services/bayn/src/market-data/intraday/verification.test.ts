@@ -145,7 +145,7 @@ describe('immutable intraday market snapshot', () => {
       ],
     }
 
-    expect(success(verifyIntradaySnapshotRequest(caseMixedRequest))).toBe(caseMixedRequest)
+    expect(success(verifyIntradaySnapshotRequest(caseMixedRequest))).toEqual(caseMixedRequest)
     expect(
       error(
         verifyIntradaySnapshotRequest({
@@ -214,6 +214,14 @@ describe('immutable intraday market snapshot', () => {
         ),
       ),
     ).toMatchObject({ reason: 'request' })
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          observedAt: '2026-08-18T13:55:00.001Z',
+        }),
+      ),
+    ).toMatchObject({ reason: 'request' })
 
     const firstQuote = rows.quotes[0]
     if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
@@ -244,6 +252,48 @@ describe('immutable intraday market snapshot', () => {
         }),
       ),
     ).toMatchObject({ reason: 'rows' })
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: [{ ...firstBar, trade_count: '01' }, ...rows.bars.slice(1)],
+        }),
+      ),
+    ).toMatchObject({ reason: 'rows' })
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: [{ ...firstBar, trade_count: '18446744073709551616' }, ...rows.bars.slice(1)],
+        }),
+      ),
+    ).toMatchObject({ reason: 'rows' })
+  })
+
+  test('detaches and freezes a verified request before asynchronous use', () => {
+    const mutableUniverse = [...request.universe]
+    const mutableTopics = { ...request.sourceTopics }
+    const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))
+    const mutableRequest: IntradaySnapshotRequest = {
+      ...request,
+      universe: mutableUniverse,
+      sourceTopics: mutableTopics,
+      archiveWatermarks: mutableWatermarks,
+    }
+    const verified = success(verifyIntradaySnapshotRequest(mutableRequest))
+
+    mutableUniverse[0] = 'AAPL'
+    mutableTopics.quotes = 'changed.quotes'
+    mutableWatermarks[0]!.inclusiveLastOffset = '999'
+
+    expect(verified.universe).toEqual(request.universe)
+    expect(verified.sourceTopics).toEqual(request.sourceTopics)
+    expect(verified.archiveWatermarks).toEqual(request.archiveWatermarks)
+    expect(Object.isFrozen(verified)).toBe(true)
+    expect(Object.isFrozen(verified.universe)).toBe(true)
+    expect(Object.isFrozen(verified.sourceTopics)).toBe(true)
+    expect(Object.isFrozen(verified.archiveWatermarks)).toBe(true)
+    expect(Object.isFrozen(verified.archiveWatermarks[0])).toBe(true)
   })
 
   test('preserves canonical nanosecond ordering timestamps from quote/trade archive rows', () => {

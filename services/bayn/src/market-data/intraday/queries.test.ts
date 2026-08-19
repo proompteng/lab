@@ -46,6 +46,11 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request))
 
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
+    expect(capture).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 3, 'UTC')`)
+    expect(capture).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
+    expect(
+      capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
+    ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
     expect(bars).toContain('ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC')
