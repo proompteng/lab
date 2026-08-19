@@ -2975,7 +2975,7 @@ describePostgres('paper accounting persistence', () => {
               terminal_at - interval '25 hours', terminal_at - interval '8 hours 30 minutes',
               terminal_at - interval '8 hours 30 minutes', terminal_at - interval '7 hours 30 minutes',
               terminal_at - interval '1 hour', terminal_at - interval '8 hours',
-              'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_SUBMISSION_DEADLINE', 1,
+              'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_PUBLICATION_DEADLINE', 1,
               terminal_at, terminal_at, terminal_at
             FROM (
               SELECT
