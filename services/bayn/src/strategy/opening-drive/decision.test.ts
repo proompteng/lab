@@ -410,6 +410,23 @@ describe('opening-drive momentum strategy', () => {
       cause: { _tag: 'IntradaySnapshotFailure' },
     })
 
+    const firstTrade = market.trades[0]
+    if (firstTrade === undefined) throw new Error('opening trade fixture is missing')
+    expect(
+      error(
+        decideOpeningDrive(
+          {
+            snapshot: {
+              ...market,
+              trades: [{ ...firstTrade, sourceOffset: 'not-an-integer' }, ...market.trades],
+            },
+            session,
+          },
+          protocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-coverage', cause: { _tag: 'IntradaySnapshotFailure' } })
+
     expect(
       error(
         decideOpeningDrive(

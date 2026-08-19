@@ -342,7 +342,6 @@ export const decideOpeningDrive = (
 ): Result.Result<OpeningDriveTargetPortfolio, OpeningDriveFailure> =>
   Result.gen(function* () {
     const { session } = context
-    yield* validateSnapshot(context, protocol)
     const snapshot = yield* Result.mapError(
       reverifyIntradayMarketSnapshot(context.snapshot),
       (cause) =>
@@ -357,6 +356,7 @@ export const decideOpeningDrive = (
           cause,
         }),
     )
+    yield* validateSnapshot({ ...context, snapshot }, protocol)
     const signals = yield* Result.all(
       protocol.universe.map((symbol) => {
         const quote = snapshot.latestQuotes[symbol]
