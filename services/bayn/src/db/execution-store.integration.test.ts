@@ -3111,7 +3111,7 @@ describePostgres('paper accounting persistence', () => {
 
           yield* insertUnboundBlockedCycle(
             historicalCycleId,
-            new Date(restrictionTime.updated_at.getTime() - 1).toISOString(),
+            new Date(restrictionTime.updated_at.getTime() - 24 * 60 * 60 * 1_000).toISOString(),
           )
 
           let reconciliations = 0
