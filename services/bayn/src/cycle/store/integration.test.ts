@@ -108,7 +108,6 @@ import {
   type SignalSessionRow,
 } from '../../market-data'
 import {
-  buildClosingExecutionCycleDecision,
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
@@ -2007,10 +2006,13 @@ const makeValidWindowBroker = (
   }
   const mutation: BrokerMutationShape = {
     submit: (intent) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const dispatchObservedAt = yield* currentUtcInstant
         control.submittedClientOrderIds.push(intent.clientOrderId)
         const encoded = Result.getOrThrow(encodeOrder(MutationOperation.Submit, intent))
-        const submitObservedAt = utcInstantFromEpochMillis(Date.parse(intent.createdAt) + 2)
+        const submitObservedAt = utcInstantFromEpochMillis(
+          Math.max(Date.parse(intent.createdAt), Date.parse(dispatchObservedAt)) + 2,
+        )
         const filled = makeOrder(intent, BrokerOrderStatus.Filled, submitObservedAt, encoded.request)
         const quantityMicros = BigInt(filled.filledQuantityMicros)
         const fillPriceMicros = BigInt(filled.filledAveragePriceMicros ?? control.marketPriceMicros.toString())
@@ -5998,6 +6000,27 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               Effect.provideService(BrokerRead, broker.read),
               Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
             )
+          const closeReconciliation = runOnce.pipe(
+            Effect.tap((result) => {
+              const authorityObservedAt = result.riskContext.authorityObservedAt
+              if (authorityObservedAt === null) {
+                return Effect.die(new Error('valid-window close reconciliation requires an authority observation'))
+              }
+              return currentUtcInstant.pipe(
+                Effect.flatMap((clockObservedAt) =>
+                  TestClock.setTime(Math.max(Date.parse(clockObservedAt), Date.parse(authorityObservedAt))),
+                ),
+              )
+            }),
+          )
+          const productionCloseRecoveryPass = () =>
+            runRecoveryFirstCyclePass(input, preparation, policy, recoveryContext, closeReconciliation, {
+              _tag: 'Mutation',
+              executionProgram,
+            }).pipe(
+              Effect.provideService(BrokerRead, broker.read),
+              Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
+            )
           const baseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (baseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(new Error('valid-window execution requires an exact production broker baseline'))
@@ -6036,31 +6059,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           }
 
           yield* TestClock.setTime(Date.parse(setup.forceCloseAt) + 1)
-          const closePreview = yield* buildClosingExecutionCycleDecision({
-            input,
-            preparation,
-            policy,
-            cycle: setup.bound,
-            entryDocument: setup.planned.document,
-            reconcile: runOnce.pipe(Effect.provideService(BrokerRead, broker.read)),
-            closeExpiresAt: setup.closeExpiresAt,
-          }).pipe(
-            Effect.provideService(BrokerRead, broker.read),
-            Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
-          )
-          if (closePreview.targetPlan.status !== TargetPlanStatus.Planned || !closePreview.dispatchable) {
-            return yield* Effect.die(
-              new Error(
-                `valid-window production close planner blocked: ${JSON.stringify({
-                  deltaRisk: closePreview.deltaRisk,
-                  dispatchable: closePreview.dispatchable,
-                  riskBlock: closePreview.riskBlock,
-                  targetPlan: closePreview.targetPlan,
-                })}`,
-              ),
-            )
-          }
-          const closeAdvance = yield* productionRecoveryPass()
+          const closeAdvance = yield* productionCloseRecoveryPass()
           if (!('_tag' in closeAdvance) || closeAdvance._tag !== 'PostMutationReconciliation') {
             return yield* Effect.die(
               new Error(
@@ -6082,7 +6081,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             return yield* Effect.die(new Error('production close intent disappeared from PostgreSQL'))
           }
 
-          yield* TestClock.setTime(Date.parse(setup.forceCloseAt) + 1_000)
+          yield* TestClock.adjust(1_000)
           const flatReconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
           if (flatReconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
             return yield* Effect.die(
@@ -6091,7 +6090,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               ),
             )
           }
-          yield* TestClock.setTime(Date.parse(setup.forceCloseAt) + 2_000)
+          yield* TestClock.adjust(1_000)
           const completed = yield* productionRecoveryPass()
           if (!('outcome' in completed) || completed.outcome !== 'RECOVERED' || completed.action !== 'COMPLETED') {
             return yield* Effect.die(
