@@ -27,7 +27,7 @@ import { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millis
 
 const minuteMs = 60_000
 const maximumWindowMs = 30 * minuteMs
-const maximumObservationLagMs = 20 * minuteMs
+export const maximumIntradayObservationLagMs = 20 * minuteMs
 const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
@@ -95,7 +95,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'snapshot observation must follow its bounded archive watermark'))
   }
-  if (observed - end > maximumObservationLagMs) {
+  if (observed - end > maximumIntradayObservationLagMs) {
     return Result.fail(failure('request', 'snapshot observation must remain within twenty minutes of the range end'))
   }
   if (
