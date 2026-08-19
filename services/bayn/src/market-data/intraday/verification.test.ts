@@ -186,6 +186,14 @@ describe('immutable intraday market snapshot', () => {
     const rows = makeRows()
     expect(
       error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          sessionDate: '2026-08-1',
+        }),
+      ),
+    ).toMatchObject({ reason: 'request' })
+    expect(
+      error(
         verifyIntradaySnapshot(
           {
             ...request,
@@ -207,6 +215,43 @@ describe('immutable intraday market snapshot', () => {
         }),
       ),
     ).toMatchObject({ reason: 'rows' })
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          quotes: [{ ...firstQuote, source_offset: '011' }, ...rows.quotes.slice(1)],
+        }),
+      ),
+    ).toMatchObject({ reason: 'lineage' })
+
+    const firstBar = rows.bars[0]
+    if (firstBar === undefined) throw new Error('bar fixture is incomplete')
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: [{ ...firstBar, vwap: '103' }, ...rows.bars.slice(1)],
+        }),
+      ),
+    ).toMatchObject({ reason: 'rows' })
+  })
+
+  test('preserves canonical nanosecond ordering timestamps from quote/trade archive rows', () => {
+    const rows = makeRows()
+    const quotes = rows.quotes.map((quote) => ({
+      ...quote,
+      event_at: '2026-08-18T13:35:15.123456789Z',
+      ingested_at: '2026-08-18T13:35:15.223456789Z',
+    }))
+    const trades = rows.trades.map((trade) => ({
+      ...trade,
+      event_at: '2026-08-18T13:34:58.123456789Z',
+      ingested_at: '2026-08-18T13:34:58.223456789Z',
+    }))
+
+    const snapshot = success(verifyIntradaySnapshot(request, { ...rows, quotes, trades }))
+    expect(snapshot.quotes[0]?.eventAt).toBe('2026-08-18T13:35:15.123456789Z')
+    expect(snapshot.trades[0]?.eventAt).toBe('2026-08-18T13:34:58.123456789Z')
   })
 
   test('fails closed on stale quotes and missing trades', () => {

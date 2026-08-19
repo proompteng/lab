@@ -1,6 +1,7 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
+import { IsoDateSchema } from '../../schemas'
 import type {
   IntradayArchiveWatermark,
   IntradayBar,
@@ -28,6 +29,8 @@ const maximumWindowMs = 30 * minuteMs
 const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
+const isIsoDate = Schema.is(IsoDateSchema)
+const maximumUInt64 = 18_446_744_073_709_551_615n
 
 // ClickHouse orders String values by their binary representation. Source topics
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
@@ -61,9 +64,10 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     return Result.fail(failure('request', 'intraday snapshot instants must be canonical UTC milliseconds'))
   }
   if (
-    !request.rangeStartAt.startsWith(request.sessionDate) ||
-    !request.rangeEndAt.startsWith(request.sessionDate) ||
-    !request.observedAt.startsWith(request.sessionDate)
+    !isIsoDate(request.sessionDate) ||
+    request.rangeStartAt.slice(0, 10) !== request.sessionDate ||
+    request.rangeEndAt.slice(0, 10) !== request.sessionDate ||
+    request.observedAt.slice(0, 10) !== request.sessionDate
   ) {
     return Result.fail(failure('request', 'intraday range and observation must remain within the declared session'))
   }
@@ -230,6 +234,13 @@ const recordIdentity = (
   if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > 4_294_967_295) {
     return Result.fail(failure('lineage', 'intraday source partition must be an unsigned 32-bit integer'))
   }
+  if (
+    !/^\d+$/.test(row.source_offset) ||
+    String(BigInt(row.source_offset)) !== row.source_offset ||
+    BigInt(row.source_offset) > maximumUInt64
+  ) {
+    return Result.fail(failure('lineage', 'intraday source offset must be a canonical UInt64'))
+  }
   return Result.succeed({
     provider: row.provider,
     universeId: row.universe_id,
@@ -258,6 +269,9 @@ const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradayS
     const vwap = row.vwap === null ? null : yield* numberValue(row.vwap, 'bar VWAP', true)
     if (high < Math.max(open, low, close) || low > Math.min(open, high, close)) {
       return yield* Result.fail(failure('rows', 'intraday bar OHLC values are inconsistent'))
+    }
+    if (vwap !== null && (vwap < low || vwap > high)) {
+      return yield* Result.fail(failure('rows', 'intraday bar VWAP must remain within its low/high range'))
     }
     return Object.freeze({
       ...identity,
@@ -355,7 +369,17 @@ const validateIdentity = (
       watermark === undefined ||
       BigInt(record.sourceOffset) > watermark
     ) {
-      return Result.fail(failure('ordering', 'intraday row falls outside the event-time and ingestion-time bounds'))
+      return Result.fail(
+        failure('ordering', 'intraday row falls outside the event-time and ingestion-time bounds', {
+          symbol: record.symbol,
+          sourceTopic: record.sourceTopic,
+          sourcePartition: record.sourcePartition,
+          sourceOffset: record.sourceOffset,
+          eventAt: record.eventAt,
+          ingestedAt: record.ingestedAt,
+          watermark: watermark === undefined ? null : String(watermark),
+        }),
+      )
     }
   }
   return Result.succeed(undefined)
