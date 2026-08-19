@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-19T01:23:22Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-19T02:17:29Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -56,7 +56,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 781ffb9972647a958fbfbaa337350026b69bef91
+              value: f42df5a403d00fd36e33c43745c6e3cc6c3fb495
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -72,7 +72,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:97a08fd5e89a89cee49032ca1ab1213fc7c2e878fba127b62a4ba843ea514c15
+              value: sha256:6ce8a4aa41a60f0b748011252563a1b4edcd2adf428361923fae7b8a21ef933e
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
