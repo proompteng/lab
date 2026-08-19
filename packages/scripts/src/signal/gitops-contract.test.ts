@@ -207,7 +207,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('for host in "${hosts[@]}"; do')
     expect(migration).toContain('FROM system.tables')
     expect(migration).toContain('FROM system.columns')
-    expect(migration).toContain('FROM signal.intraday_bars_1m_v1 FINAL AS src')
+    expect(migration).toContain('FROM signal.intraday_bars_1m_v1 AS src FINAL')
     expect(migration).toContain('LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst')
     expect(migration).toContain('Signal immutable intraday-bars backfill is incomplete')
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
