@@ -187,7 +187,7 @@ spec:
               "${client[@]}" --query "
                 INSERT INTO signal.intraday_bars_1m_v2
                 SELECT src.*
-                FROM signal.intraday_bars_1m_v1 FINAL AS src
+                FROM signal.intraday_bars_1m_v1 AS src FINAL
                 LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst
                   ON src.universe_id = dst.universe_id
                   AND src.feed = dst.feed
@@ -203,7 +203,7 @@ spec:
                   count() != 0,
                   'Signal immutable intraday-bars backfill is incomplete'
                 )
-                FROM signal.intraday_bars_1m_v1 FINAL AS src
+                FROM signal.intraday_bars_1m_v1 AS src FINAL
                 LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst
                   ON src.universe_id = dst.universe_id
                   AND src.feed = dst.feed
