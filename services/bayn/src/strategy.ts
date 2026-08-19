@@ -49,6 +49,7 @@ export {
   type OpeningDrivePortfolioReplay,
   type OpeningDriveProtocol,
   type OpeningDriveQualificationBinding,
+  type OpeningDriveQualificationCalendar,
   type OpeningDriveQualificationFailureReason,
   type OpeningDriveQualificationGate,
   type OpeningDriveQualificationPolicy,

@@ -2,7 +2,8 @@ import { Result } from 'effect'
 
 import type { ExecutionModel } from '../../execution-model-contract'
 import { canonicalHashV1Result } from '../../hash'
-import type { IntradayMarketSnapshot, IntradayQuote } from '../../market-data'
+import { reverifyIntradayMarketSnapshot, type IntradayMarketSnapshot, type IntradayQuote } from '../../market-data'
+import { scaleQuantityMicros } from '../execution-model/cash'
 import { calculateSessionFees } from '../execution-model/fees'
 import { makeFillTerms, type FillTerms } from '../execution-model/fills'
 import {
@@ -12,7 +13,7 @@ import {
   quantizeDown,
   referencePriceMicros,
 } from '../execution-model/fixed-point'
-import { defaultExecutionModel, MICROS } from '../execution-model/model'
+import { defaultExecutionModel, MICROS, PPM } from '../execution-model/model'
 import { decideOpeningDrive } from './decision'
 import {
   OpeningDriveQualificationFailure,
@@ -36,7 +37,7 @@ export const openingDriveReplayCostModelDocument = Object.freeze({
   entryPriceReference: 'verified-opening-ask',
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
-  liquidity: 'minimum-entry-ask-and-exit-bid-top-size',
+  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected',
   adverseSlippageBps: defaultExecutionModel.priceImpact.slippageBps,
   adverseSlippageMultiplier: defaultExecutionModel.doubleCostMultiplier,
   regulatoryFeeMultiplier: defaultExecutionModel.doubleCostMultiplier,
@@ -62,69 +63,15 @@ const canonicalHash = (
 const validateSnapshotIntegrity = (
   snapshot: IntradayMarketSnapshot,
 ): Result.Result<void, OpeningDriveQualificationFailure> =>
-  Result.gen(function* () {
-    const { manifest } = snapshot
-    if (
-      manifest.barCount !== snapshot.bars.length ||
-      manifest.quoteCount !== snapshot.quotes.length ||
-      manifest.tradeCount !== snapshot.trades.length
-    ) {
-      return yield* Result.fail(
-        failure('snapshot-binding', 'intraday snapshot counts do not match the bound payload', {
-          sessionDate: manifest.sessionDate,
-        }),
-      )
-    }
-    const hashes = yield* Result.all({
-      bars: canonicalHash(snapshot.bars, 'intraday bars are not canonically hashable', manifest.sessionDate),
-      quotes: canonicalHash(snapshot.quotes, 'intraday quotes are not canonically hashable', manifest.sessionDate),
-      trades: canonicalHash(snapshot.trades, 'intraday trades are not canonically hashable', manifest.sessionDate),
-    })
-    if (
-      hashes.bars !== manifest.barsContentHash ||
-      hashes.quotes !== manifest.quotesContentHash ||
-      hashes.trades !== manifest.tradesContentHash
-    ) {
-      return yield* Result.fail(
-        failure('snapshot-binding', 'intraday snapshot payload hashes do not match its manifest', {
-          sessionDate: manifest.sessionDate,
-        }),
-      )
-    }
-    const { contentHash, snapshotId, ...material } = manifest
-    if (
-      (yield* canonicalHash(material, 'intraday manifest is not canonically hashable', manifest.sessionDate)) !==
-        contentHash ||
-      (yield* canonicalHash(
-        { ...material, contentHash },
-        'intraday snapshot identity is not canonically hashable',
-        manifest.sessionDate,
-      )) !== snapshotId
-    ) {
-      return yield* Result.fail(
-        failure('snapshot-binding', 'intraday snapshot identity does not match its manifest', {
-          sessionDate: manifest.sessionDate,
-        }),
-      )
-    }
-    const derivedLatest: Record<string, IntradayQuote> = {}
-    for (const quote of snapshot.quotes) derivedLatest[quote.symbol] = quote
-    if (
-      (yield* canonicalHash(derivedLatest, 'latest quotes are not canonically hashable', manifest.sessionDate)) !==
-      (yield* canonicalHash(
-        snapshot.latestQuotes,
-        'bound latest quotes are not canonically hashable',
-        manifest.sessionDate,
-      ))
-    ) {
-      return yield* Result.fail(
-        failure('snapshot-binding', 'intraday latest-quote projection does not match the bound quote payload', {
-          sessionDate: manifest.sessionDate,
-        }),
-      )
-    }
-    return undefined
-  })
+  Result.map(
+    Result.mapError(reverifyIntradayMarketSnapshot(snapshot), (cause) =>
+      failure('snapshot-binding', 'intraday snapshot failed authoritative row verification', {
+        sessionDate: snapshot.manifest.sessionDate,
+        cause,
+      }),
+    ),
+    () => undefined,
+  )
 
 const sameTopics = (
   left: IntradayMarketSnapshot['manifest']['sourceTopics'],
@@ -182,15 +129,13 @@ const validateExitSnapshot = (
     for (const symbol of protocol.universe) {
       const quote = input.exit.latestQuotes[symbol]
       const eventAt = quote === undefined ? Number.NaN : Date.parse(quote.eventAt)
-      const ingestedAt = quote === undefined ? Number.NaN : Date.parse(quote.ingestedAt)
       if (
         quote === undefined ||
         quote.symbol !== symbol ||
         !Number.isFinite(eventAt) ||
-        !Number.isFinite(ingestedAt) ||
         eventAt < exitEnd ||
         eventAt > observed ||
-        observed - ingestedAt > protocol.maximumQuoteAgeMs ||
+        observed - eventAt > protocol.maximumQuoteAgeMs ||
         !Number.isFinite(quote.bidPrice) ||
         !Number.isFinite(quote.askPrice) ||
         quote.bidPrice <= 0 ||
@@ -213,9 +158,11 @@ const validateExitSnapshot = (
 
 interface PositionReplay {
   readonly symbol: string
-  readonly quantityMicros: bigint
+  readonly entryQuantityMicros: bigint
+  readonly exitQuantityMicros: bigint
+  readonly unclosedQuantityMicros: bigint
   readonly entry: FillTerms
-  readonly exit: FillTerms
+  readonly exit: FillTerms | null
   readonly midpointGrossPnlMicros: bigint
   readonly quotedSpreadCostMicros: bigint
 }
@@ -232,61 +179,124 @@ const replayPosition = (
   weight: number,
   allocationMicros: bigint,
   opening: IntradayQuote,
-  exit: IntradayQuote,
+  exitQuote: IntradayQuote,
   sessionDate: string,
+  scalePpm: bigint,
 ): Result.Result<PositionReplay | null, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const values = yield* Result.mapError(
       Result.all({
         entryBid: referencePriceMicros(opening.bidPrice, replayExecutionModel),
         entryAsk: referencePriceMicros(opening.askPrice, replayExecutionModel),
-        exitBid: referencePriceMicros(exit.bidPrice, replayExecutionModel),
-        exitAsk: referencePriceMicros(exit.askPrice, replayExecutionModel),
+        exitBid: referencePriceMicros(exitQuote.bidPrice, replayExecutionModel),
+        exitAsk: referencePriceMicros(exitQuote.askPrice, replayExecutionModel),
         entrySize: numberToMicros(opening.askSize, 'entry ask size'),
-        exitSize: numberToMicros(exit.bidSize, 'exit bid size'),
+        exitSize: numberToMicros(exitQuote.bidSize, 'exit bid size'),
       }),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     const desired = yield* Result.mapError(
-      desiredQuantityMicros(allocationMicros, weight, values.entryAsk, replayExecutionModel),
+      Result.flatMap(
+        makeFillTerms(
+          'buy',
+          BigInt(replayExecutionModel.precision.quantityIncrementMicros),
+          values.entryAsk,
+          replayExecutionModel,
+          BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+        ),
+        (minimumEntry) =>
+          desiredQuantityMicros(allocationMicros, weight, minimumEntry.fillPriceMicros, replayExecutionModel),
+      ),
+      (cause) => executionFailure(sessionDate, symbol, cause),
+    )
+    const scaledDesired = yield* Result.mapError(
+      scaleQuantityMicros(desired, scalePpm, replayExecutionModel),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     const quantity = yield* Result.mapError(
       quantizeDown(
-        [desired, values.entrySize, values.exitSize].reduce((minimum, value) => (value < minimum ? value : minimum)),
+        scaledDesired < values.entrySize ? scaledDesired : values.entrySize,
         BigInt(replayExecutionModel.precision.quantityIncrementMicros),
       ),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     if (quantity === 0n) return null
     const costMultiplier = BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS
-    const fills = yield* Result.mapError(
-      Result.all({
-        entry: makeFillTerms('buy', quantity, values.entryAsk, replayExecutionModel, costMultiplier),
-        exit: makeFillTerms('sell', quantity, values.exitBid, replayExecutionModel, costMultiplier),
-      }),
+    const entry = yield* Result.mapError(
+      makeFillTerms('buy', quantity, values.entryAsk, replayExecutionModel, costMultiplier),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
+    if (entry.notionalMicros < BigInt(replayExecutionModel.precision.minimumBuyNotionalMicros)) return null
+    const exitQuantity = yield* Result.mapError(
+      quantizeDown(
+        quantity < values.exitSize ? quantity : values.exitSize,
+        BigInt(replayExecutionModel.precision.quantityIncrementMicros),
+      ),
+      (cause) => executionFailure(sessionDate, symbol, cause),
+    )
+    const exitFill =
+      exitQuantity === 0n
+        ? null
+        : yield* Result.mapError(
+            makeFillTerms('sell', exitQuantity, values.exitBid, replayExecutionModel, costMultiplier),
+            (cause) => executionFailure(sessionDate, symbol, cause),
+          )
     const entryMidpoint = (values.entryBid + values.entryAsk) / 2n
     const exitMidpoint = (values.exitBid + values.exitAsk) / 2n
     const notionals = yield* Result.mapError(
       Result.all({
         entryMidpoint: notionalMicros(quantity, entryMidpoint),
-        exitMidpoint: notionalMicros(quantity, exitMidpoint),
+        exitMidpoint: notionalMicros(exitQuantity, exitMidpoint),
         entrySpread: notionalMicros(quantity, values.entryAsk - entryMidpoint),
-        exitSpread: notionalMicros(quantity, exitMidpoint - values.exitBid),
+        exitSpread: notionalMicros(exitQuantity, exitMidpoint - values.exitBid),
       }),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     return {
       symbol,
-      quantityMicros: quantity,
-      entry: fills.entry,
-      exit: fills.exit,
+      entryQuantityMicros: quantity,
+      exitQuantityMicros: exitQuantity,
+      unclosedQuantityMicros: quantity - exitQuantity,
+      entry,
+      exit: exitFill,
       midpointGrossPnlMicros: notionals.exitMidpoint - notionals.entryMidpoint,
       quotedSpreadCostMicros: notionals.entrySpread + notionals.exitSpread,
     }
   })
+
+const entryFees = (
+  positions: readonly PositionReplay[],
+  sessionDate: string,
+): Result.Result<bigint, OpeningDriveQualificationFailure> =>
+  Result.map(
+    Result.mapError(
+      calculateSessionFees(
+        positions.map((position) => ({
+          side: 'buy' as const,
+          quantityMicros: position.entryQuantityMicros,
+          notionalMicros: position.entry.notionalMicros,
+        })),
+        replayExecutionModel,
+        BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+      ),
+      (cause) => executionFailure(sessionDate, 'portfolio-entry', cause),
+    ),
+    (fees) => fees.totalMicros,
+  )
+
+const maximumAffordableScale = (
+  minimum: bigint,
+  maximum: bigint,
+  affordable: (candidate: bigint) => Result.Result<boolean, OpeningDriveQualificationFailure>,
+): Result.Result<bigint, OpeningDriveQualificationFailure> => {
+  if (minimum >= maximum) return Result.succeed(minimum)
+  const candidate = (minimum + maximum + 1n) / 2n
+  return Result.flatMap(affordable(candidate), (accepted) =>
+    accepted
+      ? maximumAffordableScale(candidate, maximum, affordable)
+      : maximumAffordableScale(minimum, candidate - 1n, affordable),
+  )
+}
 
 const replayPortfolio = (
   symbols: readonly string[],
@@ -296,41 +306,69 @@ const replayPortfolio = (
   exit: IntradayMarketSnapshot,
 ): Result.Result<OpeningDrivePortfolioReplay, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
-    const positions = (yield* Result.all(
-      symbols.map((symbol) => {
-        const entryQuote = opening.latestQuotes[symbol]
-        const exitQuote = exit.latestQuotes[symbol]
-        return entryQuote === undefined || exitQuote === undefined
-          ? Result.fail(
-              failure('snapshot-binding', 'replay snapshot lacks a required symbol quote', {
-                sessionDate: opening.manifest.sessionDate,
-                symbol,
-              }),
-            )
-          : replayPosition(
-              symbol,
-              weights[symbol] ?? 0,
-              allocationMicros,
-              entryQuote,
-              exitQuote,
-              opening.manifest.sessionDate,
-            )
-      }),
-    )).filter((position): position is PositionReplay => position !== null)
+    const positionsAtScale = (scalePpm: bigint) =>
+      Result.map(
+        Result.all(
+          symbols.map((symbol) => {
+            const entryQuote = opening.latestQuotes[symbol]
+            const exitQuote = exit.latestQuotes[symbol]
+            return entryQuote === undefined || exitQuote === undefined
+              ? Result.fail(
+                  failure('snapshot-binding', 'replay snapshot lacks a required symbol quote', {
+                    sessionDate: opening.manifest.sessionDate,
+                    symbol,
+                  }),
+                )
+              : replayPosition(
+                  symbol,
+                  weights[symbol] ?? 0,
+                  allocationMicros,
+                  entryQuote,
+                  exitQuote,
+                  opening.manifest.sessionDate,
+                  scalePpm,
+                )
+          }),
+        ),
+        (values) => values.filter((position): position is PositionReplay => position !== null),
+      )
+    const affordableScale = yield* maximumAffordableScale(0n, PPM, (scalePpm) =>
+      Result.flatMap(positionsAtScale(scalePpm), (positions) =>
+        Result.map(
+          entryFees(positions, opening.manifest.sessionDate),
+          (fees) => positions.reduce((sum, position) => sum + position.entry.notionalMicros, fees) <= allocationMicros,
+        ),
+      ),
+    )
+    const positions = yield* positionsAtScale(affordableScale)
+    const entryNotional = positions.reduce((sum, position) => sum + position.entry.notionalMicros, 0n)
+    const entryFeeCost = yield* entryFees(positions, opening.manifest.sessionDate)
+    if (entryNotional + entryFeeCost > allocationMicros) {
+      return yield* Result.fail(
+        failure('execution-cost', 'modeled opening-drive entries and buy-side fees exceed the cash allocation', {
+          sessionDate: opening.manifest.sessionDate,
+        }),
+      )
+    }
     const fees = yield* Result.mapError(
       calculateSessionFees(
-        positions.flatMap((position) => [
-          {
+        positions.flatMap((position) => {
+          const entryOrder = {
             side: 'buy' as const,
-            quantityMicros: position.quantityMicros,
+            quantityMicros: position.entryQuantityMicros,
             notionalMicros: position.entry.notionalMicros,
-          },
-          {
-            side: 'sell' as const,
-            quantityMicros: position.quantityMicros,
-            notionalMicros: position.exit.notionalMicros,
-          },
-        ]),
+          }
+          return position.exit === null
+            ? [entryOrder]
+            : [
+                entryOrder,
+                {
+                  side: 'sell' as const,
+                  quantityMicros: position.exitQuantityMicros,
+                  notionalMicros: position.exit.notionalMicros,
+                },
+              ]
+        }),
         replayExecutionModel,
         BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
       ),
@@ -339,13 +377,13 @@ const replayPortfolio = (
     const midpointGrossPnl = positions.reduce((sum, position) => sum + position.midpointGrossPnlMicros, 0n)
     const quotedSpreadCost = positions.reduce((sum, position) => sum + position.quotedSpreadCostMicros, 0n)
     const slippageCost = positions.reduce(
-      (sum, position) => sum + position.entry.slippageCostMicros + position.exit.slippageCostMicros,
+      (sum, position) => sum + position.entry.slippageCostMicros + (position.exit?.slippageCostMicros ?? 0n),
       0n,
     )
-    const netPnl =
-      positions.reduce((sum, position) => sum + position.exit.notionalMicros - position.entry.notionalMicros, 0n) -
-      fees.totalMicros
-    const replayReturn = Number(netPnl) / Number(allocationMicros)
+    const exitNotional = positions.reduce((sum, position) => sum + (position.exit?.notionalMicros ?? 0n), 0n)
+    const unclosedQuantity = positions.reduce((sum, position) => sum + position.unclosedQuantityMicros, 0n)
+    const netPnl = exitNotional - entryNotional - fees.totalMicros
+    const replayReturn = unclosedQuantity > 0n ? -1 : Number(netPnl) / Number(allocationMicros)
     if (!Number.isFinite(replayReturn) || replayReturn < -1) {
       return yield* Result.fail(
         failure('statistic', 'opening-drive replay return is outside its finite simple-return domain', {
@@ -355,6 +393,10 @@ const replayPortfolio = (
     }
     return Object.freeze({
       executedSymbols: Object.freeze(positions.map((position) => position.symbol)),
+      entryNotionalMicros: String(entryNotional),
+      exitNotionalMicros: String(exitNotional),
+      unclosedQuantityMicros: String(unclosedQuantity),
+      flat: unclosedQuantity === 0n,
       midpointGrossPnlMicros: String(midpointGrossPnl),
       quotedSpreadCostMicros: String(quotedSpreadCost),
       slippageCostMicros: String(slippageCost),

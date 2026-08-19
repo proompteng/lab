@@ -14,6 +14,7 @@ interface QualificationHashes {
   readonly protocolHash: string
   readonly policyHash: string
   readonly costModelHash: string
+  readonly calendarHash: string
 }
 
 interface BootstrapResult {
@@ -103,6 +104,9 @@ const samplePairedCircularBlocks = (
   return [candidateAnnualized, candidateAnnualized - benchmarkAnnualized, random]
 }
 
+export const openingDriveOneSidedAlphaForOrdinal = (familyOneSidedAlpha: number, candidateOrdinal: number): number =>
+  familyOneSidedAlpha / (candidateOrdinal * (candidateOrdinal + 1))
+
 const bootstrap = (
   candidateReturns: readonly number[],
   benchmarkReturns: readonly number[],
@@ -110,7 +114,10 @@ const bootstrap = (
   candidateOrdinal: number,
   seedHash: string,
 ): Result.Result<BootstrapResult, OpeningDriveQualificationFailure> => {
-  const adjustedOneSidedAlpha = policy.bootstrap.familyOneSidedAlpha / candidateOrdinal
+  const adjustedOneSidedAlpha = openingDriveOneSidedAlphaForOrdinal(
+    policy.bootstrap.familyOneSidedAlpha,
+    candidateOrdinal,
+  )
   const tailSamples = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
   let random: RandomState = { value: Number.parseInt(seedHash.slice(0, 8), 16) || 0x9e3779b9 }
   const candidateSamples: number[] = []
@@ -215,9 +222,19 @@ export const analyzeOpeningDriveQualification = (
     if (first === undefined || last === undefined) {
       return yield* Result.fail(failure('input', 'opening-drive qualification requires at least one replay session'))
     }
-    if (!/^[0-9a-f]{40}$/.test(binding.sourceRevision) || !/^[0-9a-f]{64}$/.test(binding.strategyBehaviorHash)) {
+    if (
+      !/^[0-9a-f]{40}$/.test(binding.sourceRevision) ||
+      !/^[0-9a-f]{64}$/.test(binding.strategyBehaviorHash) ||
+      !/^[0-9a-f]{64}$/.test(binding.protocolHash) ||
+      !/^[0-9a-f]{64}$/.test(binding.policyHash) ||
+      !/^[0-9a-f]{64}$/.test(binding.costModelHash) ||
+      !/^[0-9a-f]{64}$/.test(binding.evaluationCalendarHash)
+    ) {
       return yield* Result.fail(
-        failure('input', 'opening-drive qualification requires exact lowercase source and strategy hashes'),
+        failure(
+          'input',
+          'opening-drive qualification requires exact lowercase source, strategy, protocol, policy, cost, and calendar hashes',
+        ),
       )
     }
     if (
@@ -252,6 +269,7 @@ export const analyzeOpeningDriveQualification = (
         protocolHash: hashes.protocolHash,
         policyHash: hashes.policyHash,
         costModelHash: hashes.costModelHash,
+        calendarHash: hashes.calendarHash,
         priorTrialsHash,
         sessionsHash,
       },
@@ -278,6 +296,8 @@ export const analyzeOpeningDriveQualification = (
     })
     const tradeSessionCount = sessions.filter((session) => session.candidate.executedSymbols.length > 0).length
     const candidateNetPnl = sumMicros(sessions, 'netPnlMicros')
+    const candidateUnclosedQuantity = sumMicros(sessions, 'unclosedQuantityMicros')
+    const benchmarkUnclosedQuantity = sumBenchmarkMicros(sessions, 'unclosedQuantityMicros')
     const gates = Object.freeze([
       gate('session-count', sessions.length >= policy.minimumSessions, sessions.length, policy.minimumSessions),
       gate(
@@ -322,6 +342,8 @@ export const analyzeOpeningDriveQualification = (
         folds.positiveFraction,
         `>= ${policy.chronologicalFolds.minimumPositiveFraction}`,
       ),
+      gate('candidate-same-session-flat', candidateUnclosedQuantity === 0n, String(candidateUnclosedQuantity), '0'),
+      gate('benchmark-same-session-flat', benchmarkUnclosedQuantity === 0n, String(benchmarkUnclosedQuantity), '0'),
       gate('candidate-total-net-pnl', candidateNetPnl > 0n, String(candidateNetPnl), '> 0'),
     ])
     const sufficiencyGateNames = new Set([
@@ -338,6 +360,7 @@ export const analyzeOpeningDriveQualification = (
       protocolHash: hashes.protocolHash,
       policyHash: hashes.policyHash,
       costModelHash: hashes.costModelHash,
+      calendarHash: hashes.calendarHash,
       sourceRevision: binding.sourceRevision,
       strategyBehaviorHash: binding.strategyBehaviorHash,
       priorTrialsHash,

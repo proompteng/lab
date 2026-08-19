@@ -2,7 +2,7 @@ import { Data } from 'effect'
 
 import type { IntradayMarketSnapshot } from '../../market-data'
 import type { IsoDate } from '../../types'
-import type { OpeningDriveMarketContext } from './model'
+import type { OpeningDriveMarketContext, OpeningDriveSessionBinding } from './model'
 
 export interface OpeningDriveQualificationPolicy {
   readonly schemaVersion: 'bayn.opening-drive.qualification-policy.v1'
@@ -28,7 +28,24 @@ export interface OpeningDriveQualificationPolicy {
 export interface OpeningDriveQualificationBinding {
   readonly sourceRevision: string
   readonly strategyBehaviorHash: string
+  readonly protocolHash: string
+  readonly policyHash: string
+  readonly costModelHash: string
+  /** Hash frozen in the qualification lock before any replay snapshot is inspected. */
+  readonly evaluationCalendarHash: string
   readonly priorTrialReceiptHashes: readonly string[]
+}
+
+/** Complete finalized exchange-session window supplied before replay inputs are inspected. */
+export interface OpeningDriveQualificationCalendar {
+  readonly schemaVersion: 'bayn.opening-drive.qualification-calendar.v1'
+  readonly source: 'signal.exchange_sessions_v1'
+  readonly calendarVersion: string
+  readonly firstSession: IsoDate
+  readonly lastSession: IsoDate
+  readonly finalizedAt: string
+  readonly sessions: readonly OpeningDriveSessionBinding[]
+  readonly contentHash: string
 }
 
 export interface OpeningDriveReplaySessionInput {
@@ -38,6 +55,10 @@ export interface OpeningDriveReplaySessionInput {
 
 export interface OpeningDrivePortfolioReplay {
   readonly executedSymbols: readonly string[]
+  readonly entryNotionalMicros: string
+  readonly exitNotionalMicros: string
+  readonly unclosedQuantityMicros: string
+  readonly flat: boolean
   readonly midpointGrossPnlMicros: string
   readonly quotedSpreadCostMicros: string
   readonly slippageCostMicros: string
@@ -73,6 +94,7 @@ export interface OpeningDriveQualificationReceiptMaterial {
   readonly protocolHash: string
   readonly policyHash: string
   readonly costModelHash: string
+  readonly calendarHash: string
   readonly sourceRevision: string
   readonly strategyBehaviorHash: string
   readonly priorTrialsHash: string
