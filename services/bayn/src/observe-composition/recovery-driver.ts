@@ -21,6 +21,7 @@ import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { CycleDecisionDocument } from '../shadow-decision-contract'
+import { strategyApplication } from '../strategy'
 import { restrictMutationLoopFailure } from './mutation-interpreter'
 import type {
   ExecutionCapability,
@@ -47,6 +48,7 @@ import {
   mutationDecisionInput,
   runRecoveryFirstCyclePass,
 } from './execution-cycle'
+import { strategyAllowsMutationCadence } from './strategy-cadence'
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
@@ -373,7 +375,16 @@ export const mutationDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) =>
-    buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
+  (cycle, reconcile) => {
+    if (!strategyAllowsMutationCadence(input.strategy, input.cycleCadence)) {
+      return Effect.fail(
+        new CycleDecisionBuildError({
+          failure: 'contract',
+          message: `every-session mutation requires an INTRADAY strategy; ${strategyApplication(input.strategy).definition.name} is MULTI_SESSION`,
+        }),
+      )
+    }
+    return buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
       Effect.mapError(decisionBuildError),
     )
+  }

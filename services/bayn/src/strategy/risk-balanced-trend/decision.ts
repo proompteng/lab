@@ -178,6 +178,7 @@ export type RiskBalancedTrendStrategyDefinition = StrategyDefinition<
 
 export const makeRiskBalancedTrendDefinition = (protocol: Protocol): RiskBalancedTrendStrategyDefinition => ({
   name: 'risk-balanced-trend',
+  holdingPeriod: 'MULTI_SESSION',
   parameters: protocol,
   decide: ({ market }: VerifiedStrategyContext<RiskBalancedTrendMarketContext>) =>
     makeRiskBalancedTrendDecision(market.signalDate, market.sessionDates, market.closes, protocol),
