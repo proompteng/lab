@@ -1,12 +1,14 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { sha256 } from '../../hash'
 import {
+  compareIntradayInstants,
   reverifyIntradayMarketSnapshot,
   type IntradayBar,
   type IntradayQuote,
   type IntradayTrade,
 } from '../../market-data'
+import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
 import {
   OpeningDriveFailure,
@@ -27,7 +29,7 @@ export const openingDriveBehaviorHash = sha256(openingDriveBehaviorVersion)
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const compareLatestTrade = (left: IntradayTrade, right: IntradayTrade): number => {
-  const eventOrder = compareCanonicalText(right.eventAt, left.eventAt)
+  const eventOrder = compareIntradayInstants(right.eventAt, left.eventAt)
   if (eventOrder !== 0) return eventOrder
   const topicOrder = compareCanonicalText(right.sourceTopic, left.sourceTopic)
   if (topicOrder !== 0) return topicOrder
@@ -78,6 +80,68 @@ const scaledInteger = (
     return Result.succeed(BigInt(integer))
   })
 
+const floorDivide = (numerator: bigint, denominator: bigint): bigint => {
+  const quotient = numerator / denominator
+  return numerator < 0n && numerator % denominator !== 0n ? quotient - 1n : quotient
+}
+
+const ceilDivide = (numerator: bigint, denominator: bigint): bigint => {
+  const quotient = numerator / denominator
+  return numerator > 0n && numerator % denominator !== 0n ? quotient + 1n : quotient
+}
+
+const safeInteger = (value: bigint, field: string, symbol: string): Result.Result<number, OpeningDriveFailure> => {
+  if (value < BigInt(Number.MIN_SAFE_INTEGER) || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return fail('market-value', 'opening-drive derived signal exceeds the exact integer domain', {
+      symbol,
+      field,
+      observed: String(value),
+    })
+  }
+  return Result.succeed(Number(value))
+}
+
+interface SignalPrices {
+  readonly opening: bigint
+  readonly high: bigint
+  readonly low: bigint
+  readonly bid: bigint
+  readonly ask: bigint
+  readonly trade: bigint
+}
+
+const deriveSignalMetrics = (
+  prices: SignalPrices,
+  symbol: string,
+): Result.Result<
+  {
+    readonly openingReturnBps: number
+    readonly breakoutBps: number
+    readonly spreadBps: number
+    readonly rangeLocationPpm: number
+  },
+  OpeningDriveFailure
+> => {
+  const doubledMidpoint = prices.bid + prices.ask
+  const doubledOpening = 2n * prices.opening
+  const breakoutReference = prices.ask < prices.trade ? prices.ask : prices.trade
+  const openingReturnBps = floorDivide((doubledMidpoint - doubledOpening) * 10_000n, doubledOpening)
+  const breakoutBps = floorDivide((breakoutReference - prices.high) * 10_000n, prices.high)
+  const spreadBps = ceilDivide((prices.ask - prices.bid) * 20_000n, doubledMidpoint)
+  const rangeLocationPpm =
+    prices.high === prices.low
+      ? 0n
+      : floorDivide((doubledMidpoint - 2n * prices.low) * 1_000_000n, 2n * (prices.high - prices.low))
+  const boundedRangeLocationPpm =
+    rangeLocationPpm < 0n ? 0n : rangeLocationPpm > 1_000_000n ? 1_000_000n : rangeLocationPpm
+  return Result.all({
+    openingReturnBps: safeInteger(openingReturnBps, 'opening-return-bps', symbol),
+    breakoutBps: safeInteger(breakoutBps, 'breakout-bps', symbol),
+    spreadBps: safeInteger(spreadBps, 'spread-bps', symbol),
+    rangeLocationPpm: safeInteger(boundedRangeLocationPpm, 'range-location-ppm', symbol),
+  })
+}
+
 const validateSnapshot = (
   context: OpeningDriveMarketContext,
   protocol: OpeningDriveProtocol,
@@ -99,12 +163,16 @@ const validateSnapshot = (
   const observed = Date.parse(manifest.observedAt)
   const sessionOpen = Date.parse(session.openAt)
   const sessionClose = Date.parse(session.closeAt)
+  const canonicalSessionInstants = Result.all([
+    Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(session.openAt),
+    Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(session.closeAt),
+  ])
   const entryCutoff = sessionOpen + protocol.entryCutoffMinutesAfterOpen * 60_000
   const flattenAt = sessionClose - protocol.flattenBeforeCloseMinutes * 60_000
   const earliestDecision = rangeEnd + protocol.decisionDelaySeconds * 1_000
   const decisionWindowEnd = Math.min(entryCutoff, flattenAt)
   if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(session.closeAt) ||
+    Result.isFailure(canonicalSessionInstants) ||
     !Number.isFinite(rangeStart) ||
     !Number.isFinite(rangeEnd) ||
     !Number.isFinite(observed) ||
@@ -220,23 +288,6 @@ const signalFor = (
     if (ask < bid) return yield* fail('market-value', 'opening-drive quote is crossed', { symbol })
     const high = Math.max(...highs)
     const low = Math.min(...lows)
-    const midpoint = (bid + ask) / 2
-    const openingReturnBps = Math.floor((midpoint / open - 1) * 10_000)
-    const breakoutBps = Math.floor((Math.min(ask, tradePrice) / high - 1) * 10_000)
-    const spreadBps = Math.ceil(((ask - bid) / midpoint) * 10_000)
-    const rangeLocationPpm =
-      high === low ? 0 : Math.floor(Math.min(1, Math.max(0, (midpoint - low) / (high - low))) * 1_000_000)
-    if (![openingReturnBps, breakoutBps, spreadBps, rangeLocationPpm].every(Number.isSafeInteger)) {
-      return yield* fail('market-value', 'opening-drive derived signal exceeds the exact integer domain', { symbol })
-    }
-    const dollarVolume = yield* openingDollarVolume(symbol, orderedBars)
-    const minimumDollarVolume = BigInt(protocol.minimumOpeningDollarVolumeMicros)
-    const rejectionReasons: OpeningDriveRejectionReason[] = []
-    if (openingReturnBps < protocol.minimumOpeningReturnBps) rejectionReasons.push('opening-return')
-    if (breakoutBps < protocol.minimumBreakoutBps) rejectionReasons.push('breakout')
-    if (rangeLocationPpm < protocol.minimumRangeLocationPpm) rejectionReasons.push('range-location')
-    if (spreadBps > protocol.maximumSpreadBps) rejectionReasons.push('spread')
-    if (dollarVolume < minimumDollarVolume) rejectionReasons.push('dollar-volume')
     const prices = yield* Result.all({
       opening: scaledInteger(open, 'opening-price', symbol, 'round'),
       high: scaledInteger(high, 'range-high', symbol, 'round'),
@@ -245,6 +296,15 @@ const signalFor = (
       ask: scaledInteger(ask, 'quote-ask', symbol, 'round'),
       trade: scaledInteger(tradePrice, 'trade-price', symbol, 'round'),
     })
+    const { openingReturnBps, breakoutBps, spreadBps, rangeLocationPpm } = yield* deriveSignalMetrics(prices, symbol)
+    const dollarVolume = yield* openingDollarVolume(symbol, orderedBars)
+    const minimumDollarVolume = BigInt(protocol.minimumOpeningDollarVolumeMicros)
+    const rejectionReasons: OpeningDriveRejectionReason[] = []
+    if (openingReturnBps < protocol.minimumOpeningReturnBps) rejectionReasons.push('opening-return')
+    if (breakoutBps < protocol.minimumBreakoutBps) rejectionReasons.push('breakout')
+    if (rangeLocationPpm < protocol.minimumRangeLocationPpm) rejectionReasons.push('range-location')
+    if (spreadBps > protocol.maximumSpreadBps) rejectionReasons.push('spread')
+    if (dollarVolume < minimumDollarVolume) rejectionReasons.push('dollar-volume')
     return Object.freeze({
       symbol,
       openingPriceMicros: String(prices.opening),

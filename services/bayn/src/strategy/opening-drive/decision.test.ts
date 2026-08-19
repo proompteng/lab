@@ -256,6 +256,70 @@ describe('opening-drive momentum strategy', () => {
     expect(decision.signals.find((signal) => signal.symbol === 'AMD')?.rejectionReasons).toContain('breakout')
   })
 
+  test('orders mixed-precision trade timestamps by their nanosecond instant', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const rows = makeRows()
+    const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
+    if (amdTrade === undefined) throw new Error('AMD trade fixture is missing')
+    const latestOffset = String(symbols.length * 7 + 1)
+    const archiveWatermarks = request.archiveWatermarks.map((watermark) =>
+      watermark.sourceTopic === tradesTopic ? { ...watermark, inclusiveLastOffset: latestOffset } : watermark,
+    )
+    const mixedPrecisionRows = {
+      ...rows,
+      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
+        watermark.source_topic === tradesTopic ? { ...watermark, inclusive_last_offset: latestOffset } : watermark,
+      ),
+      trades: [
+        ...rows.trades.map((trade) =>
+          trade.symbol === 'AMD'
+            ? { ...trade, event_at: '2026-08-18T13:35:01.500Z', ingested_at: '2026-08-18T13:35:01.600Z' }
+            : trade,
+        ),
+        {
+          ...amdTrade,
+          event_at: '2026-08-18T13:35:01.500999999Z',
+          ingested_at: '2026-08-18T13:35:01.600999999Z',
+          source_offset: latestOffset,
+          price: '95',
+        },
+      ],
+    }
+    const market = success(verifyIntradaySnapshot({ ...request, archiveWatermarks }, mixedPrecisionRows))
+    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
+
+    expect(decision.signals.find((signal) => signal.symbol === 'AMD')).toMatchObject({
+      breakoutTradeObservedAt: '2026-08-18T13:35:01.500999999Z',
+      eligible: false,
+    })
+    expect(decision.selectedSymbols).not.toContain('AMD')
+  })
+
+  test('computes exact boundary signals from fixed-point prices', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const rows = makeRows()
+    const boundaryRows = {
+      ...rows,
+      bars: rows.bars.map((bar) =>
+        bar.symbol === 'AMD' ? { ...bar, open: '100', high: '100', low: '99', close: '100', vwap: '100' } : bar,
+      ),
+      quotes: rows.quotes.map((quote) =>
+        quote.symbol === 'AMD' ? { ...quote, bid_price: '100.224775', ask_price: '100.375225' } : quote,
+      ),
+      trades: rows.trades.map((trade) => (trade.symbol === 'AMD' ? { ...trade, price: '100.05' } : trade)),
+    }
+    const market = success(verifyIntradaySnapshot(request, boundaryRows))
+    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
+
+    expect(decision.signals.find((signal) => signal.symbol === 'AMD')).toMatchObject({
+      openingReturnBps: 30,
+      breakoutBps: 5,
+      spreadBps: 15,
+      rangeLocationPpm: 1_000_000,
+      eligible: true,
+    })
+  })
+
   test('rejects a session whose flatten boundary leaves no entry window', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
 
