@@ -10,12 +10,12 @@ import {
 import { IntradaySnapshotFailure } from './model'
 
 const FiniteNumericStringSchema = Schema.String.check(
-  Schema.makeFilter(
-    (value: string) => value.length > 0 && value.trim() === value && Number.isFinite(Number(value)),
-    { expected: 'a finite numeric string' },
-  ),
+  Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value && Number.isFinite(Number(value)), {
+    expected: 'a finite numeric string',
+  }),
 )
 const NumericSchema = Schema.Union([Schema.Finite, FiniteNumericStringSchema])
+const numericValue = (value: number | string): number => (typeof value === 'number' ? value : Number(value))
 const BooleanIntegerSchema = Schema.Union([Schema.Literals([0, 1]), Schema.Literals(['0', '1'])])
 const PartitionSchema = Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), DigitsSchema])
 const SchemaVersionSchema = Schema.Union([Schema.Literal(1), Schema.Literal('1')])
@@ -57,13 +57,27 @@ const IntradayQuoteRowSchema = Schema.Struct({
   bid_size: NumericSchema,
   ask_price: NumericSchema,
   ask_size: NumericSchema,
-})
+}).check(
+  Schema.makeFilter(
+    (row) =>
+      numericValue(row.bid_price) > 0 &&
+      numericValue(row.ask_price) > 0 &&
+      numericValue(row.bid_size) >= 0 &&
+      numericValue(row.ask_size) >= 0 &&
+      numericValue(row.bid_price) <= numericValue(row.ask_price),
+    { expected: 'positive uncrossed quote prices with non-negative sizes' },
+  ),
+)
 
 const IntradayTradeRowSchema = Schema.Struct({
   ...identityFields,
   price: NumericSchema,
   size: NumericSchema,
-})
+}).check(
+  Schema.makeFilter((row) => numericValue(row.price) > 0 && numericValue(row.size) > 0, {
+    expected: 'positive trade price and size',
+  }),
+)
 
 const IntradayArchiveWatermarkRowSchema = Schema.Struct({
   source_topic: StrictNonEmptyStringSchema,

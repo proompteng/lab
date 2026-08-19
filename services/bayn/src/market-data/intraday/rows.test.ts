@@ -32,6 +32,11 @@ describe('intraday archive row decoding', () => {
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, ask_price: 'NaN' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_size: 'Infinity' }]))).toBe(true)
     expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, ask_size: ' 13' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_price: '0' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, ask_price: '-1' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_size: '-1' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, ask_size: '-1' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayQuoteRows([{ ...quote, bid_price: '100.03' }]))).toBe(true)
 
     const trade = {
       ...identity,
@@ -41,5 +46,7 @@ describe('intraday archive row decoding', () => {
     }
     expect(Result.isSuccess(decodeIntradayTradeRows([trade]))).toBe(true)
     expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, price: '-Infinity' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, price: '0' }]))).toBe(true)
+    expect(Result.isFailure(decodeIntradayTradeRows([{ ...trade, size: '-1' }]))).toBe(true)
   })
 })
