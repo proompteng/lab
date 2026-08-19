@@ -72,6 +72,7 @@ import {
   decideExecutionCycleCloseDocument,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
+  decideExecutionIntentTerminalDisposition,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
@@ -1484,6 +1485,73 @@ describe('OBSERVE runtime composition', () => {
     ).toEqual({ _tag: 'Wait', reason: 'unknown-mutation' })
     expect(decideExecutionCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
     expect(countOpenPositions([{ quantityMicros: '0' }, { quantityMicros: '-1' }, { quantityMicros: '2' }])).toBe(2)
+  })
+
+  test('completes an entry after an exact zero-fill LIMIT/IOC cancellation without containing authority', () => {
+    const intent = {
+      accountId,
+      clientOrderId: `b1_${'Z'.repeat(43)}`,
+      intentId: '9'.repeat(64),
+      orderType: OrderType.Limit,
+      quantityMicros: '3000000',
+      side: OrderSide.Buy,
+      state: IntentState.Terminal,
+      symbol: 'AMD',
+      terminalOutcome: TerminalOutcome.Canceled,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    } as const
+    const order = {
+      accountId,
+      brokerOrderId: 'zero-fill-ioc-order',
+      clientOrderId: intent.clientOrderId,
+      filledQuantityMicros: '0',
+      intentId: intent.intentId,
+      orderType: intent.orderType,
+      quantityMicros: intent.quantityMicros,
+      side: intent.side,
+      status: OrderStatus.Canceled,
+      symbol: intent.symbol,
+      timeInForce: intent.timeInForce,
+    } as const
+    const dispositionInput = {
+      intent,
+      acceptedBrokerOrderId: order.brokerOrderId,
+      orders: [order],
+    } as const
+
+    expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'ENTRY' })).toBe(
+      'BENIGN_ZERO_FILL_IOC',
+    )
+    expect(
+      decideExecutionIntentTerminalDisposition({
+        ...dispositionInput,
+        phase: 'ENTRY',
+        orders: [{ ...order, filledQuantityMicros: '1' }],
+      }),
+    ).toBe('UNSUCCESSFUL')
+    expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'CLOSE' })).toBe('UNSUCCESSFUL')
+    expect(
+      decideExecutionCycleCompletion(
+        evaluatedAt,
+        [
+          {
+            state: IntentState.Terminal,
+            terminalOutcome: TerminalOutcome.Canceled,
+            benignZeroFillIoc: true,
+            updatedAt: '2020-05-01T12:45:03.000Z',
+            latestMutationAt: '2020-05-01T12:45:03.000Z',
+          },
+        ],
+        {
+          status: ReconciliationStatus.Exact,
+          reconciledAt: '2020-05-01T12:45:04.000Z',
+          accountingExact: true,
+          unknownMutationCount: 0,
+          unknownOrderCount: 0,
+          openPositionCount: 0,
+        },
+      ),
+    ).toEqual({ _tag: 'Complete' })
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
