@@ -566,32 +566,67 @@ describe('autonomous cycle operations classification', () => {
     })
   })
 
-  test('keeps ACTIVE healthy after cutoff through execution close and stalls exactly at close', () => {
+  test('tracks ACTIVE decision liveness through its immutable submission and execution deadlines', () => {
     const active = snapshot(CycleState.Active, {
-      submissionCutoffAt: '2026-07-20T11:58:00.000Z',
-      executionOpenAt: '2026-07-20T12:00:00.000Z',
+      submissionOpenAt: '2026-07-20T11:30:00.000Z',
+      submissionCutoffAt: '2026-07-20T12:30:00.000Z',
+      executionOpenAt: '2026-07-20T12:32:00.000Z',
       executionCloseAt: '2026-07-20T20:00:00.000Z',
-      updatedAt: '2026-07-20T11:57:00.000Z',
+      updatedAt: '2026-07-20T11:29:00.000Z',
     })
-    const afterCutoff = deriveCycleOperationsStatus(
-      projection({ current: active, unfinishedCycleCount: 1 }),
-      Date.parse(now),
-      Authority.Observe,
-      thresholds,
-    )
-    const atClose = deriveCycleOperationsStatus(
-      projection({ current: active, unfinishedCycleCount: 1 }),
-      Date.parse(active.executionCloseAt),
-      Authority.Observe,
-      thresholds,
-    )
+    const classify = (candidate: CycleOperationsSnapshot, observedAt: string) =>
+      deriveCycleOperationsStatus(
+        projection({ current: candidate, unfinishedCycleCount: 1 }),
+        Date.parse(observedAt),
+        Authority.Observe,
+        thresholds,
+      )
 
-    expect(afterCutoff).toMatchObject({
+    expect(classify(active, '2026-07-20T11:29:59.999Z')).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.AwaitingSubmissionOpen,
+      alerts: { cycleStalled: false },
+    })
+    expect(classify(active, active.submissionOpenAt)).toMatchObject({
+      condition: CycleOperationsCondition.Running,
+      reason: CycleOperationsReason.AwaitingDecision,
+      alerts: { cycleStalled: false },
+    })
+    expect(classify(active, active.submissionCutoffAt)).toMatchObject({
+      condition: CycleOperationsCondition.Stalled,
+      reason: CycleOperationsReason.MissedSubmissionCutoff,
+      alerts: { cycleStalled: true },
+    })
+    expect(classify(active, active.executionCloseAt)).toMatchObject({
+      condition: CycleOperationsCondition.Stalled,
+      reason: CycleOperationsReason.MissedSubmissionCutoff,
+      alerts: { cycleStalled: true },
+    })
+
+    const preflightFailedAtCutoff = deriveCycleOperationsStatus(
+      projection({
+        current: active,
+        unfinishedCycleCount: 1,
+        authority: null,
+        reconciliation: null,
+      }),
+      Date.parse(active.submissionCutoffAt),
+      Authority.Execution,
+      thresholds,
+    )
+    expect(preflightFailedAtCutoff).toMatchObject({
+      condition: CycleOperationsCondition.Stalled,
+      reason: CycleOperationsReason.MissedSubmissionCutoff,
+      alerts: { cycleStalled: true, authorityIncoherent: true, reconciliationBlocked: true },
+    })
+
+    const decisionBound = { ...active, decisionHash: '3'.repeat(64) }
+    expect(classify(decisionBound, active.submissionCutoffAt)).toMatchObject({
       condition: CycleOperationsCondition.Running,
       reason: CycleOperationsReason.Active,
       alerts: { cycleStalled: false },
     })
-    expect(atClose).toMatchObject({
+    expect(classify(decisionBound, active.executionCloseAt)).toMatchObject({
       condition: CycleOperationsCondition.Stalled,
       reason: CycleOperationsReason.MissedExecutionClose,
       alerts: { cycleStalled: true },
@@ -644,6 +679,7 @@ describe('autonomous cycle operations classification', () => {
       submissionCutoffAt: '2026-07-21T13:15:00.000Z',
       executionOpenAt: '2026-07-21T13:30:00.000Z',
       executionCloseAt: '2026-07-21T20:00:00.000Z',
+      decisionHash: '5'.repeat(64),
       updatedAt: '2026-07-21T13:30:00.000Z',
     })
     const recoveringProjection = projection({ current: successor, last: blocked, unfinishedCycleCount: 1 })
