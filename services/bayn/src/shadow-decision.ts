@@ -282,6 +282,16 @@ const validateBindings = (
   if (decisionSessionDate !== expectedDecisionSessionDate) {
     return Result.fail(error('binding', 'compiled strategy decision must match the immutable cycle session'))
   }
+  if (
+    decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+    (input.submissionCutoffAt === undefined ||
+      input.submissionCutoffAt <= cycle.window.submissionCutoffAt ||
+      input.riskInputs.some(
+        ({ state }) => state.closeOnly !== true || state.closeOnlyExpiresAt !== input.submissionCutoffAt,
+      ))
+  ) {
+    return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
+  }
   const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
   const executionMarketData = input.executionMarketData
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {

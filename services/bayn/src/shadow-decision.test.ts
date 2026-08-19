@@ -582,6 +582,55 @@ describe('OBSERVE shadow decision', () => {
     expect(Result.isFailure(decodeFlatTarget({ ...flatTarget, targetWeights: { AMD: 0 } }))).toBe(true)
   })
 
+  test('rejects a flat execution target through the ordinary entry lease', async () => {
+    const input = makeInput({ AMD: 0, NVDA: 0 })
+    const compiledDecision = {
+      schemaVersion: 'bayn.execution-flat-target.v1' as const,
+      strategyName: 'risk-balanced-trend',
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0 as const, NVDA: 0 as const },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close' as const,
+    }
+    const plannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights: compiledDecision.targetWeights,
+    }
+    const targetPlan = planTargetsSuccess(plannerInput)
+    const riskInputs =
+      targetPlan.status === TargetPlanStatus.Planned
+        ? targetPlan.intentTargets.map((target) => {
+            const referencePrice = plannerInput.referencePrices.priceMicros[target.symbol]
+            if (referencePrice === undefined) throw new Error(`missing fixture reference price for ${target.symbol}`)
+            return {
+              symbol: target.symbol,
+              notionalLimitMicros: ((BigInt(target.quantityMicros) * BigInt(referencePrice)) / 1_000_000n).toString(),
+              state: makeRiskState(input.cycle, target.symbol),
+            }
+          })
+        : []
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          compiledDecision,
+          plannerInput,
+          targetPlan,
+          riskInputs,
+          authorityGenerationHash: hash('6'),
+          executionSession: makeRiskState(input.cycle, 'AMD').executionSession,
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'flat execution targets require the explicit bounded close-only lease',
+    })
+  })
+
   test('binds exact final target deltas and cumulative v3 risk without any dispatchable intent state', async () => {
     const input = makeInput()
     const first = await build(input)
