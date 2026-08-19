@@ -400,9 +400,7 @@ data class ForwarderConfig(
       if (marketType != AlpacaMarketType.EQUITY) {
         error("ALPACA_OBSERVATION_FEEDS is only supported when ALPACA_MARKET_TYPE=equity")
       }
-      if (coreFeed != EquityFeed.Iex.id) {
-        error("ALPACA_FEED must be iex when ALPACA_OBSERVATION_FEEDS is enabled")
-      }
+      val parsedCoreFeed = EquityFeed.parse(coreFeed)
       if (requested.distinct().size != requested.size) {
         error("ALPACA_OBSERVATION_FEEDS must not contain duplicates")
       }
@@ -413,8 +411,8 @@ data class ForwarderConfig(
       val feeds =
         requested.map { value ->
           val feed = EquityFeed.parse(value)
-          if (!feed.observationOnly) {
-            error("ALPACA_OBSERVATION_FEEDS cannot include the core ${feed.id} feed")
+          if (feed == parsedCoreFeed) {
+            error("ALPACA_OBSERVATION_FEEDS cannot duplicate the core ${feed.id} feed")
           }
           val envPrefix = feed.id.uppercase()
 
@@ -453,7 +451,7 @@ data class ForwarderConfig(
       }
       val subscriptionCount = coreSymbols.size + observationSymbols.size * feeds.size
       if (subscriptionCount > 30) {
-        error("configured market-data feeds require $subscriptionCount symbol subscriptions; Alpaca Basic allows 30")
+        error("configured market-data feeds require $subscriptionCount symbol subscriptions; maximum is 30")
       }
       return feeds
     }

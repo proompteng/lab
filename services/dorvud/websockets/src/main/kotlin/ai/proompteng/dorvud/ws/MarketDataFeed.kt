@@ -7,12 +7,11 @@ import java.time.ZoneId
 enum class EquityFeed(
   val id: String,
   val apiVersion: String,
-  val observationOnly: Boolean,
 ) {
-  Iex("iex", "v2", false),
-  Sip("sip", "v2", false),
-  DelayedSip("delayed_sip", "v2", true),
-  Overnight("overnight", "v1beta1", true),
+  Iex("iex", "v2"),
+  Sip("sip", "v2"),
+  DelayedSip("delayed_sip", "v2"),
+  Overnight("overnight", "v1beta1"),
   ;
 
   companion object {
