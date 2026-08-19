@@ -9,7 +9,13 @@ import {
 } from '../../schemas'
 import { IntradaySnapshotFailure } from './model'
 
-const NumericSchema = Schema.Union([Schema.Finite, Schema.String])
+const FiniteNumericStringSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => value.length > 0 && value.trim() === value && Number.isFinite(Number(value)),
+    { expected: 'a finite numeric string' },
+  ),
+)
+const NumericSchema = Schema.Union([Schema.Finite, FiniteNumericStringSchema])
 const BooleanIntegerSchema = Schema.Union([Schema.Literals([0, 1]), Schema.Literals(['0', '1'])])
 const PartitionSchema = Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), DigitsSchema])
 const SchemaVersionSchema = Schema.Union([Schema.Literal(1), Schema.Literal('1')])
