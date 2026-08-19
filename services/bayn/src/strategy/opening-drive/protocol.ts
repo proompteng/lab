@@ -65,9 +65,6 @@ const protocolIssues = (protocol: typeof OpeningDriveProtocolBase.Type): readonl
   if (protocol.openingRangeMinutes > 30) {
     issues.push({ path: ['openingRangeMinutes'], issue: 'must not exceed the bounded archive window' })
   }
-  if (protocol.decisionDelaySeconds * 1_000 > protocol.maximumQuoteAgeMs) {
-    issues.push({ path: ['maximumQuoteAgeMs'], issue: 'must cover the post-range decision delay' })
-  }
   if (protocol.entryCutoffMinutesAfterOpen * 60 <= protocol.openingRangeMinutes * 60 + protocol.decisionDelaySeconds) {
     issues.push({
       path: ['entryCutoffMinutesAfterOpen'],

@@ -164,6 +164,15 @@ describe('opening-drive momentum strategy', () => {
         }),
       ),
     ).toMatchObject({ _tag: 'OpeningDriveProtocolDecodeError' })
+    expect(
+      success(
+        decodeOpeningDriveProtocol({
+          ...defaultOpeningDriveProtocolDocument,
+          decisionDelaySeconds: 30,
+          maximumQuoteAgeMs: 1_000,
+        }),
+      ),
+    ).toMatchObject({ decisionDelaySeconds: 30, maximumQuoteAgeMs: 1_000 })
   })
 
   test('selects confirmed post-range breakouts with bounded equal weights', () => {
