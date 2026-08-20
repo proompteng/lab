@@ -193,7 +193,7 @@ const makeCycleBindingProgramsDataFirst = (
           : failCycleStore(
               'bind-decision',
               'invariant',
-              'shadow decision does not match the durable snapshot and exact reconciliation evidence',
+              'decision does not match its durable market-data and exact reconciliation evidence',
             ),
       ),
       Effect.andThen(sql`
@@ -212,6 +212,7 @@ const makeCycleBindingProgramsDataFirst = (
       Effect.andThen(sql<Record<string, unknown>>`
         UPDATE autonomous_cycles
         SET
+          snapshot_id = ${decision.document.bindings.snapshotId},
           decision_hash = ${decision.document.contentHash},
           state_version = ${decision.cycle.stateVersion + 1},
           updated_at = ${observedAt}
@@ -219,6 +220,13 @@ const makeCycleBindingProgramsDataFirst = (
           AND state = ${CycleState.Active}
           AND state_version = ${decision.cycle.stateVersion}
           AND decision_hash IS NULL
+          AND (
+            snapshot_id = ${decision.document.bindings.snapshotId}
+            OR (
+              schema_version = 'bayn.autonomous-cycle.v3'
+              AND snapshot_id IS NULL
+            )
+          )
         RETURNING cycle_id
       `),
       Effect.flatMap((rows) => mutations.requireApplied('bind-decision', rows)),

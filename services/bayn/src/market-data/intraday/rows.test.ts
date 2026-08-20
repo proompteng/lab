@@ -48,6 +48,7 @@ describe('intraday archive row decoding', () => {
   test('accepts finite numeric strings and rejects non-finite market values', () => {
     const quote = {
       ...identity,
+      latest_payload_variants: '1',
       bid_price: '100.01',
       bid_size: '12',
       ask_price: '100.02',
@@ -69,6 +70,7 @@ describe('intraday archive row decoding', () => {
     const trade = {
       ...identity,
       source_topic: 'torghut.trades.v1',
+      latest_payload_variants: '1',
       price: '100.015',
       size: '5',
     }

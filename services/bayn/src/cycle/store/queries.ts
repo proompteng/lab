@@ -41,6 +41,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms,
             window_schema_version, execution_calendar_schema_version,
             execution_calendar_source, execution_calendar_hash,
             execution_session_date::text AS execution_session_date,
@@ -58,6 +59,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms,
             window_schema_version, execution_calendar_schema_version,
             execution_calendar_source, execution_calendar_hash,
             execution_session_date::text AS execution_session_date,
@@ -70,14 +72,37 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
     return rows.pipe(Effect.flatMap(decodeStoredCycles))
   }
 
-  const selectCycleByAuthoritySlot: CycleQueries['selectCycleByAuthoritySlot'] = (slot) =>
-    sql<Record<string, unknown>>`
+  const selectCycleByAuthoritySlot: CycleQueries['selectCycleByAuthoritySlot'] = (slot) => {
+    const query =
+      'executionSessionDate' in slot
+        ? sql<Record<string, unknown>>`
+          SELECT
+            cycle_id, schema_version, identity_schema_version, strategy_name,
+            qualification_run_id, strategy_protocol_hash, account_id,
+            signal_session_date::text AS signal_session_date, signal_calendar_version,
+            execution_policy_schema_version, execution_policy_hash,
+            strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms,
+            window_schema_version, execution_calendar_schema_version,
+            execution_calendar_source, execution_calendar_hash,
+            execution_session_date::text AS execution_session_date,
+            signal_close_at, publication_deadline_at, submission_open_at,
+            execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
+            decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+          FROM autonomous_cycles
+          WHERE qualification_run_id = ${slot.qualificationRunId}
+            AND account_id = ${slot.accountId}
+            AND schema_version = 'bayn.autonomous-cycle.v3'
+            AND execution_session_date = ${slot.executionSessionDate}
+        `
+        : sql<Record<string, unknown>>`
       SELECT
         cycle_id, schema_version, identity_schema_version, strategy_name,
         qualification_run_id, strategy_protocol_hash, account_id,
         signal_session_date::text AS signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+        submission_cutoff_after_open_ms,
         window_schema_version, execution_calendar_schema_version,
         execution_calendar_source, execution_calendar_hash,
         execution_session_date::text AS execution_session_date,
@@ -88,7 +113,9 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       WHERE qualification_run_id = ${slot.qualificationRunId}
         AND account_id = ${slot.accountId}
         AND signal_session_date = ${slot.signalSessionDate}
-    `.pipe(Effect.flatMap(decodeStoredCycles))
+    `
+    return query.pipe(Effect.flatMap(decodeStoredCycles))
+  }
 
   const selectDecisionDocuments: CycleQueries['selectDecisionDocuments'] = (cycleId) =>
     sql<Record<string, unknown>>`
@@ -210,6 +237,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         cycle.signal_session_date::text AS signal_session_date, cycle.signal_calendar_version,
         cycle.execution_policy_schema_version, cycle.execution_policy_hash,
         cycle.strategy_execution_model_hash, cycle.submission_window_ms, cycle.submission_cutoff_before_open_ms,
+        cycle.submission_cutoff_after_open_ms,
         cycle.window_schema_version, cycle.execution_calendar_schema_version,
         cycle.execution_calendar_source, cycle.execution_calendar_hash,
         cycle.execution_session_date::text AS execution_session_date,
@@ -223,20 +251,34 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
           WHEN cycle.is_planned_execution THEN 1
           ELSE 2
         END ASC,
-        cycle.signal_session_date ASC,
+        cycle.execution_session_date ASC,
         cycle.cycle_id ASC
       LIMIT 1
     `.pipe(Effect.flatMap(decodeStoredCycles))
 
-  const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) =>
-    sql<Record<string, unknown>>`
+  const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
+    const executionMarketData = document.bindings.executionMarketData
+    const snapshotEvidence =
+      executionMarketData === undefined
+        ? sql`
+            EXISTS (
+              SELECT 1
+              FROM snapshot_references AS snapshot
+              WHERE snapshot.snapshot_id = ${document.bindings.snapshotId}
+                AND snapshot.content_hash = ${document.bindings.snapshotContentHash}
+                AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
+            )
+          `
+        : sql`
+            ${document.bindings.snapshotId} = ${executionMarketData.snapshotId}
+            AND ${document.bindings.snapshotContentHash} = ${executionMarketData.contentHash}
+            AND ${document.bindings.snapshotFinalizedAt} = ${executionMarketData.observedAt}
+          `
+    return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
-        FROM snapshot_references AS snapshot
-        CROSS JOIN reconciliations AS reconciliation
-        WHERE snapshot.snapshot_id = ${document.bindings.snapshotId}
-          AND snapshot.content_hash = ${document.bindings.snapshotContentHash}
-          AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
+        FROM reconciliations AS reconciliation
+        WHERE ${snapshotEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}
           AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
@@ -249,6 +291,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
       Effect.flatMap(decodeDecisionEvidenceMatch),
       Effect.map(([match]) => match.matches),
     )
+  }
 
   const executionCompletionEvidenceMatches: CycleQueries['executionCompletionEvidenceMatches'] = (
     document,

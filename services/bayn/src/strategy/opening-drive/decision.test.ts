@@ -111,6 +111,7 @@ const makeRows = (returnOverride?: number, volumeOverride?: string) => {
       source_partition: '0',
       source_offset: String(offset++),
       schema_version: '1',
+      latest_payload_variants: '1',
       bid_price: String(midpoint - 0.01),
       bid_size: '100',
       ask_price: String(midpoint + 0.01),
@@ -134,6 +135,7 @@ const makeRows = (returnOverride?: number, volumeOverride?: string) => {
       source_partition: '0',
       source_offset: String(offset++),
       schema_version: '1',
+      latest_payload_variants: '1',
       price: String(opening * (1 + openingReturn)),
       size: '10',
     }

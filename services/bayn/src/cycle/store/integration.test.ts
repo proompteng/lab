@@ -37,11 +37,18 @@ import {
   makeCycleExecutionPolicy,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
+  isIntradayCycleDraft,
+  isLegacyAutonomousCycle,
+  isLegacyCycleDraft,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
+  type IntradayCycleDraft,
+  type LegacyAutonomousCycle,
+  type LegacyCycleDraft,
 } from '../index'
 import {
   CycleDecisionBuildError,
@@ -115,6 +122,9 @@ import { ensureSnapshotReference } from '../../db/snapshot-reference'
 import { CycleStore, CycleStoreLive, WriterFencedCycleStoreLive, type CycleStoreShape } from '.'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
+const migrationLoaderBeforeIntradayNativeCycles = migrationLoader.pipe(
+  Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId < 46)),
+)
 const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
@@ -854,7 +864,7 @@ const makeDraft = (
     readonly signalSessionDate?: IsoDate
     readonly submissionWindowMs?: number
   } = {},
-): CycleDraft => {
+): LegacyCycleDraft => {
   const signalSessionDate = options.signalSessionDate ?? '2026-03-06'
   const executionSessionDate = options.executionSessionDate ?? '2026-03-09'
   const executionPolicy = (() => {
@@ -903,10 +913,11 @@ const makeDraft = (
   const draftResult = makeCycleDraft(identityResult.success, windowResult.success)
   expect(Result.isSuccess(draftResult)).toBe(true)
   if (Result.isFailure(draftResult)) return expect.unreachable(draftResult.failure.message)
+  if (!isLegacyCycleDraft(draftResult.success)) return expect.unreachable('expected a legacy cycle draft')
   return draftResult.success
 }
 
-const makePlannedDraft = (accountId: string, executionPolicy: CycleExecutionPolicy): CycleDraft =>
+const makePlannedDraft = (accountId: string, executionPolicy: CycleExecutionPolicy): LegacyCycleDraft =>
   makeDraft(accountId, {
     executionPolicy,
     executionSessionDate: '2026-04-01',
@@ -914,7 +925,14 @@ const makePlannedDraft = (accountId: string, executionPolicy: CycleExecutionPoli
     executionCloseAt: '2026-04-01T20:00:00.000Z',
   })
 
-const makeIntradayDraft = (accountId = 'paper-account-intraday'): CycleDraft => {
+type HistoricalV2CycleDraft = Extract<LegacyCycleDraft, { readonly schemaVersion: 'bayn.autonomous-cycle.v2' }>
+
+const isHistoricalV2CycleDraft = (draft: CycleDraft): draft is HistoricalV2CycleDraft =>
+  draft.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+  draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+  draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2'
+
+const makeHistoricalV2Draft = (accountId = 'paper-account-historical-v2'): HistoricalV2CycleDraft => {
   const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
   const executionCalendar = Result.getOrThrow(
     makeExecutionCalendarObservation({
@@ -929,7 +947,7 @@ const makeIntradayDraft = (accountId = 'paper-account-intraday'): CycleDraft => 
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v2',
       strategyName: 'opening-drive-momentum',
-      qualificationRunId: '1'.repeat(64),
+      qualificationRunId: '2'.repeat(64),
       strategyProtocolHash: defaultOpeningDriveProtocolHash,
       accountId,
       signalSessionDate: '2026-03-06',
@@ -942,7 +960,42 @@ const makeIntradayDraft = (accountId = 'paper-account-intraday'): CycleDraft => 
     }),
   )
   const window = Result.getOrThrow(makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
-  return Result.getOrThrow(makeCycleDraft(identity, window))
+  const draft = Result.getOrThrow(makeCycleDraft(identity, window))
+  if (!isHistoricalV2CycleDraft(draft)) {
+    return expect.unreachable('expected a historical version 2 cycle draft')
+  }
+  return draft
+}
+
+const makeIntradayDraft = (accountId = 'paper-account-intraday'): IntradayCycleDraft => {
+  const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  const executionCalendar = Result.getOrThrow(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-03-09',
+      openAt: '2026-03-09T13:30:00.000Z',
+      closeAt: '2026-03-09T20:00:00.000Z',
+    }),
+  )
+  const identity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId: '1'.repeat(64),
+      strategyProtocolHash: defaultOpeningDriveProtocolHash,
+      accountId,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = Result.getOrThrow(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) return expect.unreachable('expected an intraday cycle draft')
+  return draft
 }
 
 const monthEndExecutionWindow = (
@@ -1229,6 +1282,88 @@ const makeShadowDecision = (
   return result.success
 }
 
+const makeIntradayShadowDecision = (draft: IntradayCycleDraft) => {
+  const sourceTopics = {
+    bars: 'torghut.bars.1m.v1',
+    quotes: 'torghut.quotes.v1',
+    trades: 'torghut.trades.v1',
+  }
+  const calendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: {
+      start: draft.identity.executionSessionDate,
+      end: draft.identity.executionSessionDate,
+    },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: draft.identity.executionSessionDate,
+        openAt: draft.window.executionOpenAt,
+        closeAt: draft.window.executionCloseAt,
+      },
+    ],
+  }
+  const snapshotMaterial = {
+    schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
+    sessionDate: draft.identity.executionSessionDate,
+    calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+    rangeStartAt: draft.window.executionOpenAt,
+    rangeEndAt: '2026-03-09T13:35:00.000Z',
+    observedAt: draft.window.submissionOpenAt,
+    universeId: 'opening-drive-fixture-v1',
+    universeSymbolHash: '7'.repeat(64),
+    symbols: ['AMD', 'NVDA'],
+    feed: 'sip' as const,
+    delayClass: 'real_time_consolidated' as const,
+    sourceTopics,
+    archiveWatermarks: Object.values(sourceTopics).map((sourceTopic, index) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      inclusiveLastOffset: String(10 + index),
+    })),
+    maximumQuoteAgeMs: 5_000,
+    minimumWatermarkLagMs: 1_000,
+    barCount: 10,
+    quoteCount: 2,
+    tradeCount: 2,
+    barsContentHash: '8'.repeat(64),
+    quotesContentHash: '9'.repeat(64),
+    tradesContentHash: 'a'.repeat(64),
+    lineage: Object.values(sourceTopics).map((sourceTopic, index) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      firstOffset: String(1 + index),
+      lastOffset: String(10 + index),
+      recordCount: index === 0 ? 10 : 2,
+    })),
+  }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const { schemaVersion: snapshotSchemaVersion, ...material } = snapshotMaterial
+  const executionMarketData = {
+    schemaVersion: 'bayn.execution-market-data-binding.v1' as const,
+    snapshotSchemaVersion,
+    ...material,
+    contentHash,
+    snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+  }
+  const base = makeShadowDecision(draft, executionMarketData.snapshotId, {
+    createdAt: '2026-03-09T13:36:00.000Z',
+    snapshotContentHash: executionMarketData.contentHash,
+  })
+  const { contentHash: _baseContentHash, ...baseMaterial } = base
+  const result = makeObserveShadowDecisionDocument({
+    ...baseMaterial,
+    bindings: {
+      ...baseMaterial.bindings,
+      snapshotFinalizedAt: executionMarketData.observedAt,
+      executionMarketData,
+    },
+  })
+  if (Result.isFailure(result)) throw new Error(`${result.failure.message}: ${String(result.failure.cause)}`)
+  return result.success
+}
+
 const makePaperNoTradeDecision = (
   draft: CycleDraft,
   boundSnapshotId: string,
@@ -1341,7 +1476,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
   }
 }
 
-const plannedExecutionDecisionPlan = (draft: CycleDraft): DecisionPlan => {
+const plannedExecutionDecisionPlan = (draft: LegacyCycleDraft): DecisionPlan => {
   const targetWeights = Object.fromEntries(
     fixtureProtocol.universe.map((symbol, index) => [symbol, index === 0 ? 0.5 : 0]),
   )
@@ -1373,7 +1508,7 @@ const plannedExecutionDecisionPlan = (draft: CycleDraft): DecisionPlan => {
 }
 
 const plannedPaperSnapshot = (
-  draft: CycleDraft,
+  draft: LegacyCycleDraft,
   boundSnapshotId: string,
   snapshotFinalizedAt: string,
 ): MarketDataSnapshot => {
@@ -1435,7 +1570,7 @@ const plannedPaperSnapshot = (
 }
 
 const plannedPaperMarketData = (
-  draft: CycleDraft,
+  draft: LegacyCycleDraft,
   boundSnapshotId: string,
   snapshotFinalizedAt = acquireAt,
 ): MarketDataService => {
@@ -1459,7 +1594,7 @@ const plannedPaperMarketData = (
   }
 }
 
-const plannedPaperBrokerRead = (draft: CycleDraft, observedAt = decisionAt): BrokerReadShape => {
+const plannedPaperBrokerRead = (draft: LegacyCycleDraft, observedAt = decisionAt): BrokerReadShape => {
   const unused = Effect.die(new Error('planned PAPER persistence fixture used an unrelated broker capability'))
   return {
     account: unused,
@@ -1513,15 +1648,19 @@ const buildPlannedExecutionDecision = (
   } = {},
 ) =>
   Effect.gen(function* () {
+    if (!isLegacyAutonomousCycle(cycle)) {
+      return yield* Effect.die(new Error('planned execution fixture requires a legacy cycle'))
+    }
+    const legacyCycle: LegacyAutonomousCycle = cycle
     const evaluatedAt = options.evaluatedAt ?? plannedDecisionAt
-    const sourcePolicy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
+    const sourcePolicy = yield* loadObserveRiskPolicy(legacyCycle.identity.accountId, fixtureProtocol.universe)
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
-    const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
-    const decision = plannedExecutionDecisionPlan(cycle)
+    const reconciliation = plannedPaperReconciliation(legacyCycle, evaluatedAt)
+    const decision = plannedExecutionDecisionPlan(legacyCycle)
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildMutationShadowCycleDecision({
       authorityGenerationHash: plannedPaperGenerationHash,
-      cycle,
+      cycle: legacyCycle,
       executionModel: fixtureProtocol.executionModel,
       policy,
       reconcile: Effect.succeed(reconciliation),
@@ -1530,17 +1669,24 @@ const buildPlannedExecutionDecision = (
         provenance: dueStrategy.provenance,
       },
     }).pipe(
-      Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
-      Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId, options.snapshotFinalizedAt)),
+      Effect.provideService(BrokerRead, plannedPaperBrokerRead(legacyCycle, evaluatedAt)),
+      Effect.provideService(
+        MarketData,
+        plannedPaperMarketData(legacyCycle, boundSnapshotId, options.snapshotFinalizedAt),
+      ),
     )
     return { document, reconciliation }
   })
 
 const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: string) =>
   Effect.gen(function* () {
+    if (!isLegacyAutonomousCycle(cycle)) {
+      return yield* Effect.die(new Error('planned observe fixture requires a legacy cycle'))
+    }
+    const legacyCycle: LegacyAutonomousCycle = cycle
     const evaluatedAt = plannedDecisionAt
-    const policy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
-    const paperReconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
+    const policy = yield* loadObserveRiskPolicy(legacyCycle.identity.accountId, fixtureProtocol.universe)
+    const paperReconciliation = plannedPaperReconciliation(legacyCycle, evaluatedAt)
     const authority = paperReconciliation.riskContext.authority
     if (authority === null) return yield* Effect.die(new Error('planned OBSERVE fixture requires authority'))
     const reconciliation: ReconciliationPassResult = {
@@ -1554,11 +1700,11 @@ const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: st
         },
       },
     }
-    const decision = plannedExecutionDecisionPlan(cycle)
+    const decision = plannedExecutionDecisionPlan(legacyCycle)
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildObserveCycleDecision({
       authorityGenerationHash: plannedPaperGenerationHash,
-      cycle,
+      cycle: legacyCycle,
       executionModel: fixtureProtocol.executionModel,
       policy,
       reconcile: Effect.succeed(reconciliation),
@@ -1567,8 +1713,8 @@ const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: st
         provenance: dueStrategy.provenance,
       },
     }).pipe(
-      Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
-      Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId)),
+      Effect.provideService(BrokerRead, plannedPaperBrokerRead(legacyCycle, evaluatedAt)),
+      Effect.provideService(MarketData, plannedPaperMarketData(legacyCycle, boundSnapshotId)),
     )
     return { document, reconciliation }
   })
@@ -2649,35 +2795,166 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(observed.count).toBe(1)
   })
 
+  test('upgrades historical version 2 cycles without reinterpreting their durable contract', async () => {
+    const draft = makeHistoricalV2Draft()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({ loader: migrationLoaderBeforeIntradayNativeCycles, table: 'schema_migrations' })
+        yield* sql`
+          INSERT INTO autonomous_cycles (
+            cycle_id, schema_version, identity_schema_version, strategy_name,
+            qualification_run_id, strategy_protocol_hash, account_id,
+            signal_session_date, signal_calendar_version,
+            execution_policy_schema_version, execution_policy_hash,
+            strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+            window_schema_version, execution_calendar_schema_version,
+            execution_calendar_source, execution_calendar_hash, execution_session_date,
+            signal_close_at, publication_deadline_at, submission_open_at,
+            execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
+            decision_hash, terminal_reason, state_version,
+            created_at, updated_at, terminal_at
+          ) VALUES (
+            ${draft.identity.cycleId}, ${draft.schemaVersion}, ${draft.identity.schemaVersion},
+            ${draft.identity.strategyName}, ${draft.identity.qualificationRunId},
+            ${draft.identity.strategyProtocolHash}, ${draft.identity.accountId},
+            ${draft.identity.signalSessionDate}, ${draft.identity.signalCalendarVersion},
+            ${draft.identity.executionPolicy.schemaVersion}, ${draft.identity.executionPolicy.executionPolicyHash},
+            ${draft.identity.executionPolicy.strategyExecutionModelHash},
+            ${draft.identity.executionPolicy.submissionWindowMs},
+            ${draft.identity.executionPolicy.submissionCutoffAfterOpenMs},
+            ${draft.window.schemaVersion}, ${draft.window.executionCalendarSchemaVersion},
+            ${draft.window.executionCalendarSource}, ${draft.window.executionCalendarHash},
+            ${draft.window.executionSessionDate}, ${draft.window.signalCloseAt},
+            ${draft.window.publicationDeadlineAt}, ${draft.window.submissionOpenAt},
+            ${draft.window.executionOpenAt}, ${draft.window.executionCloseAt},
+            ${draft.window.submissionCutoffAt}, ${CycleState.Pending}, NULL, NULL, NULL, 1,
+            ${acquireAt}, ${acquireAt}, NULL
+          )
+        `
+        const [before] = yield* sql<{ readonly row: unknown }>`
+          SELECT to_jsonb(cycle) AS row
+          FROM autonomous_cycles AS cycle
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+
+        yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
+
+        const [after] = yield* sql<{
+          readonly after_open_ms: number | null
+          readonly row: unknown
+        }>`
+          SELECT
+            submission_cutoff_after_open_ms AS after_open_ms,
+            to_jsonb(cycle) - 'submission_cutoff_after_open_ms' AS row
+          FROM autonomous_cycles AS cycle
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        const store = yield* CycleStore
+        const recovered = yield* store.read(draft.identity.cycleId)
+        const bound = yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        return {
+          activated,
+          after,
+          before: {
+            row:
+              typeof before.row === 'object' && before.row !== null
+                ? Object.fromEntries(
+                    Object.entries(before.row).filter(([key]) => key !== 'submission_cutoff_after_open_ms'),
+                  )
+                : before.row,
+          },
+          bound,
+          recovered,
+        }
+      }),
+    )
+
+    expect(observed.after.after_open_ms).toBeNull()
+    expect(observed.after.row).toEqual(observed.before.row)
+    expect(observed.recovered).toEqual(
+      Option.some({
+        ...draft,
+        state: CycleState.Pending,
+        bindings: {},
+        stateVersion: 1,
+        createdAt: acquireAt,
+        updatedAt: acquireAt,
+      }),
+    )
+    expect(observed.bound.cycle).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle.v2',
+      state: CycleState.Pending,
+      bindings: { snapshotId: snapshotA },
+    })
+    expect(observed.activated.cycle).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle.v2',
+      state: CycleState.Active,
+      bindings: { snapshotId: snapshotA },
+    })
+  }, 30_000)
+
   test('persists and recovers the versioned intraday cycle without changing legacy rows', async () => {
     const draft = makeIntradayDraft()
+    const document = makeIntradayShadowDecision(draft)
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
         const receipt = yield* store.acquire(draft, acquireAt)
+        const standaloneSnapshot = yield* Effect.exit(
+          store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt),
+        )
+        const activated = yield* store.activate(draft.identity.cycleId, draft.window.submissionOpenAt)
+        yield* insertShadowReconciliation(draft)
+        const bound = yield* store.bindDecision(draft.identity.cycleId, document, document.createdAt)
+        const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), document.createdAt)
+        const authoritySlot = yield* store.readAuthoritySlot({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+          executionSessionDate: draft.identity.executionSessionDate,
+        })
         const sql = yield* PgClient.PgClient
         const [row] = yield* sql<{
           schema_version: string
           execution_policy_schema_version: string
-          submission_cutoff_before_open_ms: number
+          submission_cutoff_before_open_ms: number | null
+          submission_cutoff_after_open_ms: number | null
         }>`
           SELECT
             schema_version,
             execution_policy_schema_version,
-            submission_cutoff_before_open_ms
+            submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms
           FROM autonomous_cycles
           WHERE cycle_id = ${draft.identity.cycleId}
         `
-        return { receipt, row }
+        const [dailyReference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM snapshot_references
+          WHERE snapshot_id = ${document.bindings.snapshotId}
+        `
+        return {
+          activated,
+          authoritySlot,
+          bound,
+          dailyReferenceCount: dailyReference.count,
+          receipt,
+          replay,
+          row,
+          standaloneSnapshot,
+        }
       }),
     )
 
     expect(observed.receipt).toMatchObject({
       created: true,
       cycle: {
-        schemaVersion: 'bayn.autonomous-cycle.v2',
+        schemaVersion: 'bayn.autonomous-cycle.v3',
         identity: {
-          schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+          schemaVersion: 'bayn.autonomous-cycle-identity.v3',
           strategyName: 'opening-drive-momentum',
           executionPolicy: {
             schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
@@ -2685,17 +2962,33 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           },
         },
         window: {
-          schemaVersion: 'bayn.autonomous-cycle-window.v2',
-          publicationDeadlineAt: '2026-03-09T13:30:00.000Z',
+          schemaVersion: 'bayn.autonomous-cycle-window.v3',
           submissionOpenAt: '2026-03-09T13:35:01.000Z',
           submissionCutoffAt: '2026-03-09T14:00:00.000Z',
         },
       },
     })
+    expect(Exit.isFailure(observed.standaloneSnapshot)).toBe(true)
+    expect(observed.activated).toMatchObject({ changed: true, cycle: { state: CycleState.Active, bindings: {} } })
+    expect(observed.bound).toMatchObject({
+      changed: true,
+      cycle: {
+        state: CycleState.Active,
+        stateVersion: 3,
+        bindings: {
+          snapshotId: document.bindings.snapshotId,
+          decisionHash: document.contentHash,
+        },
+      },
+    })
+    expect(observed.replay).toEqual({ changed: false, cycle: observed.bound.cycle })
+    expect(observed.authoritySlot).toEqual(Option.some(observed.bound.cycle))
+    expect(observed.dailyReferenceCount).toBe(0)
     expect(observed.row).toEqual({
-      schema_version: 'bayn.autonomous-cycle.v2',
+      schema_version: 'bayn.autonomous-cycle.v3',
       execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v2',
-      submission_cutoff_before_open_ms: 1_800_000,
+      submission_cutoff_before_open_ms: null,
+      submission_cutoff_after_open_ms: 1_800_000,
     })
   })
 
@@ -2958,21 +3251,23 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       }).pipe(Effect.provideService(MarketData, runnerMarketData()), Effect.provide(TestClock.layer())),
     )
 
-    expect(results.map((result) => result.readiness.cycle.state)).toEqual(cases.map((boundary) => boundary.state))
-    expect(results.map((result) => result.readiness.cycle.updatedAt)).toEqual(
-      cases.map((boundary) => boundary.observedAt),
-    )
-    for (const result of results.slice(1)) {
-      expect(result.readiness.cycle).toMatchObject({
+    const readiness = results.map((result) => {
+      if (result.readiness === undefined) throw new Error('legacy month-end acquisition must include readiness')
+      return result.readiness
+    })
+    expect(readiness.map((result) => result.cycle.state)).toEqual(cases.map((boundary) => boundary.state))
+    expect(readiness.map((result) => result.cycle.updatedAt)).toEqual(cases.map((boundary) => boundary.observedAt))
+    for (const result of readiness.slice(1)) {
+      expect(result.cycle).toMatchObject({
         state: CycleState.Blocked,
         terminalReason: CycleTerminalReason.MissedPublication,
       })
     }
     expect(
-      results.every(
+      readiness.every(
         (result) =>
-          result.readiness.cycle.window.submissionOpenAt < result.readiness.cycle.window.submissionCutoffAt &&
-          result.readiness.cycle.window.submissionCutoffAt < result.readiness.cycle.window.executionOpenAt,
+          result.cycle.window.submissionOpenAt < result.cycle.window.submissionCutoffAt &&
+          result.cycle.window.submissionCutoffAt < result.cycle.window.executionOpenAt,
       ),
     ).toBe(true)
   })
@@ -5577,7 +5872,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       const restarted = await runProductionDuePass(restartedRuntime, io)
       expect(restarted).toMatchObject({
         outcome: 'ALREADY_TERMINAL',
-        signalSessionDate: dueSignalDate,
         cycle: {
           identity: { cycleId: settled.cycle.identity.cycleId },
           state: settled.cycle.state,

@@ -8,6 +8,7 @@ import {
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeCycleWindow,
+  makeIntradayCycleWindow,
   makeExecutionCalendarObservation,
   type AutonomousCycle,
 } from '../cycle'
@@ -52,6 +53,43 @@ const calendar = Object.freeze({
 })
 
 const makeActiveCycle = (): AutonomousCycle => {
+  const executionCalendar = success(
+    makeExecutionCalendarObservation({
+      schemaVersion: calendar.schemaVersion,
+      source: calendar.source,
+      ...calendar.sessions[0]!,
+    }),
+  )
+  const executionPolicy = success(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
+    throw new Error('opening-drive fixture requires the post-open execution policy')
+  }
+  const identity = success(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId: hash('qualification'),
+      strategyProtocolHash: hash('protocol'),
+      accountId: 'sandbox-account-binding',
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = success(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  return {
+    ...success(makeCycleDraft(identity, window)),
+    state: CycleState.Active,
+    bindings: {},
+    stateVersion: 3,
+    createdAt: '2026-08-17T20:00:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  }
+}
+
+const makeHistoricalActiveCycle = (): AutonomousCycle => {
   const executionCalendar = success(
     makeExecutionCalendarObservation({
       schemaVersion: calendar.schemaVersion,
@@ -159,6 +197,7 @@ const makeSnapshotRows = (): IntradaySnapshotRows => {
     ...identity(symbol, sourceTopics.quotes, index + 1),
     event_at: '2026-08-18T19:30:00.500Z',
     ingested_at: '2026-08-18T19:30:00.600Z',
+    latest_payload_variants: '1',
     bid_price: symbol === 'AMD' ? '100.123456' : String(101.123456 + index),
     bid_size: '100',
     ask_price: symbol === 'AMD' ? '100.133456' : String(101.133456 + index),
@@ -168,6 +207,7 @@ const makeSnapshotRows = (): IntradaySnapshotRows => {
     ...identity(symbol, sourceTopics.trades, index + 1),
     event_at: '2026-08-18T19:30:00.400Z',
     ingested_at: '2026-08-18T19:30:00.500Z',
+    latest_payload_variants: '1',
     price: symbol === 'AMD' ? '100.13' : String(101.13 + index),
     size: '10',
   }))
@@ -228,6 +268,7 @@ const makeOpeningRangeRows = (request: IntradaySnapshotRequest): IntradaySnapsho
       ...identity(symbol, sourceTopics.quotes, index + 1),
       event_at: new Date(Date.parse(request.rangeEndAt) + 500).toISOString(),
       ingested_at: new Date(Date.parse(request.rangeEndAt) + 600).toISOString(),
+      latest_payload_variants: '1',
       bid_price: String(midpoint - 0.01),
       bid_size: '100',
       ask_price: String(midpoint + 0.01),
@@ -240,6 +281,7 @@ const makeOpeningRangeRows = (request: IntradaySnapshotRequest): IntradaySnapsho
       ...identity(symbol, sourceTopics.trades, index + 1),
       event_at: new Date(Date.parse(request.rangeEndAt) + 400).toISOString(),
       ingested_at: new Date(Date.parse(request.rangeEndAt) + 500).toISOString(),
+      latest_payload_variants: '1',
       price: String(opening * (1 + (leaders.get(symbol) ?? 0.001))),
       size: '10',
     }
@@ -275,6 +317,17 @@ describe('opening-drive runtime decision boundary', () => {
     })
     expect(failure(openingDriveEntryQuery(cycle, protocol, calendar, cycle.window.submissionCutoffAt))).toMatchObject({
       operation: 'entry-query',
+    })
+  })
+
+  test('keeps a persisted v2 opening-drive cycle eligible for its verified intraday entry read', () => {
+    const cycle = makeHistoricalActiveCycle()
+    const query = success(openingDriveEntryQuery(cycle, protocol, calendar, cycle.window.submissionOpenAt))
+
+    expect(query).toMatchObject({
+      sessionDate: '2026-08-18',
+      rangeStartAt: '2026-08-18T13:30:00.000Z',
+      rangeEndAt: '2026-08-18T13:35:00.000Z',
     })
   })
 

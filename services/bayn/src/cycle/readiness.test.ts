@@ -11,8 +11,9 @@ import {
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
-  type AutonomousCycle,
+  isLegacyCycleDraft,
   type CycleExecutionPolicy,
+  type LegacyAutonomousCycle,
 } from './index'
 import { measurePublicationFreshness, runCyclePublicationReadiness } from './readiness'
 import {
@@ -43,7 +44,7 @@ const executionPolicyFixture = (): CycleExecutionPolicy => {
 
 const executionPolicy = executionPolicyFixture()
 
-const makeCycle = (): AutonomousCycle => {
+const makeCycle = (): LegacyAutonomousCycle => {
   const signalSession = {
     calendar_version: signalCalendarVersion,
     session_date: '2026-01-30' as const,
@@ -81,6 +82,7 @@ const makeCycle = (): AutonomousCycle => {
   const draft = makeCycleDraft(identity.success, window.success)
   expect(Result.isSuccess(draft)).toBe(true)
   if (Result.isFailure(draft)) return expect.unreachable(draft.failure.message)
+  if (!isLegacyCycleDraft(draft.success)) return expect.unreachable('expected a legacy cycle draft')
   return {
     ...draft.success,
     state: CycleState.Pending,
@@ -187,7 +189,7 @@ const marketDataService = (
 }
 
 interface StoreControl {
-  current: AutonomousCycle
+  current: LegacyAutonomousCycle
   binds: number
   blocks: number
 }
@@ -238,7 +240,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
 }
 
 const provide = (
-  cycle: AutonomousCycle,
+  cycle: LegacyAutonomousCycle,
   inspectPublication: MarketDataService['inspectPublication'],
   control: StoreControl,
   inspectSnapshotPublication?: MarketDataService['inspectSnapshotPublication'],
@@ -251,15 +253,15 @@ const provide = (
 describe('autonomous cycle finalized-publication readiness', () => {
   test('decides every publication admission and binding transition without effects', () => {
     const pending = makeCycle()
-    const active = { ...pending, state: CycleState.Active } as AutonomousCycle
-    const bound = { ...pending, bindings: { snapshotId } } as AutonomousCycle
+    const active = { ...pending, state: CycleState.Active } as LegacyAutonomousCycle
+    const bound = { ...pending, bindings: { snapshotId } } as LegacyAutonomousCycle
     const blocked = {
       ...pending,
       state: CycleState.Blocked,
       terminalReason: CycleTerminalReason.MissedPublication,
       terminalAt: pending.window.publicationDeadlineAt,
       updatedAt: pending.window.publicationDeadlineAt,
-    } as AutonomousCycle
+    } as LegacyAutonomousCycle
 
     expect(decideCyclePublicationAdmission(blocked, pending.window.signalCloseAt)._tag).toBe('RETURN_BLOCKED')
     expect(decideCyclePublicationAdmission(bound, pending.window.signalCloseAt)._tag).toBe('INSPECT_BOUND')
@@ -459,7 +461,7 @@ describe('autonomous cycle finalized-publication readiness', () => {
       }),
     )
 
-    const boundCycle: AutonomousCycle = {
+    const boundCycle: LegacyAutonomousCycle = {
       ...cycle,
       bindings: { snapshotId },
       stateVersion: 2,

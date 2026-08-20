@@ -1,5 +1,5 @@
 import { Pipeable } from '../../pipeable'
-import { CycleState, type AutonomousCycle } from '../model'
+import { CycleState, type LegacyAutonomousCycle } from '../model'
 
 export type CyclePublicationAdmission =
   | { readonly _tag: 'RETURN_BLOCKED' }
@@ -10,7 +10,7 @@ export type CyclePublicationAdmission =
   | { readonly _tag: 'INSPECT_PUBLICATION' }
 
 const decideCyclePublicationAdmissionDataFirst = (
-  cycle: AutonomousCycle,
+  cycle: LegacyAutonomousCycle,
   observedAt: string,
 ): CyclePublicationAdmission => {
   if (cycle.state === CycleState.Blocked) return { _tag: 'RETURN_BLOCKED' }
@@ -33,7 +33,7 @@ export type FinalizedPublicationBindingDecision =
   | { readonly _tag: 'BIND' }
 
 const decideFinalizedPublicationBindingDataFirst = (
-  cycle: AutonomousCycle,
+  cycle: LegacyAutonomousCycle,
   snapshotId: string,
   observedAt: string,
 ): FinalizedPublicationBindingDecision => {

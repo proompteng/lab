@@ -37,7 +37,7 @@ type RuntimeIdentityFailure =
 
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
-  /** Compatibility input for archived daily Signal reads until cycle discovery is intraday-native. */
+  /** Retained for v1 history and legacy strategy reads; v2 opening-drive cycles use the intraday archive. */
   readonly protocol: CausalProtocol
   readonly strategyProtocol: OpeningDriveProtocol
 }

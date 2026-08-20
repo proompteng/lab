@@ -59,6 +59,14 @@ describe('intraday archive queries', () => {
     expect(
       capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
     ).toHaveLength(2)
+    expect(
+      capture.match(
+        new RegExp(
+          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          'g',
+        ),
+      ),
+    ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
     expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
@@ -67,11 +75,16 @@ describe('intraday archive queries', () => {
     expect(bars).not.toContain('ORDER BY source_offset DESC\n')
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
-      expect(query).toContain(`event_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).toContain(
+        `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC')`,
+      )
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
-      expect(query).toContain('ORDER BY event_ts DESC, ingest_ts DESC, source_partition DESC, source_offset DESC')
-      expect(query).toContain('LIMIT 1 BY symbol')
+      expect(query).toContain('max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts')
+      expect(query).toContain('WHERE event_ts = latest_event_ts')
+      expect(query).toContain('AS latest_payload_variants')
+      expect(query).toContain('WHERE latest_candidate_rank = 1')
+      expect(query).not.toContain('LIMIT 1 BY symbol')
     }
     for (const query of [bars, quotes, trades]) {
       expect(query).toContain(`LIMIT ${intradayArchivePageSize}`)

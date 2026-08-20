@@ -1,6 +1,6 @@
 import type { MarketDataInspection } from '../../market-data'
 import { Pipeable } from '../../pipeable'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, isLegacyAutonomousCycle, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
 import type { NonEmptyPublications } from './calendar-decisions'
 import { isEverySessionCycleCadence, type CycleCadence } from './model'
@@ -125,6 +125,7 @@ const completeCycleAuthoritySelectionDataFirst = (
   }
   const latestTerminal = state.latestTerminal?.cycle
   if (isEverySessionCycleCadence(cadence) && latestTerminal !== undefined) {
+    if (!isLegacyAutonomousCycle(latestTerminal)) return { _tag: 'ALREADY_TERMINAL', cycle: latestTerminal }
     const newerPublications = state.publications.filter(
       (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
     )

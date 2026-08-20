@@ -16,6 +16,7 @@ import {
   makeCycleExecutionPolicy,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
   signalSessionCloseAt,
@@ -54,6 +55,8 @@ const makeCycleExecutionPolicyFromModelSuccess = (...args: Parameters<typeof mak
   resultValue(makeCycleExecutionPolicyFromModel(...args))
 const makeCycleIdentitySuccess = (...args: Parameters<typeof makeCycleIdentity>) =>
   resultValue(makeCycleIdentity(...args))
+const makeIntradayCycleWindowSuccess = (...args: Parameters<typeof makeIntradayCycleWindow>) =>
+  resultValue(makeIntradayCycleWindow(...args))
 const makeCycleWindowSuccess = (...args: Parameters<typeof makeCycleWindow>) => resultValue(makeCycleWindow(...args))
 const makeExecutionCalendarObservationSuccess = (...args: Parameters<typeof makeExecutionCalendarObservation>) =>
   resultValue(makeExecutionCalendarObservation(...args))
@@ -158,20 +161,18 @@ describe('autonomous cycle identity and calendar', () => {
     }
     const observedExecutionCalendar = executionCalendar()
     const identity = makeCycleIdentitySuccess({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
       strategyName: 'opening-drive-momentum',
       qualificationRunId,
       strategyProtocolHash,
       accountId: 'paper-account-1',
-      signalSessionDate: '2026-03-06',
-      signalCalendarVersion,
       executionSessionDate: observedExecutionCalendar.executionSessionDate,
       executionCalendarSchemaVersion: observedExecutionCalendar.executionCalendarSchemaVersion,
       executionCalendarSource: observedExecutionCalendar.executionCalendarSource,
       executionCalendarHash: observedExecutionCalendar.executionCalendarHash,
       executionPolicy: policy,
     })
-    const window = makeCycleWindowSuccess(signalSession('2026-03-06'), observedExecutionCalendar, policy)
+    const window = makeIntradayCycleWindowSuccess(observedExecutionCalendar, policy)
     const draft = makeCycleDraftSuccess(identity, window)
 
     expect(policy).toMatchObject({
@@ -180,20 +181,19 @@ describe('autonomous cycle identity and calendar', () => {
       submissionCutoffAfterOpenMs: 1_800_000,
     })
     expect(window).toMatchObject({
-      schemaVersion: 'bayn.autonomous-cycle-window.v2',
-      publicationDeadlineAt: '2026-03-09T13:30:00.000Z',
+      schemaVersion: 'bayn.autonomous-cycle-window.v3',
       executionOpenAt: '2026-03-09T13:30:00.000Z',
       submissionOpenAt: '2026-03-09T13:35:01.000Z',
       submissionCutoffAt: '2026-03-09T14:00:00.000Z',
       executionCloseAt: '2026-03-09T20:00:00.000Z',
     })
     expect(draft).toMatchObject({
-      schemaVersion: 'bayn.autonomous-cycle.v2',
+      schemaVersion: 'bayn.autonomous-cycle.v3',
       identity: {
-        schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+        schemaVersion: 'bayn.autonomous-cycle-identity.v3',
         strategyName: 'opening-drive-momentum',
       },
-      window: { schemaVersion: 'bayn.autonomous-cycle-window.v2' },
+      window: { schemaVersion: 'bayn.autonomous-cycle-window.v3' },
     })
     expect(
       Result.isFailure(makeCycleDraft({ ...identity, schemaVersion: 'bayn.autonomous-cycle-identity.v1' }, window)),

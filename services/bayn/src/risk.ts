@@ -320,8 +320,12 @@ export const StateSchema = StateBase.check(
   Schema.makeFilter((state: typeof StateBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
     const accountId = state.account.accountId
-    const expectedMarketDataHash = state.executionMarketDataHash ?? state.executionSession.signal.contentHash
-    if (expectedMarketDataHash !== state.marketDataHash) {
+    const expectedMarketDataHash =
+      state.executionMarketDataHash ??
+      (state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1'
+        ? state.executionSession.signal.contentHash
+        : undefined)
+    if (expectedMarketDataHash === undefined || expectedMarketDataHash !== state.marketDataHash) {
       issues.push({
         path: ['marketDataHash'],
         issue:

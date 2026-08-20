@@ -136,11 +136,15 @@ export const AuthorityGenerationRow = Schema.Struct({
   activation_source_revision: Schema.NullOr(Schema.String),
   activation_image_repository: Schema.NullOr(NonEmptyString),
   activation_image_digest: Schema.NullOr(Schema.String),
-  strategy_name: Schema.NullOr(Schema.Literal('risk-balanced-trend')),
+  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum'])),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
   strategy_parameter_schema_version: Schema.NullOr(
-    Schema.Literals(['bayn.risk-balanced-trend.protocol.v3', 'bayn.risk-balanced-trend.protocol.v4']),
+    Schema.Literals([
+      'bayn.risk-balanced-trend.protocol.v3',
+      'bayn.risk-balanced-trend.protocol.v4',
+      'bayn.opening-drive.protocol.v2',
+    ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
   risk_policy_hash: Schema.NullOr(Sha256),

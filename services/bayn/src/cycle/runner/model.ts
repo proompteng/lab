@@ -66,19 +66,16 @@ export type CycleRunResult =
     }
   | {
       readonly outcome: 'ALREADY_ACQUIRED'
-      readonly signalSessionDate: string
       readonly observedAt: string
       readonly cycle: CycleBindingResult['cycle']
     }
   | {
       readonly outcome: 'ALREADY_TERMINAL'
-      readonly signalSessionDate: string
       readonly observedAt: string
       readonly cycle: AutonomousCycle
     }
   | {
       readonly outcome: 'RESUMED'
-      readonly signalSessionDate: string
       readonly observedAt: string
       readonly readiness: CycleBindingResult
     }
@@ -99,7 +96,7 @@ export type CycleRunResult =
       readonly outcome: 'NOT_DUE'
       /** Optional only for compatibility with lifecycle observations persisted before reasons were recorded. */
       readonly reason?: CycleNotDueReason
-      readonly signalSessionDate: string
+      readonly signalSessionDate?: string
       readonly executionSessionDate: string
       readonly observedAt: string
       readonly calendarResponseHash: string
@@ -107,13 +104,13 @@ export type CycleRunResult =
     }
   | {
       readonly outcome: 'ACQUIRED' | 'REACQUIRED'
-      readonly signalSessionDate: string
+      readonly signalSessionDate?: string
       readonly executionSessionDate: string
       readonly observedAt: string
       readonly calendarResponseHash: string
       readonly calendarReadContentHash: string
       readonly receipt: CycleAcquireReceipt
-      readonly readiness: CycleBindingResult
+      readonly readiness?: CycleBindingResult
     }
 
 export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{

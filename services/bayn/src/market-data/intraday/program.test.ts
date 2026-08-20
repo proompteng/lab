@@ -19,6 +19,7 @@ const quoteRow = (eventAt: string, sourceOffset: string) => ({
   source_topic: 'quotes',
   source_partition: '0',
   source_offset: sourceOffset,
+  latest_payload_variants: '1',
   bid_price: '100',
   bid_size: '1',
   ask_price: '100.01',

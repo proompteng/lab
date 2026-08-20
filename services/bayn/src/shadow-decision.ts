@@ -1,6 +1,14 @@
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { AutonomousCycleSchema, CycleState, makeExecutionCalendarObservation, type AutonomousCycle } from './cycle'
+import {
+  AutonomousCycleSchema,
+  CycleState,
+  cycleAuthoritySessionDate,
+  isIntradayAutonomousCycle,
+  isLegacyAutonomousCycle,
+  makeExecutionCalendarObservation,
+  type AutonomousCycle,
+} from './cycle'
 import {
   intentIdForPlan,
   clientOrderIdForIntentId,
@@ -249,7 +257,12 @@ const validateBindings = (
   if (cycle.state !== CycleState.Active) {
     return Result.fail(error('binding', 'shadow planning requires an active autonomous cycle'))
   }
-  if (cycle.bindings.snapshotId !== snapshot.snapshotId) {
+  if (
+    (isLegacyAutonomousCycle(cycle) && cycle.bindings.snapshotId !== snapshot.snapshotId) ||
+    (isIntradayAutonomousCycle(cycle) &&
+      cycle.bindings.snapshotId !== undefined &&
+      cycle.bindings.snapshotId !== snapshot.snapshotId)
+  ) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
   const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
@@ -257,7 +270,7 @@ const validateBindings = (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
-    plannerInput.signalDate !== cycle.identity.signalSessionDate ||
+    plannerInput.signalDate !== cycleAuthoritySessionDate(cycle.identity) ||
     plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
@@ -275,7 +288,7 @@ const validateBindings = (
   }
   const expectedDecisionSessionDate =
     decision.schemaVersion === 'bayn.risk-balanced-trend-decision-plan.v1'
-      ? cycle.identity.signalSessionDate
+      ? cycleAuthoritySessionDate(cycle.identity)
       : cycle.identity.executionSessionDate
   const decisionSessionDate =
     decision.schemaVersion === 'bayn.risk-balanced-trend-decision-plan.v1' ? decision.signalDate : decision.sessionDate
@@ -380,11 +393,19 @@ const validateRiskState = (
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
   if (
-    state.executionSession.signal.sessionDate !== cycle.identity.signalSessionDate ||
-    state.executionSession.signal.finalizedAt !== snapshot.finalizedAt ||
-    state.executionSession.signal.contentHash !== snapshot.contentHash
+    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1' ||
+    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v2'
   ) {
-    return Result.fail(error('binding', 'shadow risk signal binding must match the finalized cycle snapshot'))
+    if (
+      !isLegacyAutonomousCycle(cycle) ||
+      state.executionSession.signal.sessionDate !== cycle.identity.signalSessionDate ||
+      state.executionSession.signal.finalizedAt !== snapshot.finalizedAt ||
+      state.executionSession.signal.contentHash !== snapshot.contentHash
+    ) {
+      return Result.fail(error('binding', 'shadow risk signal binding must match the finalized cycle snapshot'))
+    }
+  } else if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined) {
+    return Result.fail(error('binding', 'shadow risk intraday binding must match the verified execution snapshot'))
   }
   if (
     state.executionSession.executionSession.date !== cycle.identity.executionSessionDate ||

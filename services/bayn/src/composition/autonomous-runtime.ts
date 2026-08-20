@@ -34,8 +34,8 @@ import {
   capitalGrantKey,
 } from '../execution/mandate'
 import {
-  loadObserveRiskPolicy,
   executionMandateCloseExpiresAt,
+  loadStrategyExecutionRiskPolicy,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
@@ -613,11 +613,18 @@ export const makeAutonomousServiceRuntime = (
                                     authority,
                                     runtimeServices.alpacaHttpClient,
                                   ).pipe(
+                                    Effect.mapError(executionProgramError),
                                     Effect.flatMap((brokerMutation) =>
-                                      loadObserveRiskPolicy(
+                                      loadStrategyExecutionRiskPolicy(
                                         realizedPlan.config.alpaca.expectedAccountId,
-                                        realizedPlan.strategy.definition.parameters.universe,
+                                        realizedPlan.strategy,
                                       ).pipe(
+                                        Effect.mapError((cause) =>
+                                          capitalActivationOperationalError(
+                                            'source-controlled execution risk policy is invalid',
+                                            cause,
+                                          ),
+                                        ),
                                         Effect.flatMap((riskPolicy) =>
                                           Effect.fromResult(
                                             makeExecutionProgram(authority, {
@@ -642,11 +649,10 @@ export const makeAutonomousServiceRuntime = (
                                               writerFence: runtimeServices.writerFence,
                                               brokerMutation,
                                             }),
-                                          ),
+                                          ).pipe(Effect.mapError(executionProgramError)),
                                         ),
                                       ),
                                     ),
-                                    Effect.mapError(executionProgramError),
                                     Effect.flatMap((executionProgram) => {
                                       const startCycle = (
                                         startup: AutonomousCycleStartupInput,

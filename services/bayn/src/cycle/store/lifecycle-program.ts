@@ -91,7 +91,10 @@ const makeCycleLifecycleProgramsDataFirst = (
       WHERE cycle_id = ${decision.cycle.identity.cycleId}
         AND state = ${CycleState.Pending}
         AND state_version = ${decision.cycle.stateVersion}
-        AND snapshot_id IS NOT NULL
+        AND (
+          schema_version = 'bayn.autonomous-cycle.v3'
+          OR snapshot_id IS NOT NULL
+        )
       RETURNING cycle_id
     `.pipe(
       Effect.flatMap((rows) => mutations.requireApplied('activate', rows)),

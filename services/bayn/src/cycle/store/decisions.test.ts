@@ -10,8 +10,9 @@ import {
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
-  type AutonomousCycle,
-  type CycleDraft,
+  isLegacyCycleDraft,
+  type LegacyAutonomousCycle,
+  type LegacyCycleDraft,
 } from '../../cycle'
 import { canonicalHashV1 } from '../../hash'
 import { makeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
@@ -47,7 +48,7 @@ const failure = <A>(result: Result.Result<A, CycleStoreDecisionFailure>): CycleS
   return result.failure
 }
 
-const draft = (): CycleDraft => {
+const draft = (): LegacyCycleDraft => {
   const calendar = value(
     makeExecutionCalendarObservation({
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
@@ -81,7 +82,7 @@ const draft = (): CycleDraft => {
       executionPolicy: policy,
     }),
   )
-  return value(
+  const cycleDraft = value(
     makeCycleDraft(
       identity,
       value(
@@ -98,9 +99,11 @@ const draft = (): CycleDraft => {
       ),
     ),
   )
+  if (!isLegacyCycleDraft(cycleDraft)) throw new Error('cycle-store fixture requires a legacy cycle draft')
+  return cycleDraft
 }
 
-const pendingCycle = (): AutonomousCycle => ({
+const pendingCycle = (): LegacyAutonomousCycle => ({
   ...draft(),
   state: CycleState.Pending,
   bindings: {},
@@ -109,14 +112,14 @@ const pendingCycle = (): AutonomousCycle => ({
   updatedAt: '2026-01-30T21:15:00.000Z',
 })
 
-const boundPendingCycle = (): AutonomousCycle => ({
+const boundPendingCycle = (): LegacyAutonomousCycle => ({
   ...pendingCycle(),
   bindings: { snapshotId },
   stateVersion: 2,
   updatedAt: '2026-01-30T21:16:00.000Z',
 })
 
-const activeCycle = (): AutonomousCycle => ({
+const activeCycle = (): LegacyAutonomousCycle => ({
   ...boundPendingCycle(),
   state: CycleState.Active,
   stateVersion: 3,
@@ -181,7 +184,7 @@ const targetPlan = (
 }
 
 const document = (
-  cycle: AutonomousCycle,
+  cycle: LegacyAutonomousCycle,
   status: TargetPlanStatus.NoTrade | TargetPlanStatus.Blocked = TargetPlanStatus.NoTrade,
   reason: TargetPlanReason.TargetsSatisfied | BlockedTargetPlanReason = TargetPlanReason.TargetsSatisfied,
 ): ObserveShadowDecisionDocument =>
@@ -285,7 +288,7 @@ describe('cycle store decisions', () => {
       document: input,
     })
 
-    const bound: AutonomousCycle = {
+    const bound: LegacyAutonomousCycle = {
       ...active,
       bindings: { snapshotId, decisionHash: input.contentHash },
       stateVersion: 4,
@@ -307,7 +310,7 @@ describe('cycle store decisions', () => {
   test('requires completion to match the exact bound durable decision', () => {
     const active = activeCycle()
     const noTrade = document(active)
-    const bound: AutonomousCycle = {
+    const bound: LegacyAutonomousCycle = {
       ...active,
       bindings: { snapshotId, decisionHash: noTrade.contentHash },
       stateVersion: 4,
@@ -326,7 +329,7 @@ describe('cycle store decisions', () => {
   test('requires a decision-bound block to match the exact target-plan reason', () => {
     const active = activeCycle()
     const blocked = document(active, TargetPlanStatus.Blocked, TargetPlanReason.InputStale)
-    const bound: AutonomousCycle = {
+    const bound: LegacyAutonomousCycle = {
       ...active,
       bindings: { snapshotId, decisionHash: blocked.contentHash },
       stateVersion: 4,

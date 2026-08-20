@@ -1,10 +1,16 @@
 import { Data, Duration, Effect, pipe, Result } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from '../broker/alpaca'
-import { type AutonomousCycle } from '../cycle'
+import {
+  cycleAuthoritySessionDate,
+  isIntradayAutonomousCycle,
+  isLegacyAutonomousCycle,
+  type AutonomousCycle,
+} from '../cycle'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
+  marketCalendarQueryFromSession,
   marketCalendarQueryForSignal,
   type CyclePassObservation,
   type CycleRunContext,
@@ -70,7 +76,7 @@ import {
 } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import { defaultExecutionModel } from '../strategy/execution-model/model'
-import type { DecisionPlan } from '../types'
+import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
   adverseQuotePrices,
@@ -222,17 +228,31 @@ export type ObserveDecisionFailure =
   | ShadowDecisionError
   | TargetPlannerFailure
 
-type ObserveDecisionReadPreparation = {
-  readonly snapshotId: string
-  readonly marketCalendarQuery: MarketCalendarQuery
-}
+type ObserveDecisionReadPreparation =
+  | {
+      readonly schemaVersion: 'bayn.observe-decision-read-preparation.v1'
+      readonly snapshotId: string
+      readonly marketCalendarQuery: MarketCalendarQuery
+    }
+  | {
+      readonly schemaVersion: 'bayn.observe-decision-read-preparation.v2'
+      readonly marketCalendarQuery: MarketCalendarQuery
+    }
 
-type ObserveDecisionFacts = {
-  readonly snapshot: LoadedSnapshotPublication
+type ObserveDecisionCommonFacts = {
   readonly calendar: MarketCalendarRead
   readonly reconciliation: ReconciliationPassResult
   readonly evaluatedAt: string
 }
+
+type ObserveDecisionFacts =
+  | (ObserveDecisionCommonFacts & {
+      readonly schemaVersion: 'bayn.observe-decision-facts.v1'
+      readonly snapshot: LoadedSnapshotPublication
+    })
+  | (ObserveDecisionCommonFacts & {
+      readonly schemaVersion: 'bayn.observe-decision-facts.v2'
+    })
 
 type ObserveAuthorityObservation = {
   readonly authority: AuthorityState
@@ -405,11 +425,24 @@ const intradayReferencePrices = (
 export const prepareObserveDecisionReads = <R>(
   input: ObserveDecisionInput<R>,
 ): Result.Result<ObserveDecisionReadPreparation, CycleCalendarQueryFailure | ObserveDecisionCompositionFailure> => {
+  if (isIntradayAutonomousCycle(input.cycle)) {
+    return Result.map(
+      marketCalendarQueryFromSession(input.cycle.identity.executionSessionDate),
+      (marketCalendarQuery) => ({
+        schemaVersion: 'bayn.observe-decision-read-preparation.v2' as const,
+        marketCalendarQuery,
+      }),
+    )
+  }
+  if (!isLegacyAutonomousCycle(input.cycle)) {
+    return Result.fail(compositionFailure('cycle-binding', 'autonomous cycle has mismatched contract versions'))
+  }
   const snapshotId = input.cycle.bindings.snapshotId
   if (snapshotId === undefined) {
     return Result.fail(compositionFailure('cycle-binding', 'active autonomous cycle has no immutable snapshot binding'))
   }
   return Result.map(marketCalendarQueryForSignal(input.cycle.identity.signalSessionDate), (marketCalendarQuery) => ({
+    schemaVersion: 'bayn.observe-decision-read-preparation.v1' as const,
     snapshotId,
     marketCalendarQuery,
   }))
@@ -421,6 +454,38 @@ export const readObserveDecisionFacts = <R>(
 ): Effect.Effect<ObserveDecisionFacts, OperationalError, BrokerRead | MarketData | R> =>
   Effect.gen(function* () {
     const brokerRead = yield* BrokerRead
+    if (preparation.schemaVersion === 'bayn.observe-decision-read-preparation.v2') {
+      const [calendar, reconciliation] = yield* Effect.all(
+        [
+          brokerRead.marketCalendar(preparation.marketCalendarQuery).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'market-data',
+                operation: 'market-calendar',
+                message: 'execution-session calendar read failed',
+                cause,
+              }),
+            ),
+          ),
+          input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)),
+        ],
+        { concurrency: 2 },
+      )
+      const evaluatedAt = yield* currentUtcInstant
+      return {
+        schemaVersion: 'bayn.observe-decision-facts.v2' as const,
+        calendar,
+        reconciliation,
+        evaluatedAt,
+      }
+    }
+    if (!isLegacyAutonomousCycle(input.cycle)) {
+      return yield* operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'legacy decision reads do not match the autonomous cycle contract',
+      })
+    }
     const marketData = yield* MarketData
     const [snapshot, calendar, reconciliation] = yield* Effect.all(
       [
@@ -455,7 +520,13 @@ export const readObserveDecisionFacts = <R>(
       { concurrency: 3 },
     )
     const evaluatedAt = yield* currentUtcInstant
-    return { snapshot, calendar, reconciliation, evaluatedAt }
+    return {
+      schemaVersion: 'bayn.observe-decision-facts.v1' as const,
+      snapshot,
+      calendar,
+      reconciliation,
+      evaluatedAt,
+    }
   })
 
 type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
@@ -512,27 +583,43 @@ const prepareExecutionSessionBinding = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
 ): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure> => {
-  const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
-  return Result.flatMap(
-    Result.mapError(reconciledStateHash(facts.reconciliation.brokerState), (cause) =>
-      compositionFailure('reconciled-state-hash', 'same-pass reconciled broker state is not canonicalizable', cause),
-    ),
-    (contentHash) =>
-      bindCycleExecutionSession({
-        cycle: input.cycle,
-        signal: {
-          sessionDate: input.cycle.identity.signalSessionDate,
-          finalizedAt: finalizedSnapshot.finalizedAt,
-          contentHash: finalizedSnapshot.contentHash,
-        },
-        planningBrokerState: {
-          observedAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
-          contentHash,
-        },
-        calendar: facts.calendar.value,
-        executionModel: input.executionModel,
-      }),
-  )
+  const stateHash = reconciledStateHash(facts.reconciliation.brokerState)
+  if (Result.isFailure(stateHash)) {
+    return Result.fail(
+      compositionFailure(
+        'reconciled-state-hash',
+        'same-pass reconciled broker state is not canonicalizable',
+        stateHash.failure,
+      ),
+    )
+  }
+  const common = {
+    cycle: input.cycle,
+    planningBrokerState: {
+      observedAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
+      contentHash: stateHash.success,
+    },
+    calendar: facts.calendar.value,
+    executionModel: input.executionModel,
+  }
+  if (isIntradayAutonomousCycle(input.cycle) && facts.schemaVersion === 'bayn.observe-decision-facts.v2') {
+    return bindCycleExecutionSession({
+      ...common,
+      executionSessionDate: input.cycle.identity.executionSessionDate,
+    })
+  }
+  if (isLegacyAutonomousCycle(input.cycle) && facts.schemaVersion === 'bayn.observe-decision-facts.v1') {
+    const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
+    return bindCycleExecutionSession({
+      ...common,
+      signal: {
+        sessionDate: input.cycle.identity.signalSessionDate,
+        finalizedAt: finalizedSnapshot.finalizedAt,
+        contentHash: finalizedSnapshot.contentHash,
+      },
+    })
+  }
+  return Result.fail(compositionFailure('cycle-binding', 'decision facts do not match the autonomous cycle contract'))
 }
 
 type CompiledObserveStrategyDecision = {
@@ -626,8 +713,17 @@ const compileObserveStrategyDecision = <R>(
           }),
         ),
       )
-      return { ...compiled, signalDate: input.cycle.identity.signalSessionDate }
+      return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
     })
+  }
+  if (!isLegacyAutonomousCycle(input.cycle) || facts.schemaVersion !== 'bayn.observe-decision-facts.v1') {
+    return Effect.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'daily strategy requires a legacy cycle and finalized Signal snapshot',
+      }),
+    )
   }
   return Effect.fromResult(
     (() => {
@@ -680,7 +776,7 @@ export const prepareObservePlanner = <R>(
               decisionHash,
               policyHash,
               accountId: input.cycle.identity.accountId,
-              signalDate: input.cycle.identity.signalSessionDate,
+              signalDate: compiled.signalDate,
               targetWeights: overrides.targetWeights ?? compiled.decision.targetWeights,
               referencePrices: prices,
               brokerState: facts.reconciliation.brokerState,
@@ -935,6 +1031,16 @@ function buildCycleDecision<R>(
       ),
     )
     const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
+    const snapshotContentHash =
+      compiled.executionMarketData?.contentHash ??
+      (facts.schemaVersion === 'bayn.observe-decision-facts.v1'
+        ? facts.snapshot.manifest.finalizedSnapshot.contentHash
+        : undefined)
+    if (snapshotContentHash === undefined) {
+      return yield* Effect.fail(
+        compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
+      )
+    }
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
         input,
@@ -942,17 +1048,31 @@ function buildCycleDecision<R>(
         executionAuthority,
         executionSession,
         targetPlan,
-        compiled.executionMarketData?.contentHash ?? facts.snapshot.manifest.finalizedSnapshot.contentHash,
+        snapshotContentHash,
         compiled.executionMarketData,
       ),
     )
-    const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
+    const decisionSnapshot =
+      facts.schemaVersion === 'bayn.observe-decision-facts.v1'
+        ? facts.snapshot.manifest.finalizedSnapshot
+        : compiled.executionMarketData === undefined
+          ? undefined
+          : {
+              snapshotId: compiled.executionMarketData.snapshotId,
+              contentHash: compiled.executionMarketData.contentHash,
+              finalizedAt: compiled.executionMarketData.observedAt,
+            }
+    if (decisionSnapshot === undefined) {
+      return yield* Effect.fail(
+        compositionFailure('cycle-binding', 'decision has no immutable market-data snapshot binding'),
+      )
+    }
     const decisionInput = {
       cycle: input.cycle,
       snapshot: {
-        snapshotId: finalizedSnapshot.snapshotId,
-        contentHash: finalizedSnapshot.contentHash,
-        finalizedAt: finalizedSnapshot.finalizedAt,
+        snapshotId: decisionSnapshot.snapshotId,
+        contentHash: decisionSnapshot.contentHash,
+        finalizedAt: decisionSnapshot.finalizedAt,
       },
       compiledDecision: compiled.decision,
       ...(compiled.executionMarketData === undefined ? {} : { executionMarketData: compiled.executionMarketData }),
@@ -1005,7 +1125,11 @@ const makeClosingReferencePrices = (
 }
 
 export const makeClosingDecisionPlan = (
-  identity: Pick<AutonomousCycle['identity'], 'strategyName' | 'signalSessionDate' | 'executionSessionDate'>,
+  identity: {
+    readonly strategyName: string
+    readonly executionSessionDate: IsoDate
+    readonly signalSessionDate?: IsoDate
+  },
   symbols: readonly string[],
 ): Result.Result<RuntimeStrategyDecision, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
@@ -1018,6 +1142,9 @@ export const makeClosingDecisionPlan = (
       symbols: orderedSymbols,
       reason: 'mandate-close',
     })
+  }
+  if (identity.signalSessionDate === undefined) {
+    return Result.fail(compositionFailure('cycle-binding', 'legacy close decision has no Signal session identity'))
   }
   const signalDate = identity.signalSessionDate
   const sessionsHash = canonicalHashV1Result({
@@ -1072,20 +1199,28 @@ const recoverExecutionSession = (
     )
   const persistedSession = entryDocument.executionSession
   if (persistedSession !== undefined) {
-    return bindRecoveredSession({
-      cycle,
-      signal: persistedSession.signal,
-      planningBrokerState: persistedSession.planningBrokerState,
-      calendar: persistedSession.calendar,
-      executionModel: preparation.executionModel,
-    })
+    return persistedSession.schemaVersion === 'bayn.execution-session-binding.v3'
+      ? bindRecoveredSession({
+          cycle,
+          executionSessionDate: persistedSession.executionSession.date,
+          planningBrokerState: persistedSession.planningBrokerState,
+          calendar: persistedSession.calendar,
+          executionModel: preparation.executionModel,
+        })
+      : bindRecoveredSession({
+          cycle,
+          signal: persistedSession.signal,
+          planningBrokerState: persistedSession.planningBrokerState,
+          calendar: persistedSession.calendar,
+          executionModel: preparation.executionModel,
+        })
   }
 
   const legacyCalendarMaterial = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: {
-      start: cycle.identity.signalSessionDate,
+      start: isLegacyAutonomousCycle(cycle) ? cycle.identity.signalSessionDate : cycle.identity.executionSessionDate,
       end: cycle.identity.executionSessionDate,
     },
     timeZone: 'UTC' as const,
@@ -1101,21 +1236,34 @@ const recoverExecutionSession = (
     Result.mapError(canonicalHashV1Result(legacyCalendarMaterial), (cause) =>
       compositionFailure('cycle-binding', 'legacy execution close calendar material is not canonicalizable', cause),
     ),
-    (normalizedResponseHash) =>
-      bindRecoveredSession({
+    (normalizedResponseHash) => {
+      const common = {
         cycle,
-        signal: {
-          sessionDate: cycle.identity.signalSessionDate,
-          finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
-          contentHash: entryDocument.bindings.snapshotContentHash,
-        },
         planningBrokerState: {
           observedAt: entryDocument.createdAt,
           contentHash: entryDocument.bindings.planningBrokerStateHash,
         },
         calendar: { ...legacyCalendarMaterial, normalizedResponseHash },
         executionModel: preparation.executionModel,
-      }),
+      }
+      if (isIntradayAutonomousCycle(cycle)) {
+        return bindRecoveredSession({
+          ...common,
+          executionSessionDate: cycle.identity.executionSessionDate,
+        })
+      }
+      if (isLegacyAutonomousCycle(cycle)) {
+        return bindRecoveredSession({
+          ...common,
+          signal: {
+            sessionDate: cycle.identity.signalSessionDate,
+            finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
+            contentHash: entryDocument.bindings.snapshotContentHash,
+          },
+        })
+      }
+      return Result.fail(compositionFailure('cycle-binding', 'close cycle has mismatched contract versions'))
+    },
   )
 }
 
@@ -1189,13 +1337,24 @@ export const buildClosingExecutionCycleDecision = (
     const policyHash = yield* Effect.fromResult(
       hashObserveMaterial('risk-policy-hash', 'execution close risk policy is not canonicalizable', policy),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const plannerSessionDate = isIntradayAutonomousCycle(cycle)
+      ? cycle.identity.executionSessionDate
+      : isLegacyAutonomousCycle(cycle)
+        ? cycle.identity.signalSessionDate
+        : undefined
+    if (plannerSessionDate === undefined) {
+      return yield* mutationRunnerError({
+        message: 'close cycle has mismatched contract versions',
+        failure: 'contract',
+      })
+    }
     const commonPlannerInput = {
       strategyName: cycle.identity.strategyName,
       cycleId: cycle.identity.cycleId,
       decisionHash: closeDecisionHash,
       policyHash,
       accountId: cycle.identity.accountId,
-      signalDate: cycle.identity.signalSessionDate,
+      signalDate: plannerSessionDate,
       targetWeights: closeDecision.targetWeights,
       brokerState: reconciliation.brokerState,
       precision: preparation.executionModel.precision,
@@ -1213,7 +1372,7 @@ export const buildClosingExecutionCycleDecision = (
         })
       }
       prices = yield* Effect.fromResult(
-        intradayReferencePrices(cycle.identity.signalSessionDate, closeExecutionMarketData.binding, {
+        intradayReferencePrices(plannerSessionDate, closeExecutionMarketData.binding, {
           priceMicros: closeExecutionMarketData.askPriceMicros,
           bidPriceMicros: closeExecutionMarketData.bidPriceMicros,
           askPriceMicros: closeExecutionMarketData.askPriceMicros,
@@ -1243,6 +1402,12 @@ export const buildClosingExecutionCycleDecision = (
         },
       }
     } else {
+      if (!isLegacyAutonomousCycle(cycle)) {
+        return yield* mutationRunnerError({
+          message: 'legacy execution model does not match the close cycle contract',
+          failure: 'contract',
+        })
+      }
       prices = yield* Effect.fromResult(
         makeClosingReferencePrices(
           entryDocument,

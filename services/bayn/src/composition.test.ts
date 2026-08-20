@@ -83,7 +83,12 @@ import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from 
 import type { WriterFenceService } from './execution/writer-fence'
 import { OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
-import { loadObserveRiskPolicy, executionMandateReceiptFinalizationExpiresAt } from './observe-composition'
+import {
+  loadObserveRiskPolicy,
+  executionMandateReceiptFinalizationExpiresAt,
+  loadStrategyExecutionRiskPolicy,
+} from './observe-composition'
+import { validateResearchCapitalRiskPolicy } from './composition/capital-activation'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
@@ -97,6 +102,8 @@ import {
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
+import { decodeDefaultOpeningDriveProtocol, makeOpeningDriveDefinition } from './strategy'
+import { openingDriveBehaviorHash } from './strategy/opening-drive'
 import { fixtureProtocol } from './test-fixtures'
 
 const hash = (value: string) => value.repeat(64).slice(0, 64)
@@ -354,6 +361,63 @@ const recoverBuildContinuation = (continuation = researchBuildContinuation) =>
   )
 
 describe('Bayn application platform', () => {
+  test('binds research activation to the active intraday strategy risk policy', async () => {
+    const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
+    const definition = makeOpeningDriveDefinition(protocol)
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: openingDriveBehaviorHash,
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
+          parameterSchemaVersion: protocol.schemaVersion,
+        },
+      },
+    }
+    const strategyProtocolHash = makeStrategyProtocolHash(strategy.provenance.strategy)
+    const candidate = makeApplicationPlan({
+      ...continuationApplicationPlan,
+      parameterHash: strategy.provenance.strategy.parameterHash,
+      strategy,
+      strategyProtocolHash,
+    })
+    if (candidate._tag !== 'AutonomousService') throw new Error('intraday fixture must be autonomous')
+    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(continuationAccountId, strategy))
+    const riskPolicyHash = Result.getOrThrow(canonicalHashV1Result(policy))
+    const plan = {
+      ...researchPlan,
+      strategy: {
+        name: strategy.provenance.strategy.name,
+        behaviorHash: strategy.provenance.strategy.behaviorHash,
+        parameterHash: strategy.provenance.strategy.parameterHash,
+        parameterSchemaVersion: strategy.provenance.strategy.parameterSchemaVersion,
+        protocolHash: strategyProtocolHash,
+      },
+      broker: {
+        environment: BrokerEnvironment.Sandbox,
+        accountId: continuationAccountId,
+        identityHash: continuationBrokerIdentity.identityHash,
+      },
+      riskPolicyHash,
+    } as const
+    const { schemaVersion: _schemaVersion, ...fields } = plan
+    const request = Result.getOrThrow(
+      makeResearchCapitalActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(plan)) },
+        ...fields,
+      }),
+    )
+
+    await Effect.runPromise(validateResearchCapitalRiskPolicy(candidate, request))
+    const rejected = await Effect.runPromise(
+      Effect.flip(validateResearchCapitalRiskPolicy(candidate, { ...request, riskPolicyHash: hash('wrong-policy') })),
+    )
+    expect(rejected.message).toBe('research capital request is not bound to the current risk policy')
+  })
+
   test('routes the production AutonomousService entrypoint through read-only status resources only', () => {
     expect(routeApplicationPlan(continuationApplicationPlan)).toEqual({
       _tag: 'AutonomousReadOnlyStatus',

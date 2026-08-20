@@ -399,8 +399,16 @@ const readMutationPreparationFacts = (
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(facts.reconciliation, request.policy, request.input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const snapshot =
+      facts.schemaVersion === 'bayn.observe-decision-facts.v1'
+        ? facts.snapshot.manifest.finalizedSnapshot
+        : {
+            snapshotId: request.document.bindings.snapshotId,
+            contentHash: request.document.bindings.snapshotContentHash,
+            finalizedAt: request.document.bindings.snapshotFinalizedAt,
+          }
     return {
-      snapshot: facts.snapshot.manifest.finalizedSnapshot,
+      snapshot,
       reconciliation: facts.reconciliation,
       authority: authority.authority,
       evaluatedAt: facts.evaluatedAt,

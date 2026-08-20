@@ -68,7 +68,7 @@ export const openingDriveEntryQuery = (
   )
   const expectedDecisionAt = utcInstantFromEpochMillis(Date.parse(rangeEndAt) + protocol.decisionDelaySeconds * 1_000)
   if (
-    cycle.schemaVersion !== 'bayn.autonomous-cycle.v2' ||
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v2' && cycle.schemaVersion !== 'bayn.autonomous-cycle.v3') ||
     cycle.identity.strategyName !== 'opening-drive-momentum' ||
     cycle.window.submissionOpenAt !== expectedDecisionAt ||
     observedAt < expectedDecisionAt ||
