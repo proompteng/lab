@@ -31,7 +31,7 @@ export type {
 } from './intraday/model'
 export { IntradayMarketData, IntradaySnapshotFailure } from './intraday/model'
 export { IntradayMarketDataLive, makeIntradayMarketData } from './intraday/program'
-export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos } from './intraday/time'
+export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './intraday/time'
 export {
   reverifyIntradayMarketSnapshot,
   verifyIntradayArchiveWatermarks,

@@ -3,6 +3,9 @@ import { Result, Schema } from 'effect'
 import { sha256 } from '../../hash'
 import {
   compareIntradayInstants,
+  intradayAgeNanos,
+  intradayInstantNanos,
+  millisecondsAsNanos,
   reverifyIntradayMarketSnapshot,
   type IntradayBar,
   type IntradayQuote,
@@ -173,6 +176,9 @@ const validateSnapshot = (
   const rangeStart = Date.parse(manifest.rangeStartAt)
   const rangeEnd = Date.parse(manifest.rangeEndAt)
   const observed = Date.parse(manifest.observedAt)
+  const rangeEndNanos = intradayInstantNanos(manifest.rangeEndAt)
+  const observedNanos = intradayInstantNanos(manifest.observedAt)
+  const maximumQuoteAgeNanos = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
   const sessionOpen = Date.parse(session.openAt)
   const sessionClose = Date.parse(session.closeAt)
   const canonicalSessionInstants = Result.all([
@@ -232,14 +238,12 @@ const validateSnapshot = (
     ) {
       return fail('snapshot-coverage', 'opening-drive latest quote is ambiguous across Kafka partitions', { symbol })
     }
-    const quoteEvent = quote === undefined ? Number.NaN : Date.parse(quote.eventAt)
     if (
       quote === undefined ||
       quote.symbol !== symbol ||
-      !Number.isFinite(quoteEvent) ||
-      quoteEvent < rangeEnd ||
-      quoteEvent > observed ||
-      observed - quoteEvent > protocol.maximumQuoteAgeMs
+      intradayInstantNanos(quote.eventAt) < rangeEndNanos ||
+      intradayInstantNanos(quote.eventAt) > observedNanos ||
+      intradayAgeNanos(manifest.observedAt, quote.eventAt) > maximumQuoteAgeNanos
     ) {
       return fail('snapshot-coverage', 'opening-drive decision lacks a fresh post-range quote', { symbol })
     }
@@ -256,13 +260,11 @@ const validateSnapshot = (
     ) {
       return fail('snapshot-coverage', 'opening-drive latest trade is ambiguous across Kafka partitions', { symbol })
     }
-    const tradeEvent = latestTrade === undefined ? Number.NaN : Date.parse(latestTrade.eventAt)
     if (
       latestTrade === undefined ||
-      !Number.isFinite(tradeEvent) ||
-      tradeEvent < rangeEnd ||
-      tradeEvent > observed ||
-      observed - tradeEvent > protocol.maximumQuoteAgeMs
+      intradayInstantNanos(latestTrade.eventAt) < rangeEndNanos ||
+      intradayInstantNanos(latestTrade.eventAt) > observedNanos ||
+      intradayAgeNanos(manifest.observedAt, latestTrade.eventAt) > maximumQuoteAgeNanos
     ) {
       return fail('snapshot-coverage', 'opening-drive decision lacks a fresh post-range trade', { symbol })
     }
