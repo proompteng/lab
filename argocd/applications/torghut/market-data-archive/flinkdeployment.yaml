@@ -11,7 +11,10 @@ spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:18140f03e98b05f89d66a3c6415d1ed74ec047767ba56cf83812387d3f01f70d
   imagePullPolicy: IfNotPresent
-  restartNonce: 7
+  # One-time recovery from the pre-quote/trade topology. The Kafka source resumes from the
+  # consumer group's committed offsets, while ClickHouse deduplicates replay by Kafka lineage.
+  # Return to last-state after this deployment completes its first checkpoint.
+  restartNonce: 8
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
@@ -85,5 +88,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 3
-    upgradeMode: last-state
+    upgradeMode: stateless
     state: running
