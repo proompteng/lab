@@ -66,6 +66,7 @@ import {
   readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
   realizedCapitalActivation,
+  researchCapitalRecoveryRequestIsCompatible,
   recoverCapitalActivationGeneration,
   recoverCapitalReceiptFinalizationGeneration,
   refreshResearchCapitalActivationReconciliation,
@@ -169,10 +170,12 @@ export const makeAutonomousServiceRuntime = (
           return Result.succeed({ request, buildContinuation, evidence: current.evidence })
         }
         const observedAt = yield* currentUtcInstant
-        const validation = capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
-          allowCloseRecovery: true,
-          buildContinuation,
-        })
+        const validation = isResearchCapitalActivationRequest(request)
+          ? researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
+          : capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
+              allowCloseRecovery: true,
+              buildContinuation,
+            })
         if (Result.isFailure(validation)) {
           yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
           return Result.fail(validation.failure)

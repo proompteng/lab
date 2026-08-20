@@ -111,10 +111,14 @@ jobs:
           source_revision="$(image_label "$config_amd64" org.opencontainers.image.revision)"
           strategy_behavior_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
           strategy_parameter_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
+          strategy_name="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-name)"
+          strategy_protocol_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-protocol-hash)"
           test "$source_revision" = "$SOURCE_SHA"
           test "$(image_label "$config_arm64" org.opencontainers.image.revision)" = "$source_revision"
           test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$strategy_behavior_hash"
           test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$strategy_parameter_hash"
+          test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-name)" = "$strategy_name"
+          test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-protocol-hash)" = "$strategy_protocol_hash"
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -153,6 +157,8 @@ jobs:
           }
 
           deployment_manifest=argocd/applications/bayn/deployment.yaml
+          test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_NAME)" = "$strategy_name"
+          test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PROTOCOL_HASH)" = "$strategy_protocol_hash"
           promotion_source_sha="$SOURCE_SHA"
           promotion_image_tag="$IMAGE_TAG"
           promotion_image_digest="$IMAGE_DIGEST"

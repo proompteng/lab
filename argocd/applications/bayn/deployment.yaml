@@ -77,6 +77,12 @@ spec:
               value: "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329"
+            # Reviewed activation identity pins used by the release verifier. Runtime derives the same
+            # identity from its compiled strategy contract before serving.
+            - name: BAYN_STRATEGY_NAME
+              value: opening-drive-momentum
+            - name: BAYN_STRATEGY_PROTOCOL_HASH
+              value: "d82848fc6f93a77ad584daff0fc4ad5ab4a517f49f3d4079e79484d9d1930354"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:

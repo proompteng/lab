@@ -88,7 +88,11 @@ import {
   executionMandateReceiptFinalizationExpiresAt,
   loadStrategyExecutionRiskPolicy,
 } from './observe-composition'
-import { capitalActivationRequestIsCurrent, validateResearchCapitalRiskPolicy } from './composition/capital-activation'
+import {
+  capitalActivationRequestIsCurrent,
+  researchCapitalRecoveryRequestIsCompatible,
+  validateResearchCapitalRiskPolicy,
+} from './composition/capital-activation'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
@@ -1332,12 +1336,37 @@ describe('Bayn capital startup recovery boundary', () => {
     })
   })
 
-  test('treats the research activation build as provenance while preserving the image repository boundary', () => {
+  test('requires explicit build lineage for activation while allowing exact durable recovery compatibility', () => {
     expect(
       capitalActivationRequestIsCurrent(
         continuationRequest,
         continuationApplicationPlan,
         null,
+        '2026-08-31T13:30:00.000Z',
+      ),
+    ).toEqual(Result.fail('capital activation request is not bound to the current activation build'))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+        { buildContinuation: researchBuildContinuation },
+      ),
+    ).toEqual(Result.succeed(undefined))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+        { buildContinuation: staleResearchBuildContinuation },
+      ),
+    ).toEqual(Result.fail('capital activation request is not bound to the current activation build'))
+    expect(
+      researchCapitalRecoveryRequestIsCompatible(
+        continuationRequest,
+        continuationApplicationPlan,
         '2026-08-31T13:30:00.000Z',
       ),
     ).toEqual(Result.succeed(undefined))
@@ -1353,7 +1382,11 @@ describe('Bayn capital startup recovery boundary', () => {
       },
     }
     expect(
-      capitalActivationRequestIsCurrent(continuationRequest, differentRepositoryPlan, null, '2026-08-31T13:30:00.000Z'),
+      researchCapitalRecoveryRequestIsCompatible(
+        continuationRequest,
+        differentRepositoryPlan,
+        '2026-08-31T13:30:00.000Z',
+      ),
     ).toEqual(Result.fail('research capital request image repository does not match the current runtime'))
   })
 
