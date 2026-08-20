@@ -31,7 +31,6 @@ import {
   researchCapitalGrantProof,
   researchCapitalBuildLineageIsCurrent,
   researchCapitalBuildContinuationIsBound,
-  researchCapitalCompletedGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToRequest,
   resolveExecutionPolicy,
@@ -571,7 +570,7 @@ export const readCompletedExecutionLifecycle = (
               buildContinuation,
               null,
             )
-          : researchCapitalCompletedGenerationIsBoundToBuildLineage(
+          : researchCapitalGenerationIsBoundToBuildLineage(
               buildLineage,
               request,
               currentActivationBinding(plan),

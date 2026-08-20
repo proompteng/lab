@@ -310,26 +310,12 @@ export const researchCapitalBuildLineageIsCurrent = (
     : Result.fail('research capital build lineage does not end at the current activation')
 }
 
-export const researchCapitalGenerationIsBoundToBuildLineage = (
-  lineage: ResearchCapitalBuildLineage,
-  request: ResearchCapitalActivationRequest,
-  activation: CapitalActivationRevisionBinding,
-  sourceGenerationHash: string,
-  generation: ResearchCapitalGrantGeneration,
-): Result.Result<void, string> => {
-  const lineageBinding = researchCapitalBuildLineageIsCurrent(lineage, request, activation)
-  return Result.isFailure(lineageBinding)
-    ? lineageBinding
-    : researchCapitalGenerationIsBoundToRequestDataFirst(request, sourceGenerationHash, generation, lineage.activation)
-}
-
 /**
- * A receipt-completed generation is durable historical evidence, so a later reviewed build must not reinterpret its
- * activation revision as current or execute the sealed request again. The current lineage remains strictly bound to
- * the request and worker, while the terminal generation is matched by its complete mandate, strategy, broker, risk,
- * and source-generation identity. Its historical build repository must remain inside the lineage's repository.
+ * A durable generation may predate the current reviewed worker. Bind the lineage to the current worker and sealed
+ * request, then preserve the generation's complete mandate identity without reinterpreting its historical build as
+ * current. Keeping the image repository fixed prevents a foreign build from entering that recovery boundary.
  */
-export const researchCapitalCompletedGenerationIsBoundToBuildLineage = (
+export const researchCapitalGenerationIsBoundToBuildLineage = (
   lineage: ResearchCapitalBuildLineage,
   request: ResearchCapitalActivationRequest,
   activation: CapitalActivationRevisionBinding,
@@ -342,7 +328,7 @@ export const researchCapitalCompletedGenerationIsBoundToBuildLineage = (
     generation.activationImageRepository !== lineage.authoredActivation.imageRepository ||
     generation.activationImageRepository !== lineage.activation.imageRepository
   ) {
-    return Result.fail('completed research capital generation is outside the authorized build repository')
+    return Result.fail('research capital generation is outside the authorized build repository')
   }
   return researchCapitalGenerationIdentityIsBoundToRequest(request, sourceGenerationHash, generation)
 }

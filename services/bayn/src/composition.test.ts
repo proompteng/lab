@@ -1433,6 +1433,36 @@ describe('Bayn capital startup recovery boundary', () => {
     })
   })
 
+  test('resumes historical active and failure-restricted generations across lineage promotion', async () => {
+    const cases: readonly AuthorityState[] = [
+      continuationAuthority,
+      {
+        ...continuationAuthority,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: `bound PAPER cycle ${hash('c')} restricted effective authority: intent ${hash('d')} submit settled denied`,
+      },
+    ]
+
+    for (const authority of cases) {
+      const generation = await Effect.runPromise(
+        prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          continuationRequest,
+          null,
+          researchBuildLineage,
+          unusedBrokerSession,
+          continuationAuthorityStore(continuationGeneration, authority),
+          unusedCapitalGrantLifecycle,
+          Effect.die(new Error('lineage recovery must not run pre-activation reconciliation')),
+          config.operationTimeoutMs,
+        ),
+      )
+
+      expect(generation).toEqual(continuationGeneration)
+    }
+  })
+
   test('requires explicit build lineage for activation while allowing exact durable recovery compatibility', () => {
     expect(
       capitalActivationRequestIsCurrent(
