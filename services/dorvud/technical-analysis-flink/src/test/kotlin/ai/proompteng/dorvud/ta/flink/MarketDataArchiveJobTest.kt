@@ -217,7 +217,6 @@ class MarketDataArchiveJobTest {
         "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
         "ARCHIVE_KAFKA_PASSWORD" to "password",
         "ARCHIVE_OFFSET_RESET" to "latest",
-        "ARCHIVE_EVENT_GROUP_ID" to "bayn-market-data-archive-events-v1",
         "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
         "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
         "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
@@ -265,9 +264,6 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
-    }
-    assertFailsWith<IllegalStateException> {
-      MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_EVENT_GROUP_ID")
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_EVENT_GROUP_ID" to "bayn-market-data-archive-v1"))

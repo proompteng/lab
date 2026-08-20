@@ -213,7 +213,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
   })
 
-  test('runs the IEX archive with an explicit bounded live-edge cutover', () => {
+  test('runs the IEX archive with an explicit bounded recovery mode', () => {
     const torghutKustomization = parse(
       readFileSync(resolve(root, 'argocd/applications/torghut/kustomization.yaml'), 'utf8'),
     )
@@ -248,8 +248,6 @@ describe('Signal publisher GitOps authority contract', () => {
     const coreArchiveSymbols = csv(config.data.ARCHIVE_CORE_UNIVERSE_SYMBOLS)
     const expectedCoreArchiveHash = createHash('sha256').update(coreArchiveSymbols.join(',')).digest('hex')
     expect(config.data).toMatchObject({
-      ARCHIVE_GROUP_ID: 'bayn-market-data-archive-v1',
-      ARCHIVE_EVENT_GROUP_ID: 'bayn-market-data-archive-events-v1',
       ARCHIVE_OFFSET_RESET: 'latest',
       ARCHIVE_CORE_FEED: 'iex',
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',

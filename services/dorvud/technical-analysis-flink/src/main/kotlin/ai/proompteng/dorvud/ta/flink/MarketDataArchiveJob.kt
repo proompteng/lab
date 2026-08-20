@@ -143,7 +143,12 @@ data class MarketDataArchiveConfig(
       if (routes.size != expectedRouteCount) error("archive market-data topics must be unique")
 
       val groupId = optional("ARCHIVE_GROUP_ID") ?: "bayn-market-data-archive-v1"
-      val eventGroupId = if (enrichedTopics.isEmpty()) null else required("ARCHIVE_EVENT_GROUP_ID")
+      val eventGroupId =
+        if (enrichedTopics.isEmpty()) {
+          null
+        } else {
+          optional("ARCHIVE_EVENT_GROUP_ID") ?: "bayn-market-data-archive-events-v1"
+        }
       require(eventGroupId == null || eventGroupId != groupId) {
         "ARCHIVE_EVENT_GROUP_ID must differ from ARCHIVE_GROUP_ID"
       }
