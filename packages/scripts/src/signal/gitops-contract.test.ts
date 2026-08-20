@@ -133,6 +133,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const profiles = installation.spec.configuration.profiles
     const users = installation.spec.configuration.users
     expect(profiles).toMatchObject({
+      'bayn/select_sequential_consistency': 1,
       'signal_publisher/insert_quorum': 2,
       'signal_publisher/insert_quorum_parallel': 0,
       'signal_publisher/insert_quorum_timeout': 60000,
@@ -234,7 +235,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 8,
+      restartNonce: 9,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
