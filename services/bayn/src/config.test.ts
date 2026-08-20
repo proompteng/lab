@@ -614,10 +614,12 @@ describe('runtime configuration loading', () => {
   test('loads the canonical capital activation request', async () => {
     const environment = new Map(runtimeEnvironment)
     environment.set('BAYN_CAPITAL_ACTIVATION_REQUEST', '{"request":"canonical"}')
+    environment.set('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', '{"lineage":"canonical"}')
 
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
 
     expect(config.capitalActivationRequestJson).toBe('{"request":"canonical"}')
+    expect(config.researchCapitalBuildLineageJson).toBe('{"lineage":"canonical"}')
   })
 
   test('maps canonical sandbox and live capital configuration into the account-neutral policy', async () => {

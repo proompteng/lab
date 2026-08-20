@@ -25,6 +25,7 @@ export interface RuntimeConfig {
   readonly port: number
   readonly qualificationRunId?: string | undefined
   readonly capitalActivationRequestJson?: string | undefined
+  readonly researchCapitalBuildLineageJson?: string | undefined
   readonly execution: ExecutionPolicy
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -112,6 +113,7 @@ export interface ParsedRuntimeConfig {
   readonly port: number
   readonly qualificationRunId: string | undefined
   readonly capitalActivationRequestJson?: string | undefined
+  readonly researchCapitalBuildLineageJson?: string | undefined
   readonly configuredOperation: RuntimeOperation | undefined
   readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly brokerAccess: BrokerAccess

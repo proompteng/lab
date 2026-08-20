@@ -90,6 +90,7 @@ import {
 } from './observe-composition'
 import {
   capitalActivationRequestIsCurrent,
+  decodeConfiguredCapitalActivation,
   researchCapitalRecoveryRequestIsCompatible,
   validateResearchCapitalRiskPolicy,
 } from './composition/capital-activation'
@@ -230,6 +231,12 @@ const researchBuildContinuation = Result.getOrThrow(
     activation: continuationBuild,
   }),
 )
+const researchBuildLineage = {
+  schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+  requestHash: continuationRequest.requestHash,
+  authoredActivation: continuationRequest.activation,
+  activation: continuationBuild,
+}
 const mismatchedResearchBuildContinuation = Result.getOrThrow(
   makeResearchCapitalBuildContinuation({
     schemaVersion: 'bayn.paper-research-build-continuation.v1',
@@ -347,6 +354,7 @@ const resumeBuildContinuation = (
     continuationApplicationPlan,
     continuationRequest,
     continuation,
+    null,
     unusedBrokerSession,
     authorityStore,
     unusedCapitalGrantLifecycle,
@@ -359,6 +367,7 @@ const recoverBuildContinuation = (continuation = researchBuildContinuation) =>
     continuationApplicationPlan,
     continuationRequest,
     continuation,
+    null,
     null,
     continuationAuthorityStore(),
     unusedAuthorityRestrictionStore,
@@ -798,6 +807,7 @@ describe('Bayn capital startup recovery boundary', () => {
     const configured = Result.succeed({
       request: continuationRequest,
       buildContinuation: researchBuildContinuation,
+      buildLineage: null,
     })
 
     expect(readOnlyCycleObservationId(configured)).toBe(continuationRequest.grant.planHash)
@@ -899,7 +909,7 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(readOnlyQualificationEvidenceRequired(Result.succeed(null), undefined, true)).toBe(true)
     expect(
       readOnlyQualificationEvidenceRequired(
-        Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation }),
+        Result.succeed({ request: researchRequest, buildContinuation: researchBuildContinuation, buildLineage: null }),
         undefined,
         true,
       ),
@@ -961,7 +971,11 @@ describe('Bayn capital startup recovery boundary', () => {
     await Effect.runPromise(
       refreshReadOnlyCapitalActivation(
         continuationApplicationPlan,
-        Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+        Result.succeed({
+          request: continuationRequest,
+          buildContinuation: researchBuildContinuation,
+          buildLineage: null,
+        }),
         state,
         {
           authority: continuationAuthorityStore(),
@@ -1042,7 +1056,11 @@ describe('Bayn capital startup recovery boundary', () => {
       Effect.gen(function* () {
         const refresh = refreshReadOnlyCapitalActivation(
           timedPlan,
-          Result.succeed({ request: continuationRequest, buildContinuation: researchBuildContinuation }),
+          Result.succeed({
+            request: continuationRequest,
+            buildContinuation: researchBuildContinuation,
+            buildLineage: null,
+          }),
           state,
           {
             authority: {
@@ -1291,6 +1309,7 @@ describe('Bayn capital startup recovery boundary', () => {
         continuationApplicationPlan,
         continuationRequest,
         researchBuildContinuation,
+        null,
         authorityStore,
         readReceiptHash,
       ),
@@ -1300,6 +1319,7 @@ describe('Bayn capital startup recovery boundary', () => {
         continuationApplicationPlan,
         continuationRequest,
         researchBuildContinuation,
+        null,
         authorityStore,
         () => Effect.succeed(Option.none()),
       ),
@@ -1351,6 +1371,24 @@ describe('Bayn capital startup recovery boundary', () => {
         continuationApplicationPlan,
         null,
         '2026-08-31T13:30:00.000Z',
+        { buildLineage: researchBuildLineage },
+      ),
+    ).toEqual(Result.succeed(undefined))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+        { buildLineage: { ...researchBuildLineage, requestHash: hash('0') } },
+      ),
+    ).toEqual(Result.fail('research capital build lineage is not bound to the configured request'))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
         { buildContinuation: researchBuildContinuation },
       ),
     ).toEqual(Result.succeed(undefined))
@@ -1390,11 +1428,36 @@ describe('Bayn capital startup recovery boundary', () => {
     ).toEqual(Result.fail('research capital request image repository does not match the current runtime'))
   })
 
+  test('strictly decodes research build lineage beside the sealed activation request', () => {
+    expect(
+      decodeConfiguredCapitalActivation(JSON.stringify(continuationRequest), JSON.stringify(researchBuildLineage)),
+    ).toEqual(
+      Result.succeed({
+        request: continuationRequest,
+        buildContinuation: null,
+        buildLineage: researchBuildLineage,
+      }),
+    )
+    expect(
+      decodeConfiguredCapitalActivation(
+        JSON.stringify(continuationRequest),
+        JSON.stringify({ ...researchBuildLineage, unexpected: true }),
+      ),
+    ).toEqual(Result.fail('configured research capital build lineage failed its strict schema validation'))
+    expect(
+      decodeConfiguredCapitalActivation(
+        JSON.stringify(researchBuildContinuation),
+        JSON.stringify(researchBuildLineage),
+      ),
+    ).toEqual(Result.fail('research capital build continuation cannot be combined with build lineage'))
+  })
+
   test('recovers the exact durable research generation from the raw authored request on a reviewed runtime build', async () => {
     const generation = await Effect.runPromise(
       prepareOrRecoverResearchCapitalActivation(
         continuationApplicationPlan,
         continuationRequest,
+        null,
         null,
         unusedBrokerSession,
         continuationAuthorityStore(),
@@ -1512,6 +1575,7 @@ describe('Bayn capital startup recovery boundary', () => {
           continuationApplicationPlan,
           staleRequest,
           null,
+          null,
           unusedBrokerSession,
           authorityStore,
           unusedCapitalGrantLifecycle,
@@ -1522,6 +1586,31 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(failure.message).toBe('capital activation request is not bound to the current activation build')
+    expect(operations).toEqual([])
+
+    const invalidLineageFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          staleRequest,
+          null,
+          {
+            schemaVersion: 'bayn.research-capital-build-lineage.v1',
+            requestHash: staleRequest.requestHash,
+            authoredActivation: staleRequest.activation,
+            activation: { ...continuationBuild, imageDigest: `sha256:${hash('2')}` },
+          },
+          unusedBrokerSession,
+          authorityStore,
+          unusedCapitalGrantLifecycle,
+          Effect.sync(() => operations.push('reconcile')),
+          config.operationTimeoutMs,
+        ).pipe(Effect.flip)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(invalidLineageFailure.message).toBe('research capital build lineage does not end at the current activation')
     expect(operations).toEqual([])
   })
 
@@ -1534,7 +1623,7 @@ describe('Bayn capital startup recovery boundary', () => {
       loadObserveRiskPolicy(continuationAccountId, continuationApplicationPlan.strategy.definition.parameters.universe),
     )
     const riskPolicyHash = Result.getOrThrow(canonicalHashV1Result(riskPolicy))
-    const plan = { ...continuationResearchPlan, activation: continuationBuild, riskPolicyHash }
+    const plan = { ...continuationResearchPlan, riskPolicyHash }
     const { schemaVersion: _schemaVersion, ...planFields } = plan
     const request = Result.getOrThrow(
       makeResearchCapitalActivationRequest({
@@ -1549,9 +1638,9 @@ describe('Bayn capital startup recovery boundary', () => {
         maximum: Authority.Execution,
         previousGenerationHash: successorGenerationHash,
         grant: request.grant,
-        activationSourceRevision: request.activation.sourceRevision,
-        activationImageRepository: request.activation.imageRepository,
-        activationImageDigest: request.activation.imageDigest,
+        activationSourceRevision: continuationBuild.sourceRevision,
+        activationImageRepository: continuationBuild.imageRepository,
+        activationImageDigest: continuationBuild.imageDigest,
         strategyName: request.strategy.name,
         strategyBehaviorHash: request.strategy.behaviorHash,
         strategyParameterHash: request.strategy.parameterHash,
@@ -1565,6 +1654,12 @@ describe('Bayn capital startup recovery boundary', () => {
         reconciliationContentHash: hash('56'),
       }),
     )
+    const buildLineage = {
+      schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+      requestHash: request.requestHash,
+      authoredActivation: request.activation,
+      activation: continuationBuild,
+    }
     let authority: AuthorityState = {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: previousExecutionGenerationHash,
@@ -1702,6 +1797,7 @@ describe('Bayn capital startup recovery boundary', () => {
           continuationApplicationPlan,
           request,
           null,
+          buildLineage,
           session,
           authorityStore,
           lifecycle,

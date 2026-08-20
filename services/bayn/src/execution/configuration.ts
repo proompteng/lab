@@ -36,6 +36,7 @@ export const capitalActivationRequestSchemaVersion = 'bayn.paper-activation-requ
 export const researchCapitalActivationRequestSchemaVersion = 'bayn.paper-research-activation-request.v1' as const
 export const researchCapitalPlanSchemaVersion = 'bayn.paper-research-plan.v1' as const
 export const researchCapitalBuildContinuationSchemaVersion = 'bayn.paper-research-build-continuation.v1' as const
+export const researchCapitalBuildLineageSchemaVersion = 'bayn.research-capital-build-lineage.v1' as const
 
 const CapitalActivationStrategySchema = Schema.Struct({
   name: StrictNonEmptyStringSchema,
@@ -51,6 +52,19 @@ const CapitalActivationRevisionBindingSchema = Schema.Struct({
   imageDigest: ImageDigestSchema,
 })
 export type CapitalActivationRevisionBinding = typeof CapitalActivationRevisionBindingSchema.Type
+
+/**
+ * Non-secret GitOps evidence minted only after the release workflow proves that the executing build descends from the
+ * authored build and retains the exact strategy protocol and execution risk policy. The sealed request remains the
+ * mandate; this value authorizes only the reviewed runtime lineage that may interpret it.
+ */
+export const ResearchCapitalBuildLineageSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(researchCapitalBuildLineageSchemaVersion),
+  requestHash: Sha256Schema,
+  authoredActivation: CapitalActivationRevisionBindingSchema,
+  activation: CapitalActivationRevisionBindingSchema,
+})
+export type ResearchCapitalBuildLineage = typeof ResearchCapitalBuildLineageSchema.Type
 
 const CapitalActivationRequestMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(capitalActivationRequestSchemaVersion),
@@ -201,12 +215,13 @@ export const isResearchCapitalActivationRequest = (
 
 export const researchCapitalGrantProof = (
   request: ResearchCapitalActivationRequest,
+  activation: CapitalActivationRevisionBinding = request.activation,
 ): ResearchCapitalGrantProofBinding => ({
   schemaVersion: 'bayn.research-paper-grant-proof.v1',
   grant: request.grant,
-  activationSourceRevision: request.activation.sourceRevision,
-  activationImageRepository: request.activation.imageRepository,
-  activationImageDigest: request.activation.imageDigest,
+  activationSourceRevision: activation.sourceRevision,
+  activationImageRepository: activation.imageRepository,
+  activationImageDigest: activation.imageDigest,
   strategyName: request.strategy.name,
   strategyBehaviorHash: request.strategy.behaviorHash,
   strategyParameterHash: request.strategy.parameterHash,
@@ -222,6 +237,7 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
   request: ResearchCapitalActivationRequest,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
+  activation: CapitalActivationRevisionBinding = request.activation,
 ): Result.Result<void, string> => {
   if (
     generation.maximum !== Authority.Execution ||
@@ -231,9 +247,9 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
     return Result.fail('research capital generation identity is not bound to the activation request')
   }
   if (
-    generation.activationSourceRevision !== request.activation.sourceRevision ||
-    generation.activationImageRepository !== request.activation.imageRepository ||
-    generation.activationImageDigest !== request.activation.imageDigest ||
+    generation.activationSourceRevision !== activation.sourceRevision ||
+    generation.activationImageRepository !== activation.imageRepository ||
+    generation.activationImageDigest !== activation.imageDigest ||
     generation.strategyName !== request.strategy.name ||
     generation.strategyBehaviorHash !== request.strategy.behaviorHash ||
     generation.strategyParameterHash !== request.strategy.parameterHash ||
@@ -257,6 +273,41 @@ export const researchCapitalGenerationIsBoundToRequest = Pipeable.dual(
   3,
   researchCapitalGenerationIsBoundToRequestDataFirst,
 )
+
+export const researchCapitalBuildLineageIsCurrent = (
+  lineage: ResearchCapitalBuildLineage,
+  request: ResearchCapitalActivationRequest,
+  activation: CapitalActivationRevisionBinding,
+): Result.Result<void, string> => {
+  if (lineage.requestHash !== request.requestHash) {
+    return Result.fail('research capital build lineage is not bound to the configured request')
+  }
+  if (
+    lineage.authoredActivation.sourceRevision !== request.activation.sourceRevision ||
+    lineage.authoredActivation.imageRepository !== request.activation.imageRepository ||
+    lineage.authoredActivation.imageDigest !== request.activation.imageDigest
+  ) {
+    return Result.fail('research capital build lineage does not start at the authored activation')
+  }
+  return lineage.activation.sourceRevision === activation.sourceRevision &&
+    lineage.activation.imageRepository === activation.imageRepository &&
+    lineage.activation.imageDigest === activation.imageDigest
+    ? Result.succeed(undefined)
+    : Result.fail('research capital build lineage does not end at the current activation')
+}
+
+export const researchCapitalGenerationIsBoundToBuildLineage = (
+  lineage: ResearchCapitalBuildLineage,
+  request: ResearchCapitalActivationRequest,
+  activation: CapitalActivationRevisionBinding,
+  sourceGenerationHash: string,
+  generation: ResearchCapitalGrantGeneration,
+): Result.Result<void, string> => {
+  const lineageBinding = researchCapitalBuildLineageIsCurrent(lineage, request, activation)
+  return Result.isFailure(lineageBinding)
+    ? lineageBinding
+    : researchCapitalGenerationIsBoundToRequestDataFirst(request, sourceGenerationHash, generation, lineage.activation)
+}
 
 export const researchCapitalBuildContinuationIsBound = (
   continuation: ResearchCapitalBuildContinuation,
@@ -343,6 +394,15 @@ const decodeCapitalActivationConfigurationResultDataFirst = Schema.decodeUnknown
 
 export const decodeCapitalActivationConfigurationResult = Pipeable.dual(1, (input: unknown) =>
   decodeCapitalActivationConfigurationResultDataFirst(input),
+)
+
+const decodeResearchCapitalBuildLineageResultDataFirst = Schema.decodeUnknownResult(
+  ResearchCapitalBuildLineageSchema,
+  strictParseOptions,
+)
+
+export const decodeResearchCapitalBuildLineageResult = Pipeable.dual(1, (input: unknown) =>
+  decodeResearchCapitalBuildLineageResultDataFirst(input),
 )
 
 export type CapitalAuthorityRequest = NoCapitalRequest | GrantedCapitalRequest

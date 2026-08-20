@@ -158,6 +158,25 @@ jobs:
             ' "$manifest"
           }
 
+          manifest_json_string() {
+            local manifest="$1"
+            local name="$2"
+            local raw
+            raw="$(awk -v marker="            - name: ${name}" '
+              $0 == marker {
+                count += 1
+                getline
+                sub(/^              value: /, "")
+                value = $0
+              }
+              END {
+                if (count != 1 || value == "") exit 1
+                print value
+              }
+            ' "$manifest")"
+            jq -Rer 'fromjson | select(type == "string" and length > 0)' <<< "$raw"
+          }
+
           deployment_manifest=argocd/applications/bayn/deployment.yaml
           test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_NAME)" = "$strategy_name"
           test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PROTOCOL_HASH)" = "$strategy_protocol_hash"
@@ -167,15 +186,29 @@ jobs:
           promotion_image_digest="$IMAGE_DIGEST"
           promotion_behavior_hash="$strategy_behavior_hash"
           promotion_parameter_hash="$strategy_parameter_hash"
+          promotion_research_lineage_source=""
           activation_kind="$(manifest_value "$deployment_manifest" BAYN_CAPITAL_ACTIVATION_KIND false)"
-          authored_source_sha="$(manifest_value "$deployment_manifest" BAYN_CODE_REVISION)"
-          authored_image_digest="$(manifest_value "$deployment_manifest" BAYN_IMAGE_DIGEST)"
+          configured_source_sha="$(manifest_value "$deployment_manifest" BAYN_CODE_REVISION)"
+          configured_image_repository="$(manifest_value "$deployment_manifest" BAYN_IMAGE_REPOSITORY)"
+          configured_image_digest="$(manifest_value "$deployment_manifest" BAYN_IMAGE_DIGEST)"
+          if test "$activation_kind" = ResearchCapitalActivationRequest; then
+            research_build_lineage="$(manifest_json_string "$deployment_manifest" BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE)"
+            test "$(jq -er '.schemaVersion' <<< "$research_build_lineage")" = bayn.research-capital-build-lineage.v1
+            research_request_hash="$(jq -er '.requestHash' <<< "$research_build_lineage")"
+            [[ "$research_request_hash" =~ ^[0-9a-f]{64}$ ]]
+            authored_source_sha="$(jq -er '.authoredActivation.sourceRevision' <<< "$research_build_lineage")"
+            authored_image_repository="$(jq -er '.authoredActivation.imageRepository' <<< "$research_build_lineage")"
+            authored_image_digest="$(jq -er '.authoredActivation.imageDigest' <<< "$research_build_lineage")"
+            test "$(jq -er '.activation.sourceRevision' <<< "$research_build_lineage")" = "$configured_source_sha"
+            test "$(jq -er '.activation.imageRepository' <<< "$research_build_lineage")" = "$configured_image_repository"
+            test "$(jq -er '.activation.imageDigest' <<< "$research_build_lineage")" = "$configured_image_digest"
+            test "$authored_image_repository" = registry.ide-newton.ts.net/lab/bayn
+          fi
           if test "$activation_kind" = ResearchCapitalActivationRequest && \
-            { test "$authored_source_sha" != "$SOURCE_SHA" || test "$authored_image_digest" != "$IMAGE_DIGEST"; }; then
-            test "$(manifest_value "$deployment_manifest" BAYN_IMAGE_REPOSITORY)" = registry.ide-newton.ts.net/lab/bayn
+            { test "$configured_source_sha" != "$SOURCE_SHA" || test "$configured_image_digest" != "$IMAGE_DIGEST"; }; then
             git cat-file -e "${authored_source_sha}^{commit}"
             git merge-base --is-ancestor "$authored_source_sha" "$SOURCE_SHA"
-            authored_reference="registry.ide-newton.ts.net/lab/bayn@${authored_image_digest}"
+            authored_reference="${authored_image_repository}@${authored_image_digest}"
             nix run .#assert-oci-platforms -- "$authored_reference" linux/amd64 linux/arm64
             authored_config_amd64="$(crane config --platform linux/amd64 "$authored_reference")"
             authored_config_arm64="$(crane config --platform linux/arm64 "$authored_reference")"
@@ -183,29 +216,43 @@ jobs:
             test "$(image_label "$authored_config_arm64" org.opencontainers.image.revision)" = "$authored_source_sha"
             authored_behavior_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
             authored_parameter_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
+            authored_strategy_name="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-name)"
+            authored_strategy_protocol_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-protocol-hash)"
+            authored_execution_risk_policy_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.execution-risk-policy-hash)"
             test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$authored_behavior_hash"
             test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$authored_parameter_hash"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-name)" = "$authored_strategy_name"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-protocol-hash)" = "$authored_strategy_protocol_hash"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.execution-risk-policy-hash)" = "$authored_execution_risk_policy_hash"
             test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$authored_behavior_hash"
             test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PARAMETER_HASH)" = "$authored_parameter_hash"
-            # The activation binding is immutable strategy provenance, not a runtime deployment pin. A reviewed
-            # descendant may advance infrastructure only while its semantic strategy identity remains exact.
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_NAME)" = "$authored_strategy_name"
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PROTOCOL_HASH)" = "$authored_strategy_protocol_hash"
+            test "$(manifest_value "$deployment_manifest" BAYN_EXECUTION_RISK_POLICY_HASH)" = "$authored_execution_risk_policy_hash"
             test "$strategy_behavior_hash" = "$authored_behavior_hash"
             test "$strategy_parameter_hash" = "$authored_parameter_hash"
+            test "$strategy_name" = "$authored_strategy_name"
+            test "$strategy_protocol_hash" = "$authored_strategy_protocol_hash"
+            test "$execution_risk_policy_hash" = "$authored_execution_risk_policy_hash"
+            promotion_research_lineage_source="$authored_source_sha"
           fi
 
           allowed_release_path='^(argocd/applications/bayn/(deployment|execution-activation|execution-controller|kustomization)\.yaml|argocd/applicationsets/product\.yaml)$'
           unexpected_paths="$(git diff --name-only "$SOURCE_SHA" -- | grep -Ev "$allowed_release_path" || true)"
           test -z "$unexpected_paths"
-          promotion="$(
-            bun packages/scripts/src/bayn/update-manifests.ts \
-              --source-sha "$promotion_source_sha" \
-              --tag "$promotion_image_tag" \
-              --digest "$promotion_image_digest" \
-              --strategy-behavior-hash "$promotion_behavior_hash" \
-              --strategy-parameter-hash "$promotion_parameter_hash" \
-              --deployed-deployment-path "$deployed_manifest" \
-              --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          )"
+          render_arguments=(
+            --source-sha "$promotion_source_sha"
+            --tag "$promotion_image_tag"
+            --digest "$promotion_image_digest"
+            --strategy-behavior-hash "$promotion_behavior_hash"
+            --strategy-parameter-hash "$promotion_parameter_hash"
+            --deployed-deployment-path "$deployed_manifest"
+            --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          )
+          if test -n "$promotion_research_lineage_source"; then
+            render_arguments+=(--research-lineage-source-sha "$promotion_research_lineage_source")
+          fi
+          promotion="$(bun packages/scripts/src/bayn/update-manifests.ts "${render_arguments[@]}")"
           jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace" or .qualificationMode == "install" or .qualificationMode == "research")' <<< "$promotion"
           {
             echo "promotion_action=$(jq -r '.promotionAction' <<< "$promotion")"

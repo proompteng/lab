@@ -10,12 +10,15 @@ import {
   capitalActivationRequiresQualificationEvidence,
   decodeCapitalActivationConfigurationResult,
   decodeCapitalActivationRequestResult,
+  decodeResearchCapitalBuildLineageResult,
   makeCapitalActivationRequest,
   makeResearchCapitalActivationRequest,
   makeResearchCapitalBuildContinuation,
   makeResearchCapitalPlanHash,
   researchCapitalBuildContinuationIsBound,
+  researchCapitalBuildLineageIsCurrent,
   researchCapitalGrantProof,
+  researchCapitalGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToRequest,
   resolveExecutionPolicy,
 } from './configuration'
@@ -280,6 +283,66 @@ describe('execution policy configuration', () => {
       imageRepository: request.activation.imageRepository,
       imageDigest: `sha256:${'c'.repeat(64)}`,
     }
+    const buildLineage = {
+      schemaVersion: 'bayn.research-capital-build-lineage.v1' as const,
+      requestHash: request.requestHash,
+      authoredActivation: request.activation,
+      activation: currentActivation,
+    }
+    const currentGeneration = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash: sourceGenerationHash,
+        grant: request.grant,
+        activationSourceRevision: currentActivation.sourceRevision,
+        activationImageRepository: currentActivation.imageRepository,
+        activationImageDigest: currentActivation.imageDigest,
+        strategyName: request.strategy.name,
+        strategyBehaviorHash: request.strategy.behaviorHash,
+        strategyParameterHash: request.strategy.parameterHash,
+        strategyParameterSchemaVersion: request.strategy.parameterSchemaVersion,
+        strategyProtocolHash: request.strategy.protocolHash,
+        accountId: request.broker.accountId,
+        brokerIdentityHash: request.broker.identityHash,
+        riskPolicyHash: request.riskPolicyHash,
+        proofPlanHash: request.grant.planHash,
+        reconciliationId: 'b'.repeat(64),
+        reconciliationContentHash: 'c'.repeat(64),
+      }),
+    )
+    expect(decodeResearchCapitalBuildLineageResult(buildLineage)).toEqual(Result.succeed(buildLineage))
+    expect(decodeResearchCapitalBuildLineageResult({ ...buildLineage, unexpected: true })).toMatchObject({
+      _tag: 'Failure',
+    })
+    expect(researchCapitalBuildLineageIsCurrent(buildLineage, request, currentActivation)).toEqual(
+      Result.succeed(undefined),
+    )
+    expect(
+      researchCapitalBuildLineageIsCurrent(
+        { ...buildLineage, requestHash: 'd'.repeat(64) },
+        request,
+        currentActivation,
+      ),
+    ).toEqual(Result.fail('research capital build lineage is not bound to the configured request'))
+    expect(
+      researchCapitalGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        currentActivation,
+        sourceGenerationHash,
+        currentGeneration,
+      ),
+    ).toEqual(Result.succeed(undefined))
+    expect(
+      researchCapitalGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        currentActivation,
+        sourceGenerationHash,
+        generation,
+      ),
+    ).toEqual(Result.fail('research capital generation is not bound to the requested current strategy and build'))
     const continuation = Result.getOrThrow(
       makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
