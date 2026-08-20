@@ -5,11 +5,12 @@ import { Effect, Exit, Result } from 'effect'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import {
   verifyBehaviorHash,
+  verifyExecutionRiskPolicyHash,
   verifyParameterHash,
   verifyStrategyName,
   verifyStrategyProtocolHash,
   type EmbeddedBuildMetadata,
-  type EmbeddedStrategyIdentity,
+  type EmbeddedRuntimeIdentity,
 } from './build'
 import { canonicalHashV1 } from './hash'
 import {
@@ -107,13 +108,15 @@ describe('strategy protocol', () => {
   })
 
   test('rejects build metadata for a different complete strategy identity', async () => {
-    const identity: EmbeddedStrategyIdentity = {
-      name: 'opening-drive-momentum',
-      protocolHash: '1'.repeat(64),
+    const identity: EmbeddedRuntimeIdentity = {
+      strategyName: 'opening-drive-momentum',
+      strategyProtocolHash: '1'.repeat(64),
+      executionRiskPolicyHash: '3'.repeat(64),
     }
 
     await Effect.runPromise(verifyStrategyName(identity, 'opening-drive-momentum'))
     await Effect.runPromise(verifyStrategyProtocolHash(identity, '1'.repeat(64)))
+    await Effect.runPromise(verifyExecutionRiskPolicyHash(identity, '3'.repeat(64)))
 
     const nameExit = await Effect.runPromiseExit(verifyStrategyName(identity, 'different-strategy'))
     expect(Exit.isFailure(nameExit)).toBe(true)
@@ -122,6 +125,12 @@ describe('strategy protocol', () => {
     const protocolExit = await Effect.runPromiseExit(verifyStrategyProtocolHash(identity, '2'.repeat(64)))
     expect(Exit.isFailure(protocolExit)).toBe(true)
     if (Exit.isFailure(protocolExit)) expect(protocolExit.cause.toString()).toContain('compiled strategy protocol')
+
+    const riskPolicyExit = await Effect.runPromiseExit(verifyExecutionRiskPolicyHash(identity, '4'.repeat(64)))
+    expect(Exit.isFailure(riskPolicyExit)).toBe(true)
+    if (Exit.isFailure(riskPolicyExit)) {
+      expect(riskPolicyExit.cause.toString()).toContain('compiled execution risk policy')
+    }
   })
 
   test('rejects legacy, malformed, and non-canonical documents', async () => {

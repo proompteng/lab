@@ -3,10 +3,11 @@ import { Effect, Schema } from 'effect'
 
 import {
   embeddedBuildMetadata,
-  embeddedStrategyIdentity,
+  embeddedRuntimeIdentity,
   EmbeddedBuildMetadataSchema,
-  EmbeddedStrategyIdentitySchema,
+  EmbeddedRuntimeIdentitySchema,
   verifyBehaviorHash,
+  verifyExecutionRiskPolicyHash,
   verifyParameterHash,
   verifyStrategyName,
   verifyStrategyProtocolHash,
@@ -14,6 +15,7 @@ import {
 import { makeStrategyProtocolHashResult } from './contracts'
 import { operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
+import { loadQuoteBoundExecutionRiskPolicy } from './observe-composition/decision-builder'
 import { strictParseOptions } from './schemas'
 import { activeStrategyBehaviorHash, activeStrategyName, loadActiveStrategyProtocol } from './strategy'
 
@@ -31,15 +33,15 @@ const program = Effect.gen(function* () {
       }),
     ),
   )
-  const strategyIdentity = yield* Schema.decodeUnknownEffect(
-    EmbeddedStrategyIdentitySchema,
+  const runtimeIdentity = yield* Schema.decodeUnknownEffect(
+    EmbeddedRuntimeIdentitySchema,
     strictParseOptions,
-  )(embeddedStrategyIdentity).pipe(
+  )(embeddedRuntimeIdentity).pipe(
     Effect.mapError((cause) =>
       operationalError({
         component: 'config',
         operation: 'provenance',
-        message: 'production image is missing complete strategy identity',
+        message: 'production image is missing complete runtime identity',
         cause,
       }),
     ),
@@ -72,11 +74,32 @@ const program = Effect.gen(function* () {
       }),
     ),
   )
+  const riskPolicy = yield* loadQuoteBoundExecutionRiskPolicy('build-contract', protocol.universe).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'provenance',
+        message: 'compiled execution risk policy is invalid',
+        cause,
+      }),
+    ),
+  )
+  const riskPolicyHash = yield* Effect.fromResult(canonicalHashV1Result(riskPolicy)).pipe(
+    Effect.mapError((cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'provenance',
+        message: 'compiled execution risk policy could not be canonically hashed',
+        cause,
+      }),
+    ),
+  )
   yield* Effect.all([
     verifyBehaviorHash(metadata, activeStrategyBehaviorHash),
     verifyParameterHash(metadata, parameterHash),
-    verifyStrategyName(strategyIdentity, activeStrategyName),
-    verifyStrategyProtocolHash(strategyIdentity, protocolHash),
+    verifyStrategyName(runtimeIdentity, activeStrategyName),
+    verifyStrategyProtocolHash(runtimeIdentity, protocolHash),
+    verifyExecutionRiskPolicyHash(runtimeIdentity, riskPolicyHash),
   ])
 })
 

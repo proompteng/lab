@@ -78,16 +78,25 @@ test('preserves authored research provenance while promoting a strategy-identica
     'strategy_protocol_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-protocol-hash)"',
   )
   expect(releaseWorkflow).toContain(
+    'execution_risk_policy_hash="$(image_label "$config_amd64" proompteng.ai/bayn.execution-risk-policy-hash)"',
+  )
+  expect(releaseWorkflow).toContain(
     'test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-name)" = "$strategy_name"',
   )
   expect(releaseWorkflow).toContain(
     'test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-protocol-hash)" = "$strategy_protocol_hash"',
   )
   expect(releaseWorkflow).toContain(
+    'test "$(image_label "$config_arm64" proompteng.ai/bayn.execution-risk-policy-hash)" = "$execution_risk_policy_hash"',
+  )
+  expect(releaseWorkflow).toContain(
     'test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_NAME)" = "$strategy_name"',
   )
   expect(releaseWorkflow).toContain(
     'test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PROTOCOL_HASH)" = "$strategy_protocol_hash"',
+  )
+  expect(releaseWorkflow).toContain(
+    'test "$(manifest_value "$deployment_manifest" BAYN_EXECUTION_RISK_POLICY_HASH)" = "$execution_risk_policy_hash"',
   )
   expect(releaseWorkflow).not.toContain('promotion_source_sha="$authored_source_sha"')
   expect(releaseWorkflow).not.toContain('promotion_image_digest="$authored_image_digest"')

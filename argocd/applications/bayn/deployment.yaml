@@ -83,6 +83,8 @@ spec:
               value: opening-drive-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH
               value: "d82848fc6f93a77ad584daff0fc4ad5ab4a517f49f3d4079e79484d9d1930354"
+            - name: BAYN_EXECUTION_RISK_POLICY_HASH
+              value: "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
