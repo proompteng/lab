@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-20T14:58:19Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-20T15:28:59Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
