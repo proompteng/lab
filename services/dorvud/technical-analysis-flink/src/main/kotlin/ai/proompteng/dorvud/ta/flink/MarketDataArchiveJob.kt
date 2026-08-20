@@ -105,18 +105,19 @@ data class MarketDataArchiveConfig(
       val observationUniverse = universe("UNIVERSE_ID", "UNIVERSE_SYMBOLS", "UNIVERSE_SYMBOL_HASH")
       val coreFeed = optional("ARCHIVE_CORE_FEED") ?: "iex"
       require(coreFeed in setOf("iex", "sip")) { "ARCHIVE_CORE_FEED must be iex or sip" }
-      val enrichedTopicKeys =
-        listOf(
-          "ARCHIVE_CORE_QUOTES_TOPIC",
-          "ARCHIVE_CORE_TRADES_TOPIC",
-          "ARCHIVE_DELAYED_SIP_QUOTES_TOPIC",
-          "ARCHIVE_DELAYED_SIP_TRADES_TOPIC",
-        )
-      val enrichedTopics = enrichedTopicKeys.associateWith(::optional).filterValues { it != null }
-      require(enrichedTopics.isEmpty() || enrichedTopics.size == enrichedTopicKeys.size) {
-        "archive quote and trade topics must be configured together"
+
+      fun optionalTopicGroup(vararg keys: String): Map<String, String> {
+        val topics = keys.associateWith(::optional).filterValues { it != null }.mapValues { requireNotNull(it.value) }
+        require(topics.isEmpty() || topics.size == keys.size) {
+          "${keys.joinToString(" and ")} must be configured together"
+        }
+        return topics
       }
-      require(coreFeed == "iex" || enrichedTopics.isNotEmpty()) {
+
+      val coreEnrichedTopics = optionalTopicGroup("ARCHIVE_CORE_QUOTES_TOPIC", "ARCHIVE_CORE_TRADES_TOPIC")
+      val observationEnrichedTopics =
+        optionalTopicGroup("ARCHIVE_DELAYED_SIP_QUOTES_TOPIC", "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
+      require(coreFeed == "iex" || coreEnrichedTopics.isNotEmpty()) {
         "ARCHIVE_CORE_FEED requires the complete quote and trade topic contract"
       }
       val routes =
@@ -124,20 +125,28 @@ data class MarketDataArchiveConfig(
           put(optional("ARCHIVE_CORE_BARS_TOPIC") ?: required("ARCHIVE_IEX_BARS_TOPIC"), ArchiveRoute(coreFeed, coreUniverse))
           put(required("ARCHIVE_DELAYED_SIP_BARS_TOPIC"), ArchiveRoute("delayed_sip", observationUniverse))
           put(required("ARCHIVE_OVERNIGHT_BARS_TOPIC"), ArchiveRoute("overnight", observationUniverse))
-          if (enrichedTopics.isNotEmpty()) {
-            put(requireNotNull(enrichedTopics["ARCHIVE_CORE_QUOTES_TOPIC"]), ArchiveRoute(coreFeed, coreUniverse, ArchiveRecordKind.Quote))
-            put(requireNotNull(enrichedTopics["ARCHIVE_CORE_TRADES_TOPIC"]), ArchiveRoute(coreFeed, coreUniverse, ArchiveRecordKind.Trade))
+          if (coreEnrichedTopics.isNotEmpty()) {
             put(
-              requireNotNull(enrichedTopics["ARCHIVE_DELAYED_SIP_QUOTES_TOPIC"]),
+              coreEnrichedTopics.getValue("ARCHIVE_CORE_QUOTES_TOPIC"),
+              ArchiveRoute(coreFeed, coreUniverse, ArchiveRecordKind.Quote),
+            )
+            put(
+              coreEnrichedTopics.getValue("ARCHIVE_CORE_TRADES_TOPIC"),
+              ArchiveRoute(coreFeed, coreUniverse, ArchiveRecordKind.Trade),
+            )
+          }
+          if (observationEnrichedTopics.isNotEmpty()) {
+            put(
+              observationEnrichedTopics.getValue("ARCHIVE_DELAYED_SIP_QUOTES_TOPIC"),
               ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Quote),
             )
             put(
-              requireNotNull(enrichedTopics["ARCHIVE_DELAYED_SIP_TRADES_TOPIC"]),
+              observationEnrichedTopics.getValue("ARCHIVE_DELAYED_SIP_TRADES_TOPIC"),
               ArchiveRoute("delayed_sip", observationUniverse, ArchiveRecordKind.Trade),
             )
           }
         }
-      val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
+      val expectedRouteCount = 3 + coreEnrichedTopics.size + observationEnrichedTopics.size
       if (routes.size != expectedRouteCount) error("archive market-data topics must be unique")
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000

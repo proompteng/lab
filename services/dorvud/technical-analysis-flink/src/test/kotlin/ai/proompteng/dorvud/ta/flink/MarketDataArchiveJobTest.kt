@@ -232,6 +232,16 @@ class MarketDataArchiveJobTest {
     assertEquals(100, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
 
+    val iexOnly =
+      MarketDataArchiveConfig.fromEnv(
+        valid.minus(listOf("ARCHIVE_DELAYED_SIP_QUOTES_TOPIC", "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")) +
+          ("ARCHIVE_CORE_FEED" to "iex"),
+      )
+    assertEquals(5, iexOnly.routes.size)
+    assertEquals("iex", iexOnly.routes.getValue("torghut.quotes.v1").feed)
+    assertEquals(ArchiveRecordKind.Quote, iexOnly.routes.getValue("torghut.quotes.v1").kind)
+    assertEquals(ArchiveRecordKind.Trade, iexOnly.routes.getValue("torghut.trades.v1").kind)
+
     val legacy =
       MarketDataArchiveConfig.fromEnv(
         valid
@@ -256,6 +266,9 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_CORE_TRADES_TOPIC")
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
