@@ -88,7 +88,11 @@ import {
   executionMandateReceiptFinalizationExpiresAt,
   loadStrategyExecutionRiskPolicy,
 } from './observe-composition'
-import { validateResearchCapitalRiskPolicy } from './composition/capital-activation'
+import {
+  capitalActivationRequestIsCurrent,
+  researchCapitalRecoveryRequestIsCompatible,
+  validateResearchCapitalRiskPolicy,
+} from './composition/capital-activation'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
@@ -1332,6 +1336,77 @@ describe('Bayn capital startup recovery boundary', () => {
     })
   })
 
+  test('requires explicit build lineage for activation while allowing exact durable recovery compatibility', () => {
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+      ),
+    ).toEqual(Result.fail('capital activation request is not bound to the current activation build'))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+        { buildContinuation: researchBuildContinuation },
+      ),
+    ).toEqual(Result.succeed(undefined))
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+        { buildContinuation: staleResearchBuildContinuation },
+      ),
+    ).toEqual(Result.fail('capital activation request is not bound to the current activation build'))
+    expect(
+      researchCapitalRecoveryRequestIsCompatible(
+        continuationRequest,
+        continuationApplicationPlan,
+        '2026-08-31T13:30:00.000Z',
+      ),
+    ).toEqual(Result.succeed(undefined))
+
+    const differentRepositoryPlan = {
+      ...continuationApplicationPlan,
+      config: {
+        ...continuationApplicationPlan.config,
+        build: {
+          ...continuationApplicationPlan.config.build,
+          imageRepository: 'registry.example.test/unreviewed-bayn',
+        },
+      },
+    }
+    expect(
+      researchCapitalRecoveryRequestIsCompatible(
+        continuationRequest,
+        differentRepositoryPlan,
+        '2026-08-31T13:30:00.000Z',
+      ),
+    ).toEqual(Result.fail('research capital request image repository does not match the current runtime'))
+  })
+
+  test('recovers the exact durable research generation from the raw authored request on a reviewed runtime build', async () => {
+    const generation = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        continuationApplicationPlan,
+        continuationRequest,
+        null,
+        unusedBrokerSession,
+        continuationAuthorityStore(),
+        unusedCapitalGrantLifecycle,
+        Effect.die(new Error('durable recovery must not rerun pre-activation reconciliation')),
+        config.operationTimeoutMs,
+      ),
+    )
+
+    expect(generation).toEqual(continuationGeneration)
+  })
+
   test('resumes an exact failure-restricted generation for recovery without rearming or activating', async () => {
     const authorityReason = `bound PAPER cycle ${hash('c')} restricted effective authority: intent ${hash('d')} submit settled denied`
     const authority: AuthorityState = {
@@ -1389,6 +1464,65 @@ describe('Bayn capital startup recovery boundary', () => {
 
       expect(failure.message).toBe(fixture.message)
     }
+  })
+
+  test('rejects a raw stale-build mandate before retiring the previous authority', async () => {
+    const stalePlan = {
+      ...continuationResearchPlan,
+      cutoffAt: '2026-09-02T13:30:00.000Z',
+      expiresAt: '2026-09-04T20:00:00.000Z',
+    }
+    const { schemaVersion: _schemaVersion, ...stalePlanFields } = stalePlan
+    const staleRequest = Result.getOrThrow(
+      makeResearchCapitalActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(stalePlan)) },
+        ...stalePlanFields,
+      }),
+    )
+    const successorGenerationHash = Result.getOrThrow(
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: continuationGeneration.generationHash,
+      }),
+    )
+    const operations: string[] = []
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () =>
+        Effect.sync(() => {
+          operations.push('rearm')
+          return {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: successorGenerationHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: continuationAuthority.version + 1,
+            updatedAt: '2026-08-31T20:00:00.500Z',
+          }
+        }),
+      readAuthorityState: Effect.succeed(continuationAuthority),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === continuationGeneration.generationHash ? continuationGeneration : undefined),
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          staleRequest,
+          null,
+          unusedBrokerSession,
+          authorityStore,
+          unusedCapitalGrantLifecycle,
+          Effect.sync(() => operations.push('reconcile')),
+          config.operationTimeoutMs,
+        ).pipe(Effect.flip)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(failure.message).toBe('capital activation request is not bound to the current activation build')
+    expect(operations).toEqual([])
   })
 
   test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {

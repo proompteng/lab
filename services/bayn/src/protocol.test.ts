@@ -3,7 +3,15 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit, Result } from 'effect'
 
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { verifyBehaviorHash, verifyParameterHash, type EmbeddedBuildMetadata } from './build'
+import {
+  verifyBehaviorHash,
+  verifyExecutionRiskPolicyHash,
+  verifyParameterHash,
+  verifyStrategyName,
+  verifyStrategyProtocolHash,
+  type EmbeddedBuildMetadata,
+  type EmbeddedRuntimeIdentity,
+} from './build'
 import { canonicalHashV1 } from './hash'
 import {
   decodeDefaultProtocol,
@@ -97,6 +105,32 @@ describe('strategy protocol', () => {
     )
     expect(Exit.isFailure(behaviorExit)).toBe(true)
     if (Exit.isFailure(behaviorExit)) expect(behaviorExit.cause.toString()).toContain('compiled strategy behavior')
+  })
+
+  test('rejects build metadata for a different complete strategy identity', async () => {
+    const identity: EmbeddedRuntimeIdentity = {
+      strategyName: 'opening-drive-momentum',
+      strategyProtocolHash: '1'.repeat(64),
+      executionRiskPolicyHash: '3'.repeat(64),
+    }
+
+    await Effect.runPromise(verifyStrategyName(identity, 'opening-drive-momentum'))
+    await Effect.runPromise(verifyStrategyProtocolHash(identity, '1'.repeat(64)))
+    await Effect.runPromise(verifyExecutionRiskPolicyHash(identity, '3'.repeat(64)))
+
+    const nameExit = await Effect.runPromiseExit(verifyStrategyName(identity, 'different-strategy'))
+    expect(Exit.isFailure(nameExit)).toBe(true)
+    if (Exit.isFailure(nameExit)) expect(nameExit.cause.toString()).toContain('compiled strategy name')
+
+    const protocolExit = await Effect.runPromiseExit(verifyStrategyProtocolHash(identity, '2'.repeat(64)))
+    expect(Exit.isFailure(protocolExit)).toBe(true)
+    if (Exit.isFailure(protocolExit)) expect(protocolExit.cause.toString()).toContain('compiled strategy protocol')
+
+    const riskPolicyExit = await Effect.runPromiseExit(verifyExecutionRiskPolicyHash(identity, '4'.repeat(64)))
+    expect(Exit.isFailure(riskPolicyExit)).toBe(true)
+    if (Exit.isFailure(riskPolicyExit)) {
+      expect(riskPolicyExit.cause.toString()).toContain('compiled execution risk policy')
+    }
   })
 
   test('rejects legacy, malformed, and non-canonical documents', async () => {

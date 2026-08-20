@@ -140,6 +140,56 @@ export const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousServ
   capitalAuthority: noCapitalAuthority,
 })
 
+const capitalActivationRequestIdentityIsCurrent = (
+  request: CapitalActivationRequest,
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  observedAt: string,
+  allowCloseRecovery: boolean,
+): Result.Result<void, string> => {
+  if (!allowCloseRecovery && (request.expiresAt <= observedAt || request.cutoffAt <= observedAt)) {
+    return Result.fail('capital activation request is expired or past its immutable cutoff')
+  }
+  if (request.strategy.protocolHash !== plan.strategyProtocolHash) {
+    return Result.fail('capital activation request strategy protocol does not match the current strategy')
+  }
+  const strategy = plan.strategy.provenance.strategy
+  return request.strategy.name === strategy.name &&
+    request.strategy.behaviorHash === strategy.behaviorHash &&
+    request.strategy.parameterHash === strategy.parameterHash &&
+    request.strategy.parameterSchemaVersion === strategy.parameterSchemaVersion
+    ? Result.succeed(undefined)
+    : Result.fail('capital activation request strategy identity does not match the current strategy')
+}
+
+const researchCapitalBrokerBindingIsCurrent = (
+  request: ResearchCapitalActivationRequest,
+  plan: ApplicationPlanFor<'AutonomousService'>,
+): Result.Result<void, string> => {
+  if (request.activation.imageRepository !== plan.config.build.imageRepository) {
+    return Result.fail('research capital request image repository does not match the current runtime')
+  }
+  return request.broker.environment === BrokerEnvironment.Sandbox &&
+    request.broker.accountId === plan.config.alpaca.expectedAccountId &&
+    request.broker.identityHash === plan.config.alpaca.identity.identityHash
+    ? Result.succeed(undefined)
+    : Result.fail('research capital request broker identity does not match the configured sandbox account')
+}
+
+/**
+ * Validates the non-build identity needed before durable recovery. This does not authorize fresh activation: callers
+ * must immediately prove an existing generation bound to the request, while fresh activation uses the strict build
+ * validator below.
+ */
+export const researchCapitalRecoveryRequestIsCompatible = (
+  request: ResearchCapitalActivationRequest,
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  observedAt: string,
+  allowCloseRecovery = false,
+): Result.Result<void, string> => {
+  const identity = capitalActivationRequestIdentityIsCurrent(request, plan, observedAt, allowCloseRecovery)
+  return Result.isFailure(identity) ? identity : researchCapitalBrokerBindingIsCurrent(request, plan)
+}
+
 export const capitalActivationRequestIsCurrent = (
   request: CapitalActivationRequest,
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -150,21 +200,13 @@ export const capitalActivationRequestIsCurrent = (
     readonly buildContinuation?: ResearchCapitalBuildContinuation | null
   } = {},
 ): Result.Result<void, string> => {
-  if (options.allowCloseRecovery !== true && (request.expiresAt <= observedAt || request.cutoffAt <= observedAt)) {
-    return Result.fail('capital activation request is expired or past its immutable cutoff')
-  }
-  if (request.strategy.protocolHash !== plan.strategyProtocolHash) {
-    return Result.fail('capital activation request strategy protocol does not match the current strategy')
-  }
-  const strategy = plan.strategy.provenance.strategy
-  if (
-    request.strategy.name !== strategy.name ||
-    request.strategy.behaviorHash !== strategy.behaviorHash ||
-    request.strategy.parameterHash !== strategy.parameterHash ||
-    request.strategy.parameterSchemaVersion !== strategy.parameterSchemaVersion
-  ) {
-    return Result.fail('capital activation request strategy identity does not match the current strategy')
-  }
+  const identity = capitalActivationRequestIdentityIsCurrent(
+    request,
+    plan,
+    observedAt,
+    options.allowCloseRecovery === true,
+  )
+  if (Result.isFailure(identity)) return identity
   const requestBuildIsCurrent =
     request.activation.sourceRevision === plan.config.build.sourceRevision &&
     request.activation.imageRepository === plan.config.build.imageRepository &&
@@ -173,19 +215,15 @@ export const capitalActivationRequestIsCurrent = (
     isResearchCapitalActivationRequest(request) &&
     options.buildContinuation !== null &&
     options.buildContinuation !== undefined &&
-    options.buildContinuation.request.requestHash === request.requestHash
+    options.buildContinuation.request.requestHash === request.requestHash &&
+    options.buildContinuation.activation.sourceRevision === plan.config.build.sourceRevision &&
+    options.buildContinuation.activation.imageRepository === plan.config.build.imageRepository &&
+    options.buildContinuation.activation.imageDigest === plan.config.build.imageDigest
   if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker) {
     return Result.fail('capital activation request is not bound to the current activation build')
   }
   if (isResearchCapitalActivationRequest(request)) {
-    if (
-      request.broker.environment !== BrokerEnvironment.Sandbox ||
-      request.broker.accountId !== plan.config.alpaca.expectedAccountId ||
-      request.broker.identityHash !== plan.config.alpaca.identity.identityHash
-    ) {
-      return Result.fail('research capital request broker identity does not match the configured sandbox account')
-    }
-    return Result.succeed(undefined)
+    return researchCapitalBrokerBindingIsCurrent(request, plan)
   }
   if (evidence === null) return Result.fail('pinned qualification evidence was not published by startup')
   if (
@@ -491,12 +529,15 @@ export const recoverCapitalActivationGeneration = (
 ): Effect.Effect<CapitalAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(
-      capitalActivationRequestIsCurrent(request, plan, evidence, observedAt, {
-        allowCloseRecovery: true,
-        buildContinuation,
-      }),
-    ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
+    const requestValidation = isResearchCapitalActivationRequest(request)
+      ? researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt, true)
+      : capitalActivationRequestIsCurrent(request, plan, evidence, observedAt, {
+          allowCloseRecovery: true,
+          buildContinuation,
+        })
+    yield* Effect.fromResult(requestValidation).pipe(
+      Effect.mapError((message) => capitalActivationOperationalError(message)),
+    )
     const closeExpiresAt = executionMandateCloseExpiresAt(request.expiresAt)
     if (observedAt >= closeExpiresAt) {
       yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
@@ -523,12 +564,15 @@ export const recoverCapitalReceiptFinalizationGeneration = (
 ): Effect.Effect<CapitalAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(
-      capitalActivationRequestIsCurrent(request, plan, evidence, observedAt, {
-        allowCloseRecovery: true,
-        buildContinuation,
-      }),
-    ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
+    const requestValidation = isResearchCapitalActivationRequest(request)
+      ? researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt, true)
+      : capitalActivationRequestIsCurrent(request, plan, evidence, observedAt, {
+          allowCloseRecovery: true,
+          buildContinuation,
+        })
+    yield* Effect.fromResult(requestValidation).pipe(
+      Effect.mapError((message) => capitalActivationOperationalError(message)),
+    )
     if (observedAt < executionMandateCloseExpiresAt(request.expiresAt)) {
       return yield* capitalActivationOperationalError(
         'durable capital receipt finalization is outside its bounded lease',
@@ -843,6 +887,10 @@ export const prepareOrRecoverResearchCapitalActivation = (
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt)).pipe(
+      Effect.mapError((message) => capitalActivationOperationalError(message)),
+    )
     if (authorityStore.readAuthorityState === undefined) {
       return yield* capitalActivationOperationalError('research capital startup requires durable authority state reads')
     }
@@ -899,6 +947,11 @@ export const prepareOrRecoverResearchCapitalActivation = (
       )
     }
     const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
+    if (activationRequired) {
+      yield* Effect.fromResult(capitalActivationRequestIsCurrent(request, plan, null, observedAt)).pipe(
+        Effect.mapError((message) => capitalActivationOperationalError(message)),
+      )
+    }
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
         ? yield* Effect.fromResult(
