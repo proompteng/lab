@@ -52,7 +52,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn:sha-4ab67413d661e9d35663d605497de8c48879785a@sha256:0792d2215aeed22cf23b9cab532fafcf005dd14498414262c400e8b8d597700e
+          image: registry.ide-newton.ts.net/lab/bayn:sha-5d1d85c5b60d62f0374d7533ce931a0d1568723b@sha256:22af29baa177f051570d2b66b2de27ca17fdffa529730ddc0e49a54a36a0e470
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -63,11 +63,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 4ab67413d661e9d35663d605497de8c48879785a
+              value: 5d1d85c5b60d62f0374d7533ce931a0d1568723b
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:0792d2215aeed22cf23b9cab532fafcf005dd14498414262c400e8b8d597700e
+              value: sha256:22af29baa177f051570d2b66b2de27ca17fdffa529730ddc0e49a54a36a0e470
             # Bind the replacement to the exact immutable execution generation
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
