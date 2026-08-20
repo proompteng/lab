@@ -56,6 +56,7 @@ data class MarketDataArchiveConfig(
   val routes: Map<String, ArchiveRoute>,
   val groupId: String,
   val clientId: String,
+  val offsetResetStrategy: OffsetResetStrategy,
   val securityProtocol: String,
   val saslMechanism: String,
   val saslUsername: String,
@@ -145,6 +146,12 @@ data class MarketDataArchiveConfig(
       val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 100
       val flushMs = env["ARCHIVE_CLICKHOUSE_FLUSH_MS"]?.toLongOrNull() ?: 1_000
       val maxRetries = env["ARCHIVE_CLICKHOUSE_MAX_RETRIES"]?.toIntOrNull() ?: 3
+      val offsetResetStrategy =
+        when (env["ARCHIVE_OFFSET_RESET"]?.trim()?.lowercase() ?: "earliest") {
+          "earliest" -> OffsetResetStrategy.EARLIEST
+          "latest" -> OffsetResetStrategy.LATEST
+          else -> throw IllegalArgumentException("ARCHIVE_OFFSET_RESET must be earliest or latest")
+        }
       val securityProtocol = env["ARCHIVE_KAFKA_SECURITY"] ?: "SASL_PLAINTEXT"
       val saslPassword = env["ARCHIVE_KAFKA_PASSWORD"]?.takeIf { it.isNotEmpty() }
       require(checkpointIntervalMs > 0) { "ARCHIVE_CHECKPOINT_INTERVAL_MS must be > 0" }
@@ -161,6 +168,7 @@ data class MarketDataArchiveConfig(
         routes = routes,
         groupId = env["ARCHIVE_GROUP_ID"] ?: "bayn-market-data-archive-v1",
         clientId = env["ARCHIVE_CLIENT_ID"] ?: "bayn-market-data-archive",
+        offsetResetStrategy = offsetResetStrategy,
         securityProtocol = securityProtocol,
         saslMechanism = env["ARCHIVE_KAFKA_SASL_MECH"] ?: "SCRAM-SHA-512",
         saslUsername = env["ARCHIVE_KAFKA_USERNAME"] ?: "torghut-ws",
@@ -624,8 +632,8 @@ private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<Arc
       .setClientIdPrefix(config.clientId)
       .setGroupId(config.groupId)
       .setDeserializer(ArchiveKafkaRecordDeserializer())
-      .setStartingOffsets(OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST))
-      .setProperty("auto.offset.reset", "earliest")
+      .setStartingOffsets(OffsetsInitializer.committedOffsets(config.offsetResetStrategy))
+      .setProperty("auto.offset.reset", config.offsetResetStrategy.name.lowercase())
       .setProperty("isolation.level", "read_committed")
       .setProperty("enable.auto.commit", "false")
   applyArchiveKafkaSecurity(builder, config)

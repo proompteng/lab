@@ -213,7 +213,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
   })
 
-  test('stages the compatible archive without prematurely activating the SIP rollout', () => {
+  test('runs the IEX archive with an explicit bounded recovery mode', () => {
     const torghutKustomization = parse(
       readFileSync(resolve(root, 'argocd/applications/torghut/kustomization.yaml'), 'utf8'),
     )
@@ -234,10 +234,12 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
+      restartNonce: 8,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
         state: 'running',
+        upgradeMode: 'stateless',
       },
       taskManager: { replicas: 2 },
     })
@@ -246,6 +248,7 @@ describe('Signal publisher GitOps authority contract', () => {
     const coreArchiveSymbols = csv(config.data.ARCHIVE_CORE_UNIVERSE_SYMBOLS)
     const expectedCoreArchiveHash = createHash('sha256').update(coreArchiveSymbols.join(',')).digest('hex')
     expect(config.data).toMatchObject({
+      ARCHIVE_OFFSET_RESET: 'latest',
       ARCHIVE_CORE_FEED: 'iex',
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',
       ARCHIVE_CORE_QUOTES_TOPIC: 'torghut.quotes.v1',
