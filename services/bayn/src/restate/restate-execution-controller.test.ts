@@ -17,6 +17,7 @@ import {
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
   executionControllerSuccessorPassCompleted,
+  executionControllerSourceCatchUpTickIdempotencyKey,
   executionControllerTickIdempotencyKey,
   executionControllerTickRetryPolicy,
   executionBootstrapAuthorizationHash,
@@ -224,6 +225,66 @@ describe('native Restate execution controller', () => {
     await object.tick(context, pending.parameter)
     expect(calls).toHaveLength(1)
     expect(deliveries).toHaveLength(0)
+  })
+
+  test('replayed activation schedules the missing catch-up pass for a newer worker revision', async () => {
+    const previousSourceRevision = 'd'.repeat(40)
+    const state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: activation.epoch,
+      planHash,
+      sourceRevision: previousSourceRevision,
+      initialSequence: activation.firstSequence,
+      nextSequence: activation.firstSequence,
+    }
+    const deliveries: Delivery[] = []
+    const normalKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, 0)
+    const acceptedKeys = new Set([normalKey])
+    let committed = false
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: () => {
+        committed = true
+      },
+      genericSend: (delivery: Delivery) => {
+        if (delivery.idempotencyKey === undefined || acceptedKeys.has(delivery.idempotencyKey)) return
+        acceptedKeys.add(delivery.idempotencyKey)
+        deliveries.push(delivery)
+      },
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      request: () => ({ id: 'source-catch-up', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        advance: () => Promise.reject(new Error('activation must not advance inline')),
+        log: () => Promise.resolve(),
+        projectState: () => Promise.resolve(),
+      }),
+    )
+
+    expect(await object.activate(context, activation)).toEqual(state)
+    expect(await object.activate(context, activation)).toEqual(state)
+    expect(committed).toBe(false)
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        delay: executionControllerInitialTickDelayMs,
+        idempotencyKey: executionControllerSourceCatchUpTickIdempotencyKey(
+          state.epoch,
+          state.nextSequence,
+          0,
+          sourceRevision,
+        ),
+        parameter: expect.objectContaining({
+          epoch: state.epoch,
+          sequence: state.nextSequence,
+          attempt: 0,
+          sourceCatchUpRevision: sourceRevision,
+        }),
+      }),
+    ])
+    expect(deliveries[0]?.idempotencyKey).not.toBe(normalKey)
   })
 
   test('fails activation closed before Restate state or scheduling when durable projection fails', async () => {

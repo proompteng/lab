@@ -208,9 +208,10 @@ describe('execution controller decisions', () => {
           epoch: 1,
           sequence: 0,
           attempt: 6,
+          sourceCatchUpRevision: nextSourceRevision,
         }),
-      ).attempt,
-    ).toBe(6)
+      ),
+    ).toMatchObject({ attempt: 6, sourceCatchUpRevision: nextSourceRevision })
     expect(
       Result.isFailure(
         decodeExecutionControllerTick({
@@ -218,6 +219,16 @@ describe('execution controller decisions', () => {
           epoch: 1,
           sequence: 0,
           attempt: 7,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeExecutionControllerTick({
+          schemaVersion: 'bayn.execution-controller-tick.v1',
+          epoch: 1,
+          sequence: 0,
+          sourceCatchUpRevision: 'not-a-source-revision',
         }),
       ),
     ).toBe(true)

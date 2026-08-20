@@ -36,6 +36,7 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
     sequence: { type: 'integer', minimum: 0 },
     attempt: { type: 'integer', minimum: 0, maximum: executionControllerMaximumDeliveryAttempt },
     issuedAt: { type: 'string', format: 'date-time' },
+    sourceCatchUpRevision: { type: 'string', pattern: '^[0-9a-f]{40}$' },
   },
   required: ['schemaVersion', 'epoch', 'sequence'],
   additionalProperties: false,
@@ -236,12 +237,20 @@ const readState = async (
 export const executionControllerTickIdempotencyKey = (epoch: number, sequence: number, attempt: number): string =>
   `bayn-execution-controller-${epoch}-${sequence}-${attempt}`
 
+export const executionControllerSourceCatchUpTickIdempotencyKey = (
+  epoch: number,
+  sequence: number,
+  attempt: number,
+  sourceRevision: string,
+): string => `bayn-execution-controller-${epoch}-${sequence}-source-${sourceRevision}-${attempt}`
+
 const scheduleTick = (
   ctx: restate.ObjectContext<ControllerObjectState>,
   state: ExecutionControllerState,
   delay: number,
   attempt = 0,
   issuedAt?: string,
+  sourceCatchUpRevision?: string,
 ): void => {
   ctx.genericSend({
     service: 'BaynExecutionController',
@@ -253,10 +262,19 @@ const scheduleTick = (
       sequence: state.nextSequence,
       attempt,
       ...(issuedAt === undefined ? {} : { issuedAt }),
+      ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
     },
     inputSerde: executionTickSerde,
     delay,
-    idempotencyKey: executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt),
+    idempotencyKey:
+      sourceCatchUpRevision === undefined
+        ? executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
+        : executionControllerSourceCatchUpTickIdempotencyKey(
+            state.epoch,
+            state.nextSequence,
+            attempt,
+            sourceCatchUpRevision,
+          ),
   })
 }
 
@@ -339,6 +357,25 @@ export const makeBaynExecutionController = (
               planHash: decision.state.planHash,
               sourceRevision: decision.state.sourceRevision,
             })
+          } else if (decision.state.sourceRevision !== config.sourceRevision) {
+            // A plan-compatible worker revision normally inherits the already-scheduled next tick. If that delivery
+            // was paused or cancelled, replaying activation is the only durable recovery signal available. Sending
+            // the current sequence again is safe because its Restate idempotency key is deterministic.
+            scheduleTick(
+              ctx,
+              decision.state,
+              executionControllerInitialTickDelayMs,
+              0,
+              undefined,
+              config.sourceRevision,
+            )
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled a source catch-up pass', {
+              controllerKey: ctx.key,
+              epoch: decision.state.epoch,
+              invocationId: ctx.request().id,
+              sequence: decision.state.nextSequence,
+              sourceRevision: config.sourceRevision,
+            })
           }
           return decision.state
         },
@@ -353,6 +390,9 @@ export const makeBaynExecutionController = (
           )
           const state = await readState(ctx)
           verifyTickBinding(config, ctx.key, state)
+          if (tick.sourceCatchUpRevision !== undefined && tick.sourceCatchUpRevision !== config.sourceRevision) {
+            throw terminal('execution controller source catch-up does not match this immutable deployment')
+          }
           if (isPreviousBinding(config, state)) {
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
               controllerKey: ctx.key,
@@ -387,7 +427,7 @@ export const makeBaynExecutionController = (
             if (attempt + 1 < maximumAttempts && state !== null) {
               const nextAttempt = attempt + 1
               const retryDelayMs = Math.min(1_000 * 2 ** attempt, 30_000)
-              scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt)
+              scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt, tick.sourceCatchUpRevision)
               await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
                 epoch: state.epoch,
