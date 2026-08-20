@@ -31,6 +31,7 @@ import {
   researchCapitalGrantProof,
   researchCapitalBuildLineageIsCurrent,
   researchCapitalBuildContinuationIsBound,
+  researchCapitalCompletedGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToRequest,
   resolveExecutionPolicy,
@@ -560,14 +561,23 @@ export const readCompletedExecutionLifecycle = (
           ),
         )
       if (generation === undefined) return undefined
-      binding = researchCapitalGenerationBinding(
-        request,
-        currentActivationBinding(plan),
-        generation.previousGenerationHash,
-        generation,
-        buildContinuation,
-        buildLineage,
-      )
+      binding =
+        buildLineage === null
+          ? researchCapitalGenerationBinding(
+              request,
+              currentActivationBinding(plan),
+              generation.previousGenerationHash,
+              generation,
+              buildContinuation,
+              null,
+            )
+          : researchCapitalCompletedGenerationIsBoundToBuildLineage(
+              buildLineage,
+              request,
+              currentActivationBinding(plan),
+              generation.previousGenerationHash,
+              generation,
+            )
     } else {
       if (authorityStore.readAuthorityGeneration === undefined) return undefined
       generation = yield* authorityStore

@@ -1332,6 +1332,83 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(withoutReceipt).toBeUndefined()
   })
 
+  test('recognizes a receipt-completed historical build after reviewed lineage promotion', async () => {
+    const historicalBuild = {
+      sourceRevision: 'd'.repeat(40),
+      imageRepository: continuationRequest.activation.imageRepository,
+      imageDigest: `sha256:${hash('e')}`,
+    }
+    const historicalGeneration = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash: continuationSourceGenerationHash,
+        grant: continuationRequest.grant,
+        activationSourceRevision: historicalBuild.sourceRevision,
+        activationImageRepository: historicalBuild.imageRepository,
+        activationImageDigest: historicalBuild.imageDigest,
+        strategyName: continuationRequest.strategy.name,
+        strategyBehaviorHash: continuationRequest.strategy.behaviorHash,
+        strategyParameterHash: continuationRequest.strategy.parameterHash,
+        strategyParameterSchemaVersion: continuationRequest.strategy.parameterSchemaVersion,
+        strategyProtocolHash: continuationRequest.strategy.protocolHash,
+        accountId: continuationRequest.broker.accountId,
+        brokerIdentityHash: continuationRequest.broker.identityHash,
+        riskPolicyHash: continuationRequest.riskPolicyHash,
+        proofPlanHash: continuationRequest.grant.planHash,
+        reconciliationId: hash('7'),
+        reconciliationContentHash: hash('8'),
+      }),
+    )
+    const successorGenerationHash = Result.getOrThrow(
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: historicalGeneration.generationHash }),
+    )
+    const receiptHash = hash('historical-receipt')
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () => Effect.die(new Error('completed execution must not mutate authority')),
+      readAuthorityState: Effect.succeed({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: successorGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 4,
+        updatedAt: '2026-09-04T20:01:00.000Z',
+      }),
+      readAuthorityGenerationLineage: (generationHash) =>
+        Effect.succeed(
+          generationHash === successorGenerationHash
+            ? {
+                generationHash,
+                previousGenerationHash: historicalGeneration.generationHash,
+                maximum: Authority.Observe,
+              }
+            : undefined,
+        ),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === historicalGeneration.generationHash ? historicalGeneration : undefined),
+    }
+
+    const completed = await Effect.runPromise(
+      readCompletedExecutionLifecycle(
+        continuationApplicationPlan,
+        continuationRequest,
+        null,
+        researchBuildLineage,
+        authorityStore,
+        (generationHash) =>
+          Effect.succeed(
+            generationHash === historicalGeneration.generationHash ? Option.some(receiptHash) : Option.none<string>(),
+          ),
+      ),
+    )
+
+    expect(completed).toEqual({
+      authorityGenerationHash: historicalGeneration.generationHash,
+      receiptHash,
+    })
+  })
+
   test('resumes only the exact active research generation across a reviewed build change', async () => {
     const logs: Array<{ readonly message: unknown; readonly annotations: Record<string, unknown> }> = []
     const logger = Logger.make<unknown, void>((entry) => {

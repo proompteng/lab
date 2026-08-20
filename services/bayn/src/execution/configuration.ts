@@ -233,11 +233,10 @@ export const researchCapitalGrantProof = (
   proofPlanHash: request.grant.planHash,
 })
 
-const researchCapitalGenerationIsBoundToRequestDataFirst = (
+const researchCapitalGenerationIdentityIsBoundToRequest = (
   request: ResearchCapitalActivationRequest,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
-  activation: CapitalActivationRevisionBinding = request.activation,
 ): Result.Result<void, string> => {
   if (
     generation.maximum !== Authority.Execution ||
@@ -247,16 +246,13 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
     return Result.fail('research capital generation identity is not bound to the activation request')
   }
   if (
-    generation.activationSourceRevision !== activation.sourceRevision ||
-    generation.activationImageRepository !== activation.imageRepository ||
-    generation.activationImageDigest !== activation.imageDigest ||
     generation.strategyName !== request.strategy.name ||
     generation.strategyBehaviorHash !== request.strategy.behaviorHash ||
     generation.strategyParameterHash !== request.strategy.parameterHash ||
     generation.strategyParameterSchemaVersion !== request.strategy.parameterSchemaVersion ||
     generation.strategyProtocolHash !== request.strategy.protocolHash
   ) {
-    return Result.fail('research capital generation is not bound to the requested current strategy and build')
+    return Result.fail('research capital generation is not bound to the requested strategy')
   }
   if (
     generation.accountId !== request.broker.accountId ||
@@ -265,6 +261,24 @@ const researchCapitalGenerationIsBoundToRequestDataFirst = (
     generation.proofPlanHash !== request.grant.planHash
   ) {
     return Result.fail('research capital generation is not bound to the requested broker and risk controls')
+  }
+  return Result.succeed(undefined)
+}
+
+const researchCapitalGenerationIsBoundToRequestDataFirst = (
+  request: ResearchCapitalActivationRequest,
+  sourceGenerationHash: string,
+  generation: ResearchCapitalGrantGeneration,
+  activation: CapitalActivationRevisionBinding = request.activation,
+): Result.Result<void, string> => {
+  const identity = researchCapitalGenerationIdentityIsBoundToRequest(request, sourceGenerationHash, generation)
+  if (Result.isFailure(identity)) return identity
+  if (
+    generation.activationSourceRevision !== activation.sourceRevision ||
+    generation.activationImageRepository !== activation.imageRepository ||
+    generation.activationImageDigest !== activation.imageDigest
+  ) {
+    return Result.fail('research capital generation is not bound to the requested current strategy and build')
   }
   return Result.succeed(undefined)
 }
@@ -307,6 +321,30 @@ export const researchCapitalGenerationIsBoundToBuildLineage = (
   return Result.isFailure(lineageBinding)
     ? lineageBinding
     : researchCapitalGenerationIsBoundToRequestDataFirst(request, sourceGenerationHash, generation, lineage.activation)
+}
+
+/**
+ * A receipt-completed generation is durable historical evidence, so a later reviewed build must not reinterpret its
+ * activation revision as current or execute the sealed request again. The current lineage remains strictly bound to
+ * the request and worker, while the terminal generation is matched by its complete mandate, strategy, broker, risk,
+ * and source-generation identity. Its historical build repository must remain inside the lineage's repository.
+ */
+export const researchCapitalCompletedGenerationIsBoundToBuildLineage = (
+  lineage: ResearchCapitalBuildLineage,
+  request: ResearchCapitalActivationRequest,
+  activation: CapitalActivationRevisionBinding,
+  sourceGenerationHash: string,
+  generation: ResearchCapitalGrantGeneration,
+): Result.Result<void, string> => {
+  const lineageBinding = researchCapitalBuildLineageIsCurrent(lineage, request, activation)
+  if (Result.isFailure(lineageBinding)) return lineageBinding
+  if (
+    generation.activationImageRepository !== lineage.authoredActivation.imageRepository ||
+    generation.activationImageRepository !== lineage.activation.imageRepository
+  ) {
+    return Result.fail('completed research capital generation is outside the authorized build repository')
+  }
+  return researchCapitalGenerationIdentityIsBoundToRequest(request, sourceGenerationHash, generation)
 }
 
 export const researchCapitalBuildContinuationIsBound = (

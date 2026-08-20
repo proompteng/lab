@@ -17,6 +17,7 @@ import {
   makeResearchCapitalPlanHash,
   researchCapitalBuildContinuationIsBound,
   researchCapitalBuildLineageIsCurrent,
+  researchCapitalCompletedGenerationIsBoundToBuildLineage,
   researchCapitalGrantProof,
   researchCapitalGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToRequest,
@@ -343,6 +344,31 @@ describe('execution policy configuration', () => {
         generation,
       ),
     ).toEqual(Result.fail('research capital generation is not bound to the requested current strategy and build'))
+    expect(
+      researchCapitalCompletedGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        currentActivation,
+        sourceGenerationHash,
+        generation,
+      ),
+    ).toEqual(Result.succeed(undefined))
+    const { generationHash: _generationHash, ...generationMaterial } = generation
+    const foreignRepositoryGeneration = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        ...generationMaterial,
+        activationImageRepository: 'ghcr.io/untrusted/bayn',
+      }),
+    )
+    expect(
+      researchCapitalCompletedGenerationIsBoundToBuildLineage(
+        buildLineage,
+        request,
+        currentActivation,
+        sourceGenerationHash,
+        foreignRepositoryGeneration,
+      ),
+    ).toEqual(Result.fail('completed research capital generation is outside the authorized build repository'))
     const continuation = Result.getOrThrow(
       makeResearchCapitalBuildContinuation({
         schemaVersion: 'bayn.paper-research-build-continuation.v1',
