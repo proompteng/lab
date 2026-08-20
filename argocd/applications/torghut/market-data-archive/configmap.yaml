@@ -8,9 +8,10 @@ data:
   ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"
   ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
   ARCHIVE_KAFKA_USERNAME: "torghut-ws"
-  # v2 starts the newly archived quote/trade topics at their live edge instead of
-  # replaying an operationally irrelevant retained backlog before current data.
-  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v2"
+  # Preserve committed bar offsets while the dedicated event group starts newly
+  # archived quote/trade topics at the live edge on its first reviewed rollout.
+  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v1"
+  ARCHIVE_EVENT_GROUP_ID: "bayn-market-data-archive-events-v1"
   ARCHIVE_OFFSET_RESET: "latest"
   ARCHIVE_CLIENT_ID: "bayn-market-data-archive"
   ARCHIVE_CORE_FEED: "iex"

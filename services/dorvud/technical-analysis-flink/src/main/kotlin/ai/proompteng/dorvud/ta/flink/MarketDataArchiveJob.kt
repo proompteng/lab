@@ -55,6 +55,7 @@ data class MarketDataArchiveConfig(
   val bootstrapServers: String,
   val routes: Map<String, ArchiveRoute>,
   val groupId: String,
+  val eventGroupId: String?,
   val clientId: String,
   val offsetResetStrategy: OffsetResetStrategy,
   val securityProtocol: String,
@@ -141,6 +142,12 @@ data class MarketDataArchiveConfig(
       val expectedRouteCount = if (enrichedTopics.isEmpty()) 3 else 7
       if (routes.size != expectedRouteCount) error("archive market-data topics must be unique")
 
+      val groupId = optional("ARCHIVE_GROUP_ID") ?: "bayn-market-data-archive-v1"
+      val eventGroupId = if (enrichedTopics.isEmpty()) null else required("ARCHIVE_EVENT_GROUP_ID")
+      require(eventGroupId == null || eventGroupId != groupId) {
+        "ARCHIVE_EVENT_GROUP_ID must differ from ARCHIVE_GROUP_ID"
+      }
+
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
       val batchSize = env["ARCHIVE_CLICKHOUSE_BATCH_SIZE"]?.toIntOrNull() ?: 100
@@ -166,7 +173,8 @@ data class MarketDataArchiveConfig(
       return MarketDataArchiveConfig(
         bootstrapServers = env["ARCHIVE_KAFKA_BOOTSTRAP"] ?: "kafka-kafka-bootstrap.kafka:9092",
         routes = routes,
-        groupId = env["ARCHIVE_GROUP_ID"] ?: "bayn-market-data-archive-v1",
+        groupId = groupId,
+        eventGroupId = eventGroupId,
         clientId = env["ARCHIVE_CLIENT_ID"] ?: "bayn-market-data-archive",
         offsetResetStrategy = offsetResetStrategy,
         securityProtocol = securityProtocol,
@@ -262,30 +270,50 @@ fun main() {
   environment.setParallelism(config.parallelism)
   environment.enableCheckpointing(config.checkpointIntervalMs)
 
-  val source =
+  val barRoutes = config.routes.filterValues { it.kind == ArchiveRecordKind.Bar }
+  val barSource =
     environment
-      .fromSource(archiveKafkaSource(config), WatermarkStrategy.noWatermarks(), "market-data-bars-source")
+      .fromSource(
+        archiveKafkaSource(config, barRoutes.keys, config.groupId, "${config.clientId}-bars"),
+        WatermarkStrategy.noWatermarks(),
+        "market-data-bars-source",
+      )
 
-  source
-    .flatMap(ParseArchiveBar(config.routes))
+  barSource
+    .flatMap(ParseArchiveBar(barRoutes))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
     .sinkTo(archiveClickhouseSink(config))
     .name("signal-intraday-bars-archive")
     .uid("signal-intraday-bars-archive-v1")
 
-  source
-    .flatMap(ParseArchiveQuote(config.routes))
-    .returns(TypeInformation.of(IntradayQuoteRecord::class.java))
-    .sinkTo(archiveQuoteClickhouseSink(config))
-    .name("signal-intraday-quotes-archive")
-    .uid("signal-intraday-quotes-archive-v1")
+  val eventRoutes = config.routes.filterValues { it.kind != ArchiveRecordKind.Bar }
+  if (eventRoutes.isNotEmpty()) {
+    val eventSource =
+      environment.fromSource(
+        archiveKafkaSource(
+          config,
+          eventRoutes.keys,
+          requireNotNull(config.eventGroupId),
+          "${config.clientId}-events",
+        ),
+        WatermarkStrategy.noWatermarks(),
+        "market-data-events-source",
+      )
 
-  source
-    .flatMap(ParseArchiveTrade(config.routes))
-    .returns(TypeInformation.of(IntradayTradeRecord::class.java))
-    .sinkTo(archiveTradeClickhouseSink(config))
-    .name("signal-intraday-trades-archive")
-    .uid("signal-intraday-trades-archive-v1")
+    eventSource
+      .flatMap(ParseArchiveQuote(eventRoutes))
+      .returns(TypeInformation.of(IntradayQuoteRecord::class.java))
+      .sinkTo(archiveQuoteClickhouseSink(config))
+      .name("signal-intraday-quotes-archive")
+      .uid("signal-intraday-quotes-archive-v1")
+
+    eventSource
+      .flatMap(ParseArchiveTrade(eventRoutes))
+      .returns(TypeInformation.of(IntradayTradeRecord::class.java))
+      .sinkTo(archiveTradeClickhouseSink(config))
+      .name("signal-intraday-trades-archive")
+      .uid("signal-intraday-trades-archive-v1")
+  }
 
   environment.execute("Bayn market-data archive")
 }
@@ -623,14 +651,20 @@ private fun expectedDelayClass(
     else -> error("unsupported archive feed: $feed")
   }
 
-private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<ArchiveKafkaRecord> {
+private fun archiveKafkaSource(
+  config: MarketDataArchiveConfig,
+  topics: Set<String>,
+  groupId: String,
+  clientId: String,
+): KafkaSource<ArchiveKafkaRecord> {
+  require(topics.isNotEmpty()) { "archive Kafka source must have at least one topic" }
   val builder =
     KafkaSource
       .builder<ArchiveKafkaRecord>()
       .setBootstrapServers(config.bootstrapServers)
-      .setTopics(config.routes.keys.toList())
-      .setClientIdPrefix(config.clientId)
-      .setGroupId(config.groupId)
+      .setTopics(topics.sorted())
+      .setClientIdPrefix(clientId)
+      .setGroupId(groupId)
       .setDeserializer(ArchiveKafkaRecordDeserializer())
       .setStartingOffsets(OffsetsInitializer.committedOffsets(config.offsetResetStrategy))
       .setProperty("auto.offset.reset", config.offsetResetStrategy.name.lowercase())
