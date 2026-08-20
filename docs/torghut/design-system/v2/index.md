@@ -7,7 +7,7 @@
 - Relationship to v1: `docs/torghut/design-system/v1/` remains the production-facing source of truth.
 - Source-of-truth implementation status: `implementation-status-matrix-2026-02-21.md`
 - Evidence sync: `implementation-audit.md`
-- Implementation status (strict): `Implemented=0`, `Partial=17`, `Planned=8` of 25
+- Implementation status (strict): `Implemented=0`, `Partial=16`, `Planned=8` of 24
 
 ## Source Implementation Audit (2026-07-04)
 
@@ -22,7 +22,6 @@
   - `services/torghut/app/trading/revenue_repair/repair_queue.py`
   - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
 - Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
 
 ## Purpose
 
@@ -62,7 +61,6 @@ Pick one initial alpha family:
 - `research-ledger.md`
 - `research-reading-list.md`
 - `agent-swarm-implementation.md`
-- `strategy-universe.md`
 - `data-pipeline-and-features.md`
 - `cross-sectional-factors.md`
 - `volatility-strategies.md`
