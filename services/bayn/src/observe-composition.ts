@@ -40,6 +40,7 @@ export {
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
   loadQuoteBoundExecutionRiskPolicy,
+  prepareObservePlanner,
 } from './observe-composition/decision-builder'
 export type {
   BuildClosingExecutionCycleDecisionInput,
@@ -77,6 +78,8 @@ export type { PrepareNextMutationIntentInput } from './observe-composition/execu
 export { recoveryFirstCycleNextDelayMs } from './observe-composition/recovery-driver'
 
 export {
+  decodeStrategyExecutionModel,
+  loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,

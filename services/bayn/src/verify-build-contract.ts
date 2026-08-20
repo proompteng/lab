@@ -1,11 +1,11 @@
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect, Schema } from 'effect'
 
-import { riskBalancedTrendBehaviorHash } from './behavior'
 import { embeddedBuildMetadata, EmbeddedBuildMetadataSchema, verifyBehaviorHash, verifyParameterHash } from './build'
 import { operationalError } from './errors'
-import { hashParametersResult, loadDefaultProtocol } from './protocol'
+import { canonicalHashV1Result } from './hash'
 import { strictParseOptions } from './schemas'
+import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 
 const program = Effect.gen(function* () {
   const metadata = yield* Schema.decodeUnknownEffect(
@@ -21,8 +21,8 @@ const program = Effect.gen(function* () {
       }),
     ),
   )
-  const protocol = yield* loadDefaultProtocol
-  const parameterHash = yield* Effect.fromResult(hashParametersResult(protocol)).pipe(
+  const protocol = yield* Effect.fromResult(loadActiveStrategyProtocol())
+  const parameterHash = yield* Effect.fromResult(canonicalHashV1Result(protocol)).pipe(
     Effect.mapError((cause) =>
       operationalError({
         component: 'strategy',
@@ -33,7 +33,7 @@ const program = Effect.gen(function* () {
     ),
   )
   yield* Effect.all([
-    verifyBehaviorHash(metadata, riskBalancedTrendBehaviorHash),
+    verifyBehaviorHash(metadata, activeStrategyBehaviorHash),
     verifyParameterHash(metadata, parameterHash),
   ])
 })

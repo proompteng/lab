@@ -202,7 +202,7 @@ export const makeAutonomousServiceRuntime = (
                               observeCycleGenerationHash(authority),
                             ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
                             return yield* ownCycleDriverStartup(
-                              observeCycle(observePlan, authorityGenerationHash),
+                              observeCycle(observePlan, authorityGenerationHash, dependencies.intradayMarketData),
                               options.ownCycleDriver,
                             )(startup)
                           }).pipe(
@@ -661,6 +661,7 @@ export const makeAutonomousServiceRuntime = (
                                             runtimeServices.blockedCycleIntentStore,
                                             onClosedCycle,
                                             maintainExecutionLifecycle,
+                                            dependencies.intradayMarketData,
                                           ),
                                           owner,
                                         )(startup).pipe(

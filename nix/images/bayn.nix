@@ -9,10 +9,10 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.risk-balanced-trend.behavior.v4, verified by the production executable.
-  strategyBehaviorHash = "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46";
-  # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v4 document.
-  strategyParameterHash = "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b";
+  # SHA-256 identity for bayn.opening-drive-momentum.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c";
+  # Canonical hash of the compiled bayn.opening-drive.protocol.v2 document.
+  strategyParameterHash = "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"

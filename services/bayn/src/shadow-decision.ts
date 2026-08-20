@@ -1,6 +1,6 @@
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
+import { AutonomousCycleSchema, CycleState, makeExecutionCalendarObservation, type AutonomousCycle } from './cycle'
 import {
   intentIdForPlan,
   clientOrderIdForIntentId,
@@ -293,15 +293,33 @@ const validateBindings = (
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
   const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
+  const intradayClose =
+    decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'opening-drive-momentum'
+  const intradayDecision = intradayEntry || intradayClose
   const executionMarketData = input.executionMarketData
+  const executionCalendarSession = executionMarketData?.calendar.sessions.find(
+    ({ date }) => date === cycle.identity.executionSessionDate,
+  )
+  const executionCalendar =
+    executionMarketData === undefined || executionCalendarSession === undefined
+      ? undefined
+      : makeExecutionCalendarObservation({
+          schemaVersion: executionMarketData.calendar.schemaVersion,
+          source: executionMarketData.calendar.source,
+          ...executionCalendarSession,
+        })
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
     return Result.fail(
       error('binding', 'opening-drive decision calendar must match the immutable cycle execution calendar'),
     )
   }
   if (
-    intradayEntry !== (executionMarketData !== undefined) ||
+    intradayDecision !== (executionMarketData !== undefined) ||
     (executionMarketData !== undefined && executionMarketData.sessionDate !== cycle.identity.executionSessionDate) ||
+    (executionMarketData !== undefined &&
+      (executionCalendar === undefined ||
+        Result.isFailure(executionCalendar) ||
+        executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
     (decision.schemaVersion === 'bayn.opening-drive.target.v1' &&
       executionMarketData?.snapshotId !== decision.snapshotId)
   ) {
@@ -380,9 +398,10 @@ const validateRiskState = (
   if (state.executionSession.bindingHash !== commonExecutionSessionHash) {
     return Result.fail(error('binding', 'every target delta must use one execution-session binding'))
   }
-  if (state.referencePriceMicros !== plannerInput.referencePrices.priceMicros[riskInput.symbol]) {
+  const plannedTarget = input.targetPlan.targets.find(({ symbol }) => symbol === riskInput.symbol)
+  if (plannedTarget === undefined || state.referencePriceMicros !== plannedTarget.referencePriceMicros) {
     return Result.fail(
-      error('binding', 'shadow risk must use the exact target-planning price, account, and reconciliation state'),
+      error('binding', 'shadow risk must use the exact planned target price, account, and reconciliation state'),
     )
   }
   const riskStateHash = hashValue(

@@ -67,6 +67,7 @@ import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
   openingDriveBehaviorHash,
+  openingDriveExecutionModel,
 } from './strategy/opening-drive'
 import {
   buildMutationShadowCycleDecision,
@@ -95,9 +96,11 @@ import {
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
   loadQuoteBoundExecutionRiskPolicy,
+  loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
+  prepareObservePlanner,
   recoveryFirstCycleNextDelayMs,
   terminalizeBlockedExecutionCycle,
   type MutationAutonomousCycleInput,
@@ -232,7 +235,7 @@ const calendarMaterial = {
       closeAt: '2020-05-01T20:00:00.000Z',
     },
   ],
-}
+} as const
 
 const calendar: MarketCalendarObservation = {
   ...calendarMaterial,
@@ -3453,34 +3456,67 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
-  test('admits the opening-drive v4 execution model into a post-open autonomous cycle policy', () => {
+  test('admits only a provenance-bound account-neutral intraday execution model at autonomous startup', () => {
     const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
     const definition = makeOpeningDriveDefinition(protocol)
-    const prepared = prepareObserveStartup({
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: openingDriveBehaviorHash,
+          parameterHash: canonicalHashV1(definition.parameters),
+          parameterSchemaVersion: definition.parameters.schemaVersion,
+        },
+      },
+    }
+    const input = {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: {
-        definition,
-        provenance: {
-          ...fixtureRuntime.provenance,
-          strategy: {
-            name: definition.name,
-            behaviorHash: openingDriveBehaviorHash,
-            parameterHash: canonicalHashV1(definition.parameters),
-            parameterSchemaVersion: definition.parameters.schemaVersion,
-          },
-        },
-      } as unknown as ObserveAutonomousCycleInput['strategy'],
-    })
+      strategy,
+    } as const
 
+    const prepared = prepareObserveStartup(input)
     expect(Result.isSuccess(prepared)).toBe(true)
     if (Result.isSuccess(prepared)) {
       expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v4')
       expect(prepared.success.executionPolicy.schemaVersion).toBe('bayn.autonomous-cycle-execution-policy.v2')
     }
+    expect(
+      Result.isFailure(
+        prepareObserveStartup({
+          ...input,
+          strategy: { definition, provenance: fixtureRuntime.provenance },
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        prepareObserveStartup({
+          ...input,
+          strategy: {
+            ...strategy,
+            definition: {
+              ...definition,
+              parameters: {
+                ...definition.parameters,
+                executionModel: {
+                  ...openingDriveExecutionModel,
+                  order: {
+                    ...openingDriveExecutionModel.order,
+                    submissionCutoffAfterOpenMs: openingDriveExecutionModel.order.decisionAfterOpenMs,
+                  },
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
@@ -3512,6 +3548,118 @@ describe('OBSERVE runtime composition', () => {
       allowedOrderTypes: [OrderType.Limit],
       allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     })
+  })
+
+  test('wires the strategy-bound quote policy and verified snapshot into the production planner', async () => {
+    const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
+    const strategy = {
+      definition: makeOpeningDriveDefinition(protocol),
+      provenance: fixtureRuntime.provenance,
+    }
+    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy))
+    const sourceTopics = {
+      bars: 'torghut.bars.1m.v1',
+      quotes: 'torghut.quotes.v1',
+      trades: 'torghut.trades.v1',
+    }
+    const archiveWatermarks = Object.values(sourceTopics).map((sourceTopic, index) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      inclusiveLastOffset: String(index + 1),
+    }))
+    const lineage = Object.values(sourceTopics).map((sourceTopic, index) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      firstOffset: String(index + 1),
+      lastOffset: String(index + 1),
+      recordCount: 1,
+    }))
+    const snapshotMaterial = {
+      schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
+      sessionDate: executionDate,
+      calendar: { ...calendarMaterial, normalizedResponseHash: calendar.normalizedResponseHash },
+      rangeStartAt: '2020-05-01T13:30:00.000Z',
+      rangeEndAt: '2020-05-01T13:35:00.000Z',
+      observedAt: '2020-05-01T13:35:30.000Z',
+      universeId: protocol.universeId,
+      universeSymbolHash: protocol.universeSymbolHash,
+      symbols: protocol.universe,
+      feed: protocol.feed,
+      delayClass: protocol.delayClass,
+      sourceTopics,
+      archiveWatermarks,
+      maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
+      minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1_000,
+      barCount: protocol.universe.length * protocol.openingRangeMinutes,
+      quoteCount: protocol.universe.length,
+      tradeCount: protocol.universe.length,
+      barsContentHash: '1'.repeat(64),
+      quotesContentHash: '2'.repeat(64),
+      tradesContentHash: '3'.repeat(64),
+      lineage,
+    } as const
+    const snapshotContentHash = canonicalHashV1(snapshotMaterial)
+    const { schemaVersion: snapshotSchemaVersion, ...executionMarketDataMaterial } = snapshotMaterial
+    const executionMarketData = {
+      schemaVersion: 'bayn.execution-market-data-binding.v1' as const,
+      snapshotSchemaVersion,
+      ...executionMarketDataMaterial,
+      contentHash: snapshotContentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash: snapshotContentHash }),
+    }
+    const prepared = Result.getOrThrow(
+      prepareObservePlanner(
+        {
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: openingDriveExecutionModel,
+          policy,
+          reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
+          strategy,
+        },
+        {
+          reconciliation: reconciliationResult(generationHash, Authority.Execution),
+          evaluatedAt: executionMarketData.observedAt,
+        },
+        {
+          decision,
+          signalDate,
+          priceMicros: Object.fromEntries(protocol.universe.map((symbol) => [symbol, '100000000'])),
+          bidPriceMicros: Object.fromEntries(protocol.universe.map((symbol) => [symbol, '99900000'])),
+          askPriceMicros: Object.fromEntries(protocol.universe.map((symbol) => [symbol, '100000000'])),
+          maximumBuyQuantityMicros: Object.fromEntries(protocol.universe.map((symbol) => [symbol, '1000000000'])),
+          executionMarketData,
+        },
+        { allocationCapitalMicros: '80000000000' },
+      ),
+    )
+
+    expect(policy).toMatchObject({
+      schemaVersion: 'bayn.execution-risk-policy.v3',
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+    expect(prepared.plannerInput).toMatchObject({
+      schemaVersion: 'bayn.target-planner-input.quote-bound.v1',
+      allocationCapitalMicros: '80000000000',
+      referencePrices: {
+        schemaVersion: 'bayn.intraday-snapshot-reference-prices.v1',
+        observedAt: executionMarketData.observedAt,
+        snapshotId: executionMarketData.snapshotId,
+        snapshotContentHash: executionMarketData.contentHash,
+        priceReference: 'verified-adverse-quote-boundary',
+      },
+      executionTerms: {
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        snapshotId: executionMarketData.snapshotId,
+        snapshotContentHash: executionMarketData.contentHash,
+        maximumBuyQuantityMicros: Object.fromEntries(protocol.universe.map((symbol) => [symbol, '1000000000'])),
+      },
+    })
+    const { contentHash, ...referencePriceMaterial } = prepared.plannerInput.referencePrices
+    expect(contentHash).toBe(canonicalHashV1(referencePriceMaterial))
+    expect(prepared.plannerInput.policyHash).toBe(canonicalHashV1(policy))
   })
 
   test('builds one exact cycle-bound non-dispatchable decision from same-pass inputs', async () => {
