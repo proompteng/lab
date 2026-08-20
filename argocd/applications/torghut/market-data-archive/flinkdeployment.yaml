@@ -9,12 +9,12 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:18140f03e98b05f89d66a3c6415d1ed74ec047767ba56cf83812387d3f01f70d
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c4fe8147a4579e7ab4907ff73e03955c83a0498982034ae8c0eed6888c0552cb
   imagePullPolicy: IfNotPresent
   # One-time recovery from the pre-quote/trade topology. The Kafka source resumes from the
   # consumer group's committed offsets, while ClickHouse deduplicates replay by Kafka lineage.
   # Return to last-state after this deployment completes its first checkpoint.
-  restartNonce: 8
+  restartNonce: 9
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
@@ -58,9 +58,9 @@ spec:
                   name: signal-publisher-clickhouse-auth
                   key: password
             - name: TORGHUT_TA_VERSION
-              value: sha-0e1f6200f726c364eb5886396cfb365e46ad54e5
+              value: sha-a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
             - name: TORGHUT_TA_COMMIT
-              value: 0e1f6200f726c364eb5886396cfb365e46ad54e5
+              value: a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
