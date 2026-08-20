@@ -234,6 +234,10 @@ class MarketDataArchiveJobTest {
     assertEquals(100, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
     assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
+    assertEquals("bayn-market-data-archive-v1", config.groupId)
+    assertEquals("bayn-market-data-archive-events-v1", config.eventGroupId)
+    assertEquals(3, config.routes.values.count { it.kind == ArchiveRecordKind.Bar })
+    assertEquals(4, config.routes.values.count { it.kind != ArchiveRecordKind.Bar })
 
     val legacy =
       MarketDataArchiveConfig.fromEnv(
@@ -251,6 +255,7 @@ class MarketDataArchiveJobTest {
       )
     assertEquals(3, legacy.routes.size)
     assertEquals("iex", legacy.routes.getValue("torghut.bars.1m.v1").feed)
+    assertEquals(null, legacy.eventGroupId)
 
     assertFailsWith<IllegalStateException> {
       MarketDataArchiveConfig.fromEnv(
@@ -259,6 +264,9 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_DELAYED_SIP_TRADES_TOPIC")
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_EVENT_GROUP_ID" to "bayn-market-data-archive-v1"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
