@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { makeExecutionCalendarObservation } from '../../cycle'
 import { sha256 } from '../../hash'
 import {
   compareIntradayInstants,
@@ -164,6 +165,14 @@ const validateSnapshot = (
   const { session, snapshot } = context
   const manifest = snapshot.manifest
   const boundSession = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
+  const selectedCalendar =
+    boundSession === undefined
+      ? undefined
+      : makeExecutionCalendarObservation({
+          schemaVersion: manifest.calendar.schemaVersion,
+          source: manifest.calendar.source,
+          ...boundSession,
+        })
   if (
     manifest.universeId !== protocol.universeId ||
     manifest.universeSymbolHash !== protocol.universeSymbolHash ||
@@ -206,7 +215,9 @@ const validateSnapshot = (
     session.openAt !== manifest.rangeStartAt ||
     session.openAt !== boundSession.openAt ||
     session.closeAt !== boundSession.closeAt ||
-    session.calendarHash !== manifest.calendar.normalizedResponseHash ||
+    selectedCalendar === undefined ||
+    Result.isFailure(selectedCalendar) ||
+    session.calendarHash !== selectedCalendar.success.executionCalendarHash ||
     sessionOpen >= sessionClose ||
     rangeEnd > sessionClose ||
     observed > sessionClose ||

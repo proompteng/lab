@@ -321,6 +321,27 @@ describe('Alpaca broker mutations', () => {
     ).toMatchObject(Result.fail({ failure: 'invalid-order' }))
   })
 
+  test('preserves executable adverse quote ticks through LIMIT/IOC request construction', () => {
+    const buyIntent = {
+      ...intent,
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+      quantityMicros: '3000000',
+      notionalLimitMicros: '300420000',
+    }
+    const sellIntent = {
+      ...buyIntent,
+      side: OrderSide.Sell,
+      notionalLimitMicros: '300360000',
+    }
+
+    expect(orderPriceBoundaryMicros(buyIntent)).toEqual(Result.succeed(100_140_000n))
+    expect(orderRequestBody(buyIntent)).toMatchObject(Result.succeed({ side: 'buy', limit_price: '100.14' }))
+    expect(orderPriceBoundaryMicros(sellIntent)).toEqual(Result.succeed(100_120_000n))
+    expect(orderRequestBody(sellIntent)).toMatchObject(Result.succeed({ side: 'sell', limit_price: '100.12' }))
+  })
+
   test('quantizes BUY notionals down to broker cent precision and rejects sub-dollar requests', () => {
     expect(
       orderRequestBody({

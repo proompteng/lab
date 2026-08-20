@@ -50,12 +50,15 @@ interface FixtureOptions {
   readonly decisionHash?: string
   readonly equityMicros?: string
   readonly maximumInputAgeMs?: number
+  readonly maximumBuyQuantityMicros?: Readonly<Record<string, string>>
   readonly observedAt?: string
   readonly orders?: readonly Order[]
   readonly ordersObservedAt?: string
   readonly positions?: readonly Position[]
   readonly positionsObservedAt?: string
   readonly priceMicros?: Readonly<Record<string, string>>
+  readonly bidPriceMicros?: Readonly<Record<string, string>>
+  readonly askPriceMicros?: Readonly<Record<string, string>>
   readonly pricesObservedAt?: string
   readonly referenceSignalDate?: '2026-07-21' | '2026-07-22'
   readonly quoteBound?: boolean
@@ -213,6 +216,8 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     ? (() => {
         const snapshotId = hash('7')
         const snapshotContentHash = hash('8')
+        const bidPriceMicros = options.bidPriceMicros ?? prices
+        const askPriceMicros = options.askPriceMicros ?? prices
         const priceMaterial = {
           schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
           signalDate,
@@ -220,7 +225,9 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
           snapshotId,
           snapshotContentHash,
           priceReference: 'verified-adverse-quote-boundary' as const,
-          priceMicros: prices,
+          priceMicros: askPriceMicros,
+          bidPriceMicros,
+          askPriceMicros,
         } as const
         return {
           schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
@@ -234,6 +241,9 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
             priceReference: 'verified-adverse-quote-boundary' as const,
             snapshotId,
             snapshotContentHash,
+            maximumBuyQuantityMicros:
+              options.maximumBuyQuantityMicros ??
+              Object.fromEntries(Object.keys(prices).map((symbol) => [symbol, '1000000000000'])),
           },
         }
       })()
@@ -279,6 +289,37 @@ describe('causal target planner', () => {
     })
   })
 
+  test('prices buys at the verified ask, sells at the verified bid, and does not churn inside the spread', () => {
+    const options = {
+      quoteBound: true,
+      allocationCapitalMicros: '1000000000',
+      priceMicros: { AMD: '100000000' },
+      bidPriceMicros: { AMD: '90000000' },
+      askPriceMicros: { AMD: '100000000' },
+      targetWeights: { AMD: 1 },
+    } as const
+    const buy = planSuccess(fixture({ ...options, positions: [position('AMD', '5000000')] }))
+    const sell = planSuccess(fixture({ ...options, positions: [position('AMD', '12000000')] }))
+    const insideSpread = planSuccess(fixture({ ...options, positions: [position('AMD', '10000000')] }))
+
+    expect(buy).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityMicros: '10000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityMicros: '5000000' }],
+    })
+    expect(sell).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', referencePriceMicros: '90000000', targetQuantityMicros: '11000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Sell, quantityMicros: '1000000' }],
+    })
+    expect(insideSpread).toMatchObject({
+      status: TargetPlanStatus.NoTrade,
+      reason: TargetPlanReason.TargetsSatisfied,
+      targets: [{ symbol: 'AMD', referencePriceMicros: '100000000', targetQuantityMicros: '10000000' }],
+      intentTargets: [],
+    })
+  })
+
   test('rejects quote prices not bound to the execution snapshot identity', () => {
     const input = fixture({ quoteBound: true })
     if (input.schemaVersion !== 'bayn.target-planner-input.quote-bound.v1') throw new Error('expected quote input')
@@ -319,6 +360,24 @@ describe('causal target planner', () => {
         }),
       ),
     ).toBe(true)
+  })
+
+  test('caps only buy deltas at the verified whole-share ask quantity', () => {
+    const result = planSuccess(
+      fixture({
+        quoteBound: true,
+        positions: [position('AMD', '20000000')],
+        priceMicros: { AMD: '10000000' },
+        targetWeights: { AMD: 1 },
+        maximumBuyQuantityMicros: { AMD: '10000000' },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', currentQuantityMicros: '20000000', targetQuantityMicros: '30000000' }],
+      intentTargets: [{ symbol: 'AMD', side: OrderSide.Buy, quantityMicros: '10000000' }],
+    })
   })
 
   test('sizes an immutable execution target against its bounded allocation instead of full account equity', () => {

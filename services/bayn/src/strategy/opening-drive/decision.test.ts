@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
+import { makeExecutionCalendarObservation } from '../../cycle'
 import { canonicalHashV1, sha256 } from '../../hash'
 import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
 import { strictParseOptions } from '../../schemas'
@@ -146,11 +147,18 @@ const makeRows = (returnOverride?: number, volumeOverride?: string) => {
 }
 
 const snapshot = (returnOverride?: number) => success(verifyIntradaySnapshot(request, makeRows(returnOverride)))
+const executionCalendar = success(
+  makeExecutionCalendarObservation({
+    schemaVersion: calendar.schemaVersion,
+    source: calendar.source,
+    ...calendar.sessions[0]!,
+  }),
+)
 const session = Object.freeze({
   sessionDate: request.sessionDate,
   openAt: request.rangeStartAt,
   closeAt: '2026-08-18T20:00:00.000Z',
-  calendarHash: calendar.normalizedResponseHash,
+  calendarHash: executionCalendar.executionCalendarHash,
 })
 const marketContext = (returnOverride?: number) => Object.freeze({ snapshot: snapshot(returnOverride), session })
 

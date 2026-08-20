@@ -9,6 +9,7 @@ import {
   TargetPlanReason,
   canonicalizePlannerInputFailure,
   deriveTargetsFailure,
+  quoteBoundTargetPlannerInputSchemaVersion,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type TargetPlannerFailure,
@@ -54,6 +55,9 @@ export interface TargetPlannerFacts {
   readonly targetSymbols: readonly string[]
   readonly priceSymbols: readonly string[]
   readonly prices: ReadonlyMap<string, bigint>
+  readonly bidPrices: ReadonlyMap<string, bigint>
+  readonly askPrices: ReadonlyMap<string, bigint>
+  readonly maximumBuyQuantities: ReadonlyMap<string, bigint>
   readonly positions: ReadonlyMap<string, bigint>
   readonly positionQuantities: readonly bigint[]
   readonly positionMarketValues: readonly bigint[]
@@ -119,6 +123,23 @@ const parseTargetPlannerFactsDataFirst = (
   const prices = new Map(
     Object.entries(input.referencePrices.priceMicros).map(([symbol, price]) => [symbol, BigInt(price)]),
   )
+  const bidPrices = new Map(
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? Object.entries(input.referencePrices.bidPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const)
+      : [],
+  )
+  const askPrices = new Map(
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? Object.entries(input.referencePrices.askPriceMicros).map(([symbol, price]) => [symbol, BigInt(price)] as const)
+      : [],
+  )
+  const maximumBuyQuantities = new Map(
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? Object.entries(input.executionTerms.maximumBuyQuantityMicros).map(
+          ([symbol, quantity]) => [symbol, BigInt(quantity)] as const,
+        )
+      : [],
+  )
   const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
   const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
   const positions = new Map(
@@ -131,6 +152,9 @@ const parseTargetPlannerFactsDataFirst = (
     targetSymbols,
     priceSymbols,
     prices,
+    bidPrices,
+    askPrices,
+    maximumBuyQuantities,
     positions,
     positionQuantities,
     positionMarketValues,
@@ -175,7 +199,16 @@ const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
 }
 
 const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
-  const { input, positionMarketValues, positionQuantities, priceIncrement, prices, quantityIncrement } = facts
+  const {
+    input,
+    positionMarketValues,
+    positionQuantities,
+    priceIncrement,
+    prices,
+    bidPrices,
+    askPrices,
+    quantityIncrement,
+  } = facts
   const state = input.brokerState
   const positionSymbols = state.positions.map((position) => position.symbol)
   const brokerOrderIds = state.orders.map((order) => order.brokerOrderId)
@@ -207,7 +240,9 @@ const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
     facts.allocationCapital <= facts.equity &&
     input.referencePrices.contentHash === facts.referencePriceHash &&
     Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0) <= 1 + WEIGHT_SUM_TOLERANCE &&
-    [...prices.values()].every((price) => price % priceIncrement === 0n) &&
+    [...prices.values(), ...bidPrices.values(), ...askPrices.values()].every(
+      (price) => price % priceIncrement === 0n,
+    ) &&
     positionQuantities.every((quantity) => quantity % quantityIncrement === 0n)
   )
 }
@@ -255,9 +290,9 @@ export const derivePlannedTargetFacts = (
               }),
             )
           }
-          return Result.map(
+          const desiredAt = (price: bigint) =>
             Result.mapError(
-              desiredQuantityMicros(facts.allocationCapital, targetWeight, referencePrice, {
+              desiredQuantityMicros(facts.allocationCapital, targetWeight, price, {
                 precision: {
                   ...facts.input.precision,
                   quantityIncrementMicros: facts.quantityIncrement.toString(),
@@ -274,22 +309,50 @@ export const derivePlannedTargetFacts = (
                   },
                   cause,
                 }),
-            ),
-            (targetQuantity) => [
+            )
+          const bidPrice = facts.bidPrices.get(symbol)
+          const askPrice = facts.askPrices.get(symbol)
+          const selectedTarget = (() => {
+            if (facts.input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
+              return Result.map(desiredAt(referencePrice), (quantity) => ({ referencePrice, quantity }))
+            }
+            if (bidPrice === undefined || askPrice === undefined) {
+              return Result.fail(
+                deriveTargetsFailure({
+                  reason: 'precision',
+                  message: 'quote-bound target has no complete verified bid/ask pair',
+                  facts: { cycleId: facts.input.cycleId, symbol },
+                }),
+              )
+            }
+            return Result.map(Result.all({ bid: desiredAt(bidPrice), ask: desiredAt(askPrice) }), ({ bid, ask }) => {
+              if (currentQuantity < ask) return { referencePrice: askPrice, quantity: ask }
+              if (currentQuantity > bid) return { referencePrice: bidPrice, quantity: bid }
+              return { referencePrice: askPrice, quantity: currentQuantity }
+            })
+          })()
+          return Result.map(selectedTarget, (selected) => {
+            const desiredDelta = selected.quantity - currentQuantity
+            const maximumBuyQuantity = facts.maximumBuyQuantities.get(symbol)
+            const targetQuantity =
+              desiredDelta > 0n && maximumBuyQuantity !== undefined && desiredDelta > maximumBuyQuantity
+                ? currentQuantity + maximumBuyQuantity
+                : selected.quantity
+            return [
               ...targetFacts,
               {
-                referencePrice,
+                referencePrice: selected.referencePrice,
                 delta: targetQuantity - currentQuantity,
                 target: {
                   symbol,
                   targetWeight,
-                  referencePriceMicros: referencePrice.toString(),
+                  referencePriceMicros: selected.referencePrice.toString(),
                   currentQuantityMicros: currentQuantity.toString(),
                   targetQuantityMicros: targetQuantity.toString(),
                 },
               },
-            ],
-          )
+            ]
+          })
         }),
       Result.succeed([]),
     )

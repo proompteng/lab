@@ -11,6 +11,7 @@ import {
   type Intent,
 } from '../../execution/contracts'
 import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
+import { alpacaLimitPriceIncrementMicros, quantizeAlpacaLimitPriceMicros } from '../alpaca-price'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'
 import type { BrokerConnection } from '../connection'
@@ -207,12 +208,10 @@ const decimalToMicros = (decimal: string): string | undefined => {
   return (BigInt(whole) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6))).toString()
 }
 
-const alpacaLimitPriceIncrementMicros = (priceMicros: bigint): bigint => (priceMicros >= 1_000_000n ? 10_000n : 100n)
 const alpacaMinimumBuyNotionalMicros = 1_000_000n
 const alpacaNotionalIncrementMicros = 10_000n
 
 const quantizeDown = (value: bigint, increment: bigint): bigint => (value / increment) * increment
-const quantizeUp = (value: bigint, increment: bigint): bigint => ((value + increment - 1n) / increment) * increment
 
 export const alpacaBuyNotionalMicros = (value: string): Result.Result<string, OrderRequestError> => {
   const notional = notionalMicros(value)
@@ -239,9 +238,7 @@ export const orderPriceBoundaryMicros = (intent: OrderRequestIntent): Result.Res
     intent.side === DomainSide.Buy
       ? numerator / quantity.success
       : (numerator + quantity.success - 1n) / quantity.success
-  const increment = alpacaLimitPriceIncrementMicros(unquantized)
-  const price =
-    intent.side === DomainSide.Buy ? quantizeDown(unquantized, increment) : quantizeUp(unquantized, increment)
+  const price = quantizeAlpacaLimitPriceMicros(unquantized, intent.side === DomainSide.Buy ? 'DOWN' : 'UP')
   return price > 0n
     ? Result.succeed(price)
     : Result.fail(
