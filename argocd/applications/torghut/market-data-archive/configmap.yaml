@@ -9,6 +9,7 @@ data:
   ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
   ARCHIVE_KAFKA_USERNAME: "torghut-ws"
   ARCHIVE_GROUP_ID: "bayn-market-data-archive-v1"
+  ARCHIVE_OFFSET_RESET: "latest"
   ARCHIVE_CLIENT_ID: "bayn-market-data-archive"
   ARCHIVE_CORE_FEED: "iex"
   ARCHIVE_CORE_BARS_TOPIC: "torghut.bars.1m.v1"

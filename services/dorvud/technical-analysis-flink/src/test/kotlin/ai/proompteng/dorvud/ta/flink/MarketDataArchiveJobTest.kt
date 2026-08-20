@@ -6,6 +6,7 @@ import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.apache.kafka.clients.consumer.OffsetResetStrategy
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
@@ -215,6 +216,7 @@ class MarketDataArchiveJobTest {
         "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
         "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
         "ARCHIVE_KAFKA_PASSWORD" to "password",
+        "ARCHIVE_OFFSET_RESET" to "latest",
         "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
         "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
         "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
@@ -231,6 +233,7 @@ class MarketDataArchiveJobTest {
     )
     assertEquals(100, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
+    assertEquals(OffsetResetStrategy.LATEST, config.offsetResetStrategy)
 
     val legacy =
       MarketDataArchiveConfig.fromEnv(
@@ -259,6 +262,9 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CLICKHOUSE_BATCH_SIZE" to "1001"))
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_OFFSET_RESET" to "middle"))
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid - "ARCHIVE_KAFKA_PASSWORD")
