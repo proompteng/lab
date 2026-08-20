@@ -233,6 +233,8 @@ describe('Signal publisher GitOps authority contract', () => {
       'metrics-service.yaml',
       'pdb.yaml',
     ])
+    expect(typeof archive.spec.restartNonce).toBe('number')
+    expect(Number.isInteger(archive.spec.restartNonce)).toBe(true)
     expect(archive.spec).toMatchObject({
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
