@@ -55,8 +55,9 @@ export type CapitalActivationRevisionBinding = typeof CapitalActivationRevisionB
 
 /**
  * Non-secret GitOps evidence minted only after the release workflow proves that the executing build descends from the
- * authored build and retains the exact strategy protocol and execution risk policy. The sealed request remains the
- * mandate; this value authorizes only the reviewed runtime lineage that may interpret it.
+ * authored build and its current OCI strategy/risk labels match reviewed GitOps. The sealed request remains the
+ * mandate and is validated against the current plan at runtime; this value authorizes only the reviewed runtime
+ * lineage that may interpret it.
  */
 export const ResearchCapitalBuildLineageSchema = Schema.Struct({
   schemaVersion: Schema.Literal(researchCapitalBuildLineageSchemaVersion),
