@@ -417,8 +417,23 @@ const validateBarCoverage = (
       }),
     )
   }
+  const feedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
+  const minimumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs)
+  const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs)
   const observed = new Map<string, number>()
   for (const bar of bars) {
+    const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
+    if (availabilityDelay < minimumAvailabilityDelay || availabilityDelay > maximumAvailabilityDelay) {
+      return Result.fail(
+        failure('freshness', 'intraday bar does not match its declared feed delay and finalization window', {
+          symbol: bar.symbol,
+          sourceTopic: bar.sourceTopic,
+          delayClass: request.delayClass,
+          eventAt: bar.eventAt,
+          ingestedAt: bar.ingestedAt,
+        }),
+      )
+    }
     const key = `${bar.symbol}\u0000${bar.eventAt}`
     observed.set(key, (observed.get(key) ?? 0) + 1)
   }

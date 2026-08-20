@@ -503,7 +503,10 @@ describe('immutable intraday market snapshot', () => {
     })
     const delayedRows = {
       archiveWatermarks: rows.archiveWatermarks,
-      bars: rows.bars.map(delayedIdentity),
+      bars: rows.bars.map((bar) => ({
+        ...delayedIdentity(bar),
+        ingested_at: new Date(Date.parse(bar.event_at) + 16 * 60_000).toISOString(),
+      })),
       quotes: rows.quotes.map((quote) => ({
         ...delayedIdentity(quote),
         ingested_at: '2026-08-18T13:50:15.000Z',
@@ -525,5 +528,19 @@ describe('immutable intraday market snapshot', () => {
         }),
       ),
     ).toMatchObject({ reason: 'freshness' })
+    expect(
+      error(
+        verifyIntradaySnapshot(delayedRequest, {
+          ...delayedRows,
+          bars: delayedRows.bars.map((bar) => ({
+            ...bar,
+            ingested_at: new Date(Date.parse(bar.event_at) + 60_000).toISOString(),
+          })),
+        }),
+      ),
+    ).toMatchObject({
+      reason: 'freshness',
+      message: 'intraday bar does not match its declared feed delay and finalization window',
+    })
   })
 })
