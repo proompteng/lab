@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { sha256 } from '../../hash'
+import { canonicalHashV1, sha256 } from '../../hash'
 import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
 import { decideOpeningDrive, makeOpeningDriveDefinition } from './decision'
 import {
@@ -16,9 +16,18 @@ const symbols = defaultOpeningDriveProtocolDocument.universe
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
+const calendarMaterial = {
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  source: 'alpaca-v2-calendar' as const,
+  requestedRange: { start: '2026-08-18', end: '2026-08-18' },
+  timeZone: 'UTC' as const,
+  sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
+}
+const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
 
 const request = {
   sessionDate: '2026-08-18',
+  calendar,
   rangeStartAt: '2026-08-18T13:30:00.000Z',
   rangeEndAt: '2026-08-18T13:35:00.000Z',
   observedAt: '2026-08-18T13:35:02.000Z',
@@ -136,7 +145,7 @@ const session = Object.freeze({
   sessionDate: request.sessionDate,
   openAt: request.rangeStartAt,
   closeAt: '2026-08-18T20:00:00.000Z',
-  calendarHash: sha256('verified-2026-08-18-exchange-session'),
+  calendarHash: calendar.normalizedResponseHash,
 })
 const marketContext = (returnOverride?: number) => Object.freeze({ snapshot: snapshot(returnOverride), session })
 
@@ -527,6 +536,9 @@ describe('opening-drive momentum strategy', () => {
       error(
         decideOpeningDrive({ snapshot: market, session: { ...session, openAt: '2026-08-18T14:00:00.000Z' } }, protocol),
       ),
+    ).toMatchObject({ reason: 'snapshot-window' })
+    expect(
+      error(decideOpeningDrive({ snapshot: market, session: { ...session, calendarHash: '0'.repeat(64) } }, protocol)),
     ).toMatchObject({ reason: 'snapshot-window' })
 
     const firstBar = market.bars[0]

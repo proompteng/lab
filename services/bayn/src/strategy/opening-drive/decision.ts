@@ -163,6 +163,7 @@ const validateSnapshot = (
 ): Result.Result<void, OpeningDriveFailure> => {
   const { session, snapshot } = context
   const manifest = snapshot.manifest
+  const boundSession = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
   if (
     manifest.universeId !== protocol.universeId ||
     manifest.universeSymbolHash !== protocol.universeSymbolHash ||
@@ -201,7 +202,11 @@ const validateSnapshot = (
     !Number.isSafeInteger(earliestDecision) ||
     !Number.isSafeInteger(decisionWindowEnd) ||
     session.sessionDate !== manifest.sessionDate ||
+    boundSession === undefined ||
     session.openAt !== manifest.rangeStartAt ||
+    session.openAt !== boundSession.openAt ||
+    session.closeAt !== boundSession.closeAt ||
+    session.calendarHash !== manifest.calendar.normalizedResponseHash ||
     sessionOpen >= sessionClose ||
     rangeEnd > sessionClose ||
     observed > sessionClose ||
