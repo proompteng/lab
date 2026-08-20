@@ -78,9 +78,13 @@ type InvalidRiskFailurePair = Exclude<(typeof riskFailurePairs)[number], RiskFai
 const riskFailurePairCoverage: [MissingRiskFailurePair, InvalidRiskFailurePair] extends [never, never] ? true : never =
   true
 
-const rehashExecutionSession = (
-  binding: Omit<State['executionSession'], 'bindingHash'>,
-): State['executionSession'] => ({
+type ExecutionSessionWithoutHash = State['executionSession'] extends infer Binding
+  ? Binding extends { readonly bindingHash: string }
+    ? Omit<Binding, 'bindingHash'>
+    : never
+  : never
+
+const rehashExecutionSession = (binding: ExecutionSessionWithoutHash): State['executionSession'] => ({
   ...binding,
   bindingHash: canonicalHashV1(binding),
 })
@@ -89,6 +93,7 @@ const changeExecutionWindow = (
   binding: State['executionSession'],
   overrides: Partial<Pick<State['executionSession'], 'submissionOpenAt' | 'submissionCutoffAt'>>,
 ): State['executionSession'] => {
+  if (binding.schemaVersion !== 'bayn.execution-session-binding.v1') return binding
   const { bindingHash: _, ...material } = binding
   if (overrides.submissionCutoffAt === undefined) {
     return rehashExecutionSession({
@@ -410,6 +415,16 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, extra: true })).toThrow()
 
     const state = baseState()
+    const intradayMarketDataHash = hash('6')
+    expect(
+      decodeState({
+        ...state,
+        marketDataHash: intradayMarketDataHash,
+        executionMarketDataHash: intradayMarketDataHash,
+      }).executionMarketDataHash,
+    ).toBe(intradayMarketDataHash)
+    expect(() => decodeState({ ...state, marketDataHash: intradayMarketDataHash })).toThrow()
+    expect(() => decodeState({ ...state, executionMarketDataHash: intradayMarketDataHash })).toThrow()
     expect(() => decodeState({ ...state, brokerMode: 'LIVE' })).toThrow()
     expect(() =>
       decodeState({

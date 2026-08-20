@@ -11,8 +11,134 @@ import {
   legacyObserveAuthorityToken,
 } from './execution/legacy-wire'
 import { EvaluationSchema, Reason, isAuthorityNotGrantedReason } from './risk'
-import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  SymbolSchema,
+  UnsignedMicrosSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'
+
+const ExecutionCalendarObservationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  source: Schema.Literal('alpaca-v2-calendar'),
+  requestedRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
+  timeZone: Schema.Literal('UTC'),
+  sessions: Schema.Array(
+    Schema.Struct({ date: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema }),
+  ).check(Schema.isMinLength(1)),
+  normalizedResponseHash: Sha256Schema,
+})
+
+const ExecutionArchiveWatermarkSchema = Schema.Struct({
+  sourceTopic: StrictNonEmptyStringSchema,
+  sourcePartition: NonNegativeIntegerSchema,
+  inclusiveLastOffset: UnsignedMicrosSchema,
+})
+
+const ExecutionLineageSchema = Schema.Struct({
+  sourceTopic: StrictNonEmptyStringSchema,
+  sourcePartition: NonNegativeIntegerSchema,
+  firstOffset: UnsignedMicrosSchema,
+  lastOffset: UnsignedMicrosSchema,
+  recordCount: PositiveIntegerSchema,
+})
+
+const ExecutionMarketDataBindingBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v1'),
+  snapshotSchemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
+  sessionDate: IsoDateSchema,
+  calendar: ExecutionCalendarObservationSchema,
+  rangeStartAt: UtcInstantSchema,
+  rangeEndAt: UtcInstantSchema,
+  observedAt: UtcInstantSchema,
+  universeId: StrictNonEmptyStringSchema,
+  universeSymbolHash: Sha256Schema,
+  symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
+  delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
+  sourceTopics: Schema.Struct({
+    bars: StrictNonEmptyStringSchema,
+    quotes: StrictNonEmptyStringSchema,
+    trades: StrictNonEmptyStringSchema,
+  }),
+  archiveWatermarks: Schema.Array(ExecutionArchiveWatermarkSchema).check(Schema.isMinLength(1)),
+  maximumQuoteAgeMs: PositiveIntegerSchema,
+  minimumWatermarkLagMs: NonNegativeIntegerSchema,
+  barCount: PositiveIntegerSchema,
+  quoteCount: PositiveIntegerSchema,
+  tradeCount: PositiveIntegerSchema,
+  barsContentHash: Sha256Schema,
+  quotesContentHash: Sha256Schema,
+  tradesContentHash: Sha256Schema,
+  lineage: Schema.Array(ExecutionLineageSchema).check(Schema.isMinLength(1)),
+  contentHash: Sha256Schema,
+  snapshotId: Sha256Schema,
+})
+
+const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
+const compareTopicPartition = (
+  left: { readonly sourceTopic: string; readonly sourcePartition: number },
+  right: { readonly sourceTopic: string; readonly sourcePartition: number },
+): number => compareCanonicalText(left.sourceTopic, right.sourceTopic) || left.sourcePartition - right.sourcePartition
+
+const marketDataBindingIssues = (
+  binding: typeof ExecutionMarketDataBindingBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const { normalizedResponseHash, ...calendarMaterial } = binding.calendar
+  const calendarHash = canonicalHashV1Result(calendarMaterial)
+  if (Result.isFailure(calendarHash) || calendarHash.success !== normalizedResponseHash) {
+    issues.push({ path: ['calendar', 'normalizedResponseHash'], issue: 'must match the canonical calendar content' })
+  }
+
+  const topics = Object.values(binding.sourceTopics)
+  if (new Set(topics).size !== topics.length) {
+    issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
+  }
+  const watermarks = binding.archiveWatermarks
+  const lineage = binding.lineage
+  const orderedWatermarks = watermarks.toSorted(compareTopicPartition)
+  const orderedLineage = lineage.toSorted(compareTopicPartition)
+  if (watermarks.some((watermark, index) => watermark !== orderedWatermarks[index])) {
+    issues.push({ path: ['archiveWatermarks'], issue: 'must be canonically ordered by topic and partition' })
+  }
+  if (lineage.some((entry, index) => entry !== orderedLineage[index])) {
+    issues.push({ path: ['lineage'], issue: 'must be canonically ordered by topic and partition' })
+  }
+  const watermarkKeys = watermarks.map(({ sourceTopic, sourcePartition }) => `${sourceTopic}\u0000${sourcePartition}`)
+  const lineageKeys = lineage.map(({ sourceTopic, sourcePartition }) => `${sourceTopic}\u0000${sourcePartition}`)
+  if (new Set(watermarkKeys).size !== watermarkKeys.length) {
+    issues.push({ path: ['archiveWatermarks'], issue: 'topic and partition pairs must be unique' })
+  }
+  if (new Set(lineageKeys).size !== lineageKeys.length) {
+    issues.push({ path: ['lineage'], issue: 'topic and partition pairs must be unique' })
+  }
+
+  const { contentHash, snapshotId, schemaVersion: _, snapshotSchemaVersion, ...bindingMaterial } = binding
+  const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...bindingMaterial }
+  const expectedContentHash = canonicalHashV1Result(snapshotMaterial)
+  if (Result.isFailure(expectedContentHash) || expectedContentHash.success !== contentHash) {
+    issues.push({ path: ['contentHash'], issue: 'must match the complete canonical intraday snapshot material' })
+  } else {
+    const expectedSnapshotId = canonicalHashV1Result({ ...snapshotMaterial, contentHash })
+    if (Result.isFailure(expectedSnapshotId) || expectedSnapshotId.success !== snapshotId) {
+      issues.push({ path: ['snapshotId'], issue: 'must match the complete canonical intraday snapshot identity' })
+    }
+  }
+  return issues
+}
+
+export const ExecutionMarketDataBindingSchema = ExecutionMarketDataBindingBase.check(
+  Schema.makeFilter(marketDataBindingIssues),
+)
+export type ExecutionMarketDataBinding = typeof ExecutionMarketDataBindingSchema.Type
 
 const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyName: StrictNonEmptyStringSchema,
@@ -27,6 +153,7 @@ const ShadowDecisionBindingsSchema = Schema.Struct({
   planningBrokerStateHash: Sha256Schema,
   reconciliationId: Sha256Schema,
   reconciliationHash: Sha256Schema,
+  executionMarketData: Schema.optionalKey(ExecutionMarketDataBindingSchema),
 })
 export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 

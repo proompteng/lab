@@ -54,6 +54,7 @@ import {
   type TargetPlanResult,
 } from '../target-planner'
 import { strategyApplication, type CompiledStrategyDecision, type StrategyRuntime } from '../strategy'
+import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { DecisionPlan } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import { Pipeable } from '../pipeable'
@@ -786,11 +787,22 @@ const makeClosingReferencePrices = (
   )
 }
 
-const makeClosingDecisionPlan = (
-  signalDate: SignalSessionReferencePrices['signalDate'],
+export const makeClosingDecisionPlan = (
+  identity: Pick<AutonomousCycle['identity'], 'strategyName' | 'signalSessionDate' | 'executionSessionDate'>,
   symbols: readonly string[],
-): Result.Result<DecisionPlan, ObserveDecisionCompositionFailure> => {
+): Result.Result<RuntimeStrategyDecision, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
+  if (identity.strategyName === 'opening-drive-momentum') {
+    return Result.succeed({
+      schemaVersion: 'bayn.execution-flat-target.v1',
+      strategyName: identity.strategyName,
+      sessionDate: identity.executionSessionDate,
+      targetWeights: Object.fromEntries(orderedSymbols.map((symbol) => [symbol, 0])),
+      symbols: orderedSymbols,
+      reason: 'mandate-close',
+    })
+  }
+  const signalDate = identity.signalSessionDate
   const sessionsHash = canonicalHashV1Result({
     schemaVersion: legacyCloseDecisionSessionsSchemaVersion,
     signalDate,
@@ -920,9 +932,9 @@ export const buildClosingExecutionCycleDecision = (
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),
     ]
-    const closeDecision = yield* Effect.fromResult(
-      makeClosingDecisionPlan(cycle.identity.signalSessionDate, symbols),
-    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
     const closeDecisionHash = yield* Effect.fromResult(
       hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))

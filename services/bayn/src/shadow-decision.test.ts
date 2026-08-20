@@ -7,6 +7,7 @@ import {
   CycleState,
   makeCycleDraft,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
@@ -36,6 +37,7 @@ import {
   decodeObserveShadowDecisionDocument,
   makeObserveShadowDecisionDocument,
   ShadowDecisionContractFailure,
+  type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
 import {
@@ -44,6 +46,9 @@ import {
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
+import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
+import type { OpeningDriveTargetPortfolio } from './strategy/opening-drive/model'
+import { openingDriveExecutionModel } from './strategy/opening-drive/protocol'
 import { TargetPlanReason, TargetPlanStatus, planTargets, type TargetPlannerInput } from './target-planner'
 import type { DecisionPlan } from './types'
 
@@ -146,6 +151,53 @@ const makeCycle = (): AutonomousCycle => {
     stateVersion: 3,
     createdAt: '2026-07-22T11:45:00.000Z',
     updatedAt: '2026-07-22T12:45:00.000Z',
+  })
+}
+
+const makeOpeningDriveCycle = (): AutonomousCycle => {
+  const executionPolicy = resultValue(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
+    throw new Error('opening-drive fixture requires an intraday execution policy')
+  }
+  const executionCalendar = makeExecutionCalendarObservationSuccess({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    date: executionDate,
+    openAt: '2026-07-22T13:30:00.000Z',
+    closeAt: '2026-07-22T20:00:00.000Z',
+  })
+  const identity = makeCycleIdentitySuccess({
+    schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+    strategyName: 'opening-drive-momentum',
+    qualificationRunId: hash('1'),
+    strategyProtocolHash: hash('4'),
+    accountId,
+    signalSessionDate: signalDate,
+    signalCalendarVersion: 'XNYS-v1',
+    executionSessionDate: executionDate,
+    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.executionCalendarSource,
+    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionPolicy,
+  })
+  const window = makeCycleWindowSuccess(
+    {
+      calendar_version: 'XNYS-v1',
+      session_date: signalDate,
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    },
+    executionCalendar,
+    executionPolicy,
+  )
+  const draft = makeCycleDraftSuccess(identity, window)
+  return decodeCycle({
+    ...draft,
+    state: CycleState.Active,
+    bindings: { snapshotId },
+    stateVersion: 3,
+    createdAt: '2026-07-22T11:45:00.000Z',
+    updatedAt: window.submissionOpenAt,
   })
 }
 
@@ -406,10 +458,235 @@ const makeInput = (
   }
 }
 
+const openingDriveDecision = (calendarHash: string, boundSnapshotId: string): OpeningDriveTargetPortfolio => ({
+  schemaVersion: 'bayn.opening-drive.target.v1',
+  strategy: 'opening-drive-momentum',
+  sessionDate: executionDate,
+  snapshotId: boundSnapshotId,
+  observedAt: '2026-07-22T13:35:01.000Z',
+  calendarHash,
+  selectedSymbols: [],
+  targetWeights: { AMD: 0, NVDA: 0 },
+  signals: ['AMD', 'NVDA'].map((symbol) => ({
+    symbol,
+    openingPriceMicros: '100000000',
+    rangeHighPriceMicros: '101000000',
+    rangeLowPriceMicros: '99000000',
+    bidPriceMicros: '100000000',
+    askPriceMicros: '100100000',
+    quoteObservedAt: '2026-07-22T13:35:00.500Z',
+    breakoutTradePriceMicros: '100000000',
+    breakoutTradeObservedAt: '2026-07-22T13:35:00.500Z',
+    openingReturnBps: 0,
+    breakoutBps: -100,
+    rangeLocationPpm: 500_000,
+    spreadBps: 10,
+    openingDollarVolumeMicros: '100000000',
+    eligible: false,
+    rejectionReasons: ['opening-return', 'breakout'] as const,
+    rank: null,
+  })),
+})
+
+const openingDriveMarketDataBinding = (cycle: AutonomousCycle): ExecutionMarketDataBinding => {
+  const calendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: { start: executionDate, end: executionDate },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: executionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      },
+    ],
+  }
+  const sourceTopics = {
+    bars: 'torghut.bars.1m.v1',
+    quotes: 'torghut.quotes.v1',
+    trades: 'torghut.trades.v1',
+  }
+  const archiveWatermarks = Object.values(sourceTopics).map((sourceTopic, index) => ({
+    sourceTopic,
+    sourcePartition: 0,
+    inclusiveLastOffset: String(10 + index),
+  }))
+  const lineage = Object.values(sourceTopics).map((sourceTopic, index) => ({
+    sourceTopic,
+    sourcePartition: 0,
+    firstOffset: String(1 + index),
+    lastOffset: String(10 + index),
+    recordCount: index === 0 ? 10 : 2,
+  }))
+  const snapshotMaterial = {
+    schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
+    sessionDate: executionDate,
+    calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+    rangeStartAt: cycle.window.executionOpenAt,
+    rangeEndAt: '2026-07-22T13:35:00.000Z',
+    observedAt: cycle.window.submissionOpenAt,
+    universeId: 'opening-drive-fixture-v1',
+    universeSymbolHash: hash('7'),
+    symbols: ['AMD', 'NVDA'],
+    feed: 'sip' as const,
+    delayClass: 'real_time_consolidated' as const,
+    sourceTopics,
+    archiveWatermarks,
+    maximumQuoteAgeMs: 5_000,
+    minimumWatermarkLagMs: 1_000,
+    barCount: 10,
+    quoteCount: 2,
+    tradeCount: 2,
+    barsContentHash: hash('8'),
+    quotesContentHash: hash('9'),
+    tradesContentHash: hash('a'),
+    lineage,
+  }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const { schemaVersion: snapshotSchemaVersion, ...material } = snapshotMaterial
+  return {
+    schemaVersion: 'bayn.execution-market-data-binding.v1',
+    snapshotSchemaVersion,
+    ...material,
+    contentHash,
+    snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+  }
+}
+
+const makeOpeningDriveInput = (calendarHash?: string): ObserveShadowDecisionInput => {
+  const cycle = makeOpeningDriveCycle()
+  const executionMarketData = openingDriveMarketDataBinding(cycle)
+  const compiledDecision = openingDriveDecision(
+    calendarHash ?? cycle.window.executionCalendarHash,
+    executionMarketData.snapshotId,
+  )
+  const policy = makePolicy()
+  const plannerInput: TargetPlannerInput = {
+    ...makePlannerInput(cycle, makeDecision({ AMD: 0, NVDA: 0 }), policy, 3_600_000, []),
+    strategyName: 'opening-drive-momentum',
+    decisionHash: canonicalHashV1(compiledDecision),
+    targetWeights: compiledDecision.targetWeights,
+    submissionCutoffAt: cycle.window.submissionCutoffAt,
+    observedAt: cycle.window.submissionOpenAt,
+  }
+  return {
+    cycle,
+    snapshot: {
+      snapshotId,
+      contentHash: snapshotContentHash,
+      finalizedAt: snapshotFinalizedAt,
+    },
+    compiledDecision,
+    plannerInput,
+    targetPlan: planTargetsSuccess(plannerInput),
+    policy,
+    riskInputs: [],
+    executionMarketData,
+  }
+}
+
 const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecisionDocument> =>
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
+    const input = makeOpeningDriveInput()
+    const accepted = await build(input)
+    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(input.executionMarketData?.snapshotId)
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData === undefined) throw new Error('opening-drive fixture must include execution market data')
+
+    const mixedBinding = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: { ...executionMarketData, barsContentHash: hash('b') },
+        }),
+      ),
+    )
+    expect(mixedBinding).toMatchObject({ failure: 'contract', message: 'execution market-data binding is invalid' })
+
+    const failure = await Effect.runPromise(Effect.flip(buildObserveShadowDecision(makeOpeningDriveInput(hash('f')))))
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'opening-drive decision calendar must match the immutable cycle execution calendar',
+    })
+  })
+
+  test('binds each decision variant to its strategy and validates exact flat-close weights', () => {
+    const decision = makeDecision({ AMD: 0.4, NVDA: 0.6 })
+    expect(runtimeDecisionMatchesStrategy(decision, 'risk-balanced-trend')).toBe(true)
+    expect(runtimeDecisionMatchesStrategy(decision, 'opening-drive-momentum')).toBe(false)
+
+    const decodeFlatTarget = Schema.decodeUnknownResult(FlatExecutionTargetSchema, strictParseOptions)
+    const flatTarget = {
+      schemaVersion: 'bayn.execution-flat-target.v1',
+      strategyName: 'opening-drive-momentum',
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0, NVDA: 0 },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close',
+    }
+    const decoded = decodeFlatTarget(flatTarget)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) {
+      expect(runtimeDecisionMatchesStrategy(decoded.success, 'opening-drive-momentum')).toBe(true)
+      expect(runtimeDecisionMatchesStrategy(decoded.success, 'risk-balanced-trend')).toBe(false)
+    }
+    expect(Result.isFailure(decodeFlatTarget({ ...flatTarget, targetWeights: { AMD: 0.1, NVDA: 0 } }))).toBe(true)
+    expect(Result.isFailure(decodeFlatTarget({ ...flatTarget, targetWeights: { AMD: 0 } }))).toBe(true)
+  })
+
+  test('rejects a flat execution target through the ordinary entry lease', async () => {
+    const input = makeInput({ AMD: 0, NVDA: 0 })
+    const compiledDecision = {
+      schemaVersion: 'bayn.execution-flat-target.v1' as const,
+      strategyName: 'risk-balanced-trend',
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0 as const, NVDA: 0 as const },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close' as const,
+    }
+    const plannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights: compiledDecision.targetWeights,
+    }
+    const targetPlan = planTargetsSuccess(plannerInput)
+    const riskInputs =
+      targetPlan.status === TargetPlanStatus.Planned
+        ? targetPlan.intentTargets.map((target) => {
+            const referencePrice = plannerInput.referencePrices.priceMicros[target.symbol]
+            if (referencePrice === undefined) throw new Error(`missing fixture reference price for ${target.symbol}`)
+            return {
+              symbol: target.symbol,
+              notionalLimitMicros: ((BigInt(target.quantityMicros) * BigInt(referencePrice)) / 1_000_000n).toString(),
+              state: makeRiskState(input.cycle, target.symbol),
+            }
+          })
+        : []
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildExecutionDecision({
+          ...input,
+          compiledDecision,
+          plannerInput,
+          targetPlan,
+          riskInputs,
+          authorityGenerationHash: hash('6'),
+          executionSession: makeRiskState(input.cycle, 'AMD').executionSession,
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'flat execution targets require the explicit bounded close-only lease',
+    })
+  })
+
   test('binds exact final target deltas and cumulative v3 risk without any dispatchable intent state', async () => {
     const input = makeInput()
     const first = await build(input)
@@ -691,24 +968,26 @@ describe('OBSERVE shadow decision', () => {
 
   test('rejects incomplete, malformed covariance and signal evidence, and excess compiled-decision fields', async () => {
     const input = makeInput()
-    const { estimatedAnnualizedPortfolioVolatility: _missingVolatility, ...missingField } = input.compiledDecision
+    const compiled = input.compiledDecision
+    if (compiled.schemaVersion !== 'bayn.risk-balanced-trend-decision-plan.v1') {
+      throw new Error('daily shadow-decision fixture must retain the risk-balanced decision contract')
+    }
+    const { estimatedAnnualizedPortfolioVolatility: _missingVolatility, ...missingField } = compiled
     const malformedDecisions = [
       missingField,
       {
-        ...input.compiledDecision,
+        ...compiled,
         covarianceWindow: {
-          ...input.compiledDecision.covarianceWindow,
+          ...compiled.covarianceWindow,
           returnCount: 0,
         },
       },
       {
-        ...input.compiledDecision,
-        signals: input.compiledDecision.signals.map((signal, index) =>
-          index === 0 ? { ...signal, horizons: [] } : signal,
-        ),
+        ...compiled,
+        signals: compiled.signals.map((signal, index) => (index === 0 ? { ...signal, horizons: [] } : signal)),
       },
       {
-        ...input.compiledDecision,
+        ...compiled,
         unexpectedFutureEvidence: true,
       },
     ]
