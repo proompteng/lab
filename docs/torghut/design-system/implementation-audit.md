@@ -44,16 +44,16 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 
 ## Audit Coverage
 
-- Design documents with source audit blocks: 458
+- Design documents with source audit blocks: 456
 - Deep-dive batch documents: 15
-- Triage audit documents remaining: 443
+- Triage audit documents remaining: 441
 
 ## Implementation Area Counts
 
 - 160: Proof, evidence, freshness, repair, and capital gating
-- 41: Strategy, alpha, TSMOM, regime, portfolio, and sizing
+- 40: Strategy, alpha, TSMOM, regime, portfolio, and sizing
 - 40: Routeability, TCA, fill quality, and market context
-- 29: Observability, metrics, traces, alerts, and operations
+- 28: Observability, metrics, traces, alerts, and operations
 - 27: Execution, live submission, and broker path
 - 24: CI/CD, release, GitOps, Argo, Knative, and deployment automation
 - 24: Jangar/control-plane integration
