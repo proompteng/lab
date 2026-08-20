@@ -330,11 +330,10 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = '8f4602324111bbb3dd5d8695aabf199f4a5328fa'
-  const imageDigest = 'sha256:775c165ecc499360932536d697a80b4380464897aff4ba55161ef4e9e58cb852'
+  const sourceRevision = '5dbb887f926325b36eabc32245adb26b2f25d05e'
+  const imageDigest = 'sha256:c433389487ebb4414ec45cbb761f37f3c19617411f067575d53b560739681fac'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
-  const activeGeneration = 'c6dab85a27f4d5430e89aa460c385f054403dfe169c0d6ccc67950797c3a2240'
   const sharedPlanEnvironment = [
     'BAYN_CODE_REVISION',
     'BAYN_IMAGE_REPOSITORY',
@@ -342,6 +341,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_STRATEGY_BEHAVIOR_HASH',
     'BAYN_STRATEGY_PARAMETER_HASH',
     'BAYN_CAPITAL_ACTIVATION_REQUEST',
+    'BAYN_CAPITAL_ACTIVATION_KIND',
     'BAYN_BROKER_ACCESS',
     'BAYN_CAPITAL_AUTHORITY',
     'BAYN_AUTHORITY_GENERATION_HASH',
@@ -419,20 +419,20 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    'd75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0',
+    'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
   )
   expect(activationSecret.metadata.annotations).toMatchObject({
-    'bayn.proompteng.ai/capital-activation-schema': 'bayn.paper-research-build-continuation.v1',
+    'bayn.proompteng.ai/capital-activation-schema': 'bayn.paper-research-activation-request.v1',
     'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
     'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
-    'bayn.proompteng.ai/capital-activation-generation': activeGeneration,
     'bayn.proompteng.ai/capital-activation-content-hash':
-      '193842fbe2883ca7a00fc7bca74a54be280a8cbf5897f51d98e473b571ff2b41',
+      '3b252797045a776291d14957a4dcde3255b428e0f96150f60b957b6f86d55755',
   })
+  expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
   const previousBinding = {
-    planHash: '4471596c6551057d057d1a572d9739295ef991dc7ac1ce1d339055c4476ef293',
-    sourceRevision: 'ed48b9d1df7dc9977bcccc14c21964b896304cf3',
+    planHash: 'd75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0',
+    sourceRevision: '8f4602324111bbb3dd5d8695aabf199f4a5328fa',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
@@ -451,7 +451,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '8f801993b5d24a5c7cc0464c96d42d4cb741483f856a6b0b61f966f91c5b489d',
+    'd9ab107f916659e9ebbb1515129f168d38124c1566f21799947c4c1513bc71c8',
   )
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
@@ -463,6 +463,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   ])
 
   for (const candidate of [controllerEnvironment, activationEnvironment, deploymentEnvironment]) {
+    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_KIND')?.value).toBe('ResearchCapitalActivationRequest')
     expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
       name: 'bayn-alpaca-auth',
       key: 'capital-activation-request',
