@@ -10,9 +10,18 @@ const symbols = ['AMD', 'NVDA'] as const
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
+const calendarMaterial = {
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  source: 'alpaca-v2-calendar' as const,
+  requestedRange: { start: '2026-08-18', end: '2026-08-18' },
+  timeZone: 'UTC' as const,
+  sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
+}
+const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
 
 const request: IntradaySnapshotRequest = {
   sessionDate: '2026-08-18',
+  calendar,
   rangeStartAt: '2026-08-18T13:30:00.000Z',
   rangeEndAt: '2026-08-18T13:35:00.000Z',
   observedAt: '2026-08-18T13:35:30.000Z',
@@ -176,6 +185,35 @@ describe('immutable intraday market snapshot', () => {
     expect(error(reverifyIntradayMarketSnapshot(selfRehashed))).toMatchObject({ reason: 'coverage' })
   })
 
+  test('reruns exchange-session invariants instead of trusting a self-rehashed calendar', () => {
+    const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    const forgedCalendarMaterial = {
+      schemaVersion: verified.manifest.calendar.schemaVersion,
+      source: verified.manifest.calendar.source,
+      requestedRange: { ...verified.manifest.calendar.requestedRange },
+      timeZone: verified.manifest.calendar.timeZone,
+      sessions: verified.manifest.calendar.sessions.map((session) => ({
+        ...session,
+        openAt: '2026-08-18T14:30:00.000Z',
+      })),
+    }
+    const forgedCalendar = Object.freeze({
+      ...forgedCalendarMaterial,
+      normalizedResponseHash: canonicalHashV1(forgedCalendarMaterial),
+    })
+    const { contentHash: _contentHash, snapshotId: _snapshotId, ...boundMaterial } = verified.manifest
+    const material = Object.freeze({ ...boundMaterial, calendar: forgedCalendar })
+    const contentHash = canonicalHashV1(material)
+    const manifest = Object.freeze({
+      ...material,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...material, contentHash }),
+    })
+    const selfRehashed: IntradayMarketSnapshot = Object.freeze({ ...verified, manifest })
+
+    expect(error(reverifyIntradayMarketSnapshot(selfRehashed))).toMatchObject({ reason: 'request' })
+  })
+
   test('rejects altered manifest metadata even when rows and snapshot identity are unchanged', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
     const forgedManifest = Object.freeze({
@@ -309,12 +347,79 @@ describe('immutable intraday market snapshot', () => {
     ).toMatchObject({ reason: 'rows' })
   })
 
+  test('binds the range to one finalized regular exchange session', () => {
+    const premarketMaterial = {
+      ...calendarMaterial,
+      sessions: [
+        {
+          date: '2026-08-18',
+          openAt: '2026-08-18T13:30:00.000Z',
+          closeAt: '2026-08-18T20:00:00.000Z',
+        },
+      ],
+    }
+    const premarketCalendar = {
+      ...premarketMaterial,
+      normalizedResponseHash: canonicalHashV1(premarketMaterial),
+    }
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          calendar: premarketCalendar,
+          rangeStartAt: '2026-08-18T13:00:00.000Z',
+          rangeEndAt: '2026-08-18T13:05:00.000Z',
+          observedAt: '2026-08-18T13:05:30.000Z',
+        }),
+      ),
+    ).toMatchObject({ reason: 'request' })
+
+    const weekendMaterial = {
+      ...calendarMaterial,
+      requestedRange: { start: '2026-08-22', end: '2026-08-22' },
+      sessions: [
+        {
+          date: '2026-08-22',
+          openAt: '2026-08-22T13:30:00.000Z',
+          closeAt: '2026-08-22T20:00:00.000Z',
+        },
+      ],
+    }
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          sessionDate: '2026-08-22',
+          calendar: { ...weekendMaterial, normalizedResponseHash: canonicalHashV1(weekendMaterial) },
+          rangeStartAt: '2026-08-22T13:30:00.000Z',
+          rangeEndAt: '2026-08-22T13:35:00.000Z',
+          observedAt: '2026-08-22T13:35:30.000Z',
+        }),
+      ),
+    ).toMatchObject({ reason: 'request' })
+
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          calendar: { ...calendar, normalizedResponseHash: '0'.repeat(64) },
+        }),
+      ),
+    ).toMatchObject({ reason: 'request' })
+  })
+
   test('detaches and freezes a verified request before asynchronous use', () => {
+    const mutableCalendar = {
+      ...request.calendar,
+      requestedRange: { ...request.calendar.requestedRange },
+      sessions: request.calendar.sessions.map((session) => ({ ...session })),
+    }
     const mutableUniverse = [...request.universe]
     const mutableTopics = { ...request.sourceTopics }
     const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))
     const mutableRequest: IntradaySnapshotRequest = {
       ...request,
+      calendar: mutableCalendar,
       universe: mutableUniverse,
       sourceTopics: mutableTopics,
       archiveWatermarks: mutableWatermarks,
@@ -322,14 +427,20 @@ describe('immutable intraday market snapshot', () => {
     const verified = success(verifyIntradaySnapshotRequest(mutableRequest))
 
     mutableUniverse[0] = 'AAPL'
+    mutableCalendar.sessions[0]!.openAt = '2026-08-18T14:30:00.000Z'
     mutableTopics.quotes = 'changed.quotes'
     mutableWatermarks[0]!.inclusiveLastOffset = '999'
 
     expect(verified.universe).toEqual(request.universe)
+    expect(verified.calendar).toEqual(request.calendar)
     expect(verified.sourceTopics).toEqual(request.sourceTopics)
     expect(verified.archiveWatermarks).toEqual(request.archiveWatermarks)
     expect(Object.isFrozen(verified)).toBe(true)
     expect(Object.isFrozen(verified.universe)).toBe(true)
+    expect(Object.isFrozen(verified.calendar)).toBe(true)
+    expect(Object.isFrozen(verified.calendar.requestedRange)).toBe(true)
+    expect(Object.isFrozen(verified.calendar.sessions)).toBe(true)
+    expect(Object.isFrozen(verified.calendar.sessions[0])).toBe(true)
     expect(Object.isFrozen(verified.sourceTopics)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks[0])).toBe(true)

@@ -43,6 +43,7 @@ describe('intraday archive pagination', () => {
           return Effect.succeed(pages[index++] ?? [])
         },
         decodeIntradayQuoteRows,
+        5,
         2,
       ),
     )
@@ -70,7 +71,16 @@ describe('intraday archive pagination', () => {
   test('fails closed when a full page does not advance', async () => {
     const page = [quoteRow('2026-08-18T13:30:00.000000001Z', '1')]
     const exit = await Effect.runPromiseExit(
-      loadIntradayArchivePages(() => Effect.succeed(page), decodeIntradayQuoteRows, 1),
+      loadIntradayArchivePages(() => Effect.succeed(page), decodeIntradayQuoteRows, 2, 1),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+  })
+
+  test('fails closed before retaining rows beyond the aggregate process budget', async () => {
+    const page = [quoteRow('2026-08-18T13:30:00.000000001Z', '1'), quoteRow('2026-08-18T13:30:00.000000002Z', '2')]
+    const exit = await Effect.runPromiseExit(
+      loadIntradayArchivePages(() => Effect.succeed(page), decodeIntradayQuoteRows, 1, 2),
     )
 
     expect(Exit.isFailure(exit)).toBe(true)

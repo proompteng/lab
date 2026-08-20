@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
+import { marketCalendarSchemaVersion, marketCalendarSource } from '../../broker/alpaca/model'
 import { IsoDateSchema } from '../../schemas'
 import type {
   IntradayArchiveWatermark,
@@ -60,6 +61,75 @@ const isCanonicalInstant = (value: string): boolean => {
   const parsed = epoch(value)
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
 }
+
+const calendarMaterial = (calendar: IntradaySnapshotQuery['calendar']) => ({
+  schemaVersion: calendar.schemaVersion,
+  source: calendar.source,
+  requestedRange: calendar.requestedRange,
+  timeZone: calendar.timeZone,
+  sessions: calendar.sessions,
+})
+
+const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, IntradaySnapshotFailure> => {
+  const { calendar } = request
+  if (
+    calendar.schemaVersion !== marketCalendarSchemaVersion ||
+    calendar.source !== marketCalendarSource ||
+    calendar.timeZone !== 'UTC' ||
+    !isIsoDate(calendar.requestedRange.start) ||
+    !isIsoDate(calendar.requestedRange.end) ||
+    calendar.requestedRange.start > request.sessionDate ||
+    calendar.requestedRange.end < request.sessionDate
+  ) {
+    return Result.fail(failure('request', 'intraday snapshot must bind a canonical calendar observation range'))
+  }
+  const expectedHash = canonicalHashV1Result(calendarMaterial(calendar))
+  if (Result.isFailure(expectedHash)) {
+    return Result.fail(
+      failure('request', 'intraday calendar observation is not canonically hashable', undefined, expectedHash.failure),
+    )
+  }
+  if (expectedHash.success !== calendar.normalizedResponseHash) {
+    return Result.fail(failure('request', 'intraday calendar observation hash does not match its normalized content'))
+  }
+  let previousDate: string | undefined
+  for (const session of calendar.sessions) {
+    if (
+      !isIsoDate(session.date) ||
+      session.date < calendar.requestedRange.start ||
+      session.date > calendar.requestedRange.end ||
+      !isCanonicalInstant(session.openAt) ||
+      !isCanonicalInstant(session.closeAt) ||
+      session.openAt.slice(0, 10) !== session.date ||
+      session.closeAt.slice(0, 10) !== session.date ||
+      session.openAt >= session.closeAt ||
+      (previousDate !== undefined && previousDate >= session.date)
+    ) {
+      return Result.fail(failure('request', 'intraday calendar sessions must be unique, ordered, and canonical'))
+    }
+    previousDate = session.date
+  }
+  const session = calendar.sessions.find(({ date }) => date === request.sessionDate)
+  const dayOfWeek = new Date(`${request.sessionDate}T00:00:00.000Z`).getUTCDay()
+  if (session === undefined || dayOfWeek === 0 || dayOfWeek === 6) {
+    return Result.fail(failure('request', 'intraday snapshot date is not a finalized exchange session'))
+  }
+  if (
+    request.rangeStartAt < session.openAt ||
+    request.rangeEndAt > session.closeAt ||
+    request.observedAt > session.closeAt
+  ) {
+    return Result.fail(failure('request', 'intraday range must remain within the bound regular exchange session'))
+  }
+  return Result.succeed(undefined)
+}
+
+const freezeCalendar = (calendar: IntradaySnapshotQuery['calendar']): IntradaySnapshotQuery['calendar'] =>
+  Object.freeze({
+    ...calendar,
+    requestedRange: Object.freeze({ ...calendar.requestedRange }),
+    sessions: Object.freeze(calendar.sessions.map((session) => Object.freeze({ ...session }))),
+  })
 
 const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Result<T, IntradaySnapshotFailure> => {
   const start = epoch(request.rangeStartAt)
@@ -138,6 +208,8 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   if (request.delayClass !== expectedDelayClass) {
     return Result.fail(failure('request', 'intraday feed and delay class do not match'))
   }
+  const calendar = validateCalendar(request)
+  if (Result.isFailure(calendar)) return Result.fail(calendar.failure)
   return Result.succeed(request)
 }
 
@@ -147,6 +219,7 @@ export const verifyIntradaySnapshotQuery = (
   Result.map(validateQuery(query), (verified) =>
     Object.freeze({
       ...verified,
+      calendar: freezeCalendar(verified.calendar),
       universe: Object.freeze([...verified.universe]),
       sourceTopics: Object.freeze({ ...verified.sourceTopics }),
     }),
@@ -240,6 +313,7 @@ export const verifyIntradaySnapshotRequest = (
     yield* validateWatermarks(request, request.archiveWatermarks)
     return Object.freeze({
       ...request,
+      calendar: freezeCalendar(request.calendar),
       universe: Object.freeze([...request.universe]),
       sourceTopics: Object.freeze({ ...request.sourceTopics }),
       archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
@@ -654,6 +728,7 @@ export const verifyIntradaySnapshot = (
     const material = {
       schemaVersion: 'bayn.intraday-market-snapshot.v1',
       sessionDate: verifiedRequest.sessionDate,
+      calendar: verifiedRequest.calendar,
       rangeStartAt: verifiedRequest.rangeStartAt,
       rangeEndAt: verifiedRequest.rangeEndAt,
       observedAt: verifiedRequest.observedAt,
@@ -709,6 +784,7 @@ export const reverifyIntradayMarketSnapshot = (
     const { manifest } = snapshot
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
+      calendar: manifest.calendar,
       rangeStartAt: manifest.rangeStartAt,
       rangeEndAt: manifest.rangeEndAt,
       observedAt: manifest.observedAt,

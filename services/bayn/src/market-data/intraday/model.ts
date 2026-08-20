@@ -2,12 +2,14 @@ import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
+  readonly calendar: MarketCalendarObservation
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -87,6 +89,7 @@ export interface IntradayTrade extends IntradayRecordIdentity {
 export interface IntradaySnapshotManifest {
   readonly schemaVersion: 'bayn.intraday-market-snapshot.v1'
   readonly sessionDate: IsoDate
+  readonly calendar: MarketCalendarObservation
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string

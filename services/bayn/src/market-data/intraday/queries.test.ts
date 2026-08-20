@@ -6,6 +6,14 @@ import type { IntradaySnapshotRequest } from './model'
 import { intradayArchivePageSize, makeIntradayMarketDataQueries } from './queries'
 
 const request: IntradaySnapshotRequest = {
+  calendar: {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    requestedRange: { start: '2026-08-18', end: '2026-08-18' },
+    timeZone: 'UTC',
+    sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
+    normalizedResponseHash: 'b'.repeat(64),
+  },
   universeId: 'opening-drive-v1',
   universeSymbolHash: 'a'.repeat(64),
   universe: ['AMD'],
@@ -62,6 +70,8 @@ describe('intraday archive queries', () => {
       expect(query).toContain(`event_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).toContain('ORDER BY event_ts DESC, ingest_ts DESC, source_partition DESC, source_offset DESC')
+      expect(query).toContain('LIMIT 1 BY symbol')
     }
     for (const query of [bars, quotes, trades]) {
       expect(query).toContain(`LIMIT ${intradayArchivePageSize}`)
@@ -102,7 +112,7 @@ describe('intraday archive queries', () => {
     )
     for (const query of [quotes, trades]) {
       expect(query).toContain(
-        `AND tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
+        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
       )
       expect(query).toContain(`parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`)
       expect(query).toContain(`toUInt64("${cursor.sourcePartition}")`)

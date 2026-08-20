@@ -46,9 +46,17 @@ const comparePageCursors = (left: IntradayArchivePageCursor, right: IntradayArch
 export const loadIntradayArchivePages = <E, R>(
   loadPage: (after?: IntradayArchivePageCursor) => Effect.Effect<readonly unknown[], E, R>,
   decodePage: IntradayPageDecoder,
+  maximumRows: number,
   pageSize = intradayArchivePageSize,
 ): Effect.Effect<readonly unknown[], E | IntradaySnapshotFailure, R> =>
   Effect.gen(function* () {
+    if (!Number.isSafeInteger(maximumRows) || maximumRows < 1) {
+      return yield* new IntradaySnapshotFailure({
+        reason: 'rows',
+        message: 'intraday archive row budget must be a positive safe integer',
+        facts: { maximumRows },
+      })
+    }
     const rows: unknown[] = []
     let after: IntradayArchivePageCursor | undefined
     for (let page = 0; page < maximumIntradayArchivePages; page += 1) {
@@ -61,6 +69,13 @@ export const loadIntradayArchivePages = <E, R>(
         })
       }
       const decoded = yield* Effect.fromResult(decodePage(loaded))
+      if (rows.length + loaded.length > maximumRows) {
+        return yield* new IntradaySnapshotFailure({
+          reason: 'rows',
+          message: 'intraday archive snapshot exceeded its aggregate row budget',
+          facts: { maximumRows, retainedRows: rows.length, incomingRows: loaded.length },
+        })
+      }
       rows.push(...loaded)
       if (loaded.length < pageSize) return Object.freeze(rows)
       const last = decoded.at(-1)
@@ -119,9 +134,22 @@ export const makeIntradayMarketData: Effect.Effect<
           Effect.all(
             {
               archiveWatermarks: captureIntradayArchiveWatermarks(verified),
-              bars: loadIntradayArchivePages((after) => loadIntradayBars(verified, after), decodeIntradayBarRows),
-              quotes: loadIntradayArchivePages((after) => loadIntradayQuotes(verified, after), decodeIntradayQuoteRows),
-              trades: loadIntradayArchivePages((after) => loadIntradayTrades(verified, after), decodeIntradayTradeRows),
+              bars: loadIntradayArchivePages(
+                (after) => loadIntradayBars(verified, after),
+                decodeIntradayBarRows,
+                verified.universe.length *
+                  ((Date.parse(verified.rangeEndAt) - Date.parse(verified.rangeStartAt)) / 60_000),
+              ),
+              quotes: loadIntradayArchivePages(
+                (after) => loadIntradayQuotes(verified, after),
+                decodeIntradayQuoteRows,
+                verified.universe.length,
+              ),
+              trades: loadIntradayArchivePages(
+                (after) => loadIntradayTrades(verified, after),
+                decodeIntradayTradeRows,
+                verified.universe.length,
+              ),
             },
             { concurrency: 4 },
           ).pipe(Effect.map((rows) => ({ rows, verified }))),
