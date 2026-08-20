@@ -17,7 +17,7 @@ import { MutationStore } from '../execution/mutations'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
 import type { CycleExecutionModel } from '../execution-model-contract'
-import { MarketData } from '../market-data'
+import { MarketData, type IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
@@ -90,6 +90,8 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  /** Explicit archive dependency; required only for an INTRADAY strategy. */
+  readonly intradayMarketData?: IntradayMarketDataService
   readonly cycleCadence?: CycleCadence
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape

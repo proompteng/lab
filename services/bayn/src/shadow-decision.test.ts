@@ -614,6 +614,35 @@ describe('OBSERVE shadow decision', () => {
     })
   })
 
+  test('admits a bounded opening-drive flat target with same-session execution market data', async () => {
+    const input = makeOpeningDriveInput()
+    const compiledDecision = {
+      schemaVersion: 'bayn.execution-flat-target.v1' as const,
+      strategyName: 'opening-drive-momentum' as const,
+      sessionDate: executionDate,
+      targetWeights: { AMD: 0 as const, NVDA: 0 as const },
+      symbols: ['AMD', 'NVDA'],
+      reason: 'mandate-close' as const,
+    }
+    const closeSubmitCutoffAt = '2026-07-22T19:45:00.000Z'
+    const plannerInput = {
+      ...input.plannerInput,
+      decisionHash: canonicalHashV1(compiledDecision),
+      targetWeights: compiledDecision.targetWeights,
+      submissionCutoffAt: closeSubmitCutoffAt,
+    }
+    const document = await build({
+      ...input,
+      compiledDecision,
+      plannerInput,
+      targetPlan: planTargetsSuccess(plannerInput),
+      submissionCutoffAt: closeSubmitCutoffAt,
+    })
+
+    expect(document.bindings.executionMarketData?.snapshotId).toBe(input.executionMarketData?.snapshotId)
+    expect(document.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+  })
+
   test('binds each decision variant to its strategy and validates exact flat-close weights', () => {
     const decision = makeDecision({ AMD: 0.4, NVDA: 0.6 })
     expect(runtimeDecisionMatchesStrategy(decision, 'risk-balanced-trend')).toBe(true)

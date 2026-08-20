@@ -15,6 +15,10 @@ export interface ExecutionCycleCloseWindow {
 export interface ExecutionCycleCloseWindowFacts {
   readonly cadence?: CycleCadence
   readonly executionCloseAt: string
+  /** Strategy-bound lead from the session close to the start of forced flattening. */
+  readonly sessionCloseStartLeadMs?: number
+  /** Strategy-bound lead from the session close to the final close submission. */
+  readonly sessionCloseSubmitLeadMs?: number
   /** Global end of entry authority and start of forced flattening. */
   readonly mandateForceCloseAt?: string
   readonly mandateCloseSubmitCutoffAt?: string
@@ -36,6 +40,20 @@ const decodeInstant = (value: string, field: string): Result.Result<string, Exec
       reason: `${field} is invalid`,
     }),
   )
+
+const decodeLead = (
+  value: number | undefined,
+  fallback: number,
+  field: string,
+): Result.Result<number, ExecutionCycleCloseWindowFailure> => {
+  const lead = value ?? fallback
+  return Number.isSafeInteger(lead) && lead > 0
+    ? Result.succeed(lead)
+    : Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid',
+        reason: `${field} must be a positive safe integer`,
+      })
+}
 
 export const resolveExecutionCycleCloseWindow = (
   facts: ExecutionCycleCloseWindowFacts,
@@ -59,15 +77,31 @@ export const resolveExecutionCycleCloseWindow = (
     const window = isEverySessionCycleCadence(facts.cadence)
       ? yield* Result.gen(function* () {
           const closeAt = Date.parse(executionCloseAt)
+          const startLeadMs = yield* decodeLead(
+            facts.sessionCloseStartLeadMs,
+            everySessionCloseStartLeadMs,
+            'session close start lead',
+          )
+          const submitLeadMs = yield* decodeLead(
+            facts.sessionCloseSubmitLeadMs,
+            everySessionCloseSubmitLeadMs,
+            'session close submit lead',
+          )
+          if (startLeadMs <= submitLeadMs) {
+            return yield* Result.fail({
+              _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+              reason: 'session close start lead must be greater than the submit lead',
+            })
+          }
           const sessionStartAt = yield* Result.mapError(
-            utcInstantFromEpochMillisResult(closeAt - everySessionCloseStartLeadMs),
+            utcInstantFromEpochMillisResult(closeAt - startLeadMs),
             (): ExecutionCycleCloseWindowFailure => ({
               _tag: 'ExecutionCycleCloseWindowInvalid',
               reason: 'execution close instant is invalid',
             }),
           )
           const sessionSubmitCutoffAt = yield* Result.mapError(
-            utcInstantFromEpochMillisResult(closeAt - everySessionCloseSubmitLeadMs),
+            utcInstantFromEpochMillisResult(closeAt - submitLeadMs),
             (): ExecutionCycleCloseWindowFailure => ({
               _tag: 'ExecutionCycleCloseWindowInvalid',
               reason: 'execution close instant is invalid',

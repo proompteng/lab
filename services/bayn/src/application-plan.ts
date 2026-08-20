@@ -4,7 +4,9 @@ import { makeApplicationPlan, type ApplicationIdentity, type ApplicationPlan } f
 import {
   activeStrategyBehaviorHash,
   activeStrategyName,
-  makeActiveStrategyApplication,
+  loadActiveStrategyProtocol,
+  makeActiveStrategyRuntime,
+  type OpeningDriveProtocol,
   type StrategyRuntime,
 } from './strategy'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
@@ -35,21 +37,21 @@ type RuntimeIdentityFailure =
 
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
+  /** Compatibility input for archived daily Signal reads until cycle discovery is intraday-native. */
   readonly protocol: CausalProtocol
+  readonly strategyProtocol: OpeningDriveProtocol
 }
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
 type ProvenanceRuntime = ParameterizedRuntime & { readonly provenance: RuntimeProvenance }
 type SelectedRuntime = ProvenanceRuntime & { readonly strategy: StrategyRuntime }
 
-const selectStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => {
-  const application = makeActiveStrategyApplication(runtime.protocol)
-  return { application, definition: application.definition, provenance: runtime.provenance }
-}
+const selectStrategy = (runtime: ProvenanceRuntime): StrategyRuntime =>
+  makeActiveStrategyRuntime(runtime.strategyProtocol, runtime.provenance)
 
 const hashRuntimeParameters = (seed: RuntimeSeed): Result.Result<ParameterizedRuntime, RuntimeIdentityFailure> =>
   pipe(
-    canonicalHashV1Result(seed.protocol),
+    canonicalHashV1Result(seed.strategyProtocol),
     Result.mapError((cause): RuntimeIdentityFailure => ({ _tag: 'RuntimeParameterHashFailed', cause })),
     Result.map((parameterHash) => ({ ...seed, parameterHash })),
   )
@@ -68,7 +70,7 @@ const addRuntimeProvenance = (
         name: activeStrategyName,
         behaviorHash: activeStrategyBehaviorHash,
         parameterHash: parameterized.parameterHash,
-        parameterSchemaVersion: parameterized.protocol.schemaVersion,
+        parameterSchemaVersion: parameterized.strategyProtocol.schemaVersion,
       },
     }),
     Result.mapError(
@@ -154,7 +156,11 @@ const verifyRuntimeIdentity = (
   )
 
 export const loadApplicationPlan = pipe(
-  Effect.all({ config: loadConfig(), protocol: loadDefaultProtocol }),
+  Effect.all({
+    config: loadConfig(),
+    protocol: loadDefaultProtocol,
+    strategyProtocol: Effect.fromResult(loadActiveStrategyProtocol()),
+  }),
   Effect.flatMap(flow(makeRuntimeIdentity, Effect.fromResult, Effect.mapError(runtimeIdentityError))),
   Effect.flatMap(verifyRuntimeIdentity),
   Effect.map(makeApplicationPlan),

@@ -21,7 +21,13 @@ import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execut
 import { ExecutionPrepareStoreLive } from '../execution-prepare'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
-import { MarketData, MarketDataLive } from '../market-data'
+import {
+  IntradayMarketData,
+  IntradayMarketDataLive,
+  MarketData,
+  MarketDataLive,
+  type IntradayMarketDataService,
+} from '../market-data'
 import { sqlResource } from '../operations'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
@@ -71,7 +77,7 @@ const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
 
 const SignalMarketDataLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
-  return MarketDataResourceLive(plan).pipe(Layer.provide(clickHouse))
+  return Layer.merge(MarketDataResourceLive(plan), IntradayMarketDataLive).pipe(Layer.provide(clickHouse))
 }
 
 const PostgresAuthorityLive = (config: PostgresResourceConfig) =>
@@ -190,11 +196,12 @@ export const QualifiedCapitalActivationStoreLive = (
 export const ExecutionPrepareResourcesLive = ExecutionPrepareExecutionResourcesLive
 
 export const applicationDependencies: Effect.Effect<
-  ApplicationDependencies,
+  ApplicationDependencies & { readonly intradayMarketData: IntradayMarketDataService },
   never,
-  MarketData | Journal | EvidenceStore | CycleObservability
+  MarketData | IntradayMarketData | Journal | EvidenceStore | CycleObservability
 > = Effect.all({
   marketData: MarketData,
+  intradayMarketData: IntradayMarketData,
   journal: Journal,
   evidenceStore: EvidenceStore,
   cycleObservability: CycleObservability,

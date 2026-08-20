@@ -1,7 +1,12 @@
 import type { RuntimeProvenance } from './contracts'
-import { riskBalancedTrendBehaviorHash } from './behavior'
 import { makeRiskBalancedTrendApplication } from './strategy/risk-balanced-trend'
 import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
+import {
+  decodeDefaultOpeningDriveProtocol,
+  makeOpeningDriveDefinition,
+  openingDriveBehaviorHash,
+  type OpeningDriveProtocol,
+} from './strategy/opening-drive'
 import type {
   ReviewedStrategySource,
   StrategyApplication,
@@ -48,9 +53,17 @@ export {
 } from './strategy/opening-drive'
 
 /** The application root composes exactly one reviewed strategy implementation. */
-export const makeActiveStrategyApplication = makeRiskBalancedTrendApplication
-export const activeStrategyName = 'risk-balanced-trend' as const
-export const activeStrategyBehaviorHash = riskBalancedTrendBehaviorHash
+export const activeStrategyName = 'opening-drive-momentum' as const
+export const activeStrategyBehaviorHash = openingDriveBehaviorHash
+export const loadActiveStrategyProtocol = decodeDefaultOpeningDriveProtocol
+
+export const makeActiveStrategyRuntime = (
+  protocol: OpeningDriveProtocol,
+  provenance: RuntimeProvenance,
+): StrategyRuntime => ({
+  definition: makeOpeningDriveDefinition(protocol),
+  provenance,
+})
 
 /** Attach the reviewed module identity to the executable application exported by that module. */
 const bindReviewedStrategySourceDataFirst = <
@@ -98,8 +111,8 @@ export const strategyDefinition = (
   'definition' in input ? input.definition : input
 
 /**
- * Compatibility resolution for archived test/runtime constructors. The application-plan root always supplies
- * `application`; the fallback only preserves old evidence fixtures while they migrate to the canonical boundary.
+ * Compatibility resolution for archived daily test/runtime constructors. Intraday runtimes deliberately omit the
+ * legacy application adapter and use their verified intraday decision boundary directly.
  */
 export const strategyApplication = (input: StrategyRuntimeInput): StrategyApplication<any, any, any> => {
   if ('application' in input && input.application !== undefined) return input.application

@@ -6,8 +6,9 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
+import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { strategyApplication } from '../strategy'
+import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   ObserveAutonomousCycleInput,
@@ -15,27 +16,41 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
-import { loadObserveRiskPolicy } from './decision-builder'
+import { loadExecutionRiskPolicy } from './decision-builder'
 import { validateMutationExecutionProgram } from './execution-cycle'
 import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionBuilder } from './recovery-driver'
 
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const decodedExecutionModel = Schema.decodeUnknownResult(
-    CycleExecutionModelSchema,
-    strictParseOptions,
-  )((input.strategy.definition.parameters as { readonly executionModel?: unknown }).executionModel)
-  if (Result.isFailure(decodedExecutionModel)) {
+  const definition = strategyDefinition(input.strategy)
+  const parameterHash = canonicalHashV1Result(definition.parameters)
+  if (Result.isFailure(parameterHash)) {
     return Result.fail(
       operationalError({
         component: 'strategy',
-        operation: 'cycle-loop',
-        message: 'strategy execution model is invalid for autonomous cycles',
-        cause: decodedExecutionModel.failure,
+        operation: 'cycle-policy',
+        message: 'strategy definition parameters are not canonically hashable',
+        cause: parameterHash.failure,
       }),
     )
   }
+  const parameterSchemaVersion = (definition.parameters as { readonly schemaVersion?: unknown }).schemaVersion
+  if (
+    definition.name !== input.strategy.provenance.strategy.name ||
+    parameterSchemaVersion !== input.strategy.provenance.strategy.parameterSchemaVersion ||
+    parameterHash.success !== input.strategy.provenance.strategy.parameterHash
+  ) {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-policy',
+        message: 'strategy definition does not match its runtime provenance',
+      }),
+    )
+  }
+  const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
+  if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
   if (
     executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
@@ -75,6 +90,38 @@ export const prepareObserveStartup = (
       ),
   )
 }
+
+export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
+  Result.mapError(
+    Schema.decodeUnknownResult(
+      CycleExecutionModelSchema,
+      strictParseOptions,
+    )((strategyDefinition(strategy).parameters as { readonly executionModel?: unknown }).executionModel),
+    (cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: 'strategy execution model is invalid',
+        cause,
+      }),
+  )
+
+export const loadStrategyExecutionRiskPolicy = (accountId: string, strategy: StrategyRuntime) =>
+  Effect.fromResult(decodeStrategyExecutionModel(strategy)).pipe(
+    Effect.flatMap((executionModel) =>
+      loadExecutionRiskPolicy(accountId, strategyDefinition(strategy).parameters.universe, executionModel),
+    ),
+    Effect.mapError((cause) =>
+      cause instanceof OperationalError
+        ? cause
+        : operationalError({
+            component: 'strategy',
+            operation: 'risk-policy',
+            message: 'source-controlled execution risk policy is invalid',
+            cause,
+          }),
+    ),
+  )
 
 const validateObserveAuthorityInitialization = (
   authority: AuthorityState,
@@ -120,19 +167,7 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadObserveRiskPolicy(
-        input.accountId,
-        strategyApplication(input.strategy).definition.parameters.universe,
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError({
-            component: 'strategy',
-            operation: 'risk-policy',
-            message: 'source-controlled execution risk policy is invalid',
-            cause,
-          }),
-        ),
-      )
+      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
@@ -155,19 +190,7 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadObserveRiskPolicy(
-        input.accountId,
-        strategyApplication(input.strategy).definition.parameters.universe,
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError({
-            component: 'strategy',
-            operation: 'risk-policy',
-            message: 'source-controlled execution risk policy is invalid',
-            cause,
-          }),
-        ),
-      )
+      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
           input,
