@@ -39,18 +39,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
       : sql`WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
   }
 
-  const afterCursorAnd = (cursor: IntradayArchivePageCursor | undefined) => {
-    if (cursor === undefined) return sql``
-    return sql`AND tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(
-      parseDateTime64BestEffort(${sql.param('String', cursor.eventAt)}, 9, 'UTC'),
-      ${sql.param('String', cursor.symbol)},
-      ${sql.param('String', cursor.sourceTopic)},
-      toUInt64(${sql.param('String', String(cursor.sourcePartition))}),
-      toUInt64(${sql.param('String', cursor.sourceOffset)})
-    )`
-  }
-
-  const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => sql`
+  const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => {
+    const time = bounds(request)
+    return sql`
     SELECT
       source_topic,
       toString(source_partition) AS source_partition,
@@ -63,6 +54,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+        AND event_ts < parseDateTime64BestEffort(${time.end}, 3, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 3, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
       FROM signal.intraday_quotes_v1
@@ -71,6 +65,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
       FROM signal.intraday_trades_v1
@@ -79,10 +76,14 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
     )
     GROUP BY source_topic, source_partition
     ORDER BY source_topic, source_partition
   `
+  }
 
   const loadIntradayBars = (request: IntradaySnapshotRequest, after?: IntradayArchivePageCursor) => {
     const time = bounds(request)
@@ -161,24 +162,29 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         toString(ask_price) AS ask_price,
         toString(ask_size) AS ask_size,
         toString(schema_version) AS schema_version
-      FROM signal.intraday_quotes_v1 FINAL
-      WHERE universe_id = ${sql.param('String', request.universeId)}
-        AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
-        AND feed = ${sql.param('String', request.feed)}
-        AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
-        AND has(${sql.param('Array(String)', request.universe)}, symbol)
-        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
-        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
-        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
-        AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
-        AND source_offset <= ifNull(
-          toUInt64OrNull(arrayElement(
-            ${sql.param('Array(String)', watermark.offsets)},
-            indexOf(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
-          )),
-          0
-        )
-        ${afterCursorAnd(after)}
+      FROM (
+        SELECT *
+        FROM signal.intraday_quotes_v1 FINAL
+        WHERE universe_id = ${sql.param('String', request.universeId)}
+          AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
+          AND feed = ${sql.param('String', request.feed)}
+          AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
+          AND has(${sql.param('Array(String)', request.universe)}, symbol)
+          AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+          AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
+          AND source_offset <= ifNull(
+            toUInt64OrNull(arrayElement(
+              ${sql.param('Array(String)', watermark.offsets)},
+              indexOf(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
+            )),
+            0
+          )
+        ORDER BY event_ts DESC, ingest_ts DESC, source_partition DESC, source_offset DESC
+        LIMIT 1 BY symbol
+      )
+      ${afterCursorWhere(after, 9)}
       ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
@@ -204,24 +210,29 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         toString(price) AS price,
         toString(size) AS size,
         toString(schema_version) AS schema_version
-      FROM signal.intraday_trades_v1 FINAL
-      WHERE universe_id = ${sql.param('String', request.universeId)}
-        AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
-        AND feed = ${sql.param('String', request.feed)}
-        AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
-        AND has(${sql.param('Array(String)', request.universe)}, symbol)
-        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
-        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
-        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
-        AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
-        AND source_offset <= ifNull(
-          toUInt64OrNull(arrayElement(
-            ${sql.param('Array(String)', watermark.offsets)},
-            indexOf(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
-          )),
-          0
-        )
-        ${afterCursorAnd(after)}
+      FROM (
+        SELECT *
+        FROM signal.intraday_trades_v1 FINAL
+        WHERE universe_id = ${sql.param('String', request.universeId)}
+          AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
+          AND feed = ${sql.param('String', request.feed)}
+          AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
+          AND has(${sql.param('Array(String)', request.universe)}, symbol)
+          AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+          AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
+          AND source_offset <= ifNull(
+            toUInt64OrNull(arrayElement(
+              ${sql.param('Array(String)', watermark.offsets)},
+              indexOf(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
+            )),
+            0
+          )
+        ORDER BY event_ts DESC, ingest_ts DESC, source_partition DESC, source_offset DESC
+        LIMIT 1 BY symbol
+      )
+      ${afterCursorWhere(after, 9)}
       ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
