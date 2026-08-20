@@ -458,11 +458,11 @@ const makeInput = (
   }
 }
 
-const openingDriveDecision = (calendarHash: string): OpeningDriveTargetPortfolio => ({
+const openingDriveDecision = (calendarHash: string, boundSnapshotId: string): OpeningDriveTargetPortfolio => ({
   schemaVersion: 'bayn.opening-drive.target.v1',
   strategy: 'opening-drive-momentum',
   sessionDate: executionDate,
-  snapshotId,
+  snapshotId: boundSnapshotId,
   observedAt: '2026-07-22T13:35:01.000Z',
   calendarHash,
   selectedSymbols: [],
@@ -488,9 +488,79 @@ const openingDriveDecision = (calendarHash: string): OpeningDriveTargetPortfolio
   })),
 })
 
+const openingDriveMarketDataBinding = (cycle: AutonomousCycle): ExecutionMarketDataBinding => {
+  const calendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: { start: executionDate, end: executionDate },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: executionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      },
+    ],
+  }
+  const sourceTopics = {
+    bars: 'torghut.bars.1m.v1',
+    quotes: 'torghut.quotes.v1',
+    trades: 'torghut.trades.v1',
+  }
+  const archiveWatermarks = Object.values(sourceTopics).map((sourceTopic, index) => ({
+    sourceTopic,
+    sourcePartition: 0,
+    inclusiveLastOffset: String(10 + index),
+  }))
+  const lineage = Object.values(sourceTopics).map((sourceTopic, index) => ({
+    sourceTopic,
+    sourcePartition: 0,
+    firstOffset: String(1 + index),
+    lastOffset: String(10 + index),
+    recordCount: index === 0 ? 10 : 2,
+  }))
+  const snapshotMaterial = {
+    schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
+    sessionDate: executionDate,
+    calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+    rangeStartAt: cycle.window.executionOpenAt,
+    rangeEndAt: '2026-07-22T13:35:00.000Z',
+    observedAt: cycle.window.submissionOpenAt,
+    universeId: 'opening-drive-fixture-v1',
+    universeSymbolHash: hash('7'),
+    symbols: ['AMD', 'NVDA'],
+    feed: 'sip' as const,
+    delayClass: 'real_time_consolidated' as const,
+    sourceTopics,
+    archiveWatermarks,
+    maximumQuoteAgeMs: 5_000,
+    minimumWatermarkLagMs: 1_000,
+    barCount: 10,
+    quoteCount: 2,
+    tradeCount: 2,
+    barsContentHash: hash('8'),
+    quotesContentHash: hash('9'),
+    tradesContentHash: hash('a'),
+    lineage,
+  }
+  const contentHash = canonicalHashV1(snapshotMaterial)
+  const { schemaVersion: snapshotSchemaVersion, ...material } = snapshotMaterial
+  return {
+    schemaVersion: 'bayn.execution-market-data-binding.v1',
+    snapshotSchemaVersion,
+    ...material,
+    contentHash,
+    snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+  }
+}
+
 const makeOpeningDriveInput = (calendarHash?: string): ObserveShadowDecisionInput => {
   const cycle = makeOpeningDriveCycle()
-  const compiledDecision = openingDriveDecision(calendarHash ?? cycle.window.executionCalendarHash)
+  const executionMarketData = openingDriveMarketDataBinding(cycle)
+  const compiledDecision = openingDriveDecision(
+    calendarHash ?? cycle.window.executionCalendarHash,
+    executionMarketData.snapshotId,
+  )
   const policy = makePolicy()
   const plannerInput: TargetPlannerInput = {
     ...makePlannerInput(cycle, makeDecision({ AMD: 0, NVDA: 0 }), policy, 3_600_000, []),
@@ -499,33 +569,6 @@ const makeOpeningDriveInput = (calendarHash?: string): ObserveShadowDecisionInpu
     targetWeights: compiledDecision.targetWeights,
     submissionCutoffAt: cycle.window.submissionCutoffAt,
     observedAt: cycle.window.submissionOpenAt,
-  }
-  const executionMarketData: ExecutionMarketDataBinding = {
-    schemaVersion: 'bayn.execution-market-data-binding.v1',
-    snapshotSchemaVersion: 'bayn.intraday-market-snapshot.v1',
-    sessionDate: executionDate,
-    rangeStartAt: cycle.window.executionOpenAt,
-    rangeEndAt: '2026-07-22T13:35:00.000Z',
-    observedAt: cycle.window.submissionOpenAt,
-    universeId: 'opening-drive-fixture-v1',
-    universeSymbolHash: hash('7'),
-    sourceTopics: {
-      bars: 'market.alpaca.sip.bars.v1',
-      quotes: 'market.alpaca.sip.quotes.v1',
-      trades: 'market.alpaca.sip.trades.v1',
-    },
-    archiveWatermarks: [
-      {
-        sourceTopic: 'market.alpaca.sip.bars.v1',
-        sourcePartition: 0,
-        inclusiveLastOffset: '10',
-      },
-    ],
-    barsContentHash: hash('8'),
-    quotesContentHash: hash('9'),
-    tradesContentHash: hash('a'),
-    contentHash: snapshotContentHash,
-    snapshotId,
   }
   return {
     cycle,
@@ -548,8 +591,21 @@ const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecision
 
 describe('OBSERVE shadow decision', () => {
   test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
-    const accepted = await build(makeOpeningDriveInput())
-    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(snapshotId)
+    const input = makeOpeningDriveInput()
+    const accepted = await build(input)
+    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(input.executionMarketData?.snapshotId)
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData === undefined) throw new Error('opening-drive fixture must include execution market data')
+
+    const mixedBinding = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: { ...executionMarketData, barsContentHash: hash('b') },
+        }),
+      ),
+    )
+    expect(mixedBinding).toMatchObject({ failure: 'contract', message: 'execution market-data binding is invalid' })
 
     const failure = await Effect.runPromise(Effect.flip(buildObserveShadowDecision(makeOpeningDriveInput(hash('f')))))
     expect(failure).toMatchObject({

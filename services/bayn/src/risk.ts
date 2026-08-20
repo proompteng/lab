@@ -271,6 +271,7 @@ const StateBase = Schema.Struct({
   accountingHash: Sha256,
   marketDataSymbol: SymbolName,
   marketDataHash: Sha256,
+  executionMarketDataHash: Schema.optionalKey(Sha256),
   referencePriceMicros: PositiveMicrosSchema,
   expectedExecutionPriceMicros: PositiveMicrosSchema,
   marketDataObservedAt: UtcInstant,
@@ -319,8 +320,15 @@ export const StateSchema = StateBase.check(
   Schema.makeFilter((state: typeof StateBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
     const accountId = state.account.accountId
-    if (state.executionSession.signal.contentHash !== state.marketDataHash) {
-      issues.push({ path: ['marketDataHash'], issue: 'must match the finalized signal-session binding' })
+    const expectedMarketDataHash = state.executionMarketDataHash ?? state.executionSession.signal.contentHash
+    if (expectedMarketDataHash !== state.marketDataHash) {
+      issues.push({
+        path: ['marketDataHash'],
+        issue:
+          state.executionMarketDataHash === undefined
+            ? 'must match the finalized signal-session binding'
+            : 'must match the explicit execution market-data binding',
+      })
     }
     if (
       state.closeOnly !== true &&

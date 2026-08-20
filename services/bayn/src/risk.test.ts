@@ -415,6 +415,16 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, extra: true })).toThrow()
 
     const state = baseState()
+    const intradayMarketDataHash = hash('6')
+    expect(
+      decodeState({
+        ...state,
+        marketDataHash: intradayMarketDataHash,
+        executionMarketDataHash: intradayMarketDataHash,
+      }).executionMarketDataHash,
+    ).toBe(intradayMarketDataHash)
+    expect(() => decodeState({ ...state, marketDataHash: intradayMarketDataHash })).toThrow()
+    expect(() => decodeState({ ...state, executionMarketDataHash: intradayMarketDataHash })).toThrow()
     expect(() => decodeState({ ...state, brokerMode: 'LIVE' })).toThrow()
     expect(() =>
       decodeState({

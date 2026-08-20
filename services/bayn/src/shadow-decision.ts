@@ -355,7 +355,10 @@ const validateRiskState = (
     return Result.fail(error('binding', 'shadow risk market symbol must match its target delta'))
   }
   const decisionMarketDataHash = input.executionMarketData?.contentHash ?? snapshot.contentHash
-  if (state.marketDataHash !== decisionMarketDataHash) {
+  if (
+    state.marketDataHash !== decisionMarketDataHash ||
+    state.executionMarketDataHash !== input.executionMarketData?.contentHash
+  ) {
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
   if (

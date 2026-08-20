@@ -300,12 +300,33 @@ describe('opening-drive momentum strategy', () => {
     }
     const market = success(verifyIntradaySnapshot(request, noAskLiquidityRows))
     const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(OpeningDriveTargetPortfolioSchema, strictParseOptions)(decision)),
+    ).toBe(true)
 
     expect(decision.selectedSymbols).not.toContain('AMD')
     expect(decision.signals.find((signal) => signal.symbol === 'AMD')).toMatchObject({
       eligible: false,
       rejectionReasons: expect.arrayContaining(['displayed-liquidity']),
     })
+  })
+
+  test('rejects executable weights that diverge from selection evidence', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const flat = success(decideOpeningDrive(marketContext(0.001), protocol))
+    const decode = Schema.decodeUnknownResult(OpeningDriveTargetPortfolioSchema, strictParseOptions)
+
+    expect(Result.isFailure(decode({ ...flat, targetWeights: { ...flat.targetWeights, AMD: 0.1 } }))).toBe(true)
+    expect(
+      Result.isFailure(
+        decode({
+          ...flat,
+          signals: flat.signals.map((signal) =>
+            signal.symbol === 'AMD' ? { ...signal, eligible: true, rejectionReasons: signal.rejectionReasons } : signal,
+          ),
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('rejects a fresh observation at the precommitted entry cutoff', () => {
