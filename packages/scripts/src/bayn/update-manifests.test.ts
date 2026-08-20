@@ -713,20 +713,30 @@ describe('Bayn manifest promotion', () => {
     )
   })
 
-  test('keeps a raw research capital request bound to its exact source and image', () => {
+  test('promotes a strategy-identical runtime build without rewriting raw research provenance', () => {
     const paths = makeFixture({
       qualificationRunId: null,
       capitalActivationRequest: true,
       capitalActivationKind: 'ResearchCapitalActivationRequest',
     })
-    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+    const capitalActivationConfiguration = [
+      '            - name: BAYN_CAPITAL_ACTIVATION_REQUEST',
+      '              valueFrom:',
+      '                secretKeyRef:',
+      '                  name: bayn-alpaca-auth',
+      '                  key: capital-activation-request',
+      environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalActivationRequest').trimEnd(),
+    ].join('\n')
 
     expect(promote(paths)).toMatchObject({
-      promotionAction: 'hold',
-      promotionReason: 'research-capital-activation-refresh-required',
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
       qualificationMode: 'research',
     })
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`,
+    )
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(capitalActivationConfiguration)
   })
 
   test('keeps an exact research capital release eligible', () => {

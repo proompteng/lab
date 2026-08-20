@@ -34,6 +34,7 @@ import {
   readCompletedExecutionLifecycle,
   readOnlyExecutionPolicy,
   realizedCapitalActivation,
+  researchCapitalRecoveryRequestIsCompatible,
   type ConfiguredCapitalActivation,
 } from './capital-activation'
 
@@ -144,10 +145,12 @@ export const refreshReadOnlyCapitalActivation = (
     const { request, buildContinuation } = configured.success
     const current = yield* Ref.get(state)
     const observedAt = yield* currentUtcInstant
-    const currentRequest = capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
-      allowCloseRecovery: true,
-      buildContinuation,
-    })
+    const currentRequest = isResearchCapitalActivationRequest(request)
+      ? researchCapitalRecoveryRequestIsCompatible(request, observePlan, observedAt, true)
+      : capitalActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt, {
+          allowCloseRecovery: true,
+          buildContinuation,
+        })
     if (Result.isFailure(currentRequest)) {
       yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
       return yield* logActivationUnavailable('REQUEST_NOT_CURRENT')

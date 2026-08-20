@@ -377,8 +377,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     candidateDeploymentBehaviorHash === options.strategyBehaviorHash &&
     candidateDeploymentParameterHash === options.strategyParameterHash
   const deployedBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
-  const activationBuildMatches =
-    candidateDeploymentSourceSha === options.sourceSha && candidateDeploymentImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
@@ -460,10 +458,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   }
   if (
     researchCapitalRelease &&
-    ((!activationBuildMatches && capitalActivationKind !== researchCapitalBuildContinuation) ||
-      (capitalActivationKind === researchCapitalBuildContinuation
-        ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
-        : !candidateStrategyIdentityMatches || !candidateRuntimeMatchesManifest))
+    (capitalActivationKind === researchCapitalBuildContinuation
+      ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
+      : !candidateStrategyIdentityMatches || !candidateRuntimeMatchesManifest)
   ) {
     return {
       promotionAction: 'hold',

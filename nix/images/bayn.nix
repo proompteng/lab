@@ -13,6 +13,12 @@ let
   strategyBehaviorHash = "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c";
   # Canonical hash of the compiled bayn.opening-drive.protocol.v2 document.
   strategyParameterHash = "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329";
+  strategyName = "opening-drive-momentum";
+  # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
+  strategyProtocolHash = "d82848fc6f93a77ad584daff0fc4ad5ab4a517f49f3d4079e79484d9d1930354";
+  # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
+  # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
+  executionRiskPolicyHash = "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -37,6 +43,12 @@ let
       + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
       + " "
       + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
+      + " "
+      + buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName
+      + " "
+      + buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash
+      + " "
+      + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
     )
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
@@ -45,6 +57,9 @@ let
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg strategyName} services/bayn/dist/verify-build-contract.js"
+    "grep -F -- ${lib.escapeShellArg strategyProtocolHash} services/bayn/dist/verify-build-contract.js"
+    "grep -F -- ${lib.escapeShellArg executionRiskPolicyHash} services/bayn/dist/verify-build-contract.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
@@ -101,5 +116,8 @@ import ./bun-workspace-service.nix {
     "org.opencontainers.image.revision" = repoRevision;
     "proompteng.ai/bayn.strategy-behavior-hash" = strategyBehaviorHash;
     "proompteng.ai/bayn.strategy-parameter-hash" = strategyParameterHash;
+    "proompteng.ai/bayn.strategy-name" = strategyName;
+    "proompteng.ai/bayn.strategy-protocol-hash" = strategyProtocolHash;
+    "proompteng.ai/bayn.execution-risk-policy-hash" = executionRiskPolicyHash;
   };
 }
