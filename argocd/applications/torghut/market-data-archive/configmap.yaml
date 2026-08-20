@@ -8,7 +8,10 @@ data:
   ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"
   ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
   ARCHIVE_KAFKA_USERNAME: "torghut-ws"
-  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v1"
+  # v1 retained historical offsets from the pre-quote/trade topology and left current
+  # session records behind a multi-day replay. v2 starts every configured topic at
+  # its deployment-time head; existing ClickHouse rows remain immutable and readable.
+  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v2"
   ARCHIVE_OFFSET_RESET: "latest"
   ARCHIVE_CLIENT_ID: "bayn-market-data-archive"
   ARCHIVE_CORE_FEED: "iex"
