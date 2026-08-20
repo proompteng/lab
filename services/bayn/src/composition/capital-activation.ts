@@ -947,6 +947,11 @@ export const prepareOrRecoverResearchCapitalActivation = (
       )
     }
     const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
+    if (activationRequired) {
+      yield* Effect.fromResult(capitalActivationRequestIsCurrent(request, plan, null, observedAt)).pipe(
+        Effect.mapError((message) => capitalActivationOperationalError(message)),
+      )
+    }
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
         ? yield* Effect.fromResult(

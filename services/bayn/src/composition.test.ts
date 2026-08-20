@@ -1466,6 +1466,65 @@ describe('Bayn capital startup recovery boundary', () => {
     }
   })
 
+  test('rejects a raw stale-build mandate before retiring the previous authority', async () => {
+    const stalePlan = {
+      ...continuationResearchPlan,
+      cutoffAt: '2026-09-02T13:30:00.000Z',
+      expiresAt: '2026-09-04T20:00:00.000Z',
+    }
+    const { schemaVersion: _schemaVersion, ...stalePlanFields } = stalePlan
+    const staleRequest = Result.getOrThrow(
+      makeResearchCapitalActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(stalePlan)) },
+        ...stalePlanFields,
+      }),
+    )
+    const successorGenerationHash = Result.getOrThrow(
+      executionObserveSuccessorGenerationHash({
+        previousExecutionGenerationHash: continuationGeneration.generationHash,
+      }),
+    )
+    const operations: string[] = []
+    const authorityStore: AuthorityGenerationStoreShape = {
+      ensureAuthorityGeneration: () =>
+        Effect.sync(() => {
+          operations.push('rearm')
+          return {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: successorGenerationHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: continuationAuthority.version + 1,
+            updatedAt: '2026-08-31T20:00:00.500Z',
+          }
+        }),
+      readAuthorityState: Effect.succeed(continuationAuthority),
+      readResearchAuthorityGeneration: (generationHash) =>
+        Effect.succeed(generationHash === continuationGeneration.generationHash ? continuationGeneration : undefined),
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          staleRequest,
+          null,
+          unusedBrokerSession,
+          authorityStore,
+          unusedCapitalGrantLifecycle,
+          Effect.sync(() => operations.push('reconcile')),
+          config.operationTimeoutMs,
+        ).pipe(Effect.flip)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(failure.message).toBe('capital activation request is not bound to the current activation build')
+    expect(operations).toEqual([])
+  })
+
   test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {
     const previousExecutionGenerationHash = continuationGeneration.generationHash
     const successorGenerationHash = Result.getOrThrow(
