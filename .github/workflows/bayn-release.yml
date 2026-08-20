@@ -172,15 +172,16 @@ jobs:
             authored_config_arm64="$(crane config --platform linux/arm64 "$authored_reference")"
             test "$(image_label "$authored_config_amd64" org.opencontainers.image.revision)" = "$authored_source_sha"
             test "$(image_label "$authored_config_arm64" org.opencontainers.image.revision)" = "$authored_source_sha"
-            promotion_behavior_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
-            promotion_parameter_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
-            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$promotion_behavior_hash"
-            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$promotion_parameter_hash"
-            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$promotion_behavior_hash"
-            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PARAMETER_HASH)" = "$promotion_parameter_hash"
-            promotion_source_sha="$authored_source_sha"
-            promotion_image_tag="sha-${authored_source_sha}"
-            promotion_image_digest="$authored_image_digest"
+            authored_behavior_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
+            authored_parameter_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$authored_behavior_hash"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$authored_parameter_hash"
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$authored_behavior_hash"
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PARAMETER_HASH)" = "$authored_parameter_hash"
+            # The activation binding is immutable strategy provenance, not a runtime deployment pin. A reviewed
+            # descendant may advance infrastructure only while its semantic strategy identity remains exact.
+            test "$strategy_behavior_hash" = "$authored_behavior_hash"
+            test "$strategy_parameter_hash" = "$authored_parameter_hash"
           fi
 
           allowed_release_path='^(argocd/applications/bayn/(deployment|execution-activation|execution-controller|kustomization)\.yaml|argocd/applicationsets/product\.yaml)$'

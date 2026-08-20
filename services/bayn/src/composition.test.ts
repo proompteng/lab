@@ -88,7 +88,7 @@ import {
   executionMandateReceiptFinalizationExpiresAt,
   loadStrategyExecutionRiskPolicy,
 } from './observe-composition'
-import { validateResearchCapitalRiskPolicy } from './composition/capital-activation'
+import { capitalActivationRequestIsCurrent, validateResearchCapitalRiskPolicy } from './composition/capital-activation'
 import { runLifecycleMaintenanceAdvance } from './composition/lifecycle'
 import {
   readOnlyExecutionControllerBinding,
@@ -1330,6 +1330,48 @@ describe('Bayn capital startup recovery boundary', () => {
         imageDigest: continuationBuild.imageDigest,
       },
     })
+  })
+
+  test('treats the research activation build as provenance while preserving the image repository boundary', () => {
+    expect(
+      capitalActivationRequestIsCurrent(
+        continuationRequest,
+        continuationApplicationPlan,
+        null,
+        '2026-08-31T13:30:00.000Z',
+      ),
+    ).toEqual(Result.succeed(undefined))
+
+    const differentRepositoryPlan = {
+      ...continuationApplicationPlan,
+      config: {
+        ...continuationApplicationPlan.config,
+        build: {
+          ...continuationApplicationPlan.config.build,
+          imageRepository: 'registry.example.test/unreviewed-bayn',
+        },
+      },
+    }
+    expect(
+      capitalActivationRequestIsCurrent(continuationRequest, differentRepositoryPlan, null, '2026-08-31T13:30:00.000Z'),
+    ).toEqual(Result.fail('research capital request image repository does not match the current runtime'))
+  })
+
+  test('recovers the exact durable research generation from the raw authored request on a reviewed runtime build', async () => {
+    const generation = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        continuationApplicationPlan,
+        continuationRequest,
+        null,
+        unusedBrokerSession,
+        continuationAuthorityStore(),
+        unusedCapitalGrantLifecycle,
+        Effect.die(new Error('durable recovery must not rerun pre-activation reconciliation')),
+        config.operationTimeoutMs,
+      ),
+    )
+
+    expect(generation).toEqual(continuationGeneration)
   })
 
   test('resumes an exact failure-restricted generation for recovery without rearming or activating', async () => {

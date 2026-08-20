@@ -63,14 +63,18 @@ test('promotes verified main ancestry to an immutable GitOps branch', () => {
   expect(releaseWorkflow).not.toContain('git push --force')
 })
 
-test('preserves an exact authored research activation without rebinding it to a workflow-only build', () => {
+test('preserves authored research provenance while promoting a strategy-identical reviewed runtime build', () => {
   expect(releaseWorkflow).toContain('test "$activation_kind" = ResearchCapitalActivationRequest')
   expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$authored_source_sha" "$SOURCE_SHA"')
   expect(releaseWorkflow).toContain('authored_reference="registry.ide-newton.ts.net/lab/bayn@${authored_image_digest}"')
   expect(releaseWorkflow).toContain('nix run .#assert-oci-platforms -- "$authored_reference" linux/amd64 linux/arm64')
   expect(releaseWorkflow).toContain(
-    'test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$promotion_behavior_hash"',
+    'test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$authored_behavior_hash"',
   )
+  expect(releaseWorkflow).toContain('test "$strategy_behavior_hash" = "$authored_behavior_hash"')
+  expect(releaseWorkflow).toContain('test "$strategy_parameter_hash" = "$authored_parameter_hash"')
+  expect(releaseWorkflow).not.toContain('promotion_source_sha="$authored_source_sha"')
+  expect(releaseWorkflow).not.toContain('promotion_image_digest="$authored_image_digest"')
   expect(releaseWorkflow).toContain('--source-sha "$promotion_source_sha"')
   expect(releaseWorkflow).toContain('PROMOTED_SOURCE_SHA: ${{ steps.promotion.outputs.promotion_source_sha }}')
 })

@@ -174,10 +174,15 @@ export const capitalActivationRequestIsCurrent = (
     options.buildContinuation !== null &&
     options.buildContinuation !== undefined &&
     options.buildContinuation.request.requestHash === request.requestHash
-  if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker) {
+  if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker && !isResearchCapitalActivationRequest(request)) {
     return Result.fail('capital activation request is not bound to the current activation build')
   }
   if (isResearchCapitalActivationRequest(request)) {
+    // A research request's activation build is immutable authorship provenance. Runtime-only reviewed descendants may
+    // execute the same request, but moving it to another image repository would cross the approved trust boundary.
+    if (request.activation.imageRepository !== plan.config.build.imageRepository) {
+      return Result.fail('research capital request image repository does not match the current runtime')
+    }
     if (
       request.broker.environment !== BrokerEnvironment.Sandbox ||
       request.broker.accountId !== plan.config.alpaca.expectedAccountId ||
