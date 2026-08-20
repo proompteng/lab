@@ -32,14 +32,15 @@ const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
 const isIsoDate = Schema.is(IsoDateSchema)
-const maximumUInt64 = 18_446_744_073_709_551_615n
+const maximumNonNegativeInt32 = 2_147_483_647
+const maximumNonNegativeInt64 = 9_223_372_036_854_775_807n
 
 // ClickHouse orders String values by their binary representation. Source topics
 // are restricted to Kafka's ASCII name domain, so code-unit comparison is the
 // exact in-process equivalent and cannot vary with the host locale.
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
-const isCanonicalUInt64 = (value: string): boolean =>
-  /^\d+$/.test(value) && String(BigInt(value)) === value && BigInt(value) <= maximumUInt64
+const isCanonicalNonNegativeInt64 = (value: string): boolean =>
+  /^\d+$/.test(value) && String(BigInt(value)) === value && BigInt(value) <= maximumNonNegativeInt64
 
 const failure = (
   reason: IntradaySnapshotFailureReason,
@@ -170,11 +171,11 @@ const normalizeWatermark = (
 ): Result.Result<IntradayArchiveWatermark, IntradaySnapshotFailure> => {
   const sourcePartition = typeof row.source_partition === 'number' ? row.source_partition : Number(row.source_partition)
   const offset = row.inclusive_last_offset
-  if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > 4_294_967_295) {
-    return Result.fail(failure('watermark', 'intraday archive watermark partition is outside UInt32'))
+  if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > maximumNonNegativeInt32) {
+    return Result.fail(failure('watermark', 'intraday archive watermark partition is outside Kafka Int32'))
   }
-  if (!isCanonicalUInt64(offset)) {
-    return Result.fail(failure('watermark', 'intraday archive watermark offset must be a canonical UInt64'))
+  if (!isCanonicalNonNegativeInt64(offset)) {
+    return Result.fail(failure('watermark', 'intraday archive watermark offset must be a canonical Kafka Int64'))
   }
   return Result.succeed(
     Object.freeze({
@@ -202,8 +203,8 @@ const validateWatermarks = (
     if (
       !Number.isSafeInteger(watermark.sourcePartition) ||
       watermark.sourcePartition < 0 ||
-      watermark.sourcePartition > 4_294_967_295 ||
-      !isCanonicalUInt64(watermark.inclusiveLastOffset)
+      watermark.sourcePartition > maximumNonNegativeInt32 ||
+      !isCanonicalNonNegativeInt64(watermark.inclusiveLastOffset)
     ) {
       return Result.fail(failure('watermark', 'intraday archive watermark is outside its canonical domain'))
     }
@@ -249,11 +250,11 @@ const recordIdentity = (
   row: IntradayBarRow | IntradayQuoteRow | IntradayTradeRow,
 ): Result.Result<IntradayRecordIdentity, IntradaySnapshotFailure> => {
   const sourcePartition = typeof row.source_partition === 'number' ? row.source_partition : Number(row.source_partition)
-  if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > 4_294_967_295) {
-    return Result.fail(failure('lineage', 'intraday source partition must be an unsigned 32-bit integer'))
+  if (!Number.isSafeInteger(sourcePartition) || sourcePartition < 0 || sourcePartition > maximumNonNegativeInt32) {
+    return Result.fail(failure('lineage', 'intraday source partition must be a non-negative Kafka Int32'))
   }
-  if (!isCanonicalUInt64(row.source_offset)) {
-    return Result.fail(failure('lineage', 'intraday source offset must be a canonical UInt64'))
+  if (!isCanonicalNonNegativeInt64(row.source_offset)) {
+    return Result.fail(failure('lineage', 'intraday source offset must be a canonical Kafka Int64'))
   }
   return Result.succeed({
     provider: row.provider,
@@ -281,8 +282,8 @@ const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, IntradayS
     const close = yield* numberValue(row.close, 'bar close', true)
     const volume = yield* numberValue(row.volume, 'bar volume', false)
     const vwap = row.vwap === null ? null : yield* numberValue(row.vwap, 'bar VWAP', true)
-    if (row.trade_count !== null && !isCanonicalUInt64(row.trade_count)) {
-      return yield* Result.fail(failure('rows', 'intraday bar trade count must be a canonical UInt64'))
+    if (row.trade_count !== null && !isCanonicalNonNegativeInt64(row.trade_count)) {
+      return yield* Result.fail(failure('rows', 'intraday bar trade count must be a canonical non-negative Int64'))
     }
     if (high < Math.max(open, low, close) || low > Math.min(open, high, close)) {
       return yield* Result.fail(failure('rows', 'intraday bar OHLC values are inconsistent'))
@@ -514,10 +515,15 @@ const latestQuotes = (
   trades: readonly IntradayTrade[],
 ): Result.Result<Readonly<Record<string, IntradayQuote>>, IntradaySnapshotFailure> => {
   const latest: Record<string, IntradayQuote> = {}
-  const traded = new Set(trades.map((trade) => trade.symbol))
+  const latestTrades: Record<string, IntradayTrade> = {}
   for (const quote of quotes) latest[quote.symbol] = quote
+  for (const trade of trades) latestTrades[trade.symbol] = trade
+  const expectedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
+  const minimumDelay = millisecondsAsNanos(expectedDelayMs)
+  const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs)
   for (const symbol of request.universe) {
     const quote = latest[symbol]
+    const trade = latestTrades[symbol]
     if (
       quote === undefined ||
       intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) ||
@@ -529,8 +535,22 @@ const latestQuotes = (
         }),
       )
     }
-    if (!traded.has(symbol)) {
+    if (trade === undefined) {
       return Result.fail(failure('coverage', 'intraday snapshot lacks a trade for an expected symbol', { symbol }))
+    }
+    for (const evidence of [quote, trade]) {
+      const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
+      if (availabilityDelay < minimumDelay || availabilityDelay > maximumDelay) {
+        return Result.fail(
+          failure('freshness', 'intraday evidence does not match its declared feed delay', {
+            symbol,
+            sourceTopic: evidence.sourceTopic,
+            delayClass: request.delayClass,
+            eventAt: evidence.eventAt,
+            ingestedAt: evidence.ingestedAt,
+          }),
+        )
+      }
     }
   }
   return Result.succeed(Object.freeze(latest))

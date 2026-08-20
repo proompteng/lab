@@ -208,6 +208,26 @@ describe('immutable intraday market snapshot', () => {
         verifyIntradaySnapshotRequest({
           ...request,
           archiveWatermarks: request.archiveWatermarks.map((watermark, index) =>
+            index === 0 ? { ...watermark, sourcePartition: 2_147_483_648 } : watermark,
+          ),
+        }),
+      ),
+    ).toMatchObject({ reason: 'watermark' })
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          archiveWatermarks: request.archiveWatermarks.map((watermark, index) =>
+            index === 0 ? { ...watermark, inclusiveLastOffset: '9223372036854775808' } : watermark,
+          ),
+        }),
+      ),
+    ).toMatchObject({ reason: 'watermark' })
+    expect(
+      error(
+        verifyIntradaySnapshotRequest({
+          ...request,
+          archiveWatermarks: request.archiveWatermarks.map((watermark, index) =>
             index === 0 ? { ...watermark, inclusiveLastOffset: '18446744073709551616' } : watermark,
           ),
         }),
@@ -236,6 +256,14 @@ describe('immutable intraday market snapshot', () => {
 
     const firstQuote = rows.quotes[0]
     if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          quotes: [{ ...firstQuote, source_partition: '2147483648' }, ...rows.quotes.slice(1)],
+        }),
+      ),
+    ).toMatchObject({ reason: 'lineage' })
     expect(
       error(
         verifyIntradaySnapshot(request, {
@@ -437,7 +465,26 @@ describe('immutable intraday market snapshot', () => {
     ).toMatchObject({ reason: 'ordering' })
   })
 
-  test('rejects mixed-session observations and measures delayed-feed freshness from archive ingestion', () => {
+  test('rejects evidence that violates its declared real-time feed delay', () => {
+    const rows = makeRows()
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    const lateObservationRequest = { ...request, observedAt: '2026-08-18T13:50:00.000Z' }
+
+    expect(
+      error(
+        verifyIntradaySnapshot(lateObservationRequest, {
+          ...rows,
+          quotes: [
+            { ...firstQuote, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
+            ...rows.quotes.slice(1),
+          ],
+        }),
+      ),
+    ).toMatchObject({ reason: 'freshness', message: 'intraday evidence does not match its declared feed delay' })
+  })
+
+  test('rejects mixed-session observations and verifies delayed-feed availability', () => {
     const rows = makeRows()
     expect(error(verifyIntradaySnapshot({ ...request, observedAt: '2026-08-19T13:35:30.000Z' }, rows))).toMatchObject({
       reason: 'request',
@@ -461,11 +508,22 @@ describe('immutable intraday market snapshot', () => {
         ...delayedIdentity(quote),
         ingested_at: '2026-08-18T13:50:15.000Z',
       })),
-      trades: rows.trades.map(delayedIdentity),
+      trades: rows.trades.map((trade) => ({
+        ...delayedIdentity(trade),
+        ingested_at: '2026-08-18T13:50:00.000Z',
+      })),
     }
 
     expect(success(verifyIntradaySnapshot(delayedRequest, delayedRows)).manifest.delayClass).toBe(
       'delayed_15m_consolidated',
     )
+    expect(
+      error(
+        verifyIntradaySnapshot(delayedRequest, {
+          ...delayedRows,
+          quotes: delayedRows.quotes.map((quote) => ({ ...quote, ingested_at: quote.event_at })),
+        }),
+      ),
+    ).toMatchObject({ reason: 'freshness' })
   })
 })
