@@ -40,7 +40,10 @@ const request: IntradaySnapshotRequest = {
   ],
 }
 
-type IntradayIdentityRow = Omit<IntradayQuoteRow, 'bid_price' | 'bid_size' | 'ask_price' | 'ask_size'>
+type IntradayIdentityRow = Omit<
+  IntradayQuoteRow,
+  'latest_payload_variants' | 'bid_price' | 'bid_size' | 'ask_price' | 'ask_size'
+>
 
 const identity = (symbol: string, eventAt: string, sourceTopic: string, sourceOffset: number): IntradayIdentityRow => ({
   provider: 'alpaca',
@@ -81,13 +84,15 @@ const makeRows = () => {
   )
   const quotes: IntradayQuoteRow[] = symbols.map((symbol) => ({
     ...identity(symbol, '2026-08-18T13:35:15.000Z', quotesTopic, offset++),
+    latest_payload_variants: '1',
     bid_price: '100',
     bid_size: '10',
     ask_price: '100.02',
     ask_size: '12',
   }))
   const trades: IntradayTradeRow[] = symbols.map((symbol) => ({
-    ...identity(symbol, '2026-08-18T13:34:58.000Z', tradesTopic, offset++),
+    ...identity(symbol, '2026-08-18T13:35:10.000Z', tradesTopic, offset++),
+    latest_payload_variants: '1',
     price: '100.01',
     size: '5',
   }))
@@ -398,6 +403,28 @@ describe('immutable intraday market snapshot', () => {
       ),
     ).toMatchObject({ reason: 'request' })
 
+    const earlyCloseMaterial = {
+      ...calendarMaterial,
+      sessions: [
+        {
+          date: '2026-08-18',
+          openAt: '2026-08-18T13:30:00.000Z',
+          closeAt: '2026-08-18T18:00:00.000Z',
+        },
+      ],
+    }
+    expect(
+      verifyIntradaySnapshotRequest({
+        ...request,
+        calendar: { ...earlyCloseMaterial, normalizedResponseHash: canonicalHashV1(earlyCloseMaterial) },
+        rangeStartAt: '2026-08-18T17:55:00.000Z',
+        rangeEndAt: '2026-08-18T18:00:00.000Z',
+        observedAt: '2026-08-18T18:15:00.000Z',
+        feed: 'delayed_sip',
+        delayClass: 'delayed_15m_consolidated',
+      }),
+    ).toMatchObject({ _tag: 'Success' })
+
     expect(
       error(
         verifyIntradaySnapshotRequest({
@@ -455,13 +482,13 @@ describe('immutable intraday market snapshot', () => {
     }))
     const trades = rows.trades.map((trade) => ({
       ...trade,
-      event_at: '2026-08-18T13:34:58.123456789Z',
-      ingested_at: '2026-08-18T13:34:58.223456789Z',
+      event_at: '2026-08-18T13:35:10.123456789Z',
+      ingested_at: '2026-08-18T13:35:10.223456789Z',
     }))
 
     const snapshot = success(verifyIntradaySnapshot(request, { ...rows, quotes, trades }))
     expect(snapshot.quotes[0]?.eventAt).toBe('2026-08-18T13:35:15.123456789Z')
-    expect(snapshot.trades[0]?.eventAt).toBe('2026-08-18T13:34:58.123456789Z')
+    expect(snapshot.trades[0]?.eventAt).toBe('2026-08-18T13:35:10.123456789Z')
   })
 
   test('enforces causal and observation ordering at nanosecond precision', () => {
@@ -509,7 +536,17 @@ describe('immutable intraday market snapshot', () => {
       reason: 'freshness',
     })
     expect(error(verifyIntradaySnapshot(request, { ...rows, trades: rows.trades.slice(1) }))).toMatchObject({
-      reason: 'coverage',
+      reason: 'freshness',
+    })
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          trades: rows.trades.map((trade) => ({ ...trade, event_at: '2026-08-18T13:34:59.999Z' })),
+        }),
+      ),
+    ).toMatchObject({
+      reason: 'freshness',
     })
   })
 
@@ -527,6 +564,21 @@ describe('immutable intraday market snapshot', () => {
     const duplicateLineage = [firstQuote, { ...secondQuote, source_offset: firstQuote.source_offset }]
     expect(error(verifyIntradaySnapshot(request, { ...rows, quotes: duplicateLineage }))).toMatchObject({
       reason: 'lineage',
+    })
+  })
+
+  test('fails closed when tied latest archive records contain conflicting market payloads', () => {
+    const rows = makeRows()
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          quotes: rows.quotes.map((quote, index) => (index === 0 ? { ...quote, latest_payload_variants: '2' } : quote)),
+        }),
+      ),
+    ).toMatchObject({
+      reason: 'ordering',
+      message: 'latest intraday timestamp has conflicting market payloads',
     })
   })
 
@@ -590,6 +642,11 @@ describe('immutable intraday market snapshot', () => {
             { ...firstQuote, event_at: request.rangeEndAt, ingested_at: '2026-08-18T13:49:45.000Z' },
             ...rows.quotes.slice(1),
           ],
+          trades: rows.trades.map((trade) => ({
+            ...trade,
+            event_at: '2026-08-18T13:49:50.000Z',
+            ingested_at: '2026-08-18T13:49:50.000Z',
+          })),
         }),
       ),
     ).toMatchObject({ reason: 'freshness', message: 'intraday evidence does not match its declared feed delay' })
@@ -624,6 +681,7 @@ describe('immutable intraday market snapshot', () => {
       })),
       trades: rows.trades.map((trade) => ({
         ...delayedIdentity(trade),
+        event_at: delayedRequest.rangeEndAt,
         ingested_at: '2026-08-18T13:50:00.000Z',
       })),
     }
@@ -653,5 +711,54 @@ describe('immutable intraday market snapshot', () => {
       reason: 'freshness',
       message: 'intraday bar does not match its declared feed delay and finalization window',
     })
+  })
+
+  test('allows delayed ingestion after close but rejects post-close market events', () => {
+    const rows = makeRows()
+    const delayedRequest: IntradaySnapshotRequest = {
+      ...request,
+      feed: 'delayed_sip',
+      delayClass: 'delayed_15m_consolidated',
+      rangeStartAt: '2026-08-18T19:55:00.000Z',
+      rangeEndAt: '2026-08-18T20:00:00.000Z',
+      observedAt: '2026-08-18T20:15:30.000Z',
+    }
+    const delayedIdentity = <T extends IntradayBarRow | IntradayQuoteRow | IntradayTradeRow>(row: T): T => ({
+      ...row,
+      feed: delayedRequest.feed,
+      delay_class: delayedRequest.delayClass,
+    })
+    const bars = rows.bars.map((bar) => {
+      const eventAt = new Date(Date.parse(bar.event_at) + 6 * 60 * 60_000 + 25 * 60_000).toISOString()
+      return {
+        ...delayedIdentity(bar),
+        event_at: eventAt,
+        ingested_at: new Date(Date.parse(eventAt) + 16 * 60_000).toISOString(),
+      }
+    })
+    const quotes = rows.quotes.map((quote) => ({
+      ...delayedIdentity(quote),
+      event_at: delayedRequest.rangeEndAt,
+      ingested_at: '2026-08-18T20:15:00.000Z',
+    }))
+    const trades = rows.trades.map((trade) => ({
+      ...delayedIdentity(trade),
+      event_at: delayedRequest.rangeEndAt,
+      ingested_at: '2026-08-18T20:15:00.000Z',
+    }))
+
+    expect(success(verifyIntradaySnapshot(delayedRequest, { ...rows, bars, quotes, trades })).manifest.observedAt).toBe(
+      delayedRequest.observedAt,
+    )
+    expect(
+      error(
+        verifyIntradaySnapshot(delayedRequest, {
+          ...rows,
+          bars,
+          quotes: quotes.map((quote) => ({ ...quote, event_at: '2026-08-18T20:00:00.001Z' })),
+          trades,
+        }),
+      ),
+    ).toMatchObject({ reason: 'ordering' })
   })
 })

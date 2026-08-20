@@ -7,6 +7,7 @@ import {
   type ActiveUnboundCycle,
   type AutonomousCycle,
   type CycleCompletionState,
+  type LegacyAutonomousCycle,
   type PendingCycle,
 } from '../model'
 import type { CyclePublicationReadiness } from './recovery-readiness-model'
@@ -39,7 +40,7 @@ export type CycleRecoverySelection =
       readonly observedAt: string
       readonly reason: import('../model').CycleTerminalReason
     }
-  | { readonly action: 'READ_PUBLICATION'; readonly cycle: AutonomousCycle }
+  | { readonly action: 'READ_PUBLICATION'; readonly cycle: LegacyAutonomousCycle }
   | { readonly action: 'RETURN_READINESS'; readonly result: WaitingReadiness; readonly recoveryAction: 'WAITING' }
   | { readonly action: 'RETURN_READINESS'; readonly result: BlockedReadiness; readonly recoveryAction: 'BLOCKED' }
   | {

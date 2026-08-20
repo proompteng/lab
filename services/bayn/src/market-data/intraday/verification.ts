@@ -115,11 +115,7 @@ const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, I
   if (session === undefined || dayOfWeek === 0 || dayOfWeek === 6) {
     return Result.fail(failure('request', 'intraday snapshot date is not a finalized exchange session'))
   }
-  if (
-    request.rangeStartAt < session.openAt ||
-    request.rangeEndAt > session.closeAt ||
-    request.observedAt > session.closeAt
-  ) {
+  if (request.rangeStartAt < session.openAt || request.rangeEndAt > session.closeAt) {
     return Result.fail(failure('request', 'intraday range must remain within the bound regular exchange session'))
   }
   return Result.succeed(undefined)
@@ -399,6 +395,22 @@ const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTrade, Int
     return Object.freeze({ ...identity, price, size })
   })
 
+const validateLatestPayloadVariants = (
+  quotes: readonly IntradayQuoteRow[],
+  trades: readonly IntradayTradeRow[],
+): Result.Result<void, IntradaySnapshotFailure> => {
+  const ambiguous = [...quotes, ...trades].find((row) => row.latest_payload_variants !== '1')
+  return ambiguous === undefined
+    ? Result.succeed(undefined)
+    : Result.fail(
+        failure('ordering', 'latest intraday timestamp has conflicting market payloads', {
+          symbol: ambiguous.symbol,
+          sourceTopic: ambiguous.source_topic,
+          payloadVariants: ambiguous.latest_payload_variants,
+        }),
+      )
+}
+
 const compareOffsets = (left: string, right: string): number => {
   const leftOffset = BigInt(left)
   const rightOffset = BigInt(right)
@@ -625,8 +637,14 @@ const latestQuotes = (
         }),
       )
     }
-    if (trade === undefined) {
-      return Result.fail(failure('coverage', 'intraday snapshot lacks a trade for an expected symbol', { symbol }))
+    if (
+      trade === undefined ||
+      intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt) ||
+      intradayAgeNanos(request.observedAt, trade.ingestedAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
+    ) {
+      return Result.fail(
+        failure('freshness', 'intraday snapshot lacks a fresh post-range trade for every symbol', { symbol }),
+      )
     }
     for (const evidence of [quote, trade]) {
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
@@ -710,13 +728,18 @@ export const verifyIntradaySnapshot = (
       quotes: decodeIntradayQuoteRows(rows.quotes),
       trades: decodeIntradayTradeRows(rows.trades),
     })
+    yield* validateLatestPayloadVariants(decoded.quotes, decoded.trades)
+    const session = verifiedRequest.calendar.sessions.find(({ date }) => date === verifiedRequest.sessionDate)
+    if (session === undefined) {
+      return yield* Result.fail(failure('request', 'intraday snapshot has no bound exchange session'))
+    }
     const bars = Object.freeze((yield* Result.all(decoded.bars.map(normalizeBar))).toSorted(compareRecords))
     const quotes = Object.freeze((yield* Result.all(decoded.quotes.map(normalizeQuote))).toSorted(compareRecords))
     const trades = Object.freeze((yield* Result.all(decoded.trades.map(normalizeTrade))).toSorted(compareRecords))
     const allRecords = [...bars, ...quotes, ...trades].toSorted(compareRecords)
     yield* validateSourceTopics(verifiedRequest, bars, quotes, trades)
     yield* validateIdentity(verifiedRequest, bars, verifiedRequest.rangeEndAt, false)
-    yield* validateIdentity(verifiedRequest, [...quotes, ...trades], verifiedRequest.observedAt, true)
+    yield* validateIdentity(verifiedRequest, [...quotes, ...trades], session.closeAt, true)
     yield* validateBarCoverage(verifiedRequest, bars)
     const latest = yield* latestQuotes(verifiedRequest, quotes, trades)
     const lineage = yield* lineageOf(allRecords)
@@ -819,6 +842,7 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       quotes: snapshot.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
+        latest_payload_variants: '1',
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
@@ -826,6 +850,7 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       trades: snapshot.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
+        latest_payload_variants: '1',
         price: trade.price,
         size: trade.size,
       })),

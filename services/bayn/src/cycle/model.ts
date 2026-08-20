@@ -154,44 +154,63 @@ export const CycleExecutionPolicySchema = Schema.Union([
 ])
 export type CycleExecutionPolicy = typeof CycleExecutionPolicySchema.Type
 
-const CycleIdentityMaterialCommon = {
+const CycleIdentityExecutionMaterial = {
   qualificationRunId: Sha256Schema,
   strategyProtocolHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
-  signalSessionDate: IsoDateSchema,
-  signalCalendarVersion: StrictNonEmptyStringSchema,
   executionSessionDate: IsoDateSchema,
   executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
   executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
   executionCalendarHash: Sha256Schema,
 } as const
 
+const CycleIdentitySignalMaterial = {
+  ...CycleIdentityExecutionMaterial,
+  signalSessionDate: IsoDateSchema,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+} as const
+
 const CycleIdentityV1MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v1'),
   strategyName: Schema.Literal('risk-balanced-trend'),
-  ...CycleIdentityMaterialCommon,
+  ...CycleIdentitySignalMaterial,
   executionPolicy: CycleExecutionPolicyV1Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 })
 
 const CycleIdentityV2MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v2'),
   strategyName: Schema.Literal('opening-drive-momentum'),
-  ...CycleIdentityMaterialCommon,
+  ...CycleIdentitySignalMaterial,
   executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 })
 
-export const CycleIdentityMaterialSchema = Schema.Union([CycleIdentityV1MaterialSchema, CycleIdentityV2MaterialSchema])
+const CycleIdentityV3MaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v3'),
+  strategyName: Schema.Literal('opening-drive-momentum'),
+  ...CycleIdentityExecutionMaterial,
+  executionPolicy: CycleExecutionPolicyV2Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
+})
+
+export const CycleIdentityMaterialSchema = Schema.Union([
+  CycleIdentityV1MaterialSchema,
+  CycleIdentityV2MaterialSchema,
+  CycleIdentityV3MaterialSchema,
+])
 export type CycleIdentityMaterial = typeof CycleIdentityMaterialSchema.Type
 
 const CycleIdentityV1Base = Schema.Struct({ ...CycleIdentityV1MaterialSchema.fields, cycleId: Sha256Schema })
 const CycleIdentityV2Base = Schema.Struct({ ...CycleIdentityV2MaterialSchema.fields, cycleId: Sha256Schema })
+const CycleIdentityV3Base = Schema.Struct({ ...CycleIdentityV3MaterialSchema.fields, cycleId: Sha256Schema })
 
 const cycleIdentityIssues = (
-  identity: typeof CycleIdentityV1Base.Type | typeof CycleIdentityV2Base.Type,
+  identity: typeof CycleIdentityV1Base.Type | typeof CycleIdentityV2Base.Type | typeof CycleIdentityV3Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const { cycleId, ...material } = identity
-  if (identity.signalSessionDate >= identity.executionSessionDate) {
+  if (
+    identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+    identity.signalSessionDate >= identity.executionSessionDate
+  ) {
     issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
   }
   if (!canonicalHashMatches(material, cycleId)) {
@@ -203,49 +222,61 @@ const cycleIdentityIssues = (
 export const CycleIdentitySchema = Schema.Union([
   CycleIdentityV1Base.check(Schema.makeFilter(cycleIdentityIssues)),
   CycleIdentityV2Base.check(Schema.makeFilter(cycleIdentityIssues)),
+  CycleIdentityV3Base.check(Schema.makeFilter(cycleIdentityIssues)),
 ])
 export type CycleIdentity = typeof CycleIdentitySchema.Type
 
-const CycleWindowCommon = {
-  signalCalendarVersion: StrictNonEmptyStringSchema,
-  signalSessionDate: IsoDateSchema,
+const CycleWindowExecutionFields = {
   ...ExecutionCalendarObservationBase.fields,
-  signalCloseAt: UtcInstantSchema,
-  publicationDeadlineAt: UtcInstantSchema,
   submissionOpenAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
 } as const
 
 const CycleWindowV1Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v1'),
-  ...CycleWindowCommon,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+  signalSessionDate: IsoDateSchema,
+  ...CycleWindowExecutionFields,
+  signalCloseAt: UtcInstantSchema,
+  publicationDeadlineAt: UtcInstantSchema,
 })
 
 const CycleWindowV2Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v2'),
-  ...CycleWindowCommon,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+  signalSessionDate: IsoDateSchema,
+  ...CycleWindowExecutionFields,
+  signalCloseAt: UtcInstantSchema,
+  publicationDeadlineAt: UtcInstantSchema,
+})
+
+const CycleWindowV3Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v3'),
+  ...CycleWindowExecutionFields,
 })
 
 const cycleWindowIssues = (
-  window: typeof CycleWindowV1Base.Type | typeof CycleWindowV2Base.Type,
+  window: typeof CycleWindowV1Base.Type | typeof CycleWindowV2Base.Type | typeof CycleWindowV3Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues = executionCalendarObservationIssues(window)
-  if (window.signalSessionDate >= window.executionSessionDate) {
-    issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
-  }
-  if (window.signalCloseAt >= window.submissionOpenAt) {
-    issues.push({ path: ['submissionOpenAt'], issue: 'must follow the Signal session close' })
-  }
-  const expectedPublicationDeadlineAt =
-    window.schemaVersion === 'bayn.autonomous-cycle-window.v1' ? window.submissionOpenAt : window.executionOpenAt
-  if (window.publicationDeadlineAt !== expectedPublicationDeadlineAt) {
-    issues.push({
-      path: ['publicationDeadlineAt'],
-      issue:
-        window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
-          ? 'must equal the pre-open submission window'
-          : 'must equal the execution-session open',
-    })
+  if (window.schemaVersion !== 'bayn.autonomous-cycle-window.v3') {
+    if (window.signalSessionDate >= window.executionSessionDate) {
+      issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
+    }
+    if (window.signalCloseAt >= window.submissionOpenAt) {
+      issues.push({ path: ['submissionOpenAt'], issue: 'must follow the Signal session close' })
+    }
+    const expectedPublicationDeadlineAt =
+      window.schemaVersion === 'bayn.autonomous-cycle-window.v1' ? window.submissionOpenAt : window.executionOpenAt
+    if (window.publicationDeadlineAt !== expectedPublicationDeadlineAt) {
+      issues.push({
+        path: ['publicationDeadlineAt'],
+        issue:
+          window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
+            ? 'must equal the pre-open submission window'
+            : 'must equal the execution-session open',
+      })
+    }
   }
   if (window.submissionOpenAt >= window.submissionCutoffAt) {
     issues.push({ path: ['submissionCutoffAt'], issue: 'must follow the submission window open' })
@@ -253,7 +284,7 @@ const cycleWindowIssues = (
   if (
     (window.schemaVersion === 'bayn.autonomous-cycle-window.v1' &&
       window.submissionCutoffAt >= window.executionOpenAt) ||
-    (window.schemaVersion === 'bayn.autonomous-cycle-window.v2' && window.executionOpenAt >= window.submissionOpenAt)
+    (window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' && window.executionOpenAt >= window.submissionOpenAt)
   ) {
     issues.push({
       path: ['executionOpenAt'],
@@ -264,7 +295,7 @@ const cycleWindowIssues = (
     })
   }
   if (
-    window.schemaVersion === 'bayn.autonomous-cycle-window.v2' &&
+    window.schemaVersion !== 'bayn.autonomous-cycle-window.v1' &&
     window.submissionCutoffAt >= window.executionCloseAt
   ) {
     issues.push({ path: ['submissionCutoffAt'], issue: 'must precede the execution-session close' })
@@ -278,11 +309,12 @@ const cycleWindowIssues = (
 export const CycleWindowSchema = Schema.Union([
   CycleWindowV1Base.check(Schema.makeFilter(cycleWindowIssues)),
   CycleWindowV2Base.check(Schema.makeFilter(cycleWindowIssues)),
+  CycleWindowV3Base.check(Schema.makeFilter(cycleWindowIssues)),
 ])
 export type CycleWindow = typeof CycleWindowSchema.Type
 
 const CycleDraftBase = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2']),
+  schemaVersion: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3']),
   identity: CycleIdentitySchema,
   window: CycleWindowSchema,
 })
@@ -295,15 +327,23 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
       draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
     (draft.schemaVersion === 'bayn.autonomous-cycle.v2' &&
       draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
-      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2')
+      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2') ||
+    (draft.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+      draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+      draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v3')
   if (!versionMatches) {
     issues.push({ path: ['schemaVersion'], issue: 'must match the identity and window contract versions' })
   }
-  if (draft.identity.signalSessionDate !== draft.window.signalSessionDate) {
-    issues.push({ path: ['window', 'signalSessionDate'], issue: 'must match the cycle identity' })
-  }
-  if (draft.identity.signalCalendarVersion !== draft.window.signalCalendarVersion) {
-    issues.push({ path: ['window', 'signalCalendarVersion'], issue: 'must match the cycle identity' })
+  if (
+    draft.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+    draft.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3'
+  ) {
+    if (draft.identity.signalSessionDate !== draft.window.signalSessionDate) {
+      issues.push({ path: ['window', 'signalSessionDate'], issue: 'must match the cycle identity' })
+    }
+    if (draft.identity.signalCalendarVersion !== draft.window.signalCalendarVersion) {
+      issues.push({ path: ['window', 'signalCalendarVersion'], issue: 'must match the cycle identity' })
+    }
   }
   if (draft.identity.executionSessionDate !== draft.window.executionSessionDate) {
     issues.push({ path: ['window', 'executionSessionDate'], issue: 'must match the cycle identity' })
@@ -387,11 +427,14 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
         break
       case CycleState.Active:
         if (
-          cycle.bindings.snapshotId === undefined ||
+          (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.bindings.snapshotId === undefined) ||
           cycle.terminalReason !== undefined ||
           cycle.terminalAt !== undefined
         ) {
-          issues.push({ path: ['state'], issue: 'ACTIVE requires a snapshot and no terminal fields' })
+          issues.push({
+            path: ['state'],
+            issue: 'ACTIVE permits an unbound intraday cycle but requires a legacy snapshot and no terminal fields',
+          })
         }
         break
       case CycleState.Completed:
@@ -428,6 +471,35 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
 )
 export type AutonomousCycle = typeof AutonomousCycleSchema.Type
 
+type LegacyCycleIdentityV1 = Extract<CycleIdentity, { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v1' }>
+type LegacyCycleIdentityV2 = Extract<CycleIdentity, { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v2' }>
+type LegacyCycleWindowV1 = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v1' }>
+type LegacyCycleWindowV2 = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v2' }>
+export type LegacyCycleIdentity = LegacyCycleIdentityV1 | LegacyCycleIdentityV2
+export type LegacyCycleWindow = LegacyCycleWindowV1 | LegacyCycleWindowV2
+export type LegacyCycleDraft =
+  | (Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v1'
+      readonly identity: LegacyCycleIdentityV1
+      readonly window: LegacyCycleWindowV1
+    })
+  | (Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v2'
+      readonly identity: LegacyCycleIdentityV2
+      readonly window: LegacyCycleWindowV2
+    })
+export type LegacyAutonomousCycle =
+  | (Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v1'
+      readonly identity: LegacyCycleIdentityV1
+      readonly window: LegacyCycleWindowV1
+    })
+  | (Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+      readonly schemaVersion: 'bayn.autonomous-cycle.v2'
+      readonly identity: LegacyCycleIdentityV2
+      readonly window: LegacyCycleWindowV2
+    })
+
 type AutonomousCycleVariantBase = Omit<AutonomousCycle, 'bindings' | 'state' | 'terminalAt' | 'terminalReason'>
 type PendingCycleBindings =
   | { readonly snapshotId?: undefined; readonly decisionHash?: undefined }
@@ -441,7 +513,7 @@ export type PendingCycle = AutonomousCycleVariantBase & {
 }
 export type ActiveUnboundCycle = AutonomousCycleVariantBase & {
   readonly state: CycleState.Active
-  readonly bindings: { readonly snapshotId: string; readonly decisionHash?: undefined }
+  readonly bindings: PendingCycleBindings
   readonly terminalReason?: undefined
   readonly terminalAt?: undefined
 }
@@ -469,6 +541,54 @@ export type CorrelatedAutonomousCycle =
   | ActiveDecisionBoundCycle
   | CompletedCycle
   | BlockedCycle
+
+export type IntradayCycleIdentity = Extract<
+  CycleIdentity,
+  { readonly schemaVersion: 'bayn.autonomous-cycle-identity.v3' }
+>
+export type IntradayCycleWindow = Extract<CycleWindow, { readonly schemaVersion: 'bayn.autonomous-cycle-window.v3' }>
+export type IntradayCycleDraft = Omit<CycleDraft, 'identity' | 'schemaVersion' | 'window'> & {
+  readonly schemaVersion: 'bayn.autonomous-cycle.v3'
+  readonly identity: IntradayCycleIdentity
+  readonly window: IntradayCycleWindow
+}
+export type IntradayAutonomousCycle = Omit<AutonomousCycle, 'identity' | 'schemaVersion' | 'window'> & {
+  readonly schemaVersion: 'bayn.autonomous-cycle.v3'
+  readonly identity: IntradayCycleIdentity
+  readonly window: IntradayCycleWindow
+}
+
+export const isLegacyAutonomousCycle = (cycle: AutonomousCycle): cycle is LegacyAutonomousCycle =>
+  (cycle.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+    cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
+  (cycle.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+    cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v2')
+
+export const isIntradayAutonomousCycle = (cycle: AutonomousCycle): cycle is IntradayAutonomousCycle =>
+  cycle.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+  cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+  cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v3'
+
+export const isLegacyCycleDraft = (draft: CycleDraft): draft is LegacyCycleDraft =>
+  (draft.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+    draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+    draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v1') ||
+  (draft.schemaVersion === 'bayn.autonomous-cycle.v2' &&
+    draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v2' &&
+    draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v2')
+
+export const isIntradayCycleDraft = (draft: CycleDraft): draft is IntradayCycleDraft =>
+  draft.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+  draft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' &&
+  draft.window.schemaVersion === 'bayn.autonomous-cycle-window.v3'
+
+export const isIntradayCycleIdentity = (identity: CycleIdentity): identity is IntradayCycleIdentity =>
+  identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
+
+export const cycleAuthoritySessionDate = (identity: CycleIdentity): CycleIdentity['executionSessionDate'] =>
+  isIntradayCycleIdentity(identity) ? identity.executionSessionDate : identity.signalSessionDate
 
 export const SignalCycleSessionSchema = Schema.Struct({
   calendar_version: StrictNonEmptyStringSchema,

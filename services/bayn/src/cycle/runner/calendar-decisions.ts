@@ -6,11 +6,12 @@ import { Pipeable } from '../../pipeable'
 import {
   makeCycleDraft,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
   type CycleConstructionFailure,
 } from '../construction'
-import type { CycleDraft } from '../model'
+import type { CycleDraft, CycleExecutionPolicy } from '../model'
 import { isEverySessionCycleCadence, type CycleCandidate } from './model'
 
 const calendarRangeDays = 31
@@ -64,7 +65,7 @@ export type CyclePublicationFailure =
 
 export type CycleCalendarQueryFailure = {
   readonly _tag: 'CycleCalendarQueryRangeOutOfRange'
-  readonly signalSessionDate: string
+  readonly startSessionDate: string
   readonly offsetDays: number
   readonly cause: IsoDateShiftCause
 }
@@ -94,23 +95,25 @@ const shiftIsoDate = (date: string, days: number): Result.Result<string, IsoDate
     : failure({ _tag: 'IsoDateShiftResultOutOfRange', date, days, shifted })
 }
 
-export const marketCalendarQueryForSignal = (
-  signalSessionDate: string,
+export const marketCalendarQueryFromSession = (
+  startSessionDate: string,
 ): Result.Result<MarketCalendarQuery, CycleCalendarQueryFailure> =>
   Result.mapError(
-    Result.map(shiftIsoDate(signalSessionDate, calendarRangeDays - 1), (end) => ({ start: signalSessionDate, end })),
+    Result.map(shiftIsoDate(startSessionDate, calendarRangeDays - 1), (end) => ({ start: startSessionDate, end })),
     (failure) => ({
       _tag: 'CycleCalendarQueryRangeOutOfRange',
-      signalSessionDate,
+      startSessionDate,
       offsetDays: calendarRangeDays - 1,
       cause: failure.cause,
     }),
   )
 
+export const marketCalendarQueryForSignal = marketCalendarQueryFromSession
+
 export const marketCalendarQueryForPublications = (
   publications: NonEmptyPublications,
 ): Result.Result<MarketCalendarQuery, CycleCalendarQueryFailure> =>
-  marketCalendarQueryForSignal(
+  marketCalendarQueryFromSession(
     publications.reduce((earliest, publication) =>
       publication.signalSession.session_date < earliest.signalSession.session_date ? publication : earliest,
     ).signalSession.session_date,
@@ -201,6 +204,20 @@ const selectNextExecutionSessionDataFirst = (
 
 export const selectNextExecutionSession = Pipeable.dual(2, selectNextExecutionSessionDataFirst)
 
+export const selectIntradayExecutionSession = (
+  observation: MarketCalendarObservation,
+  executionPolicy: Extract<
+    CycleExecutionPolicy,
+    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
+  >,
+  observedAt: string,
+): MarketCalendarSession | undefined =>
+  observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+    const cutoffAt = Date.parse(session.openAt) + executionPolicy.submissionCutoffAfterOpenMs
+    if (!Number.isFinite(cutoffAt) || Date.parse(observedAt) >= cutoffAt) return selected
+    return selected === undefined || session.date < selected.date ? session : selected
+  }, undefined)
+
 const isMonthEndCycleDueDataFirst = (signalSessionDate: string, executionSessionDate: string): boolean =>
   signalSessionDate.slice(0, 7) !== executionSessionDate.slice(0, 7)
 
@@ -242,3 +259,41 @@ const makeDueCycleDraftDataFirst = (
       })
 
 export const makeDueCycleDraft = Pipeable.dual(3, makeDueCycleDraftDataFirst)
+
+export interface IntradayCycleCandidate {
+  readonly qualificationRunId: string
+  readonly strategyName: 'opening-drive-momentum'
+  readonly strategyProtocolHash: string
+  readonly accountId: string
+  readonly executionPolicy: Extract<
+    CycleExecutionPolicy,
+    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
+  >
+}
+
+export const makeIntradayCycleDraft = (
+  candidate: IntradayCycleCandidate,
+  observation: MarketCalendarObservation,
+  executionSession: MarketCalendarSession,
+): Result.Result<CycleDraft, CycleConstructionFailure> =>
+  Result.gen(function* () {
+    const executionCalendar = yield* makeExecutionCalendarObservation({
+      schemaVersion: observation.schemaVersion,
+      source: observation.source,
+      ...executionSession,
+    })
+    const identity = yield* makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: candidate.strategyName,
+      qualificationRunId: candidate.qualificationRunId,
+      strategyProtocolHash: candidate.strategyProtocolHash,
+      accountId: candidate.accountId,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy: candidate.executionPolicy,
+    })
+    const window = yield* makeIntradayCycleWindow(executionCalendar, candidate.executionPolicy)
+    return yield* makeCycleDraft(identity, window)
+  })

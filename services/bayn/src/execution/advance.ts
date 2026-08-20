@@ -2,7 +2,7 @@ import { Data, Effect } from 'effect'
 
 import type { CycleRunnerError } from '../cycle/runner'
 import { CycleState } from '../cycle/model'
-import type { CycleNotDueReason, CycleRunResult } from '../cycle/runner/model'
+import type { CycleBindingResult, CycleNotDueReason, CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { withObservedSpan } from '../telemetry'
@@ -10,12 +10,13 @@ import { withObservedSpan } from '../telemetry'
 type AdvanceCycleResult =
   | Pick<Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>, 'outcome' | 'action'>
   | {
-      readonly outcome: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }>['outcome']
+      readonly outcome: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' }>['outcome']
+      readonly readiness?: Pick<CycleBindingResult, 'outcome'>
+    }
+  | {
+      readonly outcome: 'RESUMED'
       readonly readiness: {
-        readonly outcome: Extract<
-          CycleRunResult,
-          { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }
-        >['readiness']['outcome']
+        readonly outcome: Extract<CycleRunResult, { readonly outcome: 'RESUMED' }>['readiness']['outcome']
       }
     }
   | {

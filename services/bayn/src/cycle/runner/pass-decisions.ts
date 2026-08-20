@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { Pipeable } from '../../pipeable'
-import { CycleState, type AutonomousCycle } from '../model'
+import { CycleState, isLegacyAutonomousCycle, type AutonomousCycle } from '../model'
 import { decideMonthEndCadenceEligibility, type MonthEndCadenceDecision } from '../observability'
 import type { CycleReadinessError } from '../readiness'
 import type { CycleRecoverySelection } from '../recovery'
@@ -67,11 +67,13 @@ export type ObservableCycleCadence = 'MONTHLY' | 'EVERY_SESSION'
 export const observableCycleCadence = (cadence: CycleCadence | undefined): ObservableCycleCadence =>
   isEverySessionCycleCadence(cadence) ? 'EVERY_SESSION' : 'MONTHLY'
 
-const cadenceDecisionFromCycle = (cycle: AutonomousCycle): MonthEndCadenceDecision =>
-  decideMonthEndCadenceEligibility({
-    signalSessionDate: cycle.identity.signalSessionDate,
-    executionSessionDate: cycle.identity.executionSessionDate,
-  })
+const cadenceDecisionFromCycle = (cycle: AutonomousCycle): MonthEndCadenceDecision | undefined =>
+  isLegacyAutonomousCycle(cycle)
+    ? decideMonthEndCadenceEligibility({
+        signalSessionDate: cycle.identity.signalSessionDate,
+        executionSessionDate: cycle.identity.executionSessionDate,
+      })
+    : undefined
 
 export const cycleRunResultCadenceDecision = (result: CycleRunResult): MonthEndCadenceDecision | undefined => {
   switch (result.outcome) {
@@ -80,10 +82,12 @@ export const cycleRunResultCadenceDecision = (result: CycleRunResult): MonthEndC
     case 'NOT_DUE':
     case 'ACQUIRED':
     case 'REACQUIRED':
-      return decideMonthEndCadenceEligibility({
-        signalSessionDate: result.signalSessionDate,
-        executionSessionDate: result.executionSessionDate,
-      })
+      return result.signalSessionDate === undefined
+        ? undefined
+        : decideMonthEndCadenceEligibility({
+            signalSessionDate: result.signalSessionDate,
+            executionSessionDate: result.executionSessionDate,
+          })
     case 'ALREADY_ACQUIRED':
     case 'ALREADY_TERMINAL':
     case 'RECOVERED':
@@ -167,8 +171,10 @@ export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: C
         message: 'Bayn autonomous cycle pass completed',
         annotations: {
           outcome: result.outcome,
-          signalSessionDate: result.signalSessionDate,
           executionSessionDate: result.cycle.identity.executionSessionDate,
+          ...(isLegacyAutonomousCycle(result.cycle)
+            ? { signalSessionDate: result.cycle.identity.signalSessionDate }
+            : {}),
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
@@ -182,8 +188,10 @@ export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: C
         message: 'Bayn autonomous cycle pass completed',
         annotations: {
           outcome: result.outcome,
-          signalSessionDate: result.signalSessionDate,
           executionSessionDate: result.readiness.cycle.identity.executionSessionDate,
+          ...(isLegacyAutonomousCycle(result.readiness.cycle)
+            ? { signalSessionDate: result.readiness.cycle.identity.signalSessionDate }
+            : {}),
           observedAt: result.observedAt,
           cycleId: result.readiness.cycle.identity.cycleId,
           cycleState: result.readiness.cycle.state,
@@ -199,8 +207,10 @@ export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: C
         annotations: {
           outcome: result.outcome,
           recoveryAction: result.action,
-          signalSessionDate: result.cycle.identity.signalSessionDate,
           executionSessionDate: result.cycle.identity.executionSessionDate,
+          ...(isLegacyAutonomousCycle(result.cycle)
+            ? { signalSessionDate: result.cycle.identity.signalSessionDate }
+            : {}),
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
@@ -215,7 +225,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: C
         annotations: {
           outcome: result.outcome,
           ...(result.reason === undefined ? {} : { notDueReason: result.reason }),
-          signalSessionDate: result.signalSessionDate,
+          ...(result.signalSessionDate === undefined ? {} : { signalSessionDate: result.signalSessionDate }),
           executionSessionDate: result.executionSessionDate,
           observedAt: result.observedAt,
           calendarResponseHash: result.calendarResponseHash,
@@ -225,25 +235,27 @@ export const cyclePassLogFacts = (observation: CyclePassObservation, cadence?: C
         },
       }
     case 'ACQUIRED':
-    case 'REACQUIRED':
+    case 'REACQUIRED': {
+      const cycle = result.readiness?.cycle ?? result.receipt.cycle
       return {
         level: 'INFO',
         message: 'Bayn autonomous cycle pass completed',
         annotations: {
           outcome: result.outcome,
-          signalSessionDate: result.signalSessionDate,
+          ...(result.signalSessionDate === undefined ? {} : { signalSessionDate: result.signalSessionDate }),
           executionSessionDate: result.executionSessionDate,
           observedAt: result.observedAt,
           calendarResponseHash: result.calendarResponseHash,
           calendarReadContentHash: result.calendarReadContentHash,
-          cycleId: result.readiness.cycle.identity.cycleId,
-          cycleState: result.readiness.cycle.state,
-          publicationReadiness: result.readiness.outcome,
+          cycleId: cycle.identity.cycleId,
+          cycleState: cycle.state,
+          ...(result.readiness === undefined ? {} : { publicationReadiness: result.readiness.outcome }),
           persistenceDeduplicated: !result.receipt.created,
           cycleCadence,
           ...cadenceAnnotations,
         },
       }
+    }
   }
 }
 

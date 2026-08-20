@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { Pipeable } from '../../pipeable'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, isLegacyAutonomousCycle, type AutonomousCycle } from '../model'
 import { cycleDraftMatches, cycleDraftOf } from '../transitions'
 import type { CyclePublicationReadiness } from './recovery-readiness-model'
 import {
@@ -38,10 +38,18 @@ const readinessBindingFacts = (
     actualQualificationRunId: readiness.cycle.identity.qualificationRunId,
     expectedStrategyProtocolHash: cycle.identity.strategyProtocolHash,
     actualStrategyProtocolHash: readiness.cycle.identity.strategyProtocolHash,
-    expectedSignalSessionDate: cycle.identity.signalSessionDate,
-    actualSignalSessionDate: readiness.cycle.identity.signalSessionDate,
-    expectedSignalCalendarVersion: cycle.identity.signalCalendarVersion,
-    actualSignalCalendarVersion: readiness.cycle.identity.signalCalendarVersion,
+    ...(isLegacyAutonomousCycle(cycle)
+      ? {
+          expectedSignalSessionDate: cycle.identity.signalSessionDate,
+          expectedSignalCalendarVersion: cycle.identity.signalCalendarVersion,
+        }
+      : {}),
+    ...(isLegacyAutonomousCycle(readiness.cycle)
+      ? {
+          actualSignalSessionDate: readiness.cycle.identity.signalSessionDate,
+          actualSignalCalendarVersion: readiness.cycle.identity.signalCalendarVersion,
+        }
+      : {}),
     expectedSubmissionCutoffAt: cycle.window.submissionCutoffAt,
     actualSubmissionCutoffAt: readiness.cycle.window.submissionCutoffAt,
     expectedSelectedSnapshotId: selectedSnapshotId,
@@ -71,6 +79,8 @@ const readinessCommonMatches = (cycle: AutonomousCycle, readiness: CyclePublicat
   readiness.observedAt >= cycle.updatedAt
 
 const waitingReadinessMatches = (cycle: AutonomousCycle, readiness: WaitingReadiness): boolean =>
+  isLegacyAutonomousCycle(cycle) &&
+  isLegacyAutonomousCycle(readiness.cycle) &&
   cycle.bindings.snapshotId === undefined &&
   readiness.cycle.state === CycleState.Pending &&
   readiness.cycle.bindings.snapshotId === undefined &&
@@ -83,6 +93,8 @@ const waitingReadinessMatches = (cycle: AutonomousCycle, readiness: WaitingReadi
       readiness.observedAt < cycle.window.publicationDeadlineAt))
 
 const boundReadinessMatches = (cycle: AutonomousCycle, readiness: BoundOrAlreadyReadiness): boolean =>
+  isLegacyAutonomousCycle(cycle) &&
+  isLegacyAutonomousCycle(readiness.cycle) &&
   readiness.outcome === 'BOUND' &&
   cycle.bindings.snapshotId === undefined &&
   readiness.cycle.state === CycleState.Pending &&
@@ -94,7 +106,13 @@ const boundReadinessMatches = (cycle: AutonomousCycle, readiness: BoundOrAlready
   readiness.observedAt < cycle.window.publicationDeadlineAt
 
 const alreadyBoundReadinessMatches = (cycle: AutonomousCycle, readiness: BoundOrAlreadyReadiness): boolean => {
-  if (readiness.outcome !== 'ALREADY_BOUND') return false
+  if (
+    readiness.outcome !== 'ALREADY_BOUND' ||
+    !isLegacyAutonomousCycle(cycle) ||
+    !isLegacyAutonomousCycle(readiness.cycle)
+  ) {
+    return false
+  }
   const unchangedBoundCycle =
     cycle.bindings.snapshotId === readiness.snapshotId &&
     readiness.cycle.stateVersion === cycle.stateVersion &&
@@ -113,6 +131,8 @@ const alreadyBoundReadinessMatches = (cycle: AutonomousCycle, readiness: BoundOr
 }
 
 const blockedReadinessMatches = (cycle: AutonomousCycle, readiness: BlockedReadiness): boolean =>
+  isLegacyAutonomousCycle(cycle) &&
+  isLegacyAutonomousCycle(readiness.cycle) &&
   cycle.bindings.snapshotId === undefined &&
   readiness.cycle.state === CycleState.Blocked &&
   readiness.cycle.bindings.snapshotId === undefined &&

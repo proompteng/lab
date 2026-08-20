@@ -2,7 +2,7 @@ import { Effect, Ref, Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
 import type { EvidenceStoreService } from '../db/evidence-store'
-import { OperationalError, formatError } from '../errors'
+import { OperationalError, formatError, operationalError } from '../errors'
 import type { MarketDataInspection } from '../market-data'
 import { databaseOperation, withinDeadline } from '../operations'
 import type { RuntimeState } from '../runtime-state'
@@ -360,6 +360,22 @@ const evaluateAndJournal = (
     Effect.withLogSpan('startup'),
   )
 
+const evaluateSupportedStrategy = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+  strategy: StrategyRuntime,
+  dependencies: StartupDependencies,
+): Effect.Effect<void, OperationalError> =>
+  strategy.definition.name === 'risk-balanced-trend'
+    ? evaluateAndJournal(config, state, strategy, dependencies)
+    : Effect.fail(
+        operationalError({
+          component: 'strategy',
+          operation: 'startup-qualification',
+          message: `${strategy.definition.name} requires pinned intraday qualification evidence; the legacy daily brokerless workflow is unsupported`,
+        }),
+      )
+
 const runStartupDataFirst = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
@@ -367,7 +383,7 @@ const runStartupDataFirst = (
   dependencies: StartupDependencies,
 ): Effect.Effect<void, OperationalError> =>
   (config.qualificationRunId === undefined
-    ? evaluateAndJournal(config, state, strategy, dependencies)
+    ? evaluateSupportedStrategy(config, state, strategy, dependencies)
     : recoverPinnedQualification(config, config.qualificationRunId, state, dependencies.evidenceStore)
   ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))
 

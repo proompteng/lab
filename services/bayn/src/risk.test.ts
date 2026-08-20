@@ -78,16 +78,20 @@ type InvalidRiskFailurePair = Exclude<(typeof riskFailurePairs)[number], RiskFai
 const riskFailurePairCoverage: [MissingRiskFailurePair, InvalidRiskFailurePair] extends [never, never] ? true : never =
   true
 
-type ExecutionSessionWithoutHash = State['executionSession'] extends infer Binding
-  ? Binding extends { readonly bindingHash: string }
-    ? Omit<Binding, 'bindingHash'>
-    : never
-  : never
+type ExecutionSession = State['executionSession']
+type LegacyExecutionSession = Extract<ExecutionSession, { readonly schemaVersion: 'bayn.execution-session-binding.v1' }>
+type IntradayExecutionSession = Exclude<ExecutionSession, LegacyExecutionSession>
+type WithoutBindingHash<T> = T extends ExecutionSession ? Omit<T, 'bindingHash'> : never
+type LegacyExecutionSessionWithoutHash = WithoutBindingHash<LegacyExecutionSession>
+type IntradayExecutionSessionWithoutHash = WithoutBindingHash<IntradayExecutionSession>
+type ExecutionSessionWithoutHash = LegacyExecutionSessionWithoutHash | IntradayExecutionSessionWithoutHash
 
-const rehashExecutionSession = (binding: ExecutionSessionWithoutHash): State['executionSession'] => ({
-  ...binding,
-  bindingHash: canonicalHashV1(binding),
-})
+function rehashExecutionSession(binding: LegacyExecutionSessionWithoutHash): LegacyExecutionSession
+function rehashExecutionSession(binding: IntradayExecutionSessionWithoutHash): IntradayExecutionSession
+function rehashExecutionSession(binding: ExecutionSessionWithoutHash): ExecutionSession
+function rehashExecutionSession(binding: ExecutionSessionWithoutHash): ExecutionSession {
+  return { ...binding, bindingHash: canonicalHashV1(binding) }
+}
 
 const changeExecutionWindow = (
   binding: State['executionSession'],
@@ -110,7 +114,7 @@ const changeExecutionWindow = (
   const executionDate = executionOpenAt.slice(0, 10) as State['executionSession']['executionSession']['date']
   const signalDate = utcDateFromEpochMillis(
     Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000,
-  ) as State['executionSession']['signal']['sessionDate']
+  ) as LegacyExecutionSession['signal']['sessionDate']
   const executionSession = {
     date: executionDate,
     openAt: executionOpenAt,
@@ -302,14 +306,23 @@ const makeState = (overrides: Partial<State> = {}): State => {
     } satisfies State['reconciliation'])
   const sourceExecutionSession = overrides.executionSession ?? merged.executionSession
   const { bindingHash: _, ...bindingMaterial } = sourceExecutionSession
-  const executionSession = rehashExecutionSession({
-    ...bindingMaterial,
-    signal: { ...bindingMaterial.signal, contentHash: merged.marketDataHash },
-    planningBrokerState: {
-      observedAt: reconciliation.reconciledAt,
-      contentHash: reconciliation.observedHash,
-    },
-  })
+  const executionSession =
+    bindingMaterial.schemaVersion === 'bayn.execution-session-binding.v1'
+      ? rehashExecutionSession({
+          ...bindingMaterial,
+          signal: { ...bindingMaterial.signal, contentHash: merged.marketDataHash },
+          planningBrokerState: {
+            observedAt: reconciliation.reconciledAt,
+            contentHash: reconciliation.observedHash,
+          },
+        })
+      : rehashExecutionSession({
+          ...bindingMaterial,
+          planningBrokerState: {
+            observedAt: reconciliation.reconciledAt,
+            contentHash: reconciliation.observedHash,
+          },
+        })
   return decodeState({
     ...merged,
     reconciliation,

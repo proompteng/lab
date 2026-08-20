@@ -62,12 +62,20 @@ import { MutationEventType, MutationStore, type MutationEvent, type MutationStor
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
-import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
+import {
+  MarketData,
+  type IntradayMarketDataService,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRequest,
+  type MarketDataService,
+  type MarketDataSnapshot,
+} from './market-data'
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
   openingDriveBehaviorHash,
   openingDriveExecutionModel,
+  type OpeningDriveProtocol,
 } from './strategy/opening-drive'
 import {
   buildMutationShadowCycleDecision,
@@ -327,6 +335,141 @@ const snapshot: MarketDataSnapshot = {
   bars: sourceSnapshot.bars,
   manifest: { ...snapshotManifest, hash: canonicalHashV1(snapshotManifest) },
 }
+
+const intradayArchiveTopics = {
+  bars: 'torghut.bars.1m.v1',
+  quotes: 'torghut.quotes.v1',
+  trades: 'torghut.trades.v1',
+} as const
+
+const intradaySnapshot = (protocol: OpeningDriveProtocol, request: IntradaySnapshotRequest): IntradayMarketSnapshot => {
+  const rangeStartEpoch = Date.parse(request.rangeStartAt)
+  const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
+  const identity = (
+    symbol: string,
+    sourceTopic: string,
+    sourceOffset: number,
+    eventAt: string,
+    ingestedAt: string = request.observedAt,
+  ) => ({
+    provider: 'alpaca' as const,
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    feed: protocol.feed,
+    marketSession: 'regular' as const,
+    delayClass: protocol.delayClass,
+    symbol,
+    eventAt,
+    ingestedAt,
+    sourceTopic,
+    sourcePartition: 0,
+    sourceOffset: String(sourceOffset),
+    schemaVersion: 1 as const,
+  })
+  const compareRecords = (left: { eventAt: string; symbol: string }, right: { eventAt: string; symbol: string }) =>
+    left.eventAt.localeCompare(right.eventAt) || left.symbol.localeCompare(right.symbol)
+  const bars = protocol.universe
+    .flatMap((symbol, symbolIndex) =>
+      Array.from({ length: rangeMinutes }, (_, minute) => ({
+        ...identity(
+          symbol,
+          intradayArchiveTopics.bars,
+          symbolIndex * rangeMinutes + minute + 1,
+          utcInstantFromEpochMillis(rangeStartEpoch + minute * 60_000),
+          utcInstantFromEpochMillis(rangeStartEpoch + (minute + 1) * 60_000),
+        ),
+        channel: 'bars' as const,
+        final: true,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 1_000,
+        vwap: 100,
+        tradeCount: '100',
+      })),
+    )
+    .toSorted(compareRecords)
+  const quoteAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 500)
+  const quotes = protocol.universe
+    .map((symbol, index) => ({
+      ...identity(symbol, intradayArchiveTopics.quotes, index + 1, quoteAt),
+      bidPrice: 99.99,
+      bidSize: 100,
+      askPrice: 100.01,
+      askSize: 100,
+    }))
+    .toSorted(compareRecords)
+  const tradeAt = utcInstantFromEpochMillis(Date.parse(request.rangeEndAt) + 400)
+  const trades = protocol.universe
+    .map((symbol, index) => ({
+      ...identity(symbol, intradayArchiveTopics.trades, index + 1, tradeAt),
+      price: 100,
+      size: 10,
+    }))
+    .toSorted(compareRecords)
+  const lineage = Object.values(intradayArchiveTopics)
+    .sort()
+    .map((sourceTopic) => ({
+      sourceTopic,
+      sourcePartition: 0,
+      firstOffset: '1',
+      lastOffset: String(sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length),
+      recordCount: sourceTopic === intradayArchiveTopics.bars ? bars.length : protocol.universe.length,
+    }))
+  const material = {
+    schemaVersion: 'bayn.intraday-market-snapshot.v1' as const,
+    sessionDate: request.sessionDate,
+    calendar: request.calendar,
+    rangeStartAt: request.rangeStartAt,
+    rangeEndAt: request.rangeEndAt,
+    observedAt: request.observedAt,
+    universeId: request.universeId,
+    universeSymbolHash: request.universeSymbolHash,
+    symbols: [...request.universe].sort(),
+    feed: request.feed,
+    delayClass: request.delayClass,
+    sourceTopics: request.sourceTopics,
+    archiveWatermarks: [...request.archiveWatermarks].sort((left, right) =>
+      left.sourceTopic.localeCompare(right.sourceTopic),
+    ),
+    maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+    minimumWatermarkLagMs: request.minimumWatermarkLagMs,
+    barCount: bars.length,
+    quoteCount: quotes.length,
+    tradeCount: trades.length,
+    barsContentHash: canonicalHashV1(bars),
+    quotesContentHash: canonicalHashV1(quotes),
+    tradesContentHash: canonicalHashV1(trades),
+    lineage,
+  }
+  const contentHash = canonicalHashV1(material)
+  return {
+    bars,
+    quotes,
+    trades,
+    latestQuotes: Object.fromEntries(quotes.map((quote) => [quote.symbol, quote])),
+    manifest: {
+      ...material,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...material, contentHash }),
+    },
+  }
+}
+
+const intradayMarketData = (protocol: OpeningDriveProtocol): IntradayMarketDataService => ({
+  captureVersion: () =>
+    Effect.succeed(
+      Object.values(intradayArchiveTopics)
+        .sort()
+        .map((sourceTopic) => ({
+          sourceTopic,
+          sourcePartition: 0,
+          inclusiveLastOffset: String(protocol.universe.length * protocol.openingRangeMinutes),
+        })),
+    ),
+  loadSnapshot: (request) => Effect.succeed(intradaySnapshot(protocol, request)),
+})
 
 const account: AccountSnapshot = {
   schemaVersion: 'bayn.paper-account-snapshot.v1',
@@ -2972,7 +3115,6 @@ describe('OBSERVE runtime composition', () => {
       makeClosingDecisionPlan(
         {
           strategyName: 'opening-drive-momentum',
-          signalSessionDate: signalDate,
           executionSessionDate: executionDate,
         },
         ['NVDA', 'AMD', 'NVDA'],
@@ -2986,6 +3128,158 @@ describe('OBSERVE runtime composition', () => {
       targetWeights: { AMD: 0, NVDA: 0 },
       symbols: ['AMD', 'NVDA'],
       reason: 'mandate-close',
+    })
+  })
+
+  test('recovers a persisted v2 opening-drive cycle into a quote-bound forced close', async () => {
+    const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
+    const definition = makeOpeningDriveDefinition(protocol)
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: openingDriveBehaviorHash,
+          parameterHash: canonicalHashV1(definition.parameters),
+          parameterSchemaVersion: definition.parameters.schemaVersion,
+        },
+      },
+    }
+    const openingPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+    if (openingPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2') {
+      return expect.unreachable('opening-drive fixture requires the intraday execution policy')
+    }
+    const historicalIdentity = Result.getOrThrow(
+      makeCycleIdentity({
+        schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+        strategyName: definition.name,
+        qualificationRunId: 'c'.repeat(64),
+        strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
+        accountId,
+        signalSessionDate: signalDate,
+        signalCalendarVersion: 'fixture-calendar-v2',
+        executionSessionDate: executionDate,
+        executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+        executionCalendarSource: executionCalendar.executionCalendarSource,
+        executionCalendarHash: executionCalendar.executionCalendarHash,
+        executionPolicy: openingPolicy,
+      }),
+    )
+    const historicalWindow = Result.getOrThrow(
+      makeCycleWindow(
+        {
+          calendar_version: 'fixture-calendar-v2',
+          session_date: signalDate,
+          close_time: '16:00',
+          timezone: 'America/New_York',
+        },
+        executionCalendar,
+        openingPolicy,
+      ),
+    )
+    const historicalCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...Result.getOrThrow(makeCycleDraft(historicalIdentity, historicalWindow)),
+        state: CycleState.Active,
+        bindings: { snapshotId },
+        stateVersion: 3,
+        createdAt: '2020-04-30T22:00:00.000Z',
+        updatedAt: historicalWindow.submissionOpenAt,
+      }),
+    )
+    const archive = intradayMarketData(protocol)
+    const input = {
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy,
+      intradayMarketData: archive,
+      executionProgram: sandboxExecutionProgram(generationHash, strategy.provenance.strategy),
+    } as const
+    const preparation = Result.getOrThrow(prepareObserveStartup(input))
+    const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, strategy))
+    const entryDocument = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(historicalWindow.submissionOpenAt))
+        return yield* buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle: historicalCycle,
+          executionModel: openingDriveExecutionModel,
+          policy,
+          reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
+          strategy,
+          intradayMarketData: archive,
+        })
+      }).pipe(
+        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    const boundCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...historicalCycle,
+        bindings: { ...historicalCycle.bindings, decisionHash: entryDocument.contentHash },
+        stateVersion: historicalCycle.stateVersion + 1,
+        updatedAt: entryDocument.createdAt,
+      }),
+    )
+    const closeObservedAt = '2020-05-01T19:30:01.000Z'
+    const closeExpiresAt = '2020-05-01T19:45:00.000Z'
+    const heldSymbol = protocol.universe[0]
+    if (heldSymbol === undefined) return expect.unreachable('opening-drive fixture requires a non-empty universe')
+    const openPosition: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: heldSymbol,
+      quantityMicros: '1000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '100000000',
+      unrealizedPnlMicros: '0',
+      observedAt: closeObservedAt,
+    }
+    const close = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(closeObservedAt))
+        return yield* buildClosingExecutionCycleDecision({
+          input,
+          preparation,
+          policy,
+          cycle: boundCycle,
+          entryDocument,
+          reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [openPosition])),
+          closeExpiresAt,
+        })
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(entryDocument.executionSession?.schemaVersion).toBe('bayn.execution-session-binding.v2')
+    expect(close).toMatchObject({
+      mode: 'PAPER',
+      dispatchable: true,
+      executionSession: { schemaVersion: 'bayn.execution-session-binding.v2' },
+      bindings: {
+        snapshotId,
+        executionMarketData: { sessionDate: executionDate },
+      },
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [{ symbol: openPosition.symbol, side: OrderSide.Sell }],
+      },
     })
   })
 

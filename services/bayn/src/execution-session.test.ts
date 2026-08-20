@@ -9,10 +9,14 @@ import {
   makeCycleExecutionPolicy,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
-  type AutonomousCycle,
+  isIntradayCycleDraft,
+  isLegacyCycleDraft,
   type CycleExecutionPolicy,
+  type IntradayAutonomousCycle,
+  type LegacyAutonomousCycle,
 } from './cycle'
 import { defaultExecutionModel } from './execution-model'
 import {
@@ -21,6 +25,7 @@ import {
   ExecutionSessionBindingSchema,
   type BindCycleExecutionSessionInput,
   type BindExecutionSessionInput,
+  type BindLegacyExecutionSessionInput,
   type ExecutionSessionBinding,
 } from './execution-session'
 import { canonicalHashV1 } from './hash'
@@ -32,6 +37,14 @@ const resultValue = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+type LegacyExecutionSessionBinding = Extract<
+  ExecutionSessionBinding,
+  { readonly schemaVersion: 'bayn.execution-session-binding.v1' }
+>
+type LegacyBindCycleExecutionSessionInput = BindLegacyExecutionSessionInput & {
+  readonly cycle: LegacyAutonomousCycle
+}
+
 const bindExecutionSessionSuccess = (input: BindExecutionSessionInput): ExecutionSessionBinding =>
   resultValue(bindExecutionSession(input))
 const bindCycleExecutionSessionSuccess = (input: BindCycleExecutionSessionInput): ExecutionSessionBinding =>
@@ -58,7 +71,7 @@ const calendar = (
   return { ...material, normalizedResponseHash: canonicalHashV1(material) }
 }
 
-const bindingInput = (observation: MarketCalendarObservation): BindExecutionSessionInput => ({
+const bindingInput = (observation: MarketCalendarObservation): BindLegacyExecutionSessionInput => ({
   signal: {
     sessionDate: '2026-07-02',
     finalizedAt: '2026-07-02T22:00:00.000Z',
@@ -72,7 +85,13 @@ const bindingInput = (observation: MarketCalendarObservation): BindExecutionSess
   executionModel: defaultExecutionModel,
 })
 
-const bind = (observation: MarketCalendarObservation) => bindExecutionSessionSuccess(bindingInput(observation))
+const bind = (observation: MarketCalendarObservation): LegacyExecutionSessionBinding => {
+  const binding = bindExecutionSessionSuccess(bindingInput(observation))
+  if (binding.schemaVersion !== 'bayn.execution-session-binding.v1') {
+    throw new Error('legacy execution-session fixture returned an intraday binding')
+  }
+  return binding
+}
 
 const decodeBinding = Schema.decodeUnknownSync(ExecutionSessionBindingSchema, strictParseOptions)
 
@@ -97,7 +116,7 @@ const monthEndCalendar = calendar(
   { start: '2026-01-30', end: '2026-02-03' },
 )
 
-const makeActiveCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle => {
+const makeActiveCycle = (policyOverride?: CycleExecutionPolicy): LegacyAutonomousCycle => {
   const executionSession = monthEndCalendar.sessions[1]
   if (executionSession === undefined) throw new Error('cycle fixture requires the first post-signal session')
   const executionCalendar = resultValue(
@@ -136,8 +155,10 @@ const makeActiveCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle
       executionPolicy,
     ),
   )
+  const draft = resultValue(makeCycleDraft(identity, window))
+  if (!isLegacyCycleDraft(draft)) throw new Error('legacy execution-session fixture returned an intraday draft')
   return {
-    ...resultValue(makeCycleDraft(identity, window)),
+    ...draft,
     state: CycleState.Active,
     bindings: { snapshotId: hash('3') },
     stateVersion: 3,
@@ -146,7 +167,7 @@ const makeActiveCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle
   }
 }
 
-const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): AutonomousCycle => {
+const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): IntradayAutonomousCycle => {
   const executionSession = monthEndCalendar.sessions[1]
   if (executionSession === undefined) throw new Error('opening cycle fixture requires the post-signal session')
   const executionCalendar = resultValue(
@@ -162,13 +183,11 @@ const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): Autonomo
   }
   const identity = resultValue(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
       strategyName: 'opening-drive-momentum',
       qualificationRunId: hash('4'),
       strategyProtocolHash: hash('5'),
       accountId: 'paper-account-1',
-      signalSessionDate: '2026-01-30',
-      signalCalendarVersion: 'signal-calendar-v1',
       executionSessionDate: executionCalendar.executionSessionDate,
       executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
       executionCalendarSource: executionCalendar.executionCalendarSource,
@@ -176,20 +195,11 @@ const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): Autonomo
       executionPolicy,
     }),
   )
-  const window = resultValue(
-    makeCycleWindow(
-      {
-        calendar_version: 'signal-calendar-v1',
-        session_date: '2026-01-30',
-        close_time: '16:00',
-        timezone: 'America/New_York',
-      },
-      executionCalendar,
-      executionPolicy,
-    ),
-  )
+  const window = resultValue(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = resultValue(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) throw new Error('intraday execution-session fixture returned a legacy draft')
   return {
-    ...resultValue(makeCycleDraft(identity, window)),
+    ...draft,
     state: CycleState.Active,
     bindings: { snapshotId: hash('6') },
     stateVersion: 3,
@@ -198,7 +208,9 @@ const makeActiveOpeningCycle = (policyOverride?: CycleExecutionPolicy): Autonomo
   }
 }
 
-const cycleBindingInput = (overrides: Partial<BindCycleExecutionSessionInput> = {}): BindCycleExecutionSessionInput => {
+const cycleBindingInput = (
+  overrides: Partial<LegacyBindCycleExecutionSessionInput> = {},
+): LegacyBindCycleExecutionSessionInput => {
   const cycle = makeActiveCycle()
   return {
     cycle,
@@ -217,8 +229,13 @@ const cycleBindingInput = (overrides: Partial<BindCycleExecutionSessionInput> = 
   }
 }
 
-const bindCycle = (overrides: Partial<BindCycleExecutionSessionInput> = {}) =>
-  bindCycleExecutionSessionSuccess(cycleBindingInput(overrides))
+const bindCycle = (overrides: Partial<LegacyBindCycleExecutionSessionInput> = {}): LegacyExecutionSessionBinding => {
+  const binding = bindCycleExecutionSessionSuccess(cycleBindingInput(overrides))
+  if (binding.schemaVersion !== 'bayn.execution-session-binding.v1') {
+    throw new Error('legacy cycle execution-session fixture returned an intraday binding')
+  }
+  return binding
+}
 
 describe('causal execution-session binding', () => {
   test('binds a holiday gap, fixed pre-open cutoff, and early close without assuming session hours', () => {
@@ -439,11 +456,7 @@ describe('causal execution-session binding', () => {
     const cycle = makeActiveOpeningCycle()
     const binding = bindCycleExecutionSessionSuccess({
       cycle,
-      signal: {
-        sessionDate: cycle.identity.signalSessionDate,
-        finalizedAt: cycle.window.signalCloseAt,
-        contentHash: hash('7'),
-      },
+      executionSessionDate: cycle.identity.executionSessionDate,
       planningBrokerState: {
         observedAt: cycle.window.submissionOpenAt,
         contentHash: hash('8'),
@@ -453,7 +466,7 @@ describe('causal execution-session binding', () => {
     })
 
     expect(binding).toMatchObject({
-      schemaVersion: 'bayn.execution-session-binding.v2',
+      schemaVersion: 'bayn.execution-session-binding.v3',
       executionSession: {
         date: '2026-02-02',
         openAt: '2026-02-02T14:30:00.000Z',
@@ -477,11 +490,7 @@ describe('causal execution-session binding', () => {
     )
     const mismatch = bindCycleExecutionSession({
       cycle: makeActiveOpeningCycle(inconsistentPolicy),
-      signal: {
-        sessionDate: cycle.identity.signalSessionDate,
-        finalizedAt: cycle.window.signalCloseAt,
-        contentHash: hash('7'),
-      },
+      executionSessionDate: cycle.identity.executionSessionDate,
       planningBrokerState: {
         observedAt: cycle.window.submissionOpenAt,
         contentHash: hash('8'),
@@ -503,15 +512,36 @@ describe('causal execution-session binding', () => {
     }
   })
 
+  test('decodes the durable signal-bound v2 opening-drive contract without changing its hash material', () => {
+    const persisted = bindExecutionSessionSuccess({
+      signal: {
+        sessionDate: '2026-01-30',
+        finalizedAt: '2026-01-30T21:15:00.000Z',
+        contentHash: hash('7'),
+      },
+      planningBrokerState: {
+        observedAt: '2026-02-02T14:35:01.000Z',
+        contentHash: hash('8'),
+      },
+      calendar: monthEndCalendar,
+      executionModel: openingDriveExecutionModel,
+    })
+
+    expect(persisted).toMatchObject({
+      schemaVersion: 'bayn.execution-session-binding.v2',
+      signal: { sessionDate: '2026-01-30' },
+      executionSession: { date: '2026-02-02' },
+      submissionOpenAt: '2026-02-02T14:35:01.000Z',
+      submissionCutoffAt: '2026-02-02T15:00:00.000Z',
+    })
+    expect(decodeBinding(structuredClone(persisted))).toEqual(persisted)
+  })
+
   test('narrows an opening-drive submission window to later reconciled broker evidence', () => {
     const cycle = makeActiveOpeningCycle()
     const narrowed = bindCycleExecutionSessionSuccess({
       cycle,
-      signal: {
-        sessionDate: cycle.identity.signalSessionDate,
-        finalizedAt: cycle.window.signalCloseAt,
-        contentHash: hash('7'),
-      },
+      executionSessionDate: cycle.identity.executionSessionDate,
       planningBrokerState: {
         observedAt: '2026-02-02T14:45:00.000Z',
         contentHash: hash('8'),
@@ -524,11 +554,7 @@ describe('causal execution-session binding', () => {
 
     const exhausted = bindCycleExecutionSession({
       cycle,
-      signal: {
-        sessionDate: cycle.identity.signalSessionDate,
-        finalizedAt: cycle.window.signalCloseAt,
-        contentHash: hash('7'),
-      },
+      executionSessionDate: cycle.identity.executionSessionDate,
       planningBrokerState: {
         observedAt: '2026-02-02T15:00:00.000Z',
         contentHash: hash('8'),

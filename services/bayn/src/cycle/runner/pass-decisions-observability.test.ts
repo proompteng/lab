@@ -11,11 +11,14 @@ const executionSessionDate = '2026-08-03'
 
 const terminalCycle = (): AutonomousCycle =>
   ({
+    schemaVersion: 'bayn.autonomous-cycle.v1',
     identity: {
+      schemaVersion: 'bayn.autonomous-cycle-identity.v1',
       cycleId: 'c'.repeat(64),
       signalSessionDate,
       executionSessionDate,
     },
+    window: { schemaVersion: 'bayn.autonomous-cycle-window.v1' },
     state: CycleState.Completed,
   }) as unknown as AutonomousCycle
 
@@ -117,7 +120,7 @@ describe('autonomous cycle pass observability', () => {
       acquired('ACQUIRED'),
       acquired('REACQUIRED'),
       { outcome: 'RECOVERED', action: 'COMPLETED', observedAt, cycle: terminalCycle() },
-      { outcome: 'ALREADY_TERMINAL', signalSessionDate, observedAt, cycle: terminalCycle() },
+      { outcome: 'ALREADY_TERMINAL', observedAt, cycle: terminalCycle() },
     ]
 
     for (const result of results) {
@@ -147,7 +150,7 @@ describe('autonomous cycle pass observability', () => {
   test('projects retained terminal-cycle cadence into settled outcome logs', () => {
     for (const result of [
       { outcome: 'RECOVERED', action: 'COMPLETED', observedAt, cycle: terminalCycle() },
-      { outcome: 'ALREADY_TERMINAL', signalSessionDate, observedAt, cycle: terminalCycle() },
+      { outcome: 'ALREADY_TERMINAL', observedAt, cycle: terminalCycle() },
     ] as const satisfies readonly CycleRunResult[]) {
       expect(cyclePassLogFacts(succeeded(result)).annotations).toMatchObject({
         outcome: result.outcome,

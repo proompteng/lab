@@ -64,7 +64,7 @@ import {
   runStartup,
   type StartupDecisionFailure,
 } from './startup'
-import type { StrategyRuntime } from './strategy'
+import { decodeDefaultOpeningDriveProtocol, makeActiveStrategyRuntime, type StrategyRuntime } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const testStartupDependencies = Effect.all({
@@ -751,6 +751,32 @@ describe('Bayn startup pure decisions', () => {
 })
 
 describe('Bayn startup lifecycle', () => {
+  test('fails closed before the legacy daily workflow for an unpinned intraday strategy', async () => {
+    const state = await Effect.runPromise(Ref.make(initialState({})))
+    const strategy = makeActiveStrategyRuntime(Result.getOrThrow(decodeDefaultOpeningDriveProtocol()), provenance)
+    let legacyCallCount = 0
+    const forbidden = Effect.sync(() => {
+      legacyCallCount += 1
+      throw new Error('legacy daily startup must remain unreachable')
+    })
+
+    await Effect.runPromise(
+      initialize(config, state, strategy).pipe(
+        Effect.provideService(MarketData, marketDataService(forbidden)),
+        Effect.provideService(Journal, { ...successfulJournal, check: forbidden }),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
+      ),
+    )
+
+    expect(legacyCallCount).toBe(0)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      evidence: null,
+      error:
+        'strategy.startup-qualification: opening-drive-momentum requires pinned intraday qualification evidence; the legacy daily brokerless workflow is unsupported',
+    })
+  })
+
   test('recovers a pinned terminal qualification without inspecting data or writing state', async () => {
     let forbiddenCalls = 0
     const forbidden = (message: string) =>

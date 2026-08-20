@@ -46,51 +46,59 @@ const compileCurrentRiskBalancedTrendDecisionDataFirst = (
   pipe(
     decodeCurrentDecisionCycleBinding(cycleBinding),
     Result.flatMap((binding) =>
-      pipe(
-        alignBars(bars, protocol.universe, inputManifest),
-        Result.flatMap((sessions) =>
-          pipe(
-            requiredSession(sessions, sessions.length - 1, 'signal-decision'),
-            Result.flatMap((terminalSession) => {
-              if (
-                terminalSession.date !== inputManifest.finalizedSnapshot.lastSession ||
-                terminalSession.date !== inputManifest.lastSession ||
-                terminalSession.date !== binding.signal.sessionDate
-              ) {
-                return fail({
-                  _tag: 'CurrentDecisionSessionMismatch',
-                  manifestSession: inputManifest.lastSession,
-                  snapshotSession: inputManifest.finalizedSnapshot.lastSession,
-                  bindingSession: binding.signal.sessionDate,
-                  observedSession: terminalSession.date,
-                })
-              }
-              return pipe(
-                Result.all({
-                  decision: decisionFromAlignedSessions(sessions, sessions.length - 1, protocol, definition),
-                  priceMicros: terminalPrices(terminalSession, protocol),
-                }),
-                Result.flatMap(({ decision, priceMicros }) => {
-                  const observedSymbols = Object.keys(priceMicros)
-                  return decision.signalDate === terminalSession.date &&
-                    observedSymbols.length === protocol.universe.length &&
-                    protocol.universe.every((symbol) => {
-                      const price = priceMicros[symbol]
-                      return typeof price === 'string' && /^[1-9][0-9]*$/.test(price)
+      binding.schemaVersion !== 'bayn.execution-session-binding.v1'
+        ? fail({
+            _tag: 'CurrentDecisionSessionMismatch',
+            manifestSession: inputManifest.lastSession,
+            snapshotSession: inputManifest.finalizedSnapshot.lastSession,
+            bindingSession: binding.executionSession.date,
+            observedSession: null,
+          })
+        : pipe(
+            alignBars(bars, protocol.universe, inputManifest),
+            Result.flatMap((sessions) =>
+              pipe(
+                requiredSession(sessions, sessions.length - 1, 'signal-decision'),
+                Result.flatMap((terminalSession) => {
+                  if (
+                    terminalSession.date !== inputManifest.finalizedSnapshot.lastSession ||
+                    terminalSession.date !== inputManifest.lastSession ||
+                    terminalSession.date !== binding.signal.sessionDate
+                  ) {
+                    return fail({
+                      _tag: 'CurrentDecisionSessionMismatch',
+                      manifestSession: inputManifest.lastSession,
+                      snapshotSession: inputManifest.finalizedSnapshot.lastSession,
+                      bindingSession: binding.signal.sessionDate,
+                      observedSession: terminalSession.date,
                     })
-                    ? Result.succeed({ decision, priceMicros })
-                    : fail({
-                        _tag: 'CurrentDecisionCoverageMismatch',
-                        signalDate: decision.signalDate,
-                        expectedSymbols: protocol.universe,
-                        observedSymbols,
-                      })
+                  }
+                  return pipe(
+                    Result.all({
+                      decision: decisionFromAlignedSessions(sessions, sessions.length - 1, protocol, definition),
+                      priceMicros: terminalPrices(terminalSession, protocol),
+                    }),
+                    Result.flatMap(({ decision, priceMicros }) => {
+                      const observedSymbols = Object.keys(priceMicros)
+                      return decision.signalDate === terminalSession.date &&
+                        observedSymbols.length === protocol.universe.length &&
+                        protocol.universe.every((symbol) => {
+                          const price = priceMicros[symbol]
+                          return typeof price === 'string' && /^[1-9][0-9]*$/.test(price)
+                        })
+                        ? Result.succeed({ decision, priceMicros })
+                        : fail({
+                            _tag: 'CurrentDecisionCoverageMismatch',
+                            signalDate: decision.signalDate,
+                            expectedSymbols: protocol.universe,
+                            observedSymbols,
+                          })
+                    }),
+                  )
                 }),
-              )
-            }),
+              ),
+            ),
           ),
-        ),
-      ),
     ),
   )
 

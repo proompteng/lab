@@ -239,8 +239,12 @@ export const makeCycleIdentity = (material: unknown): Result.Result<CycleIdentit
       failure(
         'cycle-identity',
         'session-order',
-        'execution session must follow the Signal session',
-        { signalSessionDate: decoded.signalSessionDate, executionSessionDate: decoded.executionSessionDate },
+        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+          ? 'execution session must follow the Signal session'
+          : 'intraday cycle identity is invalid',
+        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+          ? { signalSessionDate: decoded.signalSessionDate, executionSessionDate: decoded.executionSessionDate }
+          : { executionSessionDate: decoded.executionSessionDate },
         cause,
       ),
     )
@@ -379,6 +383,40 @@ const makeCycleWindowDataFirst = (
 
 export const makeCycleWindow = Pipeable.dual(3, makeCycleWindowDataFirst)
 
+const makeIntradayCycleWindowDataFirst = (
+  executionCalendar: unknown,
+  executionPolicy: unknown,
+): Result.Result<CycleWindow, CycleConstructionFailure> =>
+  Result.gen(function* () {
+    const calendar = yield* Result.mapError(decodeExecutionCalendarObservationResult(executionCalendar), (cause) =>
+      failure('cycle-window', 'decode', 'selected broker calendar session is invalid', {}, cause),
+    )
+    const policy = yield* Result.mapError(decodeCycleWindowPolicyInputResult(executionPolicy), (cause) =>
+      failure('cycle-window', 'decode', 'intraday cycle window policy is invalid', {}, cause),
+    )
+    if (!('submissionCutoffAfterOpenMs' in policy)) {
+      return yield* Result.fail(
+        failure('cycle-window', 'decode', 'intraday cycle window requires a post-open execution policy'),
+      )
+    }
+    yield* validateCycleWindowDurations(policy)
+    const submissionCutoffAt = utcInstantFromEpochMillis(
+      Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs,
+    )
+    const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(submissionCutoffAt) - policy.submissionWindowMs)
+    return yield* Result.mapError(
+      decodeCycleWindowResult({
+        schemaVersion: 'bayn.autonomous-cycle-window.v3',
+        ...calendar,
+        submissionOpenAt,
+        submissionCutoffAt,
+      }),
+      (cause) => failure('cycle-window', 'submission-window', 'derived intraday cycle window is invalid', {}, cause),
+    )
+  })
+
+export const makeIntradayCycleWindow = Pipeable.dual(2, makeIntradayCycleWindowDataFirst)
+
 const makeCycleDraftDataFirst = (
   identity: unknown,
   window: unknown,
@@ -393,9 +431,11 @@ const makeCycleDraftDataFirst = (
     return yield* Result.mapError(
       decodeCycleDraftResult({
         schemaVersion:
-          decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v2'
-            ? 'bayn.autonomous-cycle.v2'
-            : 'bayn.autonomous-cycle.v1',
+          decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
+            ? 'bayn.autonomous-cycle.v3'
+            : decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v2'
+              ? 'bayn.autonomous-cycle.v2'
+              : 'bayn.autonomous-cycle.v1',
         identity: decodedIdentity,
         window: decodedWindow,
       }),
@@ -406,7 +446,9 @@ const makeCycleDraftDataFirst = (
           'cycle identity and window bindings are incoherent',
           {
             cycleId: decodedIdentity.cycleId,
-            signalSessionDate: decodedWindow.signalSessionDate,
+            ...(decodedWindow.schemaVersion !== 'bayn.autonomous-cycle-window.v3'
+              ? { signalSessionDate: decodedWindow.signalSessionDate }
+              : {}),
             executionSessionDate: decodedWindow.executionSessionDate,
           },
           cause,

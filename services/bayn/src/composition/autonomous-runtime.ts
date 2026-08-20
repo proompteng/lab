@@ -34,15 +34,15 @@ import {
   capitalGrantKey,
 } from '../execution/mandate'
 import {
-  loadObserveRiskPolicy,
   executionMandateCloseExpiresAt,
+  loadStrategyExecutionRiskPolicy,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
 import { runOnce } from '../reconciler'
 import { currentUtcInstant } from '../time'
-import type { RuntimeEvidence } from '../runtime-state'
+import type { RuntimeEvidence, RuntimeState } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
@@ -84,6 +84,16 @@ import {
 export interface AutonomousServiceRuntimeOptions {
   readonly ownCycleDriver: RecoveryFirstCycleDriverOwner
 }
+
+export const recoverPendingCapitalActivationToObserve = (
+  state: Ref.Ref<RuntimeState>,
+  request: CapitalActivationRequest,
+  currentObserveRuntime: Effect.Effect<AutonomousRuntime<never, never>, OperationalError>,
+  unavailableRuntime: AutonomousRuntime<never, never>,
+): Effect.Effect<AutonomousRuntime<never, never>> =>
+  pendingCapitalActivation(state, request, 'PREPARATION_FAILED').pipe(
+    Effect.andThen(currentObserveRuntime.pipe(Effect.orElseSucceed(() => unavailableRuntime))),
+  )
 
 const ownCycleDriverStartup =
   <StartupR, DriverR>(
@@ -215,7 +225,7 @@ export const makeAutonomousServiceRuntime = (
                               ),
                             ),
                           )
-                        const readRuntime = () => ({
+                        const readRuntime = (): AutonomousRuntime<never, never> => ({
                           _tag: 'AutonomousRead' as const,
                           requiresQualificationEvidence: capitalActivationRequiresQualificationEvidence(request),
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
@@ -613,11 +623,18 @@ export const makeAutonomousServiceRuntime = (
                                     authority,
                                     runtimeServices.alpacaHttpClient,
                                   ).pipe(
+                                    Effect.mapError(executionProgramError),
                                     Effect.flatMap((brokerMutation) =>
-                                      loadObserveRiskPolicy(
+                                      loadStrategyExecutionRiskPolicy(
                                         realizedPlan.config.alpaca.expectedAccountId,
-                                        realizedPlan.strategy.definition.parameters.universe,
+                                        realizedPlan.strategy,
                                       ).pipe(
+                                        Effect.mapError((cause) =>
+                                          capitalActivationOperationalError(
+                                            'source-controlled execution risk policy is invalid',
+                                            cause,
+                                          ),
+                                        ),
                                         Effect.flatMap((riskPolicy) =>
                                           Effect.fromResult(
                                             makeExecutionProgram(authority, {
@@ -642,11 +659,10 @@ export const makeAutonomousServiceRuntime = (
                                               writerFence: runtimeServices.writerFence,
                                               brokerMutation,
                                             }),
-                                          ),
+                                          ).pipe(Effect.mapError(executionProgramError)),
                                         ),
                                       ),
                                     ),
-                                    Effect.mapError(executionProgramError),
                                     Effect.flatMap((executionProgram) => {
                                       const startCycle = (
                                         startup: AutonomousCycleStartupInput,
@@ -764,8 +780,11 @@ export const makeAutonomousServiceRuntime = (
                                 reason: cause instanceof Error ? cause.message : String(cause),
                               }),
                               Effect.andThen(
-                                pendingCapitalActivation(state, request, 'PREPARATION_FAILED').pipe(
-                                  Effect.as(readRuntime()),
+                                recoverPendingCapitalActivationToObserve(
+                                  state,
+                                  request,
+                                  readCurrentObserveRuntime(),
+                                  readRuntime(),
                                 ),
                               ),
                             ),

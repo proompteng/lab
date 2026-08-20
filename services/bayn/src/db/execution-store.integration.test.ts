@@ -758,6 +758,7 @@ const proofBinding = (activation: CapitalGrantGeneration) => ({
 const makeResearchActivation = (
   previousGenerationHash: string,
   reconciliation: Pick<ReconciliationFixture, 'contentHash' | 'reconciliationId'>,
+  overrides: Partial<Parameters<typeof makeResearchCapitalGrantGeneration>[0]> = {},
 ): ResearchCapitalGrantGeneration =>
   makeResearchCapitalGrantGeneration({
     schemaVersion: 'bayn.paper-authority-generation.v3',
@@ -783,6 +784,7 @@ const makeResearchActivation = (
     proofPlanHash: hash('bounded-research-paper-plan'),
     reconciliationId: reconciliation.reconciliationId,
     reconciliationContentHash: reconciliation.contentHash,
+    ...overrides,
   })
 
 const researchProofBinding = (activation: ResearchCapitalGrantGeneration) => ({
@@ -855,10 +857,14 @@ const prepareRuntimeConfig = (activation: CapitalGrantGeneration): RuntimeConfig
   }
 }
 
-const researchRuntimeConfig = (sourceGenerationHash: string): RuntimeConfig => {
+const researchRuntimeConfig = (
+  sourceGenerationHash: string,
+  build: RuntimeConfig['build'] = config.build,
+): RuntimeConfig => {
   const identity = sandboxBrokerIdentity(accountId)
   return {
     ...config,
+    build,
     execution: {
       brokerIdentity: identity,
       brokerAccess: BrokerAccess.ReadOnly,
@@ -2365,6 +2371,56 @@ describePostgres('paper accounting persistence', () => {
         research_plan_hash: expected.grant.planHash,
         strategy_protocol_hash: expected.strategyProtocolHash,
       })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('persists and decodes an opening-drive research execution generation', async () => {
+    const initialGenerationHash = hash('opening-drive-research-observe-generation')
+    const reconciliation = exactReconciliation('opening-drive-research')
+    const strategyBehaviorHash = hash('opening-drive-behavior')
+    const strategyParameterHash = hash('opening-drive-parameters')
+    const strategyParameterSchemaVersion = 'bayn.opening-drive.protocol.v2' as const
+    const expected = makeResearchActivation(initialGenerationHash, reconciliation, {
+      strategyName: 'opening-drive-momentum',
+      strategyBehaviorHash,
+      strategyParameterHash,
+      strategyParameterSchemaVersion,
+      strategyProtocolHash: makeStrategyProtocolHash({
+        name: 'opening-drive-momentum',
+        behaviorHash: strategyBehaviorHash,
+        parameterHash: strategyParameterHash,
+        parameterSchemaVersion: strategyParameterSchemaVersion,
+      }),
+    })
+    const runtime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      researchRuntimeConfig(initialGenerationHash, {
+        ...config.build,
+        strategyBehaviorHash,
+        strategyParameterHash,
+      }),
+    )
+    try {
+      const recovered = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const activateResearch = store.activateResearchCapitalGrant
+          const readResearch = store.readResearchAuthorityGeneration
+          assert(activateResearch !== undefined, 'research execution activation must be implemented')
+          assert(readResearch !== undefined, 'research execution history read must be implemented')
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* activateResearch(researchProofBinding(expected), initialGenerationHash)
+          return yield* readResearch(expected.generationHash)
+        }),
+      )
+
+      expect(recovered).toEqual(expected)
     } finally {
       await runtime.dispose()
     }

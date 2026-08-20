@@ -8,17 +8,21 @@ import { CycleState, type AutonomousCycle } from '../model'
 import { bindFinalizedCyclePublication, runCyclePublicationReadiness, type CycleReadinessError } from '../readiness'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
 import { CycleStore, type CycleStoreShape } from '../store'
+import { isTerminalCycleState } from '../transitions'
 import {
   beginCycleAuthoritySelection,
   calendarCandidateFailureError,
   calendarQueryFailureError,
   completeCycleAuthoritySelection,
   finishRecoveryResult,
+  makeIntradayCycleDraft,
+  marketCalendarQueryFromSession,
   marketCalendarQueryForPublications,
   readinessFailure,
   reduceCycleAuthoritySelection,
   selectCycleAcquisition,
   selectCycleCalendarCandidate,
+  selectIntradayExecutionSession,
   selectCyclePassContinuation,
   selectDiscoveredPublications,
   type CycleAcquireMaterial,
@@ -141,7 +145,6 @@ const resumeDiscoveredPublication = (
         Effect.map(
           (readiness): CycleRunResult => ({
             outcome: 'RESUMED',
-            signalSessionDate: selection.publication.signalSession.session_date,
             observedAt,
             readiness,
           }),
@@ -276,14 +279,12 @@ const interpretCycleAuthoritySelection = <R>(
     case 'ALREADY_ACQUIRED':
       return Effect.succeed({
         outcome: 'ALREADY_ACQUIRED',
-        signalSessionDate: selection.publication.signalSession.session_date,
         observedAt: discoveryObservedAt,
         cycle: selection.cycle,
       })
     case 'ALREADY_TERMINAL':
       return Effect.succeed({
         outcome: 'ALREADY_TERMINAL',
-        signalSessionDate: selection.cycle.identity.signalSessionDate,
         observedAt: discoveryObservedAt,
         cycle: selection.cycle,
       })
@@ -292,37 +293,146 @@ const interpretCycleAuthoritySelection = <R>(
   }
 }
 
+const discoverIntradayCyclePass = <R>(
+  context: CycleRunContext<R>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
+  if (
+    context.strategyName !== 'opening-drive-momentum' ||
+    context.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2'
+  ) {
+    return Effect.fail(
+      runnerError({
+        operation: 'configure',
+        failure: 'invalid-config',
+        message: 'intraday discovery requires the opening-drive strategy and its post-open execution policy',
+      }),
+    )
+  }
+  const strategyName = context.strategyName
+  const executionPolicy = context.executionPolicy
+  return Effect.gen(function* () {
+    const observedAt = yield* currentIsoTime
+    const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
+      Effect.mapError(calendarQueryFailureError),
+    )
+    const broker = yield* BrokerRead
+    const calendar = yield* broker.marketCalendar(query).pipe(
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative broker calendar read failed',
+          cause,
+        }),
+      ),
+    )
+    const executionSession = selectIntradayExecutionSession(calendar.value, executionPolicy, observedAt)
+    if (executionSession === undefined) {
+      return yield* runnerError({
+        operation: 'select-session',
+        failure: 'calendar-unavailable',
+        message: 'broker calendar has no session whose intraday entry cutoff remains open',
+      })
+    }
+    const draft = yield* Effect.fromResult(
+      makeIntradayCycleDraft(
+        {
+          qualificationRunId: context.qualificationRunId,
+          strategyName,
+          strategyProtocolHash: context.strategyProtocolHash,
+          accountId: context.accountId,
+          executionPolicy,
+        },
+        calendar.value,
+        executionSession,
+      ),
+    ).pipe(
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'build-cycle',
+          failure: 'contract',
+          message: 'intraday autonomous cycle draft construction failed',
+          cause,
+        }),
+      ),
+    )
+    const store = yield* CycleStore
+    const existing = yield* store
+      .readAuthoritySlot({
+        qualificationRunId: context.qualificationRunId,
+        accountId: context.accountId,
+        executionSessionDate: draft.identity.executionSessionDate,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'read-authority-slot',
+            failure: 'store',
+            message: 'durable intraday cycle authority-slot read failed',
+            cause,
+          }),
+        ),
+      )
+    if (Option.isSome(existing)) {
+      return isTerminalCycleState(existing.value.state)
+        ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
+        : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
+    }
+    const receipt = yield* store.acquire(draft, observedAt).pipe(
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'acquire-cycle',
+          failure: 'store',
+          message: 'durable intraday autonomous cycle acquisition failed',
+          cause,
+        }),
+      ),
+    )
+    return {
+      outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
+      executionSessionDate: executionSession.date,
+      observedAt,
+      calendarResponseHash: calendar.value.normalizedResponseHash,
+      calendarReadContentHash: calendar.evidence.contentHash,
+      receipt,
+    } as const
+  })
+}
+
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
-  pipe(
-    MarketData,
-    Effect.flatMap((marketData) => marketData.inspectCyclePublications),
-    Effect.mapError((cause: OperationalError) =>
-      runnerError({
-        operation: 'inspect-publication',
-        failure: 'market-data',
-        message: 'bounded finalized Signal publication discovery failed',
-        cause,
-      }),
-    ),
-    Effect.flatMap((discovery) =>
-      pipe(
-        selectDiscoveredPublications(discovery),
-        Effect.fromResult,
-        Effect.flatMap((decision) =>
-          decision._tag === 'NO_PUBLICATION'
-            ? Effect.succeed(decision.result)
-            : pipe(
-                readCycleAuthoritySlots(context, decision.publications),
-                Effect.flatMap((selection) =>
-                  interpretCycleAuthoritySelection(context, selection, decision.observedAt),
-                ),
-              ),
+  context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
+  context.strategyName === 'opening-drive-momentum'
+    ? discoverIntradayCyclePass(context)
+    : pipe(
+        MarketData,
+        Effect.flatMap((marketData) => marketData.inspectCyclePublications),
+        Effect.mapError((cause: OperationalError) =>
+          runnerError({
+            operation: 'inspect-publication',
+            failure: 'market-data',
+            message: 'bounded finalized Signal publication discovery failed',
+            cause,
+          }),
         ),
-      ),
-    ),
-  )
+        Effect.flatMap((discovery) =>
+          pipe(
+            selectDiscoveredPublications(discovery),
+            Effect.fromResult,
+            Effect.flatMap((decision) =>
+              decision._tag === 'NO_PUBLICATION'
+                ? Effect.succeed(decision.result)
+                : pipe(
+                    readCycleAuthoritySlots(context, decision.publications),
+                    Effect.flatMap((selection) =>
+                      interpretCycleAuthoritySelection(context, selection, decision.observedAt),
+                    ),
+                  ),
+            ),
+          ),
+        ),
+      )
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
@@ -402,7 +512,7 @@ const recoverCycle = <R>(
           runnerError({
             operation: 'recover-cycle',
             failure: 'store',
-            message: 'snapshot-bound cycle activation failed',
+            message: 'durable cycle activation failed',
             cause,
           }),
         ),

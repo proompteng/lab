@@ -9,9 +9,15 @@ import {
   CycleTerminalReason,
   makeCycleDraft,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
+  isIntradayCycleDraft,
+  isLegacyCycleDraft,
+  type IntradayCycleDraft,
+  type LegacyCycleDraft,
 } from '../index'
 import { CycleOperationsCondition, CycleOperationsReason, deriveCycleOperationsStatus } from '../observability'
 import { PostgresClientLive } from '../../db/evidence-store'
@@ -21,6 +27,7 @@ import { readForwardPerformancePostgres } from '../../forward-performance/postgr
 import type { SignalSessionRow } from '../../market-data'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import type { IsoDate } from '../../types'
+import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
 import { CycleObservability, CycleObservabilityLive } from './observability'
 import { CycleStore, CycleStoreLive } from '.'
 
@@ -55,7 +62,7 @@ const signalSession = (
   timezone: 'America/New_York',
 })
 
-const makeDraft = (dedicatedAccountId = accountId) => {
+const makeDraft = (dedicatedAccountId = accountId): LegacyCycleDraft => {
   const executionPolicyResult = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'b'.repeat(64),
@@ -99,7 +106,39 @@ const makeDraft = (dedicatedAccountId = accountId) => {
   const draftResult = makeCycleDraft(identityResult.success, windowResult.success)
   expect(Result.isSuccess(draftResult)).toBe(true)
   if (Result.isFailure(draftResult)) return expect.unreachable(draftResult.failure.message)
+  if (!isLegacyCycleDraft(draftResult.success)) return expect.unreachable('expected a legacy cycle draft')
   return draftResult.success
+}
+
+const makeIntradayDraft = (dedicatedAccountId = accountId): IntradayCycleDraft => {
+  const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
+  const executionCalendar = Result.getOrThrow(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-03-09',
+      openAt: '2026-03-09T13:30:00.000Z',
+      closeAt: '2026-03-09T20:00:00.000Z',
+    }),
+  )
+  const identity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId,
+      strategyProtocolHash: defaultOpeningDriveProtocolHash,
+      accountId: dedicatedAccountId,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = Result.getOrThrow(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) return expect.unreachable('expected an intraday cycle draft')
+  return draft
 }
 
 const seedSafetyState = (reconciledAt = '2026-03-06T21:00:00.000Z') =>
@@ -820,6 +859,29 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
     expect(result.blockedReplay).toEqual(result.blocked)
     expect(result.counts).toEqual({ cycles: 1, intents: 1, mutations: 1, reconciliations: 1 })
+  })
+
+  test('projects an intraday cycle through its execution authority session', async () => {
+    const draft = makeIntradayDraft()
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        yield* seedSafetyState()
+        yield* store.acquire(draft, '2026-03-09T13:00:00.000Z')
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.current).toMatchObject({
+      cycleId: draft.identity.cycleId,
+      accountId,
+      phase: CycleState.Pending,
+      signalSessionDate: draft.identity.executionSessionDate,
+      executionSessionDate: draft.identity.executionSessionDate,
+      submissionCutoffAt: draft.window.submissionCutoffAt,
+    })
+    expect(projection.unfinishedCycleCount).toBe(1)
   })
 
   test('projects open-recovery pressure and approved intent backlog as queryable counts', async () => {
