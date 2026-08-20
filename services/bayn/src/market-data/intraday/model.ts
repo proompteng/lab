@@ -1,5 +1,6 @@
-import { Data } from 'effect'
+import { Context, Data, Effect } from 'effect'
 
+import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
@@ -96,6 +97,8 @@ export interface IntradaySnapshotManifest {
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: IntradaySnapshotRequest['sourceTopics']
   readonly archiveWatermarks: readonly IntradayArchiveWatermark[]
+  readonly maximumQuoteAgeMs: number
+  readonly minimumWatermarkLagMs: number
   readonly barCount: number
   readonly quoteCount: number
   readonly tradeCount: number
@@ -114,6 +117,22 @@ export interface IntradayMarketSnapshot {
   readonly latestQuotes: Readonly<Record<string, IntradayQuote>>
   readonly manifest: IntradaySnapshotManifest
 }
+
+/**
+ * Verified intraday market-data boundary. This service is introduced with the
+ * verifier and its ClickHouse implementation so callers can never obtain a
+ * materialized snapshot without the immutable-row checks in this layer.
+ */
+export interface IntradayMarketDataService {
+  readonly captureVersion: (
+    query: IntradaySnapshotQuery,
+  ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
+  readonly loadSnapshot: (request: IntradaySnapshotRequest) => Effect.Effect<IntradayMarketSnapshot, OperationalError>
+}
+
+export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
+  '@proompteng/bayn/market-data/intraday/IntradayMarketData',
+) {}
 
 export type IntradaySnapshotFailureReason =
   | 'request'

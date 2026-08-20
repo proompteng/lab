@@ -50,7 +50,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     )`
   }
 
-  const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => sql`
+  const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => {
+    const time = bounds(request)
+    return sql`
     SELECT
       source_topic,
       toString(source_partition) AS source_partition,
@@ -63,6 +65,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+        AND event_ts < parseDateTime64BestEffort(${time.end}, 3, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 3, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
       FROM signal.intraday_quotes_v1
@@ -71,6 +76,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
       FROM signal.intraday_trades_v1
@@ -79,10 +87,14 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
         AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+        AND event_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
     )
     GROUP BY source_topic, source_partition
     ORDER BY source_topic, source_partition
   `
+  }
 
   const loadIntradayBars = (request: IntradaySnapshotRequest, after?: IntradayArchivePageCursor) => {
     const time = bounds(request)
