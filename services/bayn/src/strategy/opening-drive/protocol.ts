@@ -184,7 +184,7 @@ export const openingDriveProtocolV1Document = Object.freeze({
   allocation: 'equal-weight',
 } as const)
 
-export const openingDriveProtocolV1Hash = '5e21b5eeea54756bad8c5861ce883da575654685b6629588fd086a2511d0165e'
+export const openingDriveProtocolV1Hash = '8e352946c007128cf6fccc0b82ad27c5eb6e6e0ef3e92883f915a15253d19f6c'
 
 export const defaultOpeningDriveProtocolDocument = Object.freeze({
   ...openingDriveProtocolV1Document,
@@ -192,7 +192,7 @@ export const defaultOpeningDriveProtocolDocument = Object.freeze({
   executionModel: openingDriveExecutionModel,
 } as const)
 
-export const defaultOpeningDriveProtocolHash = '4f2d4ba6c9ef6e997660f190db2ad23ee03e7c89b45021882efceff1c715269a'
+export const defaultOpeningDriveProtocolHash = '3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329'
 
 export class OpeningDriveProtocolDecodeError extends Data.TaggedError('OpeningDriveProtocolDecodeError')<{
   readonly message: string
