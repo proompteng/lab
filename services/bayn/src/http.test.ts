@@ -97,11 +97,14 @@ const cadenceCycle = (
   state: CycleState = CycleState.Completed,
 ): AutonomousCycle =>
   ({
+    schemaVersion: 'bayn.autonomous-cycle.v1',
     identity: {
+      schemaVersion: 'bayn.autonomous-cycle-identity.v1',
       cycleId: 'c'.repeat(64),
       signalSessionDate,
       executionSessionDate,
     },
+    window: { schemaVersion: 'bayn.autonomous-cycle-window.v1' },
     state,
   }) as AutonomousCycle
 
@@ -2201,7 +2204,7 @@ describe('Bayn HTTP probes', () => {
       acquiredCadenceResult('ACQUIRED', observedAt, signalSessionDate, executionSessionDate),
       acquiredCadenceResult('REACQUIRED', observedAt, signalSessionDate, executionSessionDate),
       { outcome: 'RECOVERED', action: 'COMPLETED', observedAt, cycle: terminal },
-      { outcome: 'ALREADY_TERMINAL', signalSessionDate, observedAt, cycle: terminal },
+      { outcome: 'ALREADY_TERMINAL', observedAt, cycle: terminal },
     ]
 
     for (const result of results) {

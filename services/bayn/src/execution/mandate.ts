@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { notionalMicros } from '../execution-model'
+import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
 import { Sha256Schema } from '../schemas'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
@@ -103,6 +103,46 @@ export const executionMandateAllocationCapitalMicros = (
         .reduce((minimum, value) => (value < minimum ? value : minimum)),
     )
   })
+}
+
+export interface ExecutionTargetAllocationFacts {
+  readonly allocationCapitalMicros: bigint
+  readonly maxOrderNotionalMicros: bigint
+  readonly maxSymbolExposureMicros: bigint
+  readonly targetWeights: Readonly<Record<string, number>>
+}
+
+export type ExecutionTargetAllocationFailure = {
+  readonly _tag: 'InvalidTargetWeight'
+  readonly symbol: string
+  readonly cause: unknown
+}
+
+/** Caps portfolio capital so every positive target remains inside both per-order and per-symbol policy limits. */
+export const constrainExecutionTargetAllocationCapitalMicros = (
+  facts: ExecutionTargetAllocationFacts,
+): Result.Result<bigint, ExecutionTargetAllocationFailure> => {
+  const targetNotionalLimit =
+    facts.maxOrderNotionalMicros < facts.maxSymbolExposureMicros
+      ? facts.maxOrderNotionalMicros
+      : facts.maxSymbolExposureMicros
+  return Object.entries(facts.targetWeights).reduce<Result.Result<bigint, ExecutionTargetAllocationFailure>>(
+    (bounded, [symbol, weight]) =>
+      Result.flatMap(bounded, (current) =>
+        Result.mapError(numberToMicros(weight, `target weight for ${symbol}`), (cause) => ({
+          _tag: 'InvalidTargetWeight' as const,
+          symbol,
+          cause,
+        })).pipe(
+          Result.map((weightMicros) => {
+            if (weightMicros === 0n) return current
+            const targetBound = (targetNotionalLimit * MICROS) / weightMicros
+            return targetBound < current ? targetBound : current
+          }),
+        ),
+      ),
+    Result.succeed(nonNegative(facts.allocationCapitalMicros)),
+  )
 }
 
 export const capitalGrantKey = (grant: CapitalGrant): string =>

@@ -41,11 +41,12 @@ export interface StrategyDefinition<
   TMarket,
   TFailure extends StrategyDecisionFailure,
   TTarget extends TargetPortfolio = TargetPortfolio,
+  TParameters = Protocol,
 > {
   readonly name: string
   /** Maximum lifetime of positions produced by this strategy. */
   readonly holdingPeriod: 'INTRADAY' | 'MULTI_SESSION'
-  readonly parameters: Protocol
+  readonly parameters: TParameters
   readonly decide: (context: VerifiedStrategyContext<TMarket>) => Result.Result<TTarget, TFailure>
 }
 

@@ -8,6 +8,8 @@ import type { InputManifest } from '../../types'
 import {
   CycleState,
   CycleTerminalReason,
+  isIntradayAutonomousCycle,
+  isLegacyAutonomousCycle,
   type AutonomousCycle,
   type CycleCompletionState,
   type CycleDraft,
@@ -117,7 +119,8 @@ const fail = (
 const shadowDecisionEquivalent = Schema.toEquivalence(CycleDecisionDocumentSchema)
 
 const makeInitialCycleDataFirst = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
-  const missedPublication = observedAt >= draft.window.publicationDeadlineAt
+  const missedPublication =
+    draft.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' && observedAt >= draft.window.publicationDeadlineAt
   return {
     ...draft,
     state: missedPublication ? CycleState.Blocked : CycleState.Pending,
@@ -146,7 +149,9 @@ const decideAcquireDataFirst = (
     return fail('conflict', 'stored cycle differs from deterministic acquisition input')
   }
   return Result.succeed(
-    stored.state === CycleState.Pending && observedAt >= stored.window.publicationDeadlineAt
+    stored.state === CycleState.Pending &&
+      stored.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' &&
+      observedAt >= stored.window.publicationDeadlineAt
       ? {
           _tag: 'Block',
           cycle: stored,
@@ -164,6 +169,10 @@ const decideSnapshotBindingDataFirst = (
   snapshot: InputManifest['finalizedSnapshot'],
   observedAt: string,
 ): Result.Result<SnapshotDecision, CycleStoreDecisionFailure> => {
+  if (isIntradayAutonomousCycle(cycle)) {
+    return fail('invariant', 'intraday cycle snapshots bind atomically with their decision')
+  }
+  if (!isLegacyAutonomousCycle(cycle)) return fail('invariant', 'cycle contract versions are not correlated')
   if (observedAt < cycle.window.signalCloseAt) {
     return fail('invariant', 'snapshot binding cannot precede the Signal session close')
   }
@@ -204,7 +213,7 @@ const decideActivationDataFirst = (
   if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Active)) {
     return fail('conflict', 'only a pending cycle may become active')
   }
-  if (cycle.bindings.snapshotId === undefined) {
+  if (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.bindings.snapshotId === undefined) {
     return fail('invariant', 'cycle activation requires a bound snapshot')
   }
   if (observedAt >= cycle.window.submissionCutoffAt) {
@@ -246,13 +255,21 @@ const decideDecisionBindingDataFirst = (
       reason: CycleTerminalReason.MissedSubmission,
     })
   }
+  const executionMarketData = document.bindings.executionMarketData
+  const snapshotMatches = isIntradayAutonomousCycle(cycle)
+    ? cycle.bindings.snapshotId === undefined &&
+      executionMarketData !== undefined &&
+      document.bindings.snapshotId === executionMarketData.snapshotId &&
+      document.bindings.snapshotContentHash === executionMarketData.contentHash &&
+      document.bindings.snapshotFinalizedAt === executionMarketData.observedAt
+    : document.bindings.snapshotId === cycle.bindings.snapshotId
   if (
     document.bindings.cycleId !== cycle.identity.cycleId ||
     document.bindings.strategyName !== cycle.identity.strategyName ||
     document.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
     (document.mode === legacyExecutionAuthorityToken &&
       document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
-    document.bindings.snapshotId !== cycle.bindings.snapshotId ||
+    !snapshotMatches ||
     document.bindings.accountId !== cycle.identity.accountId ||
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
     document.createdAt > observedAt ||
@@ -334,7 +351,8 @@ const decideBlockDataFirst = (
   }
   if (
     reason === CycleTerminalReason.MissedPublication &&
-    (cycle.state !== CycleState.Pending ||
+    (cycle.window.schemaVersion === 'bayn.autonomous-cycle-window.v3' ||
+      cycle.state !== CycleState.Pending ||
       cycle.bindings.snapshotId !== undefined ||
       observedAt < cycle.window.publicationDeadlineAt)
   ) {

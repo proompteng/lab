@@ -20,26 +20,38 @@ import {
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
-  schema_version: Schema.Literal('bayn.autonomous-cycle.v1'),
-  identity_schema_version: Schema.Literal('bayn.autonomous-cycle-identity.v1'),
-  strategy_name: Schema.Literal('risk-balanced-trend'),
+  schema_version: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3']),
+  identity_schema_version: Schema.Literals([
+    'bayn.autonomous-cycle-identity.v1',
+    'bayn.autonomous-cycle-identity.v2',
+    'bayn.autonomous-cycle-identity.v3',
+  ]),
+  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
-  signal_session_date: IsoDateSchema,
-  signal_calendar_version: StrictNonEmptyStringSchema,
-  execution_policy_schema_version: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
+  signal_session_date: Schema.NullOr(IsoDateSchema),
+  signal_calendar_version: Schema.NullOr(StrictNonEmptyStringSchema),
+  execution_policy_schema_version: Schema.Literals([
+    'bayn.autonomous-cycle-execution-policy.v1',
+    'bayn.autonomous-cycle-execution-policy.v2',
+  ]),
   execution_policy_hash: Sha256Schema,
   strategy_execution_model_hash: Sha256Schema,
   submission_window_ms: PositiveIntegerSchema,
-  submission_cutoff_before_open_ms: PositiveIntegerSchema,
-  window_schema_version: Schema.Literal('bayn.autonomous-cycle-window.v1'),
+  submission_cutoff_before_open_ms: Schema.NullOr(PositiveIntegerSchema),
+  submission_cutoff_after_open_ms: Schema.NullOr(PositiveIntegerSchema),
+  window_schema_version: Schema.Literals([
+    'bayn.autonomous-cycle-window.v1',
+    'bayn.autonomous-cycle-window.v2',
+    'bayn.autonomous-cycle-window.v3',
+  ]),
   execution_calendar_schema_version: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
   execution_calendar_source: Schema.Literal('alpaca-v2-calendar'),
   execution_calendar_hash: Sha256Schema,
   execution_session_date: IsoDateSchema,
-  signal_close_at: Schema.Date,
-  publication_deadline_at: Schema.Date,
+  signal_close_at: Schema.NullOr(Schema.Date),
+  publication_deadline_at: Schema.NullOr(Schema.Date),
   submission_open_at: Schema.Date,
   execution_open_at: Schema.Date,
   execution_close_at: Schema.Date,
@@ -55,11 +67,14 @@ const StoredCycleRowSchema = Schema.Struct({
 })
 
 const CycleIdInputSchema = Schema.Struct({ cycleId: Sha256Schema, observedAt: UtcInstantSchema })
-const CycleAuthoritySlotSchema = Schema.Struct({
+const CycleAuthoritySlotScopeFields = {
   qualificationRunId: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
-  signalSessionDate: IsoDateSchema,
-})
+} as const
+const CycleAuthoritySlotSchema = Schema.Union([
+  Schema.Struct({ ...CycleAuthoritySlotScopeFields, signalSessionDate: IsoDateSchema }),
+  Schema.Struct({ ...CycleAuthoritySlotScopeFields, executionSessionDate: IsoDateSchema }),
+])
 const CycleRecoveryScopeSchema = Schema.Struct({
   qualificationRunId: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
@@ -148,6 +163,26 @@ export const decodeStoredCycleRowValues = (
 ): Result.Result<readonly (typeof StoredCycleRowSchema.Type)[], Schema.SchemaError> =>
   decodeStoredCycleRowValuesResult(rows)
 
+const storedExecutionPolicy = (row: typeof StoredCycleRowSchema.Type) => {
+  const policyMaterial = {
+    schemaVersion: row.execution_policy_schema_version,
+    strategyExecutionModelHash: row.strategy_execution_model_hash,
+    submissionWindowMs: row.submission_window_ms,
+    executionPolicyHash: row.execution_policy_hash,
+  } as const
+  if (row.execution_policy_schema_version === 'bayn.autonomous-cycle-execution-policy.v1') {
+    return { ...policyMaterial, submissionCutoffBeforeOpenMs: row.submission_cutoff_before_open_ms }
+  }
+  return {
+    ...policyMaterial,
+    // Version 2 predates the dedicated after-open column and persisted this value in the historical column.
+    submissionCutoffAfterOpenMs:
+      row.schema_version === 'bayn.autonomous-cycle.v2'
+        ? row.submission_cutoff_before_open_ms
+        : row.submission_cutoff_after_open_ms,
+  }
+}
+
 const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
   decodeAutonomousCycleResult({
     schemaVersion: row.schema_version,
@@ -157,31 +192,33 @@ const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
       qualificationRunId: row.qualification_run_id,
       strategyProtocolHash: row.strategy_protocol_hash,
       accountId: row.account_id,
-      signalSessionDate: row.signal_session_date,
-      signalCalendarVersion: row.signal_calendar_version,
+      ...(row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v3'
+        ? {
+            signalSessionDate: row.signal_session_date,
+            signalCalendarVersion: row.signal_calendar_version,
+          }
+        : {}),
       executionSessionDate: row.execution_session_date,
       executionCalendarSchemaVersion: row.execution_calendar_schema_version,
       executionCalendarSource: row.execution_calendar_source,
       executionCalendarHash: row.execution_calendar_hash,
-      executionPolicy: {
-        schemaVersion: row.execution_policy_schema_version,
-        strategyExecutionModelHash: row.strategy_execution_model_hash,
-        submissionWindowMs: row.submission_window_ms,
-        submissionCutoffBeforeOpenMs: row.submission_cutoff_before_open_ms,
-        executionPolicyHash: row.execution_policy_hash,
-      },
+      executionPolicy: storedExecutionPolicy(row),
       cycleId: row.cycle_id,
     },
     window: {
       schemaVersion: row.window_schema_version,
-      signalCalendarVersion: row.signal_calendar_version,
-      signalSessionDate: row.signal_session_date,
+      ...(row.window_schema_version !== 'bayn.autonomous-cycle-window.v3'
+        ? {
+            signalCalendarVersion: row.signal_calendar_version,
+            signalSessionDate: row.signal_session_date,
+            signalCloseAt: row.signal_close_at?.toISOString(),
+            publicationDeadlineAt: row.publication_deadline_at?.toISOString(),
+          }
+        : {}),
       executionCalendarSchemaVersion: row.execution_calendar_schema_version,
       executionCalendarSource: row.execution_calendar_source,
       executionCalendarHash: row.execution_calendar_hash,
       executionSessionDate: row.execution_session_date,
-      signalCloseAt: row.signal_close_at.toISOString(),
-      publicationDeadlineAt: row.publication_deadline_at.toISOString(),
       submissionOpenAt: row.submission_open_at.toISOString(),
       executionOpenAt: row.execution_open_at.toISOString(),
       executionCloseAt: row.execution_close_at.toISOString(),

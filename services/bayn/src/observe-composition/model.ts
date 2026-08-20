@@ -16,8 +16,8 @@ import { IntentStore, type BlockedCycleIntentStoreShape } from '../execution/int
 import { MutationStore } from '../execution/mutations'
 import type { ExecutionProgram } from '../execution/runtime-program'
 import { WriterFence } from '../execution/writer-fence'
-import { MarketData } from '../market-data'
-import type { CausalProtocol } from '../protocol'
+import type { CycleExecutionModel } from '../execution-model-contract'
+import { MarketData, type IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
@@ -61,7 +61,7 @@ type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 export type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
 
 export type ObserveStartupPreparation = {
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
   readonly executionPolicy: CycleExecutionPolicy
   readonly strategyProtocolHash: string
 }
@@ -90,6 +90,8 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  /** Explicit archive dependency; required only for an INTRADAY strategy. */
+  readonly intradayMarketData?: IntradayMarketDataService
   readonly cycleCadence?: CycleCadence
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleClosureStore?: ExecutionCycleClosureStoreShape

@@ -45,7 +45,11 @@ import {
   validateExecutionMandateCloseWindow,
 } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
-import { loadObserveRiskPolicy, executionMandateCloseExpiresAt } from '../observe-composition'
+import {
+  loadObserveRiskPolicy,
+  executionMandateCloseExpiresAt,
+  loadStrategyExecutionRiskPolicy,
+} from '../observe-composition'
 import { restrictMutationAuthority } from '../observe-composition/mutation-interpreter'
 import { type ReconciliationPassError } from '../reconciler'
 import { type ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery'
@@ -690,7 +694,7 @@ export const validateResearchCapitalRiskPolicy = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchCapitalActivationRequest,
 ): Effect.Effect<void, OperationalError> =>
-  loadObserveRiskPolicy(request.broker.accountId, plan.strategy.definition.parameters.universe).pipe(
+  loadStrategyExecutionRiskPolicy(request.broker.accountId, plan.strategy).pipe(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('source-controlled capital risk policy is invalid', cause),
     ),

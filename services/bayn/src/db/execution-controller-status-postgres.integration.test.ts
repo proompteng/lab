@@ -446,7 +446,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         `
         yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
         yield* executionControllerPlanStatus
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44)`
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46)`
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,
@@ -516,7 +516,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 44, name: 'execution_controller_pass_observation' })
+      expect(migrated.migration).toEqual({ migration_id: 46, name: 'intraday_native_cycles' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')

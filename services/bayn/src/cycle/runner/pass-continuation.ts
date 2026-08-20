@@ -13,10 +13,16 @@ export type CyclePassContinuation =
 
 const continueFromReadiness = (
   result: Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' | 'RESUMED' }>,
-): CyclePassContinuation =>
-  result.readiness.outcome === 'BOUND' || result.readiness.outcome === 'ALREADY_BOUND'
-    ? { _tag: 'CONTINUE', cycle: result.readiness.cycle, progress: 'SNAPSHOT_BOUND' }
+): CyclePassContinuation => {
+  if (result.readiness === undefined) {
+    if (result.outcome === 'RESUMED') return { _tag: 'RETURN' }
+    return { _tag: 'CONTINUE', cycle: result.receipt.cycle, progress: 'DISCOVERED_EXISTING' }
+  }
+  const readiness = result.readiness
+  return readiness.outcome === 'BOUND' || readiness.outcome === 'ALREADY_BOUND'
+    ? { _tag: 'CONTINUE', cycle: readiness.cycle, progress: 'SNAPSHOT_BOUND' }
     : { _tag: 'RETURN' }
+}
 
 export const selectCyclePassContinuation = (result: CycleRunResult): CyclePassContinuation => {
   switch (result.outcome) {

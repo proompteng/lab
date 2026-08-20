@@ -11,6 +11,7 @@ import {
   type Intent,
 } from '../../execution/contracts'
 import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
+import { alpacaLimitPriceIncrementMicros, quantizeAlpacaLimitPriceMicros } from '../alpaca-price'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'
 import type { BrokerConnection } from '../connection'
@@ -65,7 +66,21 @@ export interface SellQuantityMarketOrderRequestBody {
   readonly extended_hours: false
 }
 
-export type OrderRequestBody = BuyNotionalMarketOrderRequestBody | SellQuantityMarketOrderRequestBody
+export interface LimitIocOrderRequestBody {
+  readonly symbol: string
+  readonly qty: string
+  readonly side: OrderSide
+  readonly type: OrderType.Limit
+  readonly time_in_force: TimeInForce.ImmediateOrCancel
+  readonly limit_price: string
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export type OrderRequestBody =
+  | BuyNotionalMarketOrderRequestBody
+  | SellQuantityMarketOrderRequestBody
+  | LimitIocOrderRequestBody
 
 type MarketOrderRequestCommon = Omit<BuyNotionalMarketOrderRequestBody, 'notional'>
 
@@ -193,12 +208,10 @@ const decimalToMicros = (decimal: string): string | undefined => {
   return (BigInt(whole) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6))).toString()
 }
 
-const alpacaLimitPriceIncrementMicros = (priceMicros: bigint): bigint => (priceMicros >= 1_000_000n ? 10_000n : 100n)
 const alpacaMinimumBuyNotionalMicros = 1_000_000n
 const alpacaNotionalIncrementMicros = 10_000n
 
 const quantizeDown = (value: bigint, increment: bigint): bigint => (value / increment) * increment
-const quantizeUp = (value: bigint, increment: bigint): bigint => ((value + increment - 1n) / increment) * increment
 
 export const alpacaBuyNotionalMicros = (value: string): Result.Result<string, OrderRequestError> => {
   const notional = notionalMicros(value)
@@ -225,9 +238,7 @@ export const orderPriceBoundaryMicros = (intent: OrderRequestIntent): Result.Res
     intent.side === DomainSide.Buy
       ? numerator / quantity.success
       : (numerator + quantity.success - 1n) / quantity.success
-  const increment = alpacaLimitPriceIncrementMicros(unquantized)
-  const price =
-    intent.side === DomainSide.Buy ? quantizeDown(unquantized, increment) : quantizeUp(unquantized, increment)
+  const price = quantizeAlpacaLimitPriceMicros(unquantized, intent.side === DomainSide.Buy ? 'DOWN' : 'UP')
   return price > 0n
     ? Result.succeed(price)
     : Result.fail(
@@ -379,6 +390,67 @@ export const legacyBoundedLimitOrderRequestBody = (
   })
 }
 
+export const limitIocOrderRequestBody = (
+  intent: OrderRequestIntent,
+): Result.Result<LimitIocOrderRequestBody, OrderRequestError> => {
+  if (intent.orderType !== DomainOrderType.Limit || intent.timeInForce !== DomainTimeInForce.ImmediateOrCancel) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound Bayn orders require LIMIT with IOC time in force',
+        orderType: intent.orderType,
+        timeInForce: intent.timeInForce,
+      }),
+    )
+  }
+  const quantity = quantityMicros(intent.quantityMicros)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  if (quantity.success % 1_000_000n !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC orders require a whole-share quantity',
+        quantityMicros: intent.quantityMicros,
+      }),
+    )
+  }
+  const notional = notionalMicros(intent.notionalLimitMicros)
+  if (Result.isFailure(notional)) return Result.fail(notional.failure)
+  const priceNumerator = notional.success * 1_000_000n
+  if (priceNumerator % quantity.success !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC price boundary must be exactly reconstructible from durable intent facts',
+        quantityMicros: intent.quantityMicros,
+        notionalLimitMicros: intent.notionalLimitMicros,
+      }),
+    )
+  }
+  const priceBoundary = priceNumerator / quantity.success
+  const increment = alpacaLimitPriceIncrementMicros(priceBoundary)
+  if (priceBoundary <= 0n || priceBoundary % increment !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'quote-bound LIMIT/IOC price boundary must already match the broker price increment',
+        quantityMicros: intent.quantityMicros,
+        notionalLimitMicros: intent.notionalLimitMicros,
+      }),
+    )
+  }
+  return Result.succeed({
+    symbol: intent.symbol,
+    qty: microsToDecimal(quantity.success),
+    side: side(intent.side),
+    type: OrderType.Limit,
+    time_in_force: TimeInForce.ImmediateOrCancel,
+    limit_price: microsToDecimal(priceBoundary),
+    client_order_id: intent.clientOrderId,
+    extended_hours: false,
+  })
+}
+
 const validateMarketOrderRequest = (
   intent: OrderRequestIntent,
 ): Result.Result<ValidatedMarketOrderRequest, OrderRequestError> => {
@@ -417,6 +489,7 @@ const validateMarketOrderRequest = (
 }
 
 export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  if (intent.orderType === DomainOrderType.Limit) return limitIocOrderRequestBody(intent)
   const validated = validateMarketOrderRequest(intent)
   if (Result.isFailure(validated)) return Result.fail(validated.failure)
   const { common, notional, quantity } = validated.success
@@ -639,6 +712,8 @@ const normalizeAcceptedOrder = (
   )
 
 const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean => {
+  const expectedLimitPriceMicros =
+    'limit_price' in facts.request ? decimalToMicros(facts.request.limit_price) : undefined
   const commonMatches =
     order.accountId === facts.intent.accountId &&
     order.assetClass === AssetClass.UsEquity &&
@@ -647,7 +722,7 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
     order.side === facts.request.side &&
     order.orderType === facts.request.type &&
     order.timeInForce === facts.request.time_in_force &&
-    order.limitPriceMicros === undefined &&
+    order.limitPriceMicros === expectedLimitPriceMicros &&
     !order.extendedHours
   if (!commonMatches) return false
   return 'notional' in facts.request

@@ -44,6 +44,8 @@ import executionControllerActiveStatus from '../../migrations/0041_execution_con
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
 import executionControllerPassObservation from '../../migrations/0044_execution_controller_pass_observation'
+import intradayAutonomousCycles from '../../migrations/0045_intraday_autonomous_cycles'
+import intradayNativeCycles from '../../migrations/0046_intraday_native_cycles'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -90,4 +92,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '42_execution_controller_plan_status': executionControllerPlanStatus,
   '43_execution_controller_activation_projection': executionControllerActivationProjection,
   '44_execution_controller_pass_observation': executionControllerPassObservation,
+  '45_intraday_autonomous_cycles': intradayAutonomousCycles,
+  '46_intraday_native_cycles': intradayNativeCycles,
 })

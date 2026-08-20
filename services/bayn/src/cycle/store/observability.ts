@@ -136,6 +136,7 @@ const snapshotFromRow = (
   const accountId = row[`${prefix}_account_id`]
   const signalSessionDate = row[`${prefix}_signal_session_date`]
   const executionSessionDate = row[`${prefix}_execution_session_date`]
+  const authoritySessionDate = signalSessionDate ?? executionSessionDate
   const phase = row[`${prefix}_state`]
   const submissionOpenAt = row[`${prefix}_submission_open_at`]
   const submissionCutoffAt = row[`${prefix}_submission_cutoff_at`]
@@ -145,7 +146,7 @@ const snapshotFromRow = (
   const updatedAt = row[`${prefix}_updated_at`]
   if (
     accountId === null ||
-    signalSessionDate === null ||
+    authoritySessionDate === null ||
     executionSessionDate === null ||
     phase === null ||
     submissionOpenAt === null ||
@@ -160,7 +161,7 @@ const snapshotFromRow = (
   return Result.succeed({
     cycleId,
     accountId,
-    signalSessionDate,
+    signalSessionDate: authoritySessionDate,
     executionSessionDate,
     phase,
     snapshotId: row[`${prefix}_snapshot_id`],

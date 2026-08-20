@@ -6,25 +6,18 @@ import { CycleRunnerError } from '../cycle/runner'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
-import {
-  Authority,
-  IntentState,
-  KillState,
-  OrderSide,
-  TerminalOutcome,
-  type AuthorityState,
-  type Intent,
-} from '../execution/contracts'
+import { Authority, IntentState, KillState, type AuthorityState, type Intent } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations'
-import { makeFillTerms, MICROS } from '../execution-model'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
-import type { CausalProtocol } from '../protocol'
+import type { CycleExecutionModel } from '../execution-model-contract'
 import {
   decideExecutionCycleCompletion,
+  decideExecutionIntentTerminalDisposition,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
   decidePendingMutationObservation,
@@ -61,7 +54,7 @@ export type MutationIntentInput = {
 }
 
 export type MutationPreparation = {
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
 }
 
 export type MutationPreparationFactsRequest<
@@ -203,23 +196,24 @@ const validateCurrentMutationExecutionTerms = (
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
 ): Result.Result<void, CycleRunnerError> => {
-  const fillTerms = makeFillTerms(
-    targetIntent.side === OrderSide.Buy ? 'buy' : 'sell',
-    BigInt(targetIntent.quantityMicros),
-    BigInt(target.referencePriceMicros),
-    preparation.executionModel,
-    MICROS,
-  )
-  if (Result.isFailure(fillTerms)) {
+  const pricing = deriveExecutionIntentPricing({
+    side: targetIntent.side,
+    orderType: targetIntent.orderType,
+    timeInForce: targetIntent.timeInForce,
+    quantityMicros: BigInt(targetIntent.quantityMicros),
+    referencePriceMicros: BigInt(target.referencePriceMicros),
+    executionModel: preparation.executionModel,
+  })
+  if (Result.isFailure(pricing)) {
     return Result.fail(
       mutationRunnerError({
         message: 'mutation execution terms are invalid',
-        cause: fillTerms.failure,
+        cause: pricing.failure,
         failure: 'contract',
       }),
     )
   }
-  return fillTerms.success.notionalMicros.toString() === riskBinding.notionalLimitMicros
+  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros
     ? Result.succeed(undefined)
     : Result.fail(
         mutationRunnerError({
@@ -379,14 +373,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       preparedIntents.push({ ...lookup, intent })
     }
 
-    const entryHasTerminalUnsuccessfulIntent =
-      input.mutationPhase !== 'CLOSE' &&
-      preparedIntents.some(
-        (prepared) =>
-          prepared.stored?.intent.state === IntentState.Terminal &&
-          prepared.stored.intent.terminalOutcome !== TerminalOutcome.Filled,
-      )
-
     const recoveryObservedAt = yield* dependencies.now
     let pendingRecovery: { readonly intentId: string; readonly event: MutationEvent } | undefined
     for (const prepared of preparedIntents) {
@@ -526,6 +512,24 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       })
     }
 
+    const mutationPhase = input.mutationPhase === 'CLOSE' ? 'CLOSE' : 'ENTRY'
+    const entryHasTerminalUnsuccessfulIntent =
+      mutationPhase === 'ENTRY' &&
+      preparedIntents.some((prepared) => {
+        const intent = prepared.stored?.intent
+        return (
+          intent?.state === IntentState.Terminal &&
+          decideExecutionIntentTerminalDisposition({
+            phase: mutationPhase,
+            intent,
+            ...(prepared.latestSubmit?.brokerOrderId === undefined
+              ? {}
+              : { acceptedBrokerOrderId: prepared.latestSubmit.brokerOrderId }),
+            orders: facts.reconciliation.brokerState.orders,
+          }) === 'UNSUCCESSFUL'
+        )
+      })
+
     const terminalEvidence: ExecutionCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
     let unsuccessfulIntentFound = entryHasTerminalUnsuccessfulIntent
@@ -572,14 +576,21 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
       switch (decision._tag) {
-        case 'SkipTerminal':
+        case 'SkipTerminal': {
+          const disposition = decideExecutionIntentTerminalDisposition({
+            phase: mutationPhase,
+            intent: record.intent,
+            ...(latest?.brokerOrderId === undefined ? {} : { acceptedBrokerOrderId: latest.brokerOrderId }),
+            orders: facts.reconciliation.brokerState.orders,
+          })
           terminalEvidence.push({
             state: record.intent.state,
             ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
+            ...(disposition === 'BENIGN_ZERO_FILL_IOC' ? { benignZeroFillIoc: true as const } : {}),
           })
-          if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
+          if (disposition === 'UNSUCCESSFUL') {
             if (!drainOpenOrders) {
               unsuccessfulIntentFound = true
               yield* dependencies.restrictAuthority(
@@ -590,6 +601,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             continue
           }
           break
+        }
         case 'Pending': {
           const observation = yield* Effect.fromResult(
             decidePendingMutationObservation(decision.order, facts.reconciliation.brokerState.orders),

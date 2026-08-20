@@ -1235,6 +1235,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 42, name: 'execution_controller_plan_status' },
       { migration_id: 43, name: 'execution_controller_activation_projection' },
       { migration_id: 44, name: 'execution_controller_pass_observation' },
+      { migration_id: 45, name: 'intraday_autonomous_cycles' },
+      { migration_id: 46, name: 'intraday_native_cycles' },
     ])
   })
 

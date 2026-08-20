@@ -1,6 +1,12 @@
 import { Result } from 'effect'
 
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
+import {
+  CycleState,
+  CycleTerminalReason,
+  isIntradayAutonomousCycle,
+  isLegacyAutonomousCycle,
+  type AutonomousCycle,
+} from '../model'
 import { isTerminalCycleState } from '../transitions'
 import { selectBoundDecision } from './recovery-decision-binding'
 import {
@@ -108,6 +114,7 @@ const selectDeadlineOrProvenance = (
   const pendingBindingEffectiveAt = pendingSnapshotBindingAt(cycle, correlatedReadiness)
   if (
     cycle.state === CycleState.Pending &&
+    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' &&
     (pendingBindingEffectiveAt === undefined
       ? observedAt >= cycle.window.publicationDeadlineAt
       : pendingBindingEffectiveAt >= cycle.window.publicationDeadlineAt)
@@ -120,7 +127,9 @@ const selectDeadlineOrProvenance = (
     }
   }
   if (
-    (cycle.state === CycleState.Active || pendingBindingEffectiveAt !== undefined) &&
+    (cycle.state === CycleState.Active ||
+      pendingBindingEffectiveAt !== undefined ||
+      (cycle.state === CycleState.Pending && isIntradayAutonomousCycle(cycle))) &&
     observedAt >= cycle.window.submissionCutoffAt
   ) {
     return {
@@ -206,6 +215,27 @@ const selectPendingRecovery = (
         facts: {
           cycleId: cycle.identity.cycleId,
         },
+      }),
+    )
+  }
+  if (isIntradayAutonomousCycle(cycle)) {
+    if (state.readiness !== undefined) {
+      return Result.fail(
+        selectRecoveryFailure({
+          reason: 'state-evidence',
+          message: 'intraday pending cycles do not accept daily publication readiness',
+          facts: { cycleId: cycle.identity.cycleId },
+        }),
+      )
+    }
+    return Result.succeed({ action: 'ACTIVATE', cycleId: cycle.identity.cycleId, observedAt: state.observedAt })
+  }
+  if (!isLegacyAutonomousCycle(cycle)) {
+    return Result.fail(
+      selectRecoveryFailure({
+        reason: 'state-evidence',
+        message: 'cycle contract versions are not correlated',
+        facts: { cycleId: cycle.identity.cycleId },
       }),
     )
   }

@@ -27,6 +27,7 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { TargetPlanStatus } from '../target-planner'
+import { decodeOpeningDriveProtocol, strategyDefinition } from '../strategy'
 import {
   countOpenPositions,
   mutationIntentReconciliationDelayMs,
@@ -365,6 +366,7 @@ export const mutationDecisionInput = (
   policy,
   reconcile,
   strategy: input.strategy,
+  ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
 })
 
 const readMutationPreparationFacts = (
@@ -397,8 +399,16 @@ const readMutationPreparationFacts = (
     const authority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(facts.reconciliation, request.policy, request.input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const snapshot =
+      facts.schemaVersion === 'bayn.observe-decision-facts.v1'
+        ? facts.snapshot.manifest.finalizedSnapshot
+        : {
+            snapshotId: request.document.bindings.snapshotId,
+            contentHash: request.document.bindings.snapshotContentHash,
+            finalizedAt: request.document.bindings.snapshotFinalizedAt,
+          }
     return {
-      snapshot: facts.snapshot.manifest.finalizedSnapshot,
+      snapshot,
       reconciliation: facts.reconciliation,
       authority: authority.authority,
       evaluatedAt: facts.evaluatedAt,
@@ -474,10 +484,27 @@ const executeBoundExecutionCycle = (
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
+    const sessionCloseLeads =
+      preparation.executionModel.schemaVersion === 'bayn.execution-model.v4'
+        ? yield* Effect.fromResult(decodeOpeningDriveProtocol(strategyDefinition(input.strategy).parameters)).pipe(
+            Effect.mapError((cause) =>
+              mutationRunnerError({
+                message: 'opening-drive close window protocol is invalid',
+                cause,
+                failure: 'contract',
+              }),
+            ),
+            Effect.map((protocol) => ({
+              sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
+              sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
+            })),
+          )
+        : undefined
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
         executionCloseAt: cycle.window.executionCloseAt,
+        ...sessionCloseLeads,
         ...(input.executionMandateCutoffAt === undefined
           ? {}
           : { mandateForceCloseAt: input.executionMandateCutoffAt }),

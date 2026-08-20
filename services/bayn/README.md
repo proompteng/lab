@@ -186,5 +186,12 @@ BAYN_TEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_test \
   bun test services/bayn/src/db/evidence-store.integration.test.ts
 ```
 
-The current candidate reads `adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v2` through the
-official Effect ClickHouse client. Bayn's Signal identity is read-only and has no DDL, insert, or mutation authority.
+The active `opening-drive-momentum` strategy reads Alpaca WebSocket data after it has flowed through Kafka and the
+Dorvud/Flink archive into ClickHouse: `intraday_bars_1m_v2`, `intraday_quotes_v1`, and `intraday_trades_v1`. Snapshot
+identity binds the exact Kafka topics, partition watermarks, archive content hashes, calendar observation, universe,
+and feed before a decision can produce broker intents. Bayn's ClickHouse identity is read-only and has no DDL, insert,
+or mutation authority.
+
+`adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v2` are the legacy adjusted-daily Signal
+publication tables. They remain readable only for v1 history, forward-performance evidence, and the legacy
+`risk-balanced-trend` strategy; native v2 opening-drive cycle discovery and decisions do not depend on them.

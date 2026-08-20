@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 
 import { fixtureRuntime } from '../app-test-support'
-import { strategyAllowsMutationCadence } from './strategy-cadence'
+import { strategyAllowsMutationCadence, strategyCycleCadence } from './strategy-cadence'
 
 test('refuses to execute a multi-session strategy under an every-session mutation cadence', () => {
   expect(strategyAllowsMutationCadence(fixtureRuntime, 'MONTHLY')).toBe(true)
@@ -11,13 +11,11 @@ test('refuses to execute a multi-session strategy under an every-session mutatio
 
 test('allows an intraday strategy under an every-session mutation cadence', () => {
   const intraday = {
-    ...fixtureRuntime,
     definition: { ...fixtureRuntime.definition, holdingPeriod: 'INTRADAY' as const },
-    application: {
-      ...fixtureRuntime.application,
-      definition: { ...fixtureRuntime.application.definition, holdingPeriod: 'INTRADAY' as const },
-    },
+    provenance: fixtureRuntime.provenance,
   }
 
+  expect(strategyCycleCadence(fixtureRuntime)).toBeUndefined()
+  expect(strategyCycleCadence(intraday)).toBe('EVERY_SESSION')
   expect(strategyAllowsMutationCadence(intraday, 'EVERY_SESSION')).toBe(true)
 })

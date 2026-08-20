@@ -82,6 +82,7 @@ const IntradayBarRowSchema = Schema.Struct({
 
 const IntradayQuoteRowSchema = Schema.Struct({
   ...identityFields,
+  latest_payload_variants: DigitsSchema,
   bid_price: NumericSchema,
   bid_size: NumericSchema,
   ask_price: NumericSchema,
@@ -101,6 +102,7 @@ const IntradayQuoteRowSchema = Schema.Struct({
 
 const IntradayTradeRowSchema = Schema.Struct({
   ...identityFields,
+  latest_payload_variants: DigitsSchema,
   price: NumericSchema,
   size: NumericSchema,
 }).check(

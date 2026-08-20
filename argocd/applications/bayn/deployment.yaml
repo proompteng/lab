@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-20T07:40:51Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-20T14:30:00Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -56,7 +56,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 5d1d85c5b60d62f0374d7533ce931a0d1568723b
+              value: 5dbb887f926325b36eabc32245adb26b2f25d05e
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -72,18 +72,18 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:22af29baa177f051570d2b66b2de27ca17fdffa529730ddc0e49a54a36a0e470
+              value: sha256:c433389487ebb4414ec45cbb761f37f3c19617411f067575d53b560739681fac
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
+              value: "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b"
+              value: "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
                   name: bayn-alpaca-auth
                   key: capital-activation-request
             - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalBuildContinuation
+              value: ResearchCapitalActivationRequest
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import type { MarketDataInspection } from '../../market-data'
 import { Pipeable } from '../../pipeable'
 import { signalSessionCloseAt, type CycleConstructionFailure } from '../construction'
-import type { AutonomousCycle } from '../model'
+import { isLegacyAutonomousCycle, type AutonomousCycle } from '../model'
 
 export interface PublicationFreshness {
   readonly dataAgeMs: number
@@ -31,6 +31,10 @@ export type CyclePublicationReadiness =
     }
 
 export type PublicationFreshnessFailure =
+  | {
+      readonly _tag: 'PublicationCycleContractMismatch'
+      readonly cycleId: string
+    }
   | {
       readonly _tag: 'PublicationSessionMismatch'
       readonly expectedSessionDate: string
@@ -82,6 +86,12 @@ const measurePublicationFreshnessDataFirst = (
   inspection: MarketDataInspection,
   observedAt: string,
 ): Result.Result<PublicationFreshness, PublicationFreshnessFailure> => {
+  if (!isLegacyAutonomousCycle(cycle)) {
+    return Result.fail({
+      _tag: 'PublicationCycleContractMismatch',
+      cycleId: cycle.identity.cycleId,
+    })
+  }
   const snapshot = inspection.manifest.finalizedSnapshot
   if (
     snapshot.asOfSession !== cycle.identity.signalSessionDate ||

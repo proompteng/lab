@@ -59,7 +59,9 @@ export const selectCycleAcquisition = (
   material: CycleAcquireMaterial,
   acquiredAt: string,
 ): CycleCalendarCandidateDecision =>
-  isEverySessionCycleCadence(cadence) && acquiredAt >= material.draft.window.publicationDeadlineAt
+  isEverySessionCycleCadence(cadence) &&
+  material.draft.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' &&
+  acquiredAt >= material.draft.window.publicationDeadlineAt
     ? { _tag: 'NOT_DUE', result: staleExecutionBootstrapResult(material, acquiredAt) }
     : { _tag: 'ACQUIRE', material }
 
@@ -74,6 +76,7 @@ const selectCycleCalendarPublication = <R>(
   const candidate: CycleCandidate = {
     qualificationRunId: context.qualificationRunId,
     ...(context.cadence === undefined ? {} : { cadence: context.cadence }),
+    ...(context.strategyName === undefined ? {} : { strategyName: context.strategyName }),
     strategyProtocolHash: context.strategyProtocolHash,
     accountId: context.accountId,
     signalSession: publication.signalSession,

@@ -6,6 +6,14 @@ import type { IntradaySnapshotRequest } from './model'
 import { intradayArchivePageSize, makeIntradayMarketDataQueries } from './queries'
 
 const request: IntradaySnapshotRequest = {
+  calendar: {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    requestedRange: { start: '2026-08-18', end: '2026-08-18' },
+    timeZone: 'UTC',
+    sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
+    normalizedResponseHash: 'b'.repeat(64),
+  },
   universeId: 'opening-drive-v1',
   universeSymbolHash: 'a'.repeat(64),
   universe: ['AMD'],
@@ -46,6 +54,19 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request))
 
     expect(capture).toContain('FROM signal.intraday_bars_1m_v2')
+    expect(capture).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 3, 'UTC')`)
+    expect(capture).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 3, 'UTC')`)
+    expect(
+      capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
+    ).toHaveLength(2)
+    expect(
+      capture.match(
+        new RegExp(
+          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          'g',
+        ),
+      ),
+    ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
     expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
     expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
@@ -54,9 +75,16 @@ describe('intraday archive queries', () => {
     expect(bars).not.toContain('ORDER BY source_offset DESC\n')
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
-      expect(query).toContain(`event_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).toContain(
+        `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC')`,
+      )
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
+      expect(query).toContain('max(event_ts) OVER (PARTITION BY symbol) AS latest_event_ts')
+      expect(query).toContain('WHERE event_ts = latest_event_ts')
+      expect(query).toContain('AS latest_payload_variants')
+      expect(query).toContain('WHERE latest_candidate_rank = 1')
+      expect(query).not.toContain('LIMIT 1 BY symbol')
     }
     for (const query of [bars, quotes, trades]) {
       expect(query).toContain(`LIMIT ${intradayArchivePageSize}`)
@@ -97,7 +125,7 @@ describe('intraday archive queries', () => {
     )
     for (const query of [quotes, trades]) {
       expect(query).toContain(
-        `AND tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
+        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
       )
       expect(query).toContain(`parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`)
       expect(query).toContain(`toUInt64("${cursor.sourcePartition}")`)

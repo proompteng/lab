@@ -8,10 +8,15 @@ import {
   makeCycleDraft,
   makeCycleExecutionPolicy,
   makeCycleIdentity,
+  makeIntradayCycleWindow,
   makeCycleWindow,
   makeExecutionCalendarObservation,
+  isIntradayCycleDraft,
   type AutonomousCycle,
   type CycleDraft,
+  type IntradayAutonomousCycle,
+  type LegacyAutonomousCycle,
+  type LegacyCycleDraft,
 } from './index'
 import {
   cycleCompletionStateForTargetPlan,
@@ -30,12 +35,20 @@ const strategyProtocolHash = hash('2')
 const accountId = 'paper-account-1'
 const snapshotId = hash('3')
 
+type LegacyV1CycleDraft = Extract<LegacyCycleDraft, { readonly schemaVersion: 'bayn.autonomous-cycle.v1' }>
+type LegacyV1AutonomousCycle = Extract<LegacyAutonomousCycle, { readonly schemaVersion: 'bayn.autonomous-cycle.v1' }>
+
+const isLegacyV1CycleDraft = (cycleDraft: CycleDraft): cycleDraft is LegacyV1CycleDraft =>
+  cycleDraft.schemaVersion === 'bayn.autonomous-cycle.v1' &&
+  cycleDraft.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v1' &&
+  cycleDraft.window.schemaVersion === 'bayn.autonomous-cycle-window.v1'
+
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
 
-const draft = (signalCalendarVersion = 'XNYS-v1'): CycleDraft => {
+const draft = (signalCalendarVersion = 'XNYS-v1'): LegacyV1CycleDraft => {
   const calendar = value(
     makeExecutionCalendarObservation({
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
@@ -81,10 +94,14 @@ const draft = (signalCalendarVersion = 'XNYS-v1'): CycleDraft => {
       policy,
     ),
   )
-  return value(makeCycleDraft(identity, window))
+  const cycleDraft = value(makeCycleDraft(identity, window))
+  if (!isLegacyV1CycleDraft(cycleDraft)) {
+    throw new Error('recovery fixture requires a version 1 legacy cycle draft')
+  }
+  return cycleDraft
 }
 
-const pendingCycle = (signalCalendarVersion = 'XNYS-v1'): AutonomousCycle => ({
+const pendingCycle = (signalCalendarVersion = 'XNYS-v1'): LegacyV1AutonomousCycle => ({
   ...draft(signalCalendarVersion),
   state: CycleState.Pending,
   bindings: {},
@@ -93,19 +110,63 @@ const pendingCycle = (signalCalendarVersion = 'XNYS-v1'): AutonomousCycle => ({
   updatedAt: '2026-01-30T21:15:00.000Z',
 })
 
-const boundPendingCycle = (): AutonomousCycle => ({
+const boundPendingCycle = (): LegacyV1AutonomousCycle => ({
   ...pendingCycle(),
   bindings: { snapshotId },
   stateVersion: 2,
   updatedAt: '2026-01-30T21:16:00.000Z',
 })
 
-const activeCycle = (): AutonomousCycle => ({
+const activeCycle = (): LegacyV1AutonomousCycle => ({
   ...boundPendingCycle(),
   state: CycleState.Active,
   stateVersion: 3,
   updatedAt: '2026-02-02T13:56:00.000Z',
 })
+
+const pendingIntradayCycle = (): IntradayAutonomousCycle => {
+  const calendar = value(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-02-02',
+      openAt: '2026-02-02T14:30:00.000Z',
+      closeAt: '2026-02-02T21:00:00.000Z',
+    }),
+  )
+  const policy = value(
+    makeCycleExecutionPolicy({
+      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
+      strategyExecutionModelHash: hash('4'),
+      submissionWindowMs: 25 * 60_000,
+      submissionCutoffAfterOpenMs: 30 * 60_000,
+    }),
+  )
+  const identity = value(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'opening-drive-momentum',
+      qualificationRunId,
+      strategyProtocolHash,
+      accountId,
+      executionSessionDate: calendar.executionSessionDate,
+      executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
+      executionCalendarSource: calendar.executionCalendarSource,
+      executionCalendarHash: calendar.executionCalendarHash,
+      executionPolicy: policy,
+    }),
+  )
+  const intradayDraft = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, policy))))
+  if (!isIntradayCycleDraft(intradayDraft)) throw new Error('recovery fixture requires an intraday cycle draft')
+  return {
+    ...intradayDraft,
+    state: CycleState.Pending,
+    bindings: {},
+    stateVersion: 1,
+    createdAt: '2026-02-02T14:29:00.000Z',
+    updatedAt: '2026-02-02T14:29:00.000Z',
+  }
+}
 
 const targetPlan = (
   status: TargetPlanStatus.NoTrade | TargetPlanStatus.Blocked,
@@ -138,7 +199,7 @@ const targetPlan = (
 }
 
 const decisionDocument = (
-  cycle: AutonomousCycle,
+  cycle: LegacyAutonomousCycle,
   status: TargetPlanStatus.NoTrade | TargetPlanStatus.Blocked = TargetPlanStatus.NoTrade,
   reason: TargetPlanReason.TargetsSatisfied | BlockedTargetPlanReason = TargetPlanReason.TargetsSatisfied,
   createdAt = '2026-02-02T13:59:00.000Z',
@@ -185,11 +246,34 @@ const recoveryState = (
 const select = (state: CycleRecoveryState): CycleRecoverySelection => value(selectCycleRecovery(state))
 
 describe('cycle recovery algebra', () => {
+  test('blocks an unbound intraday cycle at its submission cutoff instead of attempting stale activation', () => {
+    const pending = pendingIntradayCycle()
+    expect(
+      select(
+        recoveryState(pending, {
+          observedAt: '2026-02-02T14:59:59.999Z',
+        }),
+      ),
+    ).toEqual({ action: 'ACTIVATE', cycleId: pending.identity.cycleId, observedAt: '2026-02-02T14:59:59.999Z' })
+    expect(
+      select(
+        recoveryState(pending, {
+          observedAt: pending.window.submissionCutoffAt,
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: pending.identity.cycleId,
+      observedAt: pending.window.submissionCutoffAt,
+      reason: CycleTerminalReason.MissedSubmission,
+    })
+  })
+
   test('selects every discovery, readiness, activation, waiting, and decision-building action', () => {
     const pending = pendingCycle()
     const bound = boundPendingCycle()
     const active = activeCycle()
-    const blockedReadinessCycle: AutonomousCycle = {
+    const blockedReadinessCycle: LegacyAutonomousCycle = {
       ...pending,
       state: CycleState.Blocked,
       terminalReason: CycleTerminalReason.MissedPublication,
@@ -289,7 +373,7 @@ describe('cycle recovery algebra', () => {
     })
 
     const noTrade = decisionDocument(active)
-    const decisionBound: AutonomousCycle = {
+    const decisionBound: LegacyAutonomousCycle = {
       ...active,
       bindings: { snapshotId, decisionHash: noTrade.contentHash },
       updatedAt: '2026-02-02T14:01:00.000Z',
@@ -317,7 +401,7 @@ describe('cycle recovery algebra', () => {
     expect(cycleCompletionStateForTargetPlan(TargetPlanStatus.NoTrade)).toBe(CycleState.NoTrade)
 
     const blocked = decisionDocument(active, TargetPlanStatus.Blocked, TargetPlanReason.InputStale)
-    const blockedBound: AutonomousCycle = {
+    const blockedBound: LegacyAutonomousCycle = {
       ...decisionBound,
       bindings: { snapshotId, decisionHash: blocked.contentHash },
     }
@@ -372,7 +456,7 @@ describe('cycle recovery algebra', () => {
   test('rejects a concurrent snapshot binding that became effective at or after the publication deadline', () => {
     const pending = pendingCycle()
     const selectConcurrentBinding = (bindingEffectiveAt: string, observedAt: string): CycleRecoverySelection => {
-      const concurrentlyBound: AutonomousCycle = {
+      const concurrentlyBound: LegacyAutonomousCycle = {
         ...pending,
         bindings: { snapshotId },
         stateVersion: pending.stateVersion + 1,
@@ -473,7 +557,7 @@ describe('cycle recovery algebra', () => {
   test('rejects adversarial readiness snapshots, drafts, states, and version transitions', () => {
     const pending = pendingCycle()
     const bound = boundPendingCycle()
-    const blocked: AutonomousCycle = {
+    const blocked: LegacyAutonomousCycle = {
       ...pending,
       state: CycleState.Blocked,
       terminalReason: CycleTerminalReason.MissedPublication,
@@ -481,14 +565,14 @@ describe('cycle recovery algebra', () => {
       updatedAt: pending.window.publicationDeadlineAt,
       stateVersion: pending.stateVersion + 1,
     }
-    const differentDraftBound: AutonomousCycle = {
+    const differentDraftBound: LegacyAutonomousCycle = {
       ...bound,
       window: {
         ...bound.window,
         signalCloseAt: '2026-01-30T20:59:00.000Z',
       },
     }
-    const wrongSnapshotBound: AutonomousCycle = {
+    const wrongSnapshotBound: LegacyAutonomousCycle = {
       ...bound,
       bindings: { snapshotId: hash('c') },
     }
@@ -569,7 +653,7 @@ describe('cycle recovery algebra', () => {
     const cases = [beforeCycleCreation, beforeSubmissionOpen]
 
     for (const document of cases) {
-      const decisionBound: AutonomousCycle = {
+      const decisionBound: LegacyAutonomousCycle = {
         ...active,
         bindings: { snapshotId, decisionHash: document.contentHash },
         updatedAt: '2026-02-02T14:01:00.000Z',
@@ -625,7 +709,7 @@ describe('cycle recovery algebra', () => {
   test('returns tagged failures for every reachable recovery-state contradiction', () => {
     const pending = pendingCycle()
     const otherPending = pendingCycle('XNYS-v2')
-    const otherBound: AutonomousCycle = {
+    const otherBound: LegacyAutonomousCycle = {
       ...pending,
       bindings: { snapshotId: hash('c') },
       stateVersion: 2,
@@ -634,7 +718,7 @@ describe('cycle recovery algebra', () => {
     const active = activeCycle()
     const document = decisionDocument(active)
     const otherDocument = decisionDocument(active, TargetPlanStatus.Blocked, TargetPlanReason.InputStale)
-    const decisionBound: AutonomousCycle = {
+    const decisionBound: LegacyAutonomousCycle = {
       ...active,
       bindings: { snapshotId, decisionHash: document.contentHash },
       updatedAt: '2026-02-02T14:01:00.000Z',

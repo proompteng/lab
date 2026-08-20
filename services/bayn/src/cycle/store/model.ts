@@ -23,11 +23,16 @@ export interface CycleMutationReceipt {
   readonly changed: boolean
 }
 
-export interface CycleAuthoritySlot {
+interface CycleAuthoritySlotScope {
   readonly qualificationRunId: string
   readonly accountId: string
-  readonly signalSessionDate: IsoDate
 }
+
+export type CycleAuthoritySlot = CycleAuthoritySlotScope &
+  (
+    | { readonly signalSessionDate: IsoDate; readonly executionSessionDate?: never }
+    | { readonly signalSessionDate?: never; readonly executionSessionDate: IsoDate }
+  )
 
 export interface CycleRecoveryScope {
   readonly qualificationRunId: string

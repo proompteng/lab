@@ -30,6 +30,7 @@ import {
   isAuthorityNotGrantedReason,
   orderedRiskGateDefinitions,
   PolicySchema,
+  executionRiskPolicySchemaVersion,
   Reason,
   RiskEvaluationFailure,
   StateSchema,
@@ -77,17 +78,26 @@ type InvalidRiskFailurePair = Exclude<(typeof riskFailurePairs)[number], RiskFai
 const riskFailurePairCoverage: [MissingRiskFailurePair, InvalidRiskFailurePair] extends [never, never] ? true : never =
   true
 
-const rehashExecutionSession = (
-  binding: Omit<State['executionSession'], 'bindingHash'>,
-): State['executionSession'] => ({
-  ...binding,
-  bindingHash: canonicalHashV1(binding),
-})
+type ExecutionSession = State['executionSession']
+type LegacyExecutionSession = Extract<ExecutionSession, { readonly schemaVersion: 'bayn.execution-session-binding.v1' }>
+type IntradayExecutionSession = Exclude<ExecutionSession, LegacyExecutionSession>
+type WithoutBindingHash<T> = T extends ExecutionSession ? Omit<T, 'bindingHash'> : never
+type LegacyExecutionSessionWithoutHash = WithoutBindingHash<LegacyExecutionSession>
+type IntradayExecutionSessionWithoutHash = WithoutBindingHash<IntradayExecutionSession>
+type ExecutionSessionWithoutHash = LegacyExecutionSessionWithoutHash | IntradayExecutionSessionWithoutHash
+
+function rehashExecutionSession(binding: LegacyExecutionSessionWithoutHash): LegacyExecutionSession
+function rehashExecutionSession(binding: IntradayExecutionSessionWithoutHash): IntradayExecutionSession
+function rehashExecutionSession(binding: ExecutionSessionWithoutHash): ExecutionSession
+function rehashExecutionSession(binding: ExecutionSessionWithoutHash): ExecutionSession {
+  return { ...binding, bindingHash: canonicalHashV1(binding) }
+}
 
 const changeExecutionWindow = (
   binding: State['executionSession'],
   overrides: Partial<Pick<State['executionSession'], 'submissionOpenAt' | 'submissionCutoffAt'>>,
 ): State['executionSession'] => {
+  if (binding.schemaVersion !== 'bayn.execution-session-binding.v1') return binding
   const { bindingHash: _, ...material } = binding
   if (overrides.submissionCutoffAt === undefined) {
     return rehashExecutionSession({
@@ -104,7 +114,7 @@ const changeExecutionWindow = (
   const executionDate = executionOpenAt.slice(0, 10) as State['executionSession']['executionSession']['date']
   const signalDate = utcDateFromEpochMillis(
     Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000,
-  ) as State['executionSession']['signal']['sessionDate']
+  ) as LegacyExecutionSession['signal']['sessionDate']
   const executionSession = {
     date: executionDate,
     openAt: executionOpenAt,
@@ -296,14 +306,23 @@ const makeState = (overrides: Partial<State> = {}): State => {
     } satisfies State['reconciliation'])
   const sourceExecutionSession = overrides.executionSession ?? merged.executionSession
   const { bindingHash: _, ...bindingMaterial } = sourceExecutionSession
-  const executionSession = rehashExecutionSession({
-    ...bindingMaterial,
-    signal: { ...bindingMaterial.signal, contentHash: merged.marketDataHash },
-    planningBrokerState: {
-      observedAt: reconciliation.reconciledAt,
-      contentHash: reconciliation.observedHash,
-    },
-  })
+  const executionSession =
+    bindingMaterial.schemaVersion === 'bayn.execution-session-binding.v1'
+      ? rehashExecutionSession({
+          ...bindingMaterial,
+          signal: { ...bindingMaterial.signal, contentHash: merged.marketDataHash },
+          planningBrokerState: {
+            observedAt: reconciliation.reconciledAt,
+            contentHash: reconciliation.observedHash,
+          },
+        })
+      : rehashExecutionSession({
+          ...bindingMaterial,
+          planningBrokerState: {
+            observedAt: reconciliation.reconciledAt,
+            contentHash: reconciliation.observedHash,
+          },
+        })
   return decodeState({
     ...merged,
     reconciliation,
@@ -400,6 +419,8 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['NVDA', 'AMD'] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['AMD', 'AMD'] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Limit] })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Market] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '01' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '9223372036854775808' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOpenOrders: 0 })).toThrow()
@@ -407,6 +428,16 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, extra: true })).toThrow()
 
     const state = baseState()
+    const intradayMarketDataHash = hash('6')
+    expect(
+      decodeState({
+        ...state,
+        marketDataHash: intradayMarketDataHash,
+        executionMarketDataHash: intradayMarketDataHash,
+      }).executionMarketDataHash,
+    ).toBe(intradayMarketDataHash)
+    expect(() => decodeState({ ...state, marketDataHash: intradayMarketDataHash })).toThrow()
+    expect(() => decodeState({ ...state, executionMarketDataHash: intradayMarketDataHash })).toThrow()
     expect(() => decodeState({ ...state, brokerMode: 'LIVE' })).toThrow()
     expect(() =>
       decodeState({
@@ -516,6 +547,22 @@ describe('bounded execution risk', () => {
       aggregateBuyingPowerMicros: '100000000',
       unresolvedOrderCount: 0,
     })
+  })
+
+  test('approves quote-bound LIMIT/IOC only when the policy explicitly allows both terms', () => {
+    const limitIntent = makeIntent({
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    })
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+
+    expect(evaluateSuccess(limitIntent, makeState(), policy).decision.outcome).toBe(RiskOutcome.Approved)
+    expect(() => decodePolicy({ ...policy, schemaVersion: 'bayn.paper-risk-policy.v2' })).toThrow()
   })
 
   test('permits only the bounded sell close through an active kill', () => {

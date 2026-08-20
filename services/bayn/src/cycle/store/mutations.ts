@@ -107,7 +107,8 @@ const makeCycleMutationPrimitivesDataFirst = (
         qualification_run_id, strategy_protocol_hash, account_id,
         signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
-        strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+        strategy_execution_model_hash, submission_window_ms,
+        submission_cutoff_before_open_ms, submission_cutoff_after_open_ms,
         window_schema_version, execution_calendar_schema_version,
         execution_calendar_source, execution_calendar_hash, execution_session_date,
         signal_close_at, publication_deadline_at, submission_open_at,
@@ -118,17 +119,43 @@ const makeCycleMutationPrimitivesDataFirst = (
         ${candidate.identity.cycleId}, ${candidate.schemaVersion},
         ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
         ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
-        ${candidate.identity.accountId}, ${candidate.identity.signalSessionDate},
-        ${candidate.identity.signalCalendarVersion},
+        ${candidate.identity.accountId},
+        ${
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+            ? candidate.identity.signalSessionDate
+            : null
+        },
+        ${
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+            ? candidate.identity.signalCalendarVersion
+            : null
+        },
         ${candidate.identity.executionPolicy.schemaVersion},
         ${candidate.identity.executionPolicy.executionPolicyHash},
         ${candidate.identity.executionPolicy.strategyExecutionModelHash},
         ${candidate.identity.executionPolicy.submissionWindowMs},
-        ${candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs},
+        ${
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
+            ? candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs
+            : candidate.schemaVersion === 'bayn.autonomous-cycle.v2'
+              ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
+              : null
+        },
+        ${
+          candidate.schemaVersion === 'bayn.autonomous-cycle.v3' &&
+          candidate.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+            ? candidate.identity.executionPolicy.submissionCutoffAfterOpenMs
+            : null
+        },
         ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
         ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
         ${candidate.window.executionSessionDate},
-        ${candidate.window.signalCloseAt}, ${candidate.window.publicationDeadlineAt},
+        ${candidate.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ? candidate.window.signalCloseAt : null},
+        ${
+          candidate.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3'
+            ? candidate.window.publicationDeadlineAt
+            : null
+        },
         ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
         ${candidate.window.executionCloseAt}, ${candidate.window.submissionCutoffAt},
         ${candidate.state}, NULL, NULL, ${candidate.terminalReason ?? null}, ${candidate.stateVersion},
@@ -138,15 +165,27 @@ const makeCycleMutationPrimitivesDataFirst = (
       RETURNING cycle_id
     `.pipe(Effect.flatMap(decodeMutationRows))
 
-  const lockAuthoritySlot: CycleMutationPrimitives['lockAuthoritySlot'] = (candidate) =>
-    sql<Record<string, unknown>>`
+  const lockAuthoritySlot: CycleMutationPrimitives['lockAuthoritySlot'] = (candidate) => {
+    const query =
+      candidate.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
+        ? sql<Record<string, unknown>>`
+            SELECT cycle_id
+            FROM autonomous_cycles
+            WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
+              AND account_id = ${candidate.identity.accountId}
+              AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
+              AND execution_session_date = ${candidate.identity.executionSessionDate}
+            FOR UPDATE
+          `
+        : sql<Record<string, unknown>>`
       SELECT cycle_id
       FROM autonomous_cycles
       WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
         AND account_id = ${candidate.identity.accountId}
         AND signal_session_date = ${candidate.identity.signalSessionDate}
       FOR UPDATE
-    `.pipe(
+    `
+    return query.pipe(
       Effect.flatMap(decodeMutationRows),
       Effect.flatMap((rows) => {
         const cycleId = rows[0]?.cycle_id
@@ -155,6 +194,7 @@ const makeCycleMutationPrimitivesDataFirst = (
           : failCycleStore('acquire', 'invariant', 'autonomous cycle authority slot was not found exactly once')
       }),
     )
+  }
 
   return { readLocked, requireApplied, blockCycle, insertCycle, lockAuthoritySlot }
 }

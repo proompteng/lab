@@ -4,6 +4,7 @@ import { Result } from 'effect'
 import {
   decideExecutionMandateAuthority,
   decideExecutionMandateCycleTerminalization,
+  constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
   executionMandateFailureRestrictionPrefix,
   isExecutionMandateFailureRestriction,
@@ -73,6 +74,29 @@ describe('executionMandateAllocationCapitalMicros', () => {
         remainingReferenceTurnoverMicros: 250_000_000n,
       }),
     )
+  })
+
+  test('caps portfolio capital before planning so each target fits order and symbol limits', () => {
+    expect(
+      Result.getOrThrow(
+        constrainExecutionTargetAllocationCapitalMicros({
+          allocationCapitalMicros: 100_000_000_000n,
+          maxOrderNotionalMicros: 40_000_000_000n,
+          maxSymbolExposureMicros: 50_000_000_000n,
+          targetWeights: { AMD: 0.5, NVDA: 0.5 },
+        }),
+      ),
+    ).toBe(80_000_000_000n)
+    expect(
+      Result.isFailure(
+        constrainExecutionTargetAllocationCapitalMicros({
+          allocationCapitalMicros: 100_000_000_000n,
+          maxOrderNotionalMicros: 40_000_000_000n,
+          maxSymbolExposureMicros: 40_000_000_000n,
+          targetWeights: { AMD: Number.NaN },
+        }),
+      ),
+    ).toBe(true)
   })
 })
 

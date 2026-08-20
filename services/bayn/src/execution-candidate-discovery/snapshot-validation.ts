@@ -1,7 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { CycleState } from '../cycle'
+import { cycleAuthoritySessionDate, CycleState } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle/observability'
 import { Authority, RiskOutcome } from '../execution/contracts'
 import { Gate, isAuthorityNotGrantedReason } from '../risk'
@@ -118,7 +118,7 @@ const validateCycleProjection = (
         observedStrategyProtocolHash: cycle.identity.strategyProtocolHash,
       }),
       requireCondition(
-        last.signalSessionDate === cycle.identity.signalSessionDate &&
+        last.signalSessionDate === cycleAuthoritySessionDate(cycle.identity) &&
           last.executionSessionDate === cycle.identity.executionSessionDate &&
           last.submissionOpenAt === cycle.window.submissionOpenAt &&
           last.submissionCutoffAt === cycle.window.submissionCutoffAt &&
@@ -139,7 +139,7 @@ const validateCycleProjection = (
             terminalAt: last.terminalAt,
           },
           stored: {
-            signalSessionDate: cycle.identity.signalSessionDate,
+            signalSessionDate: cycleAuthoritySessionDate(cycle.identity),
             executionSessionDate: cycle.identity.executionSessionDate,
             submissionOpenAt: cycle.window.submissionOpenAt,
             submissionCutoffAt: cycle.window.submissionCutoffAt,
@@ -335,7 +335,7 @@ const assembleBinding = (
   runtime: identity,
   cycle: {
     cycleId: snapshot.cycle.identity.cycleId,
-    signalSessionDate: snapshot.cycle.identity.signalSessionDate,
+    signalSessionDate: cycleAuthoritySessionDate(snapshot.cycle.identity),
     executionSessionDate: snapshot.cycle.identity.executionSessionDate,
     snapshotId,
     decisionHash: snapshot.document.contentHash,
