@@ -239,6 +239,53 @@ describe('Bayn manifest promotion', () => {
     }
   })
 
+  test('promotes an explicitly authored research activation over an older deployed build', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const nativePaths = installNativeExecutionManifests()
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    writeFileSync(deployedDeploymentPath, readFileSync(paths.deploymentPath, 'utf8'))
+
+    const sourceSha = 'a'.repeat(40)
+    const digest = `sha256:${'b'.repeat(64)}`
+    const nextBehaviorHash = '3'.repeat(64)
+    const nextParameterHash = '4'.repeat(64)
+    for (const path of [
+      paths.deploymentPath,
+      nativePaths.executionControllerPath,
+      nativePaths.executionActivationPath,
+    ]) {
+      const candidate = readFileSync(path, 'utf8')
+        .replaceAll(`sha256:${'0'.repeat(64)}`, digest)
+        .replaceAll('0'.repeat(40), sourceSha)
+        .replaceAll(strategyBehaviorHash, nextBehaviorHash)
+        .replaceAll(strategyParameterHash, nextParameterHash)
+      writeFileSync(path, candidate)
+    }
+
+    const result = updateBaynManifests({
+      sourceSha,
+      tag: `sha-${sourceSha}`,
+      digest,
+      strategyBehaviorHash: nextBehaviorHash,
+      strategyParameterHash: nextParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      deployedDeploymentPath,
+      ...paths,
+      ...nativePaths,
+    })
+
+    expect(result).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+      hadQualificationPin: false,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_CODE_REVISION\n              value: ${sourceSha}`,
+    )
+  })
+
   test('rejects mismatched native controller and activation image bindings', () => {
     const paths = makeFixture()
     const nativePaths = installNativeExecutionManifests()
@@ -609,6 +656,41 @@ describe('Bayn manifest promotion', () => {
     )
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+  })
+
+  test('keeps an unpinned qualification replay bound to the pre-merge deployed build', () => {
+    const paths = makeFixture({ qualificationRunId: null })
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const deployed = readFileSync(paths.deploymentPath, 'utf8')
+    writeFileSync(deployedDeploymentPath, deployed)
+    writeFileSync(
+      paths.deploymentPath,
+      deployed
+        .replace(
+          environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+          environmentBlock('BAYN_CODE_REVISION', 'a'.repeat(40)),
+        )
+        .replace(
+          environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
+          environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'b'.repeat(64)}`),
+        ),
+    )
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() =>
+      updateBaynManifests({
+        sourceSha: 'a'.repeat(40),
+        tag: `sha-${'a'.repeat(40)}`,
+        digest: `sha256:${'b'.repeat(64)}`,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        deployedDeploymentPath,
+        ...paths,
+      }),
+    ).toThrow('an unpinned qualification candidate is immutable until its terminal run is pinned')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('promotes source-only research capital changes with an explicit build-continuation contract', () => {
