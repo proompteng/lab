@@ -14,6 +14,7 @@ import {
   OrderType,
   ReconciliationStatus,
   TerminalOutcome,
+  TimeInForce,
   type Intent,
   type Order,
   type Position,
@@ -45,6 +46,72 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
         order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityMicros) > 0n,
     )
   )
+}
+
+export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'UNSUCCESSFUL'
+
+export interface ExecutionIntentTerminalDispositionInput {
+  readonly phase: 'ENTRY' | 'CLOSE'
+  readonly intent: Pick<
+    Intent,
+    | 'accountId'
+    | 'clientOrderId'
+    | 'intentId'
+    | 'orderType'
+    | 'quantityMicros'
+    | 'side'
+    | 'state'
+    | 'symbol'
+    | 'terminalOutcome'
+    | 'timeInForce'
+  >
+  readonly acceptedBrokerOrderId?: string
+  readonly orders: readonly Pick<
+    Order,
+    | 'accountId'
+    | 'brokerOrderId'
+    | 'clientOrderId'
+    | 'filledQuantityMicros'
+    | 'intentId'
+    | 'orderType'
+    | 'quantityMicros'
+    | 'side'
+    | 'status'
+    | 'symbol'
+    | 'timeInForce'
+  >[]
+}
+
+export const decideExecutionIntentTerminalDisposition = (
+  input: ExecutionIntentTerminalDispositionInput,
+): ExecutionIntentTerminalDisposition => {
+  if (input.intent.state !== IntentState.Terminal) return 'UNSUCCESSFUL'
+  if (input.intent.terminalOutcome === TerminalOutcome.Filled) return 'FILLED'
+  if (
+    input.phase !== 'ENTRY' ||
+    input.intent.terminalOutcome !== TerminalOutcome.Canceled ||
+    input.intent.orderType !== OrderType.Limit ||
+    input.intent.timeInForce !== TimeInForce.ImmediateOrCancel ||
+    input.acceptedBrokerOrderId === undefined
+  ) {
+    return 'UNSUCCESSFUL'
+  }
+  const matchingOrders = input.orders.filter(
+    (order) =>
+      order.accountId === input.intent.accountId &&
+      order.brokerOrderId === input.acceptedBrokerOrderId &&
+      order.clientOrderId === input.intent.clientOrderId &&
+      order.intentId === input.intent.intentId &&
+      order.symbol === input.intent.symbol &&
+      order.side === input.intent.side &&
+      order.orderType === input.intent.orderType &&
+      order.timeInForce === input.intent.timeInForce &&
+      order.quantityMicros === input.intent.quantityMicros,
+  )
+  const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
+  return order?.status === OrderStatus.Canceled && order.filledQuantityMicros === '0'
+    ? 'BENIGN_ZERO_FILL_IOC'
+    : 'UNSUCCESSFUL'
 }
 
 const executionClosePlanNeedsResidualReplanDataFirst = (
@@ -435,6 +502,7 @@ export interface ExecutionCycleIntentTerminalEvidence {
   readonly terminalOutcome?: TerminalOutcome
   readonly updatedAt: string
   readonly latestMutationAt?: string
+  readonly benignZeroFillIoc?: true
 }
 
 export interface ExecutionCycleReconciliationEvidence {
@@ -469,7 +537,9 @@ const decideExecutionCycleCompletionDataFirst = (
   if (intents.some((intent) => intent.state !== IntentState.Terminal)) {
     return { _tag: 'Wait', reason: 'intent-nonterminal' }
   }
-  if (intents.some((intent) => intent.terminalOutcome !== TerminalOutcome.Filled)) {
+  if (
+    intents.some((intent) => intent.terminalOutcome !== TerminalOutcome.Filled && intent.benignZeroFillIoc !== true)
+  ) {
     return { _tag: 'Wait', reason: 'intent-unsuccessful' }
   }
   if (reconciliation.status !== ReconciliationStatus.Exact) {

@@ -16,12 +16,12 @@ import {
   type ExecutionSessionBinding,
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
-import { makeFillTerms, MICROS } from '../execution-model'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
 import { MarketData, type MarketDataService } from '../market-data'
 import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
-import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
+import { Authority, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
+import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import {
   legacyCloseDecisionSessionsSchemaVersion,
   legacyRiskPolicySchemaVersion,
@@ -29,10 +29,10 @@ import {
   legacyTargetPlannerInputV1SchemaVersion,
   legacyTargetPlannerInputV2SchemaVersion,
 } from '../execution/legacy-wire'
-import type { CausalProtocol } from '../protocol'
+import type { CycleExecutionModel } from '../execution-model-contract'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
-import { BrokerMode, decodePolicy, type Policy, type State } from '../risk'
+import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -90,6 +90,20 @@ const loadObserveRiskPolicyDataFirst = (accountId: string, allowedSymbols: reado
 
 export const loadObserveRiskPolicy = Pipeable.dual(2, loadObserveRiskPolicyDataFirst)
 
+const loadQuoteBoundExecutionRiskPolicyDataFirst = (accountId: string, allowedSymbols: readonly string[]) =>
+  decodePolicy({
+    schemaVersion: executionRiskPolicySchemaVersion,
+    accountId,
+    brokerMode: BrokerMode.Execution,
+    allowedSymbols: [...allowedSymbols].sort(),
+    allowedOrderTypes: [OrderType.Limit],
+    allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    maxOpenOrders: allowedSymbols.length,
+    ...observeRiskLimits,
+  })
+
+export const loadQuoteBoundExecutionRiskPolicy = Pipeable.dual(2, loadQuoteBoundExecutionRiskPolicyDataFirst)
+
 type ObserveStrategy = StrategyRuntime
 
 class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
@@ -136,7 +150,7 @@ export const runMutationPassWithinTimeout = <A, E, R>(
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
   readonly cycle: AutonomousCycle
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
   readonly policy: Policy
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly strategy: ObserveStrategy
@@ -548,7 +562,7 @@ const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
-  readonly executionModel: CausalProtocol['executionModel']
+  readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
   readonly authorityObservation: ObserveAuthorityObservation
   readonly executionSession: ExecutionSessionBinding
@@ -576,14 +590,15 @@ const reduceRiskInputs = (
         }
         const referencePrice = BigInt(referencePriceMicros)
         return Result.map(
-          makeFillTerms(
-            target.side === OrderSide.Buy ? 'buy' : 'sell',
-            BigInt(target.quantityMicros),
-            referencePrice,
-            input.executionModel,
-            MICROS,
-          ),
-          (fillTerms): ShadowDeltaRiskInput => {
+          deriveExecutionIntentPricing({
+            side: target.side,
+            orderType: target.orderType,
+            timeInForce: target.timeInForce,
+            quantityMicros: BigInt(target.quantityMicros),
+            referencePriceMicros: referencePrice,
+            executionModel: input.executionModel,
+          }),
+          (pricing): ShadowDeltaRiskInput => {
             const state: State = {
               schemaVersion: legacyRiskStateSchemaVersion,
               brokerMode: BrokerMode.Execution,
@@ -603,7 +618,7 @@ const reduceRiskInputs = (
               marketDataSymbol: target.symbol,
               marketDataHash: input.snapshotContentHash,
               referencePriceMicros: referencePrice.toString(),
-              expectedExecutionPriceMicros: fillTerms.fillPriceMicros.toString(),
+              expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.evaluatedAt,
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
@@ -614,7 +629,7 @@ const reduceRiskInputs = (
             }
             return {
               symbol: target.symbol,
-              notionalLimitMicros: fillTerms.notionalMicros.toString(),
+              notionalLimitMicros: pricing.notionalLimitMicros.toString(),
               state,
             }
           },

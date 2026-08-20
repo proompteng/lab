@@ -4,6 +4,7 @@ export {
   decidePendingMutationObservation,
   decideMutationIntentSettlement,
   decideExecutionCycleCompletion,
+  decideExecutionIntentTerminalDisposition,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
@@ -22,6 +23,8 @@ export type {
   ExecutionCycleCompletionDecision,
   ExecutionCycleIntentTerminalEvidence,
   ExecutionCycleReconciliationEvidence,
+  ExecutionIntentTerminalDisposition,
+  ExecutionIntentTerminalDispositionInput,
   PreparedMutationIntentAdmissionFailure,
   PreparedMutationIntentDecision,
   PreparedMutationIntentDecisionFailure,
@@ -35,6 +38,7 @@ export {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
+  loadQuoteBoundExecutionRiskPolicy,
 } from './observe-composition/decision-builder'
 export type {
   BuildClosingExecutionCycleDecisionInput,

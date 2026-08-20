@@ -221,8 +221,11 @@ const makeDueCycleDraftDataFirst = (
           ...executionSession,
         })
         const identity = yield* makeCycleIdentity({
-          schemaVersion: 'bayn.autonomous-cycle-identity.v1',
-          strategyName: 'risk-balanced-trend',
+          schemaVersion:
+            candidate.strategyName === 'opening-drive-momentum'
+              ? 'bayn.autonomous-cycle-identity.v2'
+              : 'bayn.autonomous-cycle-identity.v1',
+          strategyName: candidate.strategyName ?? 'risk-balanced-trend',
           qualificationRunId: candidate.qualificationRunId,
           strategyProtocolHash: candidate.strategyProtocolHash,
           accountId: candidate.accountId,

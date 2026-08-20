@@ -21,7 +21,10 @@ import {
   TargetPlanReason,
   TargetPlanStatus,
   decodeTargetPlanResult,
+  intradaySnapshotReferencePricesSchemaVersion,
   planTargets,
+  quoteBoundTargetPlannerInputSchemaVersion,
+  referenceTargetPlanSchemaVersion,
   type SignalSessionReferencePrices,
   type TargetPlanResult,
   type TargetPlannerInput,
@@ -55,6 +58,7 @@ interface FixtureOptions {
   readonly priceMicros?: Readonly<Record<string, string>>
   readonly pricesObservedAt?: string
   readonly referenceSignalDate?: '2026-07-21' | '2026-07-22'
+  readonly quoteBound?: boolean
   readonly submissionCutoffAt?: string
   readonly targetWeights?: Readonly<Record<string, number>>
   readonly unknownOrderCount?: number
@@ -205,13 +209,41 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     submissionCutoffAt: options.submissionCutoffAt ?? submissionCutoffAt,
     observedAt: options.observedAt ?? observedAt,
   }
-  return options.allocationCapitalMicros === undefined
-    ? { schemaVersion: 'bayn.paper-target-planner-input.v1', ...common }
-    : {
-        schemaVersion: 'bayn.paper-target-planner-input.v2',
-        ...common,
-        allocationCapitalMicros: options.allocationCapitalMicros,
-      }
+  return options.quoteBound === true
+    ? (() => {
+        const snapshotId = hash('7')
+        const snapshotContentHash = hash('8')
+        const priceMaterial = {
+          schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
+          signalDate,
+          observedAt: options.pricesObservedAt ?? pricesObservedAt,
+          snapshotId,
+          snapshotContentHash,
+          priceReference: 'verified-adverse-quote-boundary' as const,
+          priceMicros: prices,
+        } as const
+        return {
+          schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+          ...common,
+          referencePrices: { ...priceMaterial, contentHash: canonicalHashV1(priceMaterial) },
+          allocationCapitalMicros: options.allocationCapitalMicros ?? '1000000000',
+          precision: { ...common.precision, quantityIncrementMicros: '1000000' as const },
+          executionTerms: {
+            orderType: OrderType.Limit,
+            timeInForce: TimeInForce.ImmediateOrCancel,
+            priceReference: 'verified-adverse-quote-boundary' as const,
+            snapshotId,
+            snapshotContentHash,
+          },
+        }
+      })()
+    : options.allocationCapitalMicros === undefined
+      ? { schemaVersion: 'bayn.paper-target-planner-input.v1', ...common }
+      : {
+          schemaVersion: 'bayn.paper-target-planner-input.v2',
+          ...common,
+          allocationCapitalMicros: options.allocationCapitalMicros,
+        }
 }
 
 const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
@@ -221,6 +253,74 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('plans whole-share LIMIT/IOC deltas against an immutable adverse quote boundary', () => {
+    const result = planSuccess(
+      fixture({
+        quoteBound: true,
+        positions: [],
+        priceMicros: { AMD: '30000000' },
+        targetWeights: { AMD: 1 },
+      }),
+    )
+
+    expect(result).toMatchObject({
+      schemaVersion: referenceTargetPlanSchemaVersion,
+      status: TargetPlanStatus.Planned,
+      requiredReferenceBuyNotionalMicros: '990000000',
+      targets: [{ symbol: 'AMD', targetQuantityMicros: '33000000' }],
+      intentTargets: [
+        {
+          symbol: 'AMD',
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
+          quantityMicros: '33000000',
+        },
+      ],
+    })
+  })
+
+  test('rejects quote prices not bound to the execution snapshot identity', () => {
+    const input = fixture({ quoteBound: true })
+    if (input.schemaVersion !== 'bayn.target-planner-input.quote-bound.v1') throw new Error('expected quote input')
+
+    expect(
+      Result.isFailure(
+        planTargets({
+          ...input,
+          executionTerms: { ...input.executionTerms, snapshotId: hash('9') },
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('keeps the legacy target-plan decoder strict to MARKET/DAY evidence', () => {
+    const current = planSuccess(
+      fixture({ quoteBound: true, positions: [], priceMicros: { AMD: '30000000' }, targetWeights: { AMD: 1 } }),
+    )
+    const { outputHash: _outputHash, ...currentMaterial } = current
+    const mislabeledLegacy = {
+      ...currentMaterial,
+      schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
+    }
+
+    expect(
+      Result.isFailure(decodeTargetPlanResult({ ...mislabeledLegacy, outputHash: canonicalHashV1(mislabeledLegacy) })),
+    ).toBe(true)
+  })
+
+  test('rejects quote-bound planning that permits fractional-share quantities', () => {
+    const input = fixture({ quoteBound: true, positions: [] })
+
+    expect(
+      Result.isFailure(
+        planTargets({
+          ...input,
+          precision: { ...input.precision, quantityIncrementMicros: '1' },
+        }),
+      ),
+    ).toBe(true)
+  })
+
   test('sizes an immutable execution target against its bounded allocation instead of full account equity', () => {
     const bounded = planSuccess(
       fixture({
@@ -251,6 +351,7 @@ describe('causal target planner', () => {
       { symbol: 'AMD', targetQuantityMicros: '100000000' },
       { symbol: 'NVDA', targetQuantityMicros: '50000000' },
     ])
+    expect(legacy.schemaVersion).toBe('bayn.paper-reference-target-plan.v1')
     expect(excessive).toMatchObject({ status: TargetPlanStatus.Blocked, reason: TargetPlanReason.InputMismatch })
   })
 
@@ -448,6 +549,7 @@ describe('causal target planner', () => {
 
   test('rejects a reference vector labeled as a signal session that has not happened', () => {
     const input = fixture()
+    if (input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion) throw new Error('expected legacy input')
     const material = {
       schemaVersion: input.referencePrices.schemaVersion,
       signalDate: '2026-07-24' as const,
@@ -467,6 +569,12 @@ describe('causal target planner', () => {
     const identity = planSuccess(fixture({ referenceSignalDate: '2026-07-21' }))
     const referenceInput = fixture()
     const reconciliationInput = fixture()
+    if (
+      referenceInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion ||
+      reconciliationInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+    ) {
+      throw new Error('expected legacy planner inputs')
+    }
     const leveraged = planSuccess(fixture({ targetWeights: { AMD: 0.75, NVDA: 0.75 } }))
     const badReference = {
       ...referenceInput,
@@ -511,7 +619,7 @@ describe('causal target planner', () => {
     })
     const precise = {
       ...preciseInput,
-      precision: { ...preciseInput.precision, quantityIncrementMicros: '1000000' },
+      precision: { ...preciseInput.precision, quantityIncrementMicros: '1000000' as const },
     }
     const rounded = planSuccess(precise)
 

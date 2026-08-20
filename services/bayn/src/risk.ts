@@ -203,12 +203,10 @@ const riskGateDefinitionByName: RiskGateDefinitionByName = {
 
 export const orderedRiskGateDefinitions: ReadonlyArray<RiskGateDefinition> = Object.values(riskGateDefinitionByName)
 
-export const PolicySchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
+const RiskPolicyFields = {
   accountId: NonEmptyString,
   brokerMode: Schema.Literal(BrokerMode.Execution),
   allowedSymbols: Schema.Array(SymbolName).check(Schema.isMinLength(1), Schema.isUnique(), SortedUniqueStrings),
-  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
   allowedTimeInForce: Schema.Array(Schema.Enum(TimeInForce)).check(
     Schema.isMinLength(1),
     Schema.isUnique(),
@@ -227,8 +225,33 @@ export const PolicySchema = Schema.Struct({
   maxAdverseSlippageBps: BasisPointLimit,
   maxOpenOrders: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
   decisionTtlMs: AgeMilliseconds,
+} as const
+
+const LegacyRiskPolicyV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
+  ...RiskPolicyFields,
+  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
 })
+
+export const executionRiskPolicySchemaVersion = 'bayn.execution-risk-policy.v3' as const
+
+export const ExecutionRiskPolicySchema = Schema.Struct({
+  schemaVersion: Schema.Literal(executionRiskPolicySchemaVersion),
+  ...RiskPolicyFields,
+  allowedOrderTypes: Schema.Array(Schema.Enum(OrderType)).check(
+    Schema.isMinLength(1),
+    Schema.isUnique(),
+    SortedUniqueStrings,
+  ),
+})
+
+export const PolicySchema = Schema.Union([LegacyRiskPolicyV2Schema, ExecutionRiskPolicySchema])
 export type Policy = typeof PolicySchema.Type
+
+const policyAllowsOrderType = (policy: Policy, orderType: OrderType): boolean =>
+  policy.schemaVersion === legacyRiskPolicySchemaVersion
+    ? orderType === OrderType.Market
+    : policy.allowedOrderTypes.includes(orderType)
 
 const StateBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskStateSchemaVersion),
@@ -841,7 +864,7 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      intent.orderType === OrderType.Market,
+      policyAllowsOrderType(policy, intent.orderType),
       intent.orderType,
       policy.allowedOrderTypes.join(','),
     ),

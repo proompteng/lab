@@ -1,7 +1,7 @@
 import { Data, DateTime, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { SupportedExecutionModelSchema } from '../protocol'
+import { CycleExecutionModelSchema } from '../protocol'
 import { strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import {
@@ -34,10 +34,7 @@ const decodeSelectedExecutionCalendarSessionResult = Schema.decodeUnknownResult(
   strictParseOptions,
 )
 const decodeSignalCycleSessionResult = Schema.decodeUnknownResult(SignalCycleSessionSchema, strictParseOptions)
-const decodeSupportedExecutionModelResult = Schema.decodeUnknownResult(
-  SupportedExecutionModelSchema,
-  strictParseOptions,
-)
+const decodeCycleExecutionModelResult = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
 
 interface CycleDraftConstructionIssue {
   readonly operation: 'cycle-draft'
@@ -155,18 +152,27 @@ export const makeCycleExecutionPolicyFromModel = (
   executionModel: unknown,
 ): Result.Result<CycleExecutionPolicy, CycleConstructionFailure> =>
   Result.gen(function* () {
-    const decodedModel = yield* Result.mapError(decodeSupportedExecutionModelResult(executionModel), (cause) =>
+    const decodedModel = yield* Result.mapError(decodeCycleExecutionModelResult(executionModel), (cause) =>
       failure('execution-policy', 'decode', 'strategy execution model is invalid', {}, cause),
     )
     const strategyExecutionModelHash = yield* Result.mapError(canonicalHashV1Result(decodedModel), (cause) =>
       failure('execution-policy', 'hash', 'strategy execution model is not canonicalizable', {}, cause),
     )
-    return yield* makeCycleExecutionPolicy({
-      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
-      strategyExecutionModelHash,
-      submissionWindowMs: autonomousCycleSubmissionWindowMs,
-      submissionCutoffBeforeOpenMs: decodedModel.order.submissionCutoffLeadMinutes * 60_000,
-    })
+    return yield* makeCycleExecutionPolicy(
+      decodedModel.schemaVersion === 'bayn.execution-model.v4'
+        ? {
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2',
+            strategyExecutionModelHash,
+            submissionWindowMs: decodedModel.order.submissionCutoffAfterOpenMs - decodedModel.order.decisionAfterOpenMs,
+            submissionCutoffAfterOpenMs: decodedModel.order.submissionCutoffAfterOpenMs,
+          }
+        : {
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+            strategyExecutionModelHash,
+            submissionWindowMs: autonomousCycleSubmissionWindowMs,
+            submissionCutoffBeforeOpenMs: decodedModel.order.submissionCutoffLeadMinutes * 60_000,
+          },
+    )
   })
 
 export const makeExecutionCalendarObservation = (
@@ -273,7 +279,7 @@ const decodeCycleWindowInputs = (
 const validateCycleWindowDurations = (
   policy: CycleWindowPolicyInput,
 ): Result.Result<void, CycleConstructionFailure> => {
-  const { submissionCutoffBeforeOpenMs, submissionWindowMs } = policy
+  const { submissionWindowMs } = policy
   if (
     !Number.isSafeInteger(submissionWindowMs) ||
     submissionWindowMs <= 0 ||
@@ -285,16 +291,14 @@ const validateCycleWindowDurations = (
       }),
     )
   }
-  if (
-    !Number.isSafeInteger(submissionCutoffBeforeOpenMs) ||
-    submissionCutoffBeforeOpenMs <= 0 ||
-    submissionCutoffBeforeOpenMs > maximumSubmissionDurationMs
-  ) {
-    return Result.fail(
-      failure('cycle-window', 'duration', 'broker cutoff lead must be between one millisecond and one day', {
-        submissionCutoffBeforeOpenMs,
-      }),
-    )
+  const cutoffOffsetMs =
+    'submissionCutoffAfterOpenMs' in policy ? policy.submissionCutoffAfterOpenMs : policy.submissionCutoffBeforeOpenMs
+  if (!Number.isSafeInteger(cutoffOffsetMs) || cutoffOffsetMs <= 0 || cutoffOffsetMs > maximumSubmissionDurationMs) {
+    const message =
+      'submissionCutoffAfterOpenMs' in policy
+        ? 'intraday cutoff offset must be between one millisecond and one day'
+        : 'broker cutoff lead must be between one millisecond and one day'
+    return Result.fail(failure('cycle-window', 'duration', message, { cutoffOffsetMs }))
   }
   return Result.succeed(undefined)
 }
@@ -322,8 +326,10 @@ const deriveCycleWindowTimes = (
       ),
     )
   }
+  const intraday = 'submissionCutoffAfterOpenMs' in policy
   const submissionCutoffAt = utcInstantFromEpochMillis(
-    Date.parse(calendar.executionOpenAt) - policy.submissionCutoffBeforeOpenMs,
+    Date.parse(calendar.executionOpenAt) +
+      (intraday ? policy.submissionCutoffAfterOpenMs : -policy.submissionCutoffBeforeOpenMs),
   )
   const submissionOpenAt = utcInstantFromEpochMillis(Date.parse(submissionCutoffAt) - policy.submissionWindowMs)
   if (submissionOpenAt <= signalCloseAt) {
@@ -343,12 +349,16 @@ const assembleCycleWindow = (
 ): Result.Result<CycleWindow, CycleConstructionFailure> =>
   Result.mapError(
     decodeCycleWindowResult({
-      schemaVersion: 'bayn.autonomous-cycle-window.v1',
+      schemaVersion:
+        'submissionCutoffAfterOpenMs' in input.policy
+          ? 'bayn.autonomous-cycle-window.v2'
+          : 'bayn.autonomous-cycle-window.v1',
       signalCalendarVersion: input.signal.calendar_version,
       signalSessionDate: input.signal.session_date,
       ...input.calendar,
       signalCloseAt: times.signalCloseAt,
-      publicationDeadlineAt: times.submissionOpenAt,
+      publicationDeadlineAt:
+        'submissionCutoffAfterOpenMs' in input.policy ? input.calendar.executionOpenAt : times.submissionOpenAt,
       submissionOpenAt: times.submissionOpenAt,
       submissionCutoffAt: times.submissionCutoffAt,
     }),
@@ -382,7 +392,10 @@ const makeCycleDraftDataFirst = (
     )
     return yield* Result.mapError(
       decodeCycleDraftResult({
-        schemaVersion: 'bayn.autonomous-cycle.v1',
+        schemaVersion:
+          decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v2'
+            ? 'bayn.autonomous-cycle.v2'
+            : 'bayn.autonomous-cycle.v1',
         identity: decodedIdentity,
         window: decodedWindow,
       }),

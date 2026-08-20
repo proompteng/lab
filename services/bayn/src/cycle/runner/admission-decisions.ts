@@ -74,6 +74,7 @@ const selectCycleCalendarPublication = <R>(
   const candidate: CycleCandidate = {
     qualificationRunId: context.qualificationRunId,
     ...(context.cadence === undefined ? {} : { cadence: context.cadence }),
+    ...(context.strategyName === undefined ? {} : { strategyName: context.strategyName }),
     strategyProtocolHash: context.strategyProtocolHash,
     accountId: context.accountId,
     signalSession: publication.signalSession,

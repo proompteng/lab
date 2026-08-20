@@ -18,6 +18,7 @@ import {
   CycleState,
   CycleTerminalReason,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
@@ -61,6 +62,7 @@ import {
 } from '../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { utcInstantFromEpochMillis } from '../time'
+import { openingDriveExecutionModel } from '../strategy/opening-drive'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -1533,6 +1535,39 @@ describe('autonomous cycle runner', () => {
     expect(Result.isSuccess(everySession)).toBe(true)
     expect(Result.isSuccess(legacy)).toBe(true)
     if (Result.isSuccess(everySession)) expect(everySession.success?.identity.signalSessionDate).toBe('2026-01-29')
+  })
+
+  test('propagates opening-drive identity into the every-session intraday cycle', () => {
+    const executionSession = selectNextExecutionSession('2026-01-29', ordinaryNotDueCalendar)
+    if (executionSession === undefined) throw new Error('opening-drive fixture must have an execution session')
+    const policy = makeCycleExecutionPolicyFromModel(openingDriveExecutionModel)
+    if (Result.isFailure(policy)) throw policy.failure
+    const draft = makeDueCycleDraft(
+      {
+        ...candidate('2026-01-29'),
+        cadence: 'EVERY_SESSION',
+        strategyName: 'opening-drive-momentum',
+        executionPolicy: policy.success,
+      },
+      ordinaryNotDueCalendar,
+      executionSession,
+    )
+
+    expect(Result.isSuccess(draft)).toBeTrue()
+    if (Result.isFailure(draft) || draft.success === undefined) return expect.unreachable()
+    expect(draft.success).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle.v2',
+      identity: {
+        schemaVersion: 'bayn.autonomous-cycle-identity.v2',
+        strategyName: 'opening-drive-momentum',
+      },
+      window: {
+        schemaVersion: 'bayn.autonomous-cycle-window.v2',
+        publicationDeadlineAt: '2026-01-30T14:30:00.000Z',
+        submissionOpenAt: '2026-01-30T14:35:01.000Z',
+        submissionCutoffAt: '2026-01-30T15:00:00.000Z',
+      },
+    })
   })
 
   test('does nothing when no finalized publication exists and never reads the broker', async () => {

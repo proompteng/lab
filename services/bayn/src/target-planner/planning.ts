@@ -7,6 +7,8 @@ import {
   TargetPlanReason,
   TargetPlanStatus,
   canonicalizePlannerOutputFailure,
+  quoteBoundTargetPlannerInputSchemaVersion,
+  referenceTargetPlanSchemaVersion,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
   type ReferenceTargetIntent,
@@ -28,14 +30,20 @@ import {
   type TargetPlanResult,
 } from './result'
 
+const outputSchemaVersion = (input: TargetPlannerInput) =>
+  input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+    ? referenceTargetPlanSchemaVersion
+    : legacyReferenceTargetPlanSchemaVersion
+
 const blocked = (
+  input: TargetPlannerInput,
   inputHash: string,
   reason: BlockedTargetPlanReason,
   availableBuyingPowerMicros: string,
   targets: readonly PlannedTargetQuantity[] = [],
   requiredReferenceBuyNotionalMicros = '0',
 ): BlockedOutputMaterial => ({
-  schemaVersion: legacyReferenceTargetPlanSchemaVersion,
+  schemaVersion: outputSchemaVersion(input),
   inputHash,
   status: TargetPlanStatus.Blocked,
   reason,
@@ -49,8 +57,12 @@ const blocked = (
 const makeReferenceTargetIntents = (
   input: TargetPlannerInput,
   targetFacts: readonly PlannedTargetFact[],
-): readonly ReferenceTargetIntent[] =>
-  targetFacts
+): readonly ReferenceTargetIntent[] => {
+  const executionTerms =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
+      ? input.executionTerms
+      : { orderType: OrderType.Market, timeInForce: TimeInForce.Day }
+  return targetFacts
     .flatMap(({ target, delta }): readonly ReferenceTargetIntent[] =>
       delta === 0n
         ? []
@@ -63,8 +75,8 @@ const makeReferenceTargetIntents = (
               accountId: input.accountId,
               symbol: target.symbol,
               side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
-              orderType: OrderType.Market,
-              timeInForce: TimeInForce.Day,
+              orderType: executionTerms.orderType,
+              timeInForce: executionTerms.timeInForce,
               quantityMicros: (delta < 0n ? -delta : delta).toString(),
               createdAt: input.observedAt,
             },
@@ -74,6 +86,7 @@ const makeReferenceTargetIntents = (
       if (left.side !== right.side) return left.side === OrderSide.Sell ? -1 : 1
       return compareText(left.symbol, right.symbol)
     })
+}
 
 const selectTargetNotionalBlock = (
   facts: TargetPlannerFacts,
@@ -84,6 +97,7 @@ const selectTargetNotionalBlock = (
   const availableBuyingPowerMicros = facts.input.brokerState.account.buyingPowerMicros
   if (requiredReferenceBuyNotionals.some((notional) => notional < facts.minimumBuyNotional)) {
     return blocked(
+      facts.input,
       facts.inputHash,
       TargetPlanReason.BelowMinimumBuyNotional,
       availableBuyingPowerMicros,
@@ -93,6 +107,7 @@ const selectTargetNotionalBlock = (
   }
   return requiredBuyingPower > 0n && requiredBuyingPower > facts.availableBuyingPower
     ? blocked(
+        facts.input,
         facts.inputHash,
         TargetPlanReason.InsufficientBuyingPower,
         availableBuyingPowerMicros,
@@ -115,7 +130,7 @@ const assembleExecutableTargetPlan = (
   const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
   if (notionalBlock !== undefined) return notionalBlock
   const common = {
-    schemaVersion: legacyReferenceTargetPlanSchemaVersion,
+    schemaVersion: outputSchemaVersion(facts.input),
     inputHash: facts.inputHash,
     targets,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
@@ -141,7 +156,9 @@ export const computeTargetPlan = (facts: TargetPlannerFacts): Result.Result<Outp
   const preflightReason = selectTargetPlannerPreflightReason(facts)
   return preflightReason === undefined
     ? Result.map(derivePlannedTargetFacts(facts), (targetFacts) => assembleExecutableTargetPlan(facts, targetFacts))
-    : Result.succeed(blocked(facts.inputHash, preflightReason, facts.input.brokerState.account.buyingPowerMicros))
+    : Result.succeed(
+        blocked(facts.input, facts.inputHash, preflightReason, facts.input.brokerState.account.buyingPowerMicros),
+      )
 }
 
 export const finalizeTargetPlan = (material: OutputMaterial): Result.Result<TargetPlanResult, TargetPlannerFailure> =>

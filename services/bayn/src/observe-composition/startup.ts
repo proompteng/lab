@@ -1,10 +1,12 @@
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle'
 import { AuthorityGenerationStore } from '../db/execution-store'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'
 import { Authority, type AuthorityState } from '../execution/contracts'
+import { CycleExecutionModelSchema } from '../execution-model-contract'
+import { strictParseOptions } from '../schemas'
 import { strategyApplication } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
@@ -20,13 +22,30 @@ import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder, observeDecisionB
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const executionModel = strategyApplication(input.strategy).definition.parameters.executionModel
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v3') {
+  const decodedExecutionModel = Schema.decodeUnknownResult(
+    CycleExecutionModelSchema,
+    strictParseOptions,
+  )((input.strategy.definition.parameters as { readonly executionModel?: unknown }).executionModel)
+  if (Result.isFailure(decodedExecutionModel)) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require the account-neutral v3 execution model',
+        message: 'strategy execution model is invalid for autonomous cycles',
+        cause: decodedExecutionModel.failure,
+      }),
+    )
+  }
+  const executionModel = decodedExecutionModel.success
+  if (
+    executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
+    executionModel.schemaVersion !== 'bayn.execution-model.v4'
+  ) {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'cycle-loop',
+        message: 'autonomous cycles require an account-neutral v3 or v4 execution model',
       }),
     )
   }

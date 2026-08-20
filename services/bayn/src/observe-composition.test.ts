@@ -64,6 +64,11 @@ import { WriterFence, WriterFenceError, type WriterFenceService } from './execut
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
+  decodeDefaultOpeningDriveProtocol,
+  makeOpeningDriveDefinition,
+  openingDriveBehaviorHash,
+} from './strategy/opening-drive'
+import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
   buildObserveCycleDecision,
@@ -72,6 +77,7 @@ import {
   decideExecutionCycleCloseDocument,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
+  decideExecutionIntentTerminalDisposition,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
@@ -87,6 +93,7 @@ import {
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
+  loadQuoteBoundExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
@@ -1483,6 +1490,73 @@ describe('OBSERVE runtime composition', () => {
     ).toEqual({ _tag: 'Wait', reason: 'unknown-mutation' })
     expect(decideExecutionCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
     expect(countOpenPositions([{ quantityMicros: '0' }, { quantityMicros: '-1' }, { quantityMicros: '2' }])).toBe(2)
+  })
+
+  test('completes an entry after an exact zero-fill LIMIT/IOC cancellation without containing authority', () => {
+    const intent = {
+      accountId,
+      clientOrderId: `b1_${'Z'.repeat(43)}`,
+      intentId: '9'.repeat(64),
+      orderType: OrderType.Limit,
+      quantityMicros: '3000000',
+      side: OrderSide.Buy,
+      state: IntentState.Terminal,
+      symbol: 'AMD',
+      terminalOutcome: TerminalOutcome.Canceled,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    } as const
+    const order = {
+      accountId,
+      brokerOrderId: 'zero-fill-ioc-order',
+      clientOrderId: intent.clientOrderId,
+      filledQuantityMicros: '0',
+      intentId: intent.intentId,
+      orderType: intent.orderType,
+      quantityMicros: intent.quantityMicros,
+      side: intent.side,
+      status: OrderStatus.Canceled,
+      symbol: intent.symbol,
+      timeInForce: intent.timeInForce,
+    } as const
+    const dispositionInput = {
+      intent,
+      acceptedBrokerOrderId: order.brokerOrderId,
+      orders: [order],
+    } as const
+
+    expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'ENTRY' })).toBe(
+      'BENIGN_ZERO_FILL_IOC',
+    )
+    expect(
+      decideExecutionIntentTerminalDisposition({
+        ...dispositionInput,
+        phase: 'ENTRY',
+        orders: [{ ...order, filledQuantityMicros: '1' }],
+      }),
+    ).toBe('UNSUCCESSFUL')
+    expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'CLOSE' })).toBe('UNSUCCESSFUL')
+    expect(
+      decideExecutionCycleCompletion(
+        evaluatedAt,
+        [
+          {
+            state: IntentState.Terminal,
+            terminalOutcome: TerminalOutcome.Canceled,
+            benignZeroFillIoc: true,
+            updatedAt: '2020-05-01T12:45:03.000Z',
+            latestMutationAt: '2020-05-01T12:45:03.000Z',
+          },
+        ],
+        {
+          status: ReconciliationStatus.Exact,
+          reconciledAt: '2020-05-01T12:45:04.000Z',
+          accountingExact: true,
+          unknownMutationCount: 0,
+          unknownOrderCount: 0,
+          openPositionCount: 0,
+        },
+      ),
+    ).toEqual({ _tag: 'Complete' })
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
@@ -3356,6 +3430,36 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
+  test('admits the opening-drive v4 execution model into a post-open autonomous cycle policy', () => {
+    const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
+    const definition = makeOpeningDriveDefinition(protocol)
+    const prepared = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: {
+        definition,
+        provenance: {
+          ...fixtureRuntime.provenance,
+          strategy: {
+            name: definition.name,
+            behaviorHash: openingDriveBehaviorHash,
+            parameterHash: canonicalHashV1(definition.parameters),
+            parameterSchemaVersion: definition.parameters.schemaVersion,
+          },
+        },
+      } as unknown as ObserveAutonomousCycleInput['strategy'],
+    })
+
+    expect(Result.isSuccess(prepared)).toBe(true)
+    if (Result.isSuccess(prepared)) {
+      expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v4')
+      expect(prepared.success.executionPolicy.schemaVersion).toBe('bayn.autonomous-cycle-execution-policy.v2')
+    }
+  })
+
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()))
 
@@ -3370,6 +3474,20 @@ describe('OBSERVE runtime composition', () => {
       maxDailyLossMicros: '5000000000',
       maxDrawdownMicros: '5000000000',
       maxOpenOrders: fixtureProtocol.universe.length,
+    })
+  })
+
+  test('decodes a versioned quote-bound LIMIT/IOC policy for intraday execution', async () => {
+    const policy = await Effect.runPromise(
+      loadQuoteBoundExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()),
+    )
+
+    expect(policy).toMatchObject({
+      schemaVersion: 'bayn.execution-risk-policy.v3',
+      accountId,
+      allowedSymbols: fixtureProtocol.universe,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     })
   })
 

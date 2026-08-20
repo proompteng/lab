@@ -8,7 +8,7 @@ export const PPM = 1_000_000n
 export const BPS = 10_000n
 export const WEIGHT_SCALE = 1_000_000_000_000n
 
-export const defaultExecutionModel: ExecutionModel = {
+export const defaultExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v3' }> = {
   schemaVersion: 'bayn.execution-model.v3',
   venue: 'alpaca-us-equity',
   assetClass: 'us-equity',

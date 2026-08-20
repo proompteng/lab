@@ -11,7 +11,6 @@ import {
   deriveTargetsFailure,
   type BlockedTargetPlanReason,
   type PlannedTargetQuantity,
-  type SignalSessionReferencePrices,
   type TargetPlannerFailure,
   type TargetPlannerInput,
 } from './model'
@@ -36,12 +35,10 @@ const sameStrings = (left: readonly string[], right: readonly string[]): boolean
 const isUnresolved = (status: OrderStatus): boolean =>
   status === OrderStatus.New || status === OrderStatus.PartiallyFilled || status === OrderStatus.Pending
 
-const referencePriceMaterial = (referencePrices: SignalSessionReferencePrices) => ({
-  schemaVersion: referencePrices.schemaVersion,
-  signalDate: referencePrices.signalDate,
-  observedAt: referencePrices.observedAt,
-  priceMicros: referencePrices.priceMicros,
-})
+const referencePriceMaterial = (referencePrices: TargetPlannerInput['referencePrices']) => {
+  const { contentHash: _contentHash, ...material } = referencePrices
+  return material
+}
 
 export interface TargetPlannerHashes {
   readonly inputHash: string
@@ -261,7 +258,10 @@ export const derivePlannedTargetFacts = (
           return Result.map(
             Result.mapError(
               desiredQuantityMicros(facts.allocationCapital, targetWeight, referencePrice, {
-                precision: facts.input.precision,
+                precision: {
+                  ...facts.input.precision,
+                  quantityIncrementMicros: facts.quantityIncrement.toString(),
+                },
               }),
               (cause) =>
                 deriveTargetsFailure({

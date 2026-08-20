@@ -20,20 +20,23 @@ import {
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
-  schema_version: Schema.Literal('bayn.autonomous-cycle.v1'),
-  identity_schema_version: Schema.Literal('bayn.autonomous-cycle-identity.v1'),
-  strategy_name: Schema.Literal('risk-balanced-trend'),
+  schema_version: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2']),
+  identity_schema_version: Schema.Literals(['bayn.autonomous-cycle-identity.v1', 'bayn.autonomous-cycle-identity.v2']),
+  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
   signal_session_date: IsoDateSchema,
   signal_calendar_version: StrictNonEmptyStringSchema,
-  execution_policy_schema_version: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
+  execution_policy_schema_version: Schema.Literals([
+    'bayn.autonomous-cycle-execution-policy.v1',
+    'bayn.autonomous-cycle-execution-policy.v2',
+  ]),
   execution_policy_hash: Sha256Schema,
   strategy_execution_model_hash: Sha256Schema,
   submission_window_ms: PositiveIntegerSchema,
   submission_cutoff_before_open_ms: PositiveIntegerSchema,
-  window_schema_version: Schema.Literal('bayn.autonomous-cycle-window.v1'),
+  window_schema_version: Schema.Literals(['bayn.autonomous-cycle-window.v1', 'bayn.autonomous-cycle-window.v2']),
   execution_calendar_schema_version: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
   execution_calendar_source: Schema.Literal('alpaca-v2-calendar'),
   execution_calendar_hash: Sha256Schema,
@@ -148,6 +151,16 @@ export const decodeStoredCycleRowValues = (
 ): Result.Result<readonly (typeof StoredCycleRowSchema.Type)[], Schema.SchemaError> =>
   decodeStoredCycleRowValuesResult(rows)
 
+const storedExecutionPolicy = (row: typeof StoredCycleRowSchema.Type) => ({
+  schemaVersion: row.execution_policy_schema_version,
+  strategyExecutionModelHash: row.strategy_execution_model_hash,
+  submissionWindowMs: row.submission_window_ms,
+  ...(row.execution_policy_schema_version === 'bayn.autonomous-cycle-execution-policy.v1'
+    ? { submissionCutoffBeforeOpenMs: row.submission_cutoff_before_open_ms }
+    : { submissionCutoffAfterOpenMs: row.submission_cutoff_before_open_ms }),
+  executionPolicyHash: row.execution_policy_hash,
+})
+
 const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
   decodeAutonomousCycleResult({
     schemaVersion: row.schema_version,
@@ -163,13 +176,7 @@ const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
       executionCalendarSchemaVersion: row.execution_calendar_schema_version,
       executionCalendarSource: row.execution_calendar_source,
       executionCalendarHash: row.execution_calendar_hash,
-      executionPolicy: {
-        schemaVersion: row.execution_policy_schema_version,
-        strategyExecutionModelHash: row.strategy_execution_model_hash,
-        submissionWindowMs: row.submission_window_ms,
-        submissionCutoffBeforeOpenMs: row.submission_cutoff_before_open_ms,
-        executionPolicyHash: row.execution_policy_hash,
-      },
+      executionPolicy: storedExecutionPolicy(row),
       cycleId: row.cycle_id,
     },
     window: {
