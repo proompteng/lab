@@ -100,6 +100,7 @@ import {
   resolveReadOnlyCycleObservationIdForHealth,
 } from './composition/read-only-status'
 import { executionControllerConfig } from './composition/native-execution-runtime'
+import { recoverPendingCapitalActivationToObserve } from './composition/autonomous-runtime'
 import { ReconciliationError } from './reconciler'
 import { initialState, type RuntimeEvidence } from './runtime-state'
 import { decodeDefaultOpeningDriveProtocol, makeOpeningDriveDefinition } from './strategy'
@@ -1090,6 +1091,51 @@ describe('Bayn capital startup recovery boundary', () => {
         effective: Authority.Execution,
       }),
     ).toEqual(Result.fail('OBSERVE cycle startup requires current effective OBSERVE authority'))
+  })
+
+  test('keeps a durable OBSERVE binding after a stale capital continuation is rejected', async () => {
+    const successorGenerationHash = hash('current-observe-successor')
+    const state = await Effect.runPromise(
+      Ref.make(
+        initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: true,
+            executionDisabledReason: null,
+          },
+        }),
+      ),
+    )
+
+    const runtime = await Effect.runPromise(
+      recoverPendingCapitalActivationToObserve(
+        state,
+        continuationRequest,
+        Effect.succeed({
+          _tag: 'AutonomousRead' as const,
+          cycleBindingId: successorGenerationHash,
+          startCycle: () => Effect.succeed(Effect.never),
+        }),
+        {
+          _tag: 'AutonomousRead' as const,
+          cycleBindingId: null,
+          startCycle: () => Effect.succeed(Effect.never),
+        },
+      ),
+    )
+
+    expect(runtime.cycleBindingId).toBe(successorGenerationHash)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      capitalActivation: {
+        _tag: 'Pending',
+        requestHash: continuationRequest.requestHash,
+        reason: 'PREPARATION_FAILED',
+      },
+      broker: {
+        executionEligible: false,
+        executionDisabledReason: 'CAPITAL_ACTIVATION_NOT_PREPARED',
+      },
+    })
   })
 
   test('recovers a committed qualified generation before rerunning candidate discovery', async () => {
