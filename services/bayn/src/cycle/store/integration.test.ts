@@ -967,7 +967,10 @@ const makeHistoricalV2Draft = (accountId = 'paper-account-historical-v2'): Histo
   return draft
 }
 
-const makeIntradayDraft = (accountId = 'paper-account-intraday'): IntradayCycleDraft => {
+const makeIntradayDraft = (
+  accountId = 'paper-account-intraday',
+  qualificationRunId = '1'.repeat(64),
+): IntradayCycleDraft => {
   const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(openingDriveExecutionModel))
   const executionCalendar = Result.getOrThrow(
     makeExecutionCalendarObservation({
@@ -982,7 +985,7 @@ const makeIntradayDraft = (accountId = 'paper-account-intraday'): IntradayCycleD
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v3',
       strategyName: 'opening-drive-momentum',
-      qualificationRunId: '1'.repeat(64),
+      qualificationRunId,
       strategyProtocolHash: defaultOpeningDriveProtocolHash,
       accountId,
       executionSessionDate: executionCalendar.executionSessionDate,
@@ -2896,6 +2899,52 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       bindings: { snapshotId: snapshotA },
     })
   }, 30_000)
+
+  test('preserves a terminal version 2 cycle as the intraday execution authority slot', async () => {
+    const accountId = 'paper-account-v2-intraday-authority-slot'
+    const historical = makeHistoricalV2Draft(accountId)
+    const intraday = makeIntradayDraft(accountId, historical.identity.qualificationRunId)
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(historical, acquireAt)
+        const blocked = yield* store.block(
+          historical.identity.cycleId,
+          CycleTerminalReason.MissedSubmission,
+          historical.window.submissionCutoffAt,
+        )
+        const authoritySlot = yield* store.readAuthoritySlot({
+          qualificationRunId: intraday.identity.qualificationRunId,
+          accountId,
+          executionSessionDate: intraday.identity.executionSessionDate,
+        })
+        const duplicate = yield* Effect.exit(store.acquire(intraday, intraday.window.submissionOpenAt))
+        const sql = yield* PgClient.PgClient
+        const [count] = yield* sql<{ readonly count: number }>`
+          SELECT count(*)::integer AS count
+          FROM autonomous_cycles
+          WHERE qualification_run_id = ${intraday.identity.qualificationRunId}
+            AND account_id = ${accountId}
+            AND execution_session_date = ${intraday.identity.executionSessionDate}
+        `
+        return { authoritySlot, blocked, count: count.count, duplicate }
+      }),
+    )
+
+    expect(observed.blocked.cycle).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle.v2',
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.MissedSubmission,
+    })
+    expect(observed.authoritySlot).toEqual(Option.some(observed.blocked.cycle))
+    expect(Exit.isFailure(observed.duplicate)).toBe(true)
+    if (Exit.isFailure(observed.duplicate)) {
+      expect(Cause.pretty(observed.duplicate.cause)).toContain(
+        'stored cycle differs from deterministic acquisition input',
+      )
+    }
+    expect(observed.count).toBe(1)
+  })
 
   test('persists and recovers the versioned intraday cycle without changing legacy rows', async () => {
     const draft = makeIntradayDraft()

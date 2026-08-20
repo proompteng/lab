@@ -173,7 +173,7 @@ const makeCycleMutationPrimitivesDataFirst = (
             FROM autonomous_cycles
             WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
               AND account_id = ${candidate.identity.accountId}
-              AND schema_version = 'bayn.autonomous-cycle.v3'
+              AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
               AND execution_session_date = ${candidate.identity.executionSessionDate}
             FOR UPDATE
           `

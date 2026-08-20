@@ -259,7 +259,7 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE UNIQUE INDEX IF NOT EXISTS autonomous_cycles_intraday_authority_slot_key
     ON autonomous_cycles(qualification_run_id, account_id, execution_session_date)
-    WHERE schema_version = 'bayn.autonomous-cycle.v3'
+    WHERE schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
   `
 
   yield* sql`

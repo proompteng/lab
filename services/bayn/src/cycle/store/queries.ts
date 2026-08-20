@@ -92,7 +92,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
           FROM autonomous_cycles
           WHERE qualification_run_id = ${slot.qualificationRunId}
             AND account_id = ${slot.accountId}
-            AND schema_version = 'bayn.autonomous-cycle.v3'
+            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
             AND execution_session_date = ${slot.executionSessionDate}
         `
         : sql<Record<string, unknown>>`
