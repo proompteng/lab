@@ -40,7 +40,7 @@ export const SignalSessionReferencePricesSchema = Schema.Struct({
 
 export const intradaySnapshotReferencePricesSchemaVersion = 'bayn.intraday-snapshot-reference-prices.v1' as const
 
-export const IntradaySnapshotReferencePricesSchema = Schema.Struct({
+const IntradaySnapshotReferencePricesBase = Schema.Struct({
   schemaVersion: Schema.Literal(intradaySnapshotReferencePricesSchemaVersion),
   signalDate: IsoDateSchema,
   observedAt: UtcInstantSchema,
@@ -48,8 +48,44 @@ export const IntradaySnapshotReferencePricesSchema = Schema.Struct({
   snapshotContentHash: Sha256Schema,
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
   contentHash: Sha256Schema,
+  /** Conservative compatibility surface; quote-bound planning requires this to equal the ask map. */
   priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+  bidPriceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+  askPriceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
 })
+
+const intradayReferencePriceIssues = (
+  prices: typeof IntradaySnapshotReferencePricesBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const symbols = Object.keys(prices.priceMicros).sort()
+  const bidSymbols = Object.keys(prices.bidPriceMicros).sort()
+  const askSymbols = Object.keys(prices.askPriceMicros).sort()
+  if (
+    symbols.length !== bidSymbols.length ||
+    symbols.length !== askSymbols.length ||
+    symbols.some((symbol, index) => symbol !== bidSymbols[index] || symbol !== askSymbols[index])
+  ) {
+    return [{ path: ['priceMicros'], issue: 'bid, ask, and compatibility price maps must bind identical symbols' }]
+  }
+  const issues: Schema.FilterIssue[] = []
+  for (const symbol of symbols) {
+    const bid = prices.bidPriceMicros[symbol]
+    const ask = prices.askPriceMicros[symbol]
+    const compatibility = prices.priceMicros[symbol]
+    if (bid === undefined || ask === undefined || compatibility === undefined) continue
+    if (BigInt(bid) > BigInt(ask)) {
+      issues.push({ path: ['bidPriceMicros', symbol], issue: 'verified bid must not exceed the verified ask' })
+    }
+    if (compatibility !== ask) {
+      issues.push({ path: ['priceMicros', symbol], issue: 'compatibility price must equal the conservative ask' })
+    }
+  }
+  return issues
+}
+
+export const IntradaySnapshotReferencePricesSchema = IntradaySnapshotReferencePricesBase.check(
+  Schema.makeFilter(intradayReferencePriceIssues),
+)
 
 export const TargetPlannerBrokerStateSchema = Schema.Struct({
   account: AccountSnapshotSchema,
@@ -100,6 +136,7 @@ export const QuoteBoundExecutionTermsSchema = Schema.Struct({
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
+  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 export const TargetPlannerInputV1Schema = Schema.Struct({
@@ -126,16 +163,41 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   executionTerms: QuoteBoundExecutionTermsSchema,
 })
 
-const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] =>
-  input.executionTerms.snapshotId === input.referencePrices.snapshotId &&
-  input.executionTerms.snapshotContentHash === input.referencePrices.snapshotContentHash
-    ? []
-    : [
-        {
-          path: ['executionTerms'],
-          issue: 'must bind the same verified intraday snapshot as its reference prices',
-        },
-      ]
+const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Type): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (
+    input.executionTerms.snapshotId !== input.referencePrices.snapshotId ||
+    input.executionTerms.snapshotContentHash !== input.referencePrices.snapshotContentHash
+  ) {
+    issues.push({
+      path: ['executionTerms'],
+      issue: 'must bind the same verified intraday snapshot as its reference prices',
+    })
+  }
+  const targetSymbols = Object.keys(input.targetWeights).sort()
+  const quantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
+  if (
+    targetSymbols.length !== quantitySymbols.length ||
+    targetSymbols.some((symbol, index) => symbol !== quantitySymbols[index])
+  ) {
+    issues.push({
+      path: ['executionTerms', 'maximumBuyQuantityMicros'],
+      issue: 'must contain one quantity limit for every target symbol',
+    })
+  }
+  const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
+  if (
+    Object.values(input.executionTerms.maximumBuyQuantityMicros).some(
+      (quantity) => BigInt(quantity) % quantityIncrement !== 0n,
+    )
+  ) {
+    issues.push({
+      path: ['executionTerms', 'maximumBuyQuantityMicros'],
+      issue: 'must use the declared whole-share quantity precision',
+    })
+  }
+  return issues
+}
 
 export const QuoteBoundTargetPlannerInputSchema = QuoteBoundTargetPlannerInputBase.check(
   Schema.makeFilter(quoteBoundInputIssues),

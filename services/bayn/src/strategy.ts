@@ -1,6 +1,7 @@
 import type { RuntimeProvenance } from './contracts'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { makeRiskBalancedTrendApplication } from './strategy/risk-balanced-trend'
+import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
 import type {
   ReviewedStrategySource,
   StrategyApplication,
@@ -83,11 +84,18 @@ export interface StrategyRuntime {
   /** Canonical application used by all pure evaluation and runtime decision paths. */
   readonly application?: StrategyApplication<any, any, any>
   /** Compatibility projection for archived callers; it is the same definition instance as application.definition. */
-  readonly definition: StrategyDefinition<any, any, any>
+  readonly definition: StrategyDefinition<any, any, any, any>
   readonly provenance: RuntimeProvenance
 }
 
-export type StrategyRuntimeInput = StrategyRuntime | StrategyDefinition<any, StrategyDecisionFailure, TargetPortfolio>
+export type StrategyRuntimeInput =
+  | StrategyRuntime
+  | StrategyDefinition<any, StrategyDecisionFailure, TargetPortfolio, any>
+
+export const strategyDefinition = (
+  input: StrategyRuntimeInput,
+): StrategyDefinition<any, StrategyDecisionFailure, TargetPortfolio, any> =>
+  'definition' in input ? input.definition : input
 
 /**
  * Compatibility resolution for archived test/runtime constructors. The application-plan root always supplies
@@ -95,6 +103,9 @@ export type StrategyRuntimeInput = StrategyRuntime | StrategyDefinition<any, Str
  */
 export const strategyApplication = (input: StrategyRuntimeInput): StrategyApplication<any, any, any> => {
   if ('application' in input && input.application !== undefined) return input.application
-  const definition = 'definition' in input ? input.definition : input
-  return makeRiskBalancedTrendApplication(definition.parameters, definition)
+  const definition = strategyDefinition(input)
+  if (definition.name !== 'risk-balanced-trend' || definition.holdingPeriod !== 'MULTI_SESSION') {
+    throw new Error(`strategy ${definition.name} has no legacy daily application adapter`)
+  }
+  return makeRiskBalancedTrendApplication(definition.parameters, definition as RiskBalancedTrendStrategyDefinition)
 }
