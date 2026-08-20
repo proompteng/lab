@@ -146,8 +146,8 @@ interface NativeExecutionManifests {
 
 const nativeExecutionManifests = (
   options: UpdateBaynManifestOptions,
-  deploymentSourceSha: string,
-  deploymentDigest: string,
+  candidateSourceSha: string,
+  candidateDigest: string,
 ): NativeExecutionManifests | undefined => {
   const usesDefaultManifests =
     options.kustomizationPath === undefined &&
@@ -179,8 +179,8 @@ const nativeExecutionManifests = (
   ) {
     throw new Error('native execution controller and activation manifests have different immutable image bindings')
   }
-  if (sourceSha !== deploymentSourceSha || digest !== deploymentDigest) {
-    throw new Error('native execution controller is not bound to the deployed Bayn source and image')
+  if (sourceSha !== candidateSourceSha || digest !== candidateDigest) {
+    throw new Error('native execution controller is not bound to the candidate Bayn source and image')
   }
   return { activation, activationPath, controller, controllerPath, sourceSha, digest }
 }
@@ -348,12 +348,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error(`invalid BAYN_CAPITAL_ACTIVATION_KIND: ${capitalActivationKind}`)
   }
   const deployedRuntime = runtimeFromDeployment(deployedDeployment)
-  const candidateRuntime = options.candidateRuntime ?? runtimeFromDeployment(deployment)
+  const candidateManifestRuntime = runtimeFromDeployment(deployment)
+  const candidateRuntime = options.candidateRuntime ?? candidateManifestRuntime
   validateCandidateRuntime(candidateRuntime)
   const deployedSourceSha = environmentValue(deployedDeployment, 'BAYN_CODE_REVISION')
   const deployedImageDigest = environmentValue(deployedDeployment, 'BAYN_IMAGE_DIGEST')
   const deployedBehaviorHash = environmentValue(deployedDeployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
   const deployedParameterHash = environmentValue(deployedDeployment, 'BAYN_STRATEGY_PARAMETER_HASH')
+  const candidateDeploymentSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
+  const candidateDeploymentImageDigest = environmentValue(deployment, 'BAYN_IMAGE_DIGEST')
+  const candidateDeploymentBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
+  const candidateDeploymentParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
   const deployedSnapshotId = environmentValue(deployedDeployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
   const candidateSnapshotId = candidateRuntime.BAYN_SIGNAL_SNAPSHOT_ID
   const snapshotChanged = deployedSnapshotId !== candidateSnapshotId
@@ -363,13 +368,25 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateRuntimeMatchesDeployment = candidateRuntimeNames.every(
     (name) => deployedRuntime[name] === candidateRuntime[name],
   )
+  const candidateRuntimeMatchesManifest = candidateRuntimeNames.every(
+    (name) => candidateManifestRuntime[name] === candidateRuntime[name],
+  )
   const strategyIdentityMatches =
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
-  const activationBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
+  const candidateStrategyIdentityMatches =
+    candidateDeploymentBehaviorHash === options.strategyBehaviorHash &&
+    candidateDeploymentParameterHash === options.strategyParameterHash
+  const deployedBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
+  const activationBuildMatches =
+    candidateDeploymentSourceSha === options.sourceSha && candidateDeploymentImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
-  const nativeExecution = nativeExecutionManifests(options, deployedSourceSha, deployedImageDigest)
+  const nativeExecution = nativeExecutionManifests(
+    options,
+    candidateDeploymentSourceSha,
+    candidateDeploymentImageDigest,
+  )
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned && options.candidateRuntime === undefined) {
     throw new Error('installing an accepted qualification run requires an explicit candidate runtime')
   }
@@ -398,7 +415,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     !hadQualificationPin && !hasCapitalActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
-    (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
+    (!deployedBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
   ) {
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
   }
@@ -444,8 +461,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (
     researchCapitalRelease &&
     ((!activationBuildMatches && capitalActivationKind !== researchCapitalBuildContinuation) ||
-      !strategyIdentityMatches ||
-      !candidateRuntimeMatchesDeployment)
+      (capitalActivationKind === researchCapitalBuildContinuation
+        ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
+        : !candidateStrategyIdentityMatches || !candidateRuntimeMatchesManifest))
   ) {
     return {
       promotionAction: 'hold',

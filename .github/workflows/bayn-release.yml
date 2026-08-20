@@ -132,16 +132,67 @@ jobs:
             git switch --force-create bayn-release-generated "$SOURCE_SHA"
           fi
 
+          manifest_value() {
+            local manifest="$1"
+            local name="$2"
+            local required="${3:-true}"
+            awk -v marker="            - name: ${name}" -v required="$required" '
+              $0 == marker {
+                count += 1
+                getline
+                sub(/^              value: /, "")
+                value = $0
+              }
+              END {
+                if (count > 1 || (required == "true" && count != 1) || (count == 1 && value == "")) exit 1
+                if (count == 0) exit 0
+                gsub(/^"|"$/, "", value)
+                print value
+              }
+            ' "$manifest"
+          }
+
+          deployment_manifest=argocd/applications/bayn/deployment.yaml
+          promotion_source_sha="$SOURCE_SHA"
+          promotion_image_tag="$IMAGE_TAG"
+          promotion_image_digest="$IMAGE_DIGEST"
+          promotion_behavior_hash="$strategy_behavior_hash"
+          promotion_parameter_hash="$strategy_parameter_hash"
+          activation_kind="$(manifest_value "$deployment_manifest" BAYN_CAPITAL_ACTIVATION_KIND false)"
+          authored_source_sha="$(manifest_value "$deployment_manifest" BAYN_CODE_REVISION)"
+          authored_image_digest="$(manifest_value "$deployment_manifest" BAYN_IMAGE_DIGEST)"
+          if test "$activation_kind" = ResearchCapitalActivationRequest && \
+            { test "$authored_source_sha" != "$SOURCE_SHA" || test "$authored_image_digest" != "$IMAGE_DIGEST"; }; then
+            test "$(manifest_value "$deployment_manifest" BAYN_IMAGE_REPOSITORY)" = registry.ide-newton.ts.net/lab/bayn
+            git cat-file -e "${authored_source_sha}^{commit}"
+            git merge-base --is-ancestor "$authored_source_sha" "$SOURCE_SHA"
+            authored_reference="registry.ide-newton.ts.net/lab/bayn@${authored_image_digest}"
+            nix run .#assert-oci-platforms -- "$authored_reference" linux/amd64 linux/arm64
+            authored_config_amd64="$(crane config --platform linux/amd64 "$authored_reference")"
+            authored_config_arm64="$(crane config --platform linux/arm64 "$authored_reference")"
+            test "$(image_label "$authored_config_amd64" org.opencontainers.image.revision)" = "$authored_source_sha"
+            test "$(image_label "$authored_config_arm64" org.opencontainers.image.revision)" = "$authored_source_sha"
+            promotion_behavior_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
+            promotion_parameter_hash="$(image_label "$authored_config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$promotion_behavior_hash"
+            test "$(image_label "$authored_config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$promotion_parameter_hash"
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$promotion_behavior_hash"
+            test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_PARAMETER_HASH)" = "$promotion_parameter_hash"
+            promotion_source_sha="$authored_source_sha"
+            promotion_image_tag="sha-${authored_source_sha}"
+            promotion_image_digest="$authored_image_digest"
+          fi
+
           allowed_release_path='^(argocd/applications/bayn/(deployment|execution-activation|execution-controller|kustomization)\.yaml|argocd/applicationsets/product\.yaml)$'
           unexpected_paths="$(git diff --name-only "$SOURCE_SHA" -- | grep -Ev "$allowed_release_path" || true)"
           test -z "$unexpected_paths"
           promotion="$(
             bun packages/scripts/src/bayn/update-manifests.ts \
-              --source-sha "$SOURCE_SHA" \
-              --tag "$IMAGE_TAG" \
-              --digest "$IMAGE_DIGEST" \
-              --strategy-behavior-hash "$strategy_behavior_hash" \
-              --strategy-parameter-hash "$strategy_parameter_hash" \
+              --source-sha "$promotion_source_sha" \
+              --tag "$promotion_image_tag" \
+              --digest "$promotion_image_digest" \
+              --strategy-behavior-hash "$promotion_behavior_hash" \
+              --strategy-parameter-hash "$promotion_parameter_hash" \
               --deployed-deployment-path "$deployed_manifest" \
               --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )"
@@ -160,14 +211,17 @@ jobs:
             echo "deployed_parameter_hash=$(jq -r '.deployedParameterHash' <<< "$promotion")"
             echo "candidate_behavior_hash=$(jq -r '.candidateBehaviorHash' <<< "$promotion")"
             echo "candidate_parameter_hash=$(jq -r '.candidateParameterHash' <<< "$promotion")"
+            echo "promotion_source_sha=${promotion_source_sha}"
+            echo "promotion_image_tag=${promotion_image_tag}"
+            echo "promotion_image_digest=${promotion_image_digest}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Record held candidate
         if: steps.promotion.outputs.promotion_action == 'hold'
         shell: bash
         env:
-          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
-          IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
+          SOURCE_SHA: ${{ steps.promotion.outputs.promotion_source_sha }}
+          IMAGE_DIGEST: ${{ steps.promotion.outputs.promotion_image_digest }}
           PROMOTION_REASON: ${{ steps.promotion.outputs.promotion_reason }}
         run: |
           set -euo pipefail
@@ -191,8 +245,9 @@ jobs:
         shell: bash
         env:
           DEPLOYMENT_BRANCH: codex/bayn-deploy
-          IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
-          IMAGE_TAG: ${{ steps.release.outputs.tag }}
+          PROMOTED_IMAGE_DIGEST: ${{ steps.promotion.outputs.promotion_image_digest }}
+          PROMOTED_IMAGE_TAG: ${{ steps.promotion.outputs.promotion_image_tag }}
+          PROMOTED_SOURCE_SHA: ${{ steps.promotion.outputs.promotion_source_sha }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
         run: |
           set -euo pipefail
@@ -207,15 +262,15 @@ jobs:
             argocd/applications/bayn/execution-activation.yaml \
             argocd/applicationsets/product.yaml
           if ! git diff --cached --quiet; then
-            git commit -m "chore(bayn): promote image ${IMAGE_TAG}"
+            git commit -m "chore(bayn): promote image ${PROMOTED_IMAGE_TAG}"
           fi
           git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"
           {
             echo '## Bayn immutable release promoted'
             echo
-            echo "- Source commit: \`${SOURCE_SHA}\`"
-            echo "- Image tag: \`${IMAGE_TAG}\`"
-            echo "- Image digest: \`${IMAGE_DIGEST}\`"
+            echo "- Source commit: \`${PROMOTED_SOURCE_SHA}\`"
+            echo "- Image tag: \`${PROMOTED_IMAGE_TAG}\`"
+            echo "- Image digest: \`${PROMOTED_IMAGE_DIGEST}\`"
             echo "- Deployment branch: \`${DEPLOYMENT_BRANCH}\`"
             echo '- Argo watches this branch directly; no promotion pull request is required.'
           } >> "$GITHUB_STEP_SUMMARY"

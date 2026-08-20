@@ -45,7 +45,7 @@ test('keeps the existing Bayn PR gate aggregation', () => {
   expect(baynCiWorkflow).not.toContain('verify-release-review')
 })
 
-test('promotes only the exact current main build to an immutable GitOps branch', () => {
+test('promotes verified main ancestry to an immutable GitOps branch', () => {
   expect(releaseWorkflow).toContain('test "$(git rev-parse HEAD)" = "$source_sha"')
   expect(releaseWorkflow).toContain('test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"')
   expect(releaseWorkflow).toContain('DEPLOYMENT_BRANCH: codex/bayn-deploy')
@@ -61,6 +61,18 @@ test('promotes only the exact current main build to an immutable GitOps branch',
   expect(releaseWorkflow).not.toContain('create-pull-request')
   expect(releaseWorkflow).not.toContain('pull-requests: write')
   expect(releaseWorkflow).not.toContain('git push --force')
+})
+
+test('preserves an exact authored research activation without rebinding it to a workflow-only build', () => {
+  expect(releaseWorkflow).toContain('test "$activation_kind" = ResearchCapitalActivationRequest')
+  expect(releaseWorkflow).toContain('git merge-base --is-ancestor "$authored_source_sha" "$SOURCE_SHA"')
+  expect(releaseWorkflow).toContain('authored_reference="registry.ide-newton.ts.net/lab/bayn@${authored_image_digest}"')
+  expect(releaseWorkflow).toContain('nix run .#assert-oci-platforms -- "$authored_reference" linux/amd64 linux/arm64')
+  expect(releaseWorkflow).toContain(
+    'test "$(manifest_value "$deployment_manifest" BAYN_STRATEGY_BEHAVIOR_HASH)" = "$promotion_behavior_hash"',
+  )
+  expect(releaseWorkflow).toContain('--source-sha "$promotion_source_sha"')
+  expect(releaseWorkflow).toContain('PROMOTED_SOURCE_SHA: ${{ steps.promotion.outputs.promotion_source_sha }}')
 })
 
 test('allows the renderer to change only the atomic Bayn deployment manifests', () => {
