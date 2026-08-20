@@ -234,7 +234,6 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 6,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
@@ -242,6 +241,8 @@ describe('Signal publisher GitOps authority contract', () => {
       },
       taskManager: { replicas: 2 },
     })
+    expect(Number.isSafeInteger(archive.spec.restartNonce)).toBe(true)
+    expect(archive.spec.restartNonce).toBeGreaterThan(0)
     const coreArchiveSymbols = csv(config.data.ARCHIVE_CORE_UNIVERSE_SYMBOLS)
     const expectedCoreArchiveHash = createHash('sha256').update(coreArchiveSymbols.join(',')).digest('hex')
     expect(config.data).toMatchObject({
@@ -252,6 +253,8 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v1',
       ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH: expectedCoreArchiveHash,
       ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
+      ARCHIVE_DELAYED_SIP_QUOTES_TOPIC: 'bayn.market-data.delayed-sip.quotes.v1',
+      ARCHIVE_DELAYED_SIP_TRADES_TOPIC: 'bayn.market-data.delayed-sip.trades.v1',
       ARCHIVE_OVERNIGHT_BARS_TOPIC: 'bayn.market-data.overnight.bars.1m.v1',
       ARCHIVE_PARALLELISM: '3',
       ARCHIVE_CLICKHOUSE_URL:
@@ -259,8 +262,6 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
     })
     expect(coreArchiveSymbols).toEqual([...new Set(csv(websocket.data.SYMBOLS))].sort())
-    expect(config.data.ARCHIVE_DELAYED_SIP_QUOTES_TOPIC).toBeUndefined()
-    expect(config.data.ARCHIVE_DELAYED_SIP_TRADES_TOPIC).toBeUndefined()
     expect(websocket.data.ALPACA_FEED).toBe('iex')
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
