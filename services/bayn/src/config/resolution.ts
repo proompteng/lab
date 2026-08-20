@@ -236,6 +236,7 @@ const baseConfig = (
   port: parsed.port,
   qualificationRunId: parsed.qualificationRunId,
   capitalActivationRequestJson: parsed.capitalActivationRequestJson,
+  researchCapitalBuildLineageJson: parsed.researchCapitalBuildLineageJson,
   execution,
   build,
   healthIntervalMs: parsed.healthIntervalMs,

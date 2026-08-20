@@ -24,6 +24,7 @@ import {
   isResearchCapitalActivationRequest,
   type CapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
+  type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
 import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
@@ -123,7 +124,9 @@ export const makeAutonomousServiceRuntime = (
     }) as ApplicationPlanFor<'AutonomousService'>
     const serializedRequest = plan.config.capitalActivationRequestJson
     const decodedActivation: Result.Result<ConfiguredCapitalActivation | null, string> =
-      serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serializedRequest)
+      serializedRequest === undefined
+        ? Result.succeed(null)
+        : decodeConfiguredCapitalActivation(serializedRequest, plan.config.researchCapitalBuildLineageJson)
     const requiresQualificationEvidence =
       Result.isSuccess(decodedActivation) &&
       decodedActivation.success !== null &&
@@ -148,6 +151,7 @@ export const makeAutonomousServiceRuntime = (
           {
             readonly request: CapitalActivationRequest | null
             readonly buildContinuation: ResearchCapitalBuildContinuation | null
+            readonly buildLineage: ResearchCapitalBuildLineage | null
             readonly evidence: RuntimeEvidence | null
           },
           string
@@ -161,13 +165,14 @@ export const makeAutonomousServiceRuntime = (
         const configured = decodedActivation.success
         const request = configured?.request ?? null
         const buildContinuation = configured?.buildContinuation ?? null
+        const buildLineage = configured?.buildLineage ?? null
         const current = yield* Ref.get(state)
         if (request === null) {
           if (plan.config.execution.brokerAccess === BrokerAccess.Mutation) {
             yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
             return Result.fail('configured granted capital requires an immutable execution mandate request')
           }
-          return Result.succeed({ request, buildContinuation, evidence: current.evidence })
+          return Result.succeed({ request, buildContinuation, buildLineage, evidence: current.evidence })
         }
         const observedAt = yield* currentUtcInstant
         const validation = isResearchCapitalActivationRequest(request)
@@ -180,13 +185,14 @@ export const makeAutonomousServiceRuntime = (
           yield* pendingCapitalActivation(state, request, 'PREPARATION_FAILED')
           return Result.fail(validation.failure)
         }
-        return Result.succeed({ request, buildContinuation, evidence: current.evidence })
+        return Result.succeed({ request, buildContinuation, buildLineage, evidence: current.evidence })
       })
       return validateStaticRequest.pipe(
         Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never, Scope.Scope> => {
           if (Result.isFailure(validated)) return Effect.succeed(pendingRuntime())
           const request = validated.success.request
           const buildContinuation = validated.success.buildContinuation
+          const buildLineage = validated.success.buildLineage
           return Effect.flatMap(Scope.Scope, (scope) =>
             scopedAcquisition(
               (attemptScope) =>
@@ -329,6 +335,7 @@ export const makeAutonomousServiceRuntime = (
                           observePlan,
                           request,
                           buildContinuation,
+                          buildLineage,
                           runtimeServices.authorityGenerationStore,
                           (authorityGenerationHash) =>
                             runtimeServices.forwardPerformanceReceiptStore.read(authorityGenerationHash).pipe(
@@ -357,6 +364,7 @@ export const makeAutonomousServiceRuntime = (
                                       observePlan,
                                       request,
                                       buildContinuation,
+                                      buildLineage,
                                       evidence,
                                       runtimeServices.authorityGenerationStore,
                                       runtimeServices.authorityRestrictionStore,
@@ -372,6 +380,7 @@ export const makeAutonomousServiceRuntime = (
                                         observePlan,
                                         request,
                                         buildContinuation,
+                                        buildLineage,
                                         evidence,
                                         runtimeServices.authorityGenerationStore,
                                         runtimeServices.authorityRestrictionStore,
@@ -382,6 +391,7 @@ export const makeAutonomousServiceRuntime = (
                                           observePlan,
                                           request,
                                           buildContinuation,
+                                          buildLineage,
                                           runtimeServices.session,
                                           runtimeServices.authorityGenerationStore,
                                           runtimeServices.capitalGrantLifecycleStore,

@@ -25,10 +25,13 @@ import {
 import {
   CapitalAuthoritySelection,
   decodeCapitalActivationConfigurationResult,
+  decodeResearchCapitalBuildLineageResult,
   isResearchCapitalActivationRequest,
   isResearchCapitalBuildContinuation,
   researchCapitalGrantProof,
+  researchCapitalBuildLineageIsCurrent,
   researchCapitalBuildContinuationIsBound,
+  researchCapitalGenerationIsBoundToBuildLineage,
   researchCapitalGenerationIsBoundToRequest,
   resolveExecutionPolicy,
   type ExecutionPolicy,
@@ -36,6 +39,7 @@ import {
   type QualifiedCapitalActivationRequest,
   type ResearchCapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
+  type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
 import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
 import { OperationalError } from '../errors'
@@ -115,10 +119,12 @@ export const activatePreparedQualifiedCapitalGeneration = (
 export interface ConfiguredCapitalActivation {
   readonly request: CapitalActivationRequest
   readonly buildContinuation: ResearchCapitalBuildContinuation | null
+  readonly buildLineage: ResearchCapitalBuildLineage | null
 }
 
 export const decodeConfiguredCapitalActivation = (
   serialized: string,
+  serializedBuildLineage?: string,
 ): Result.Result<ConfiguredCapitalActivation, string> => {
   let value: unknown
   try {
@@ -127,11 +133,32 @@ export const decodeConfiguredCapitalActivation = (
     return Result.fail('configured capital activation is not valid JSON')
   }
   const decoded = decodeCapitalActivationConfigurationResult(value)
-  return Result.isFailure(decoded)
-    ? Result.fail('configured capital activation failed its canonical schema and hash validation')
-    : isResearchCapitalBuildContinuation(decoded.success)
-      ? Result.succeed({ request: decoded.success.request, buildContinuation: decoded.success })
-      : Result.succeed({ request: decoded.success, buildContinuation: null })
+  if (Result.isFailure(decoded)) {
+    return Result.fail('configured capital activation failed its canonical schema and hash validation')
+  }
+  let buildLineage: ResearchCapitalBuildLineage | null = null
+  if (serializedBuildLineage !== undefined) {
+    let lineageValue: unknown
+    try {
+      lineageValue = JSON.parse(serializedBuildLineage) as unknown
+    } catch {
+      return Result.fail('configured research capital build lineage is not valid JSON')
+    }
+    const decodedLineage = decodeResearchCapitalBuildLineageResult(lineageValue)
+    if (Result.isFailure(decodedLineage)) {
+      return Result.fail('configured research capital build lineage failed its strict schema validation')
+    }
+    buildLineage = decodedLineage.success
+  }
+  if (isResearchCapitalBuildContinuation(decoded.success)) {
+    return buildLineage === null
+      ? Result.succeed({ request: decoded.success.request, buildContinuation: decoded.success, buildLineage: null })
+      : Result.fail('research capital build continuation cannot be combined with build lineage')
+  }
+  if (buildLineage !== null && !isResearchCapitalActivationRequest(decoded.success)) {
+    return Result.fail('research capital build lineage requires a research activation request')
+  }
+  return Result.succeed({ request: decoded.success, buildContinuation: null, buildLineage })
 }
 
 export const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousService'>): ReadOnlyExecutionPolicy => ({
@@ -198,6 +225,7 @@ export const capitalActivationRequestIsCurrent = (
   options: {
     readonly allowCloseRecovery?: boolean
     readonly buildContinuation?: ResearchCapitalBuildContinuation | null
+    readonly buildLineage?: ResearchCapitalBuildLineage | null
   } = {},
 ): Result.Result<void, string> => {
   const identity = capitalActivationRequestIdentityIsCurrent(
@@ -219,7 +247,21 @@ export const capitalActivationRequestIsCurrent = (
     options.buildContinuation.activation.sourceRevision === plan.config.build.sourceRevision &&
     options.buildContinuation.activation.imageRepository === plan.config.build.imageRepository &&
     options.buildContinuation.activation.imageDigest === plan.config.build.imageDigest
-  if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker) {
+  const buildLineage = options.buildLineage
+  if (buildLineage !== null && buildLineage !== undefined && !isResearchCapitalActivationRequest(request)) {
+    return Result.fail('research capital build lineage requires a research activation request')
+  }
+  const lineageBinding =
+    isResearchCapitalActivationRequest(request) && buildLineage !== null && buildLineage !== undefined
+      ? researchCapitalBuildLineageIsCurrent(buildLineage, request, {
+          sourceRevision: plan.config.build.sourceRevision,
+          imageRepository: plan.config.build.imageRepository,
+          imageDigest: plan.config.build.imageDigest,
+        })
+      : null
+  if (lineageBinding !== null && Result.isFailure(lineageBinding)) return lineageBinding
+  const lineageAuthorizesCurrentWorker = lineageBinding !== null
+  if (!requestBuildIsCurrent && !continuationAuthorizesCurrentWorker && !lineageAuthorizesCurrentWorker) {
     return Result.fail('capital activation request is not bound to the current activation build')
   }
   if (isResearchCapitalActivationRequest(request)) {
@@ -332,6 +374,37 @@ export const capitalGenerationIsBoundToRequest = (
 
 export type CapitalAuthorityGeneration = CapitalGrantGeneration | ResearchCapitalGrantGeneration
 
+const currentActivationBinding = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+): ResearchCapitalBuildLineage['activation'] => ({
+  sourceRevision: plan.config.build.sourceRevision,
+  imageRepository: plan.config.build.imageRepository,
+  imageDigest: plan.config.build.imageDigest,
+})
+
+const researchCapitalGenerationBinding = (
+  request: ResearchCapitalActivationRequest,
+  activation: ResearchCapitalBuildLineage['activation'],
+  sourceGenerationHash: string,
+  generation: ResearchCapitalGrantGeneration,
+  buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
+): Result.Result<void, string> => {
+  if (buildContinuation !== null) {
+    return researchCapitalBuildContinuationIsBound(buildContinuation, sourceGenerationHash, generation)
+  }
+  if (buildLineage !== null) {
+    return researchCapitalGenerationIsBoundToBuildLineage(
+      buildLineage,
+      request,
+      activation,
+      sourceGenerationHash,
+      generation,
+    )
+  }
+  return researchCapitalGenerationIsBoundToRequest(request, sourceGenerationHash, generation)
+}
+
 export const preparedCapitalActivationIsBound = (
   request: QualifiedCapitalActivationRequest,
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -357,6 +430,7 @@ export const readBoundCapitalActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: CapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
   authorityStore: AuthorityGenerationStoreShape,
 ): Effect.Effect<CapitalAuthorityGeneration, OperationalError> =>
   Effect.gen(function* () {
@@ -395,10 +469,14 @@ export const readBoundCapitalActivationGeneration = (
       if (generation === undefined) {
         return yield* capitalActivationOperationalError('durable research capital history is missing')
       }
-      const binding =
-        buildContinuation === null
-          ? researchCapitalGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
-          : researchCapitalBuildContinuationIsBound(buildContinuation, generation.previousGenerationHash, generation)
+      const binding = researchCapitalGenerationBinding(
+        request,
+        currentActivationBinding(plan),
+        generation.previousGenerationHash,
+        generation,
+        buildContinuation,
+        buildLineage,
+      )
       yield* Effect.fromResult(binding).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
       return generation
     }
@@ -430,6 +508,7 @@ export const readCompletedExecutionLifecycle = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: CapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
   authorityStore: AuthorityGenerationStoreShape,
   readReceiptHash: (authorityGenerationHash: string) => Effect.Effect<Option.Option<string>, OperationalError>,
 ): Effect.Effect<CompletedExecutionLifecycle | undefined, OperationalError> =>
@@ -482,9 +561,22 @@ export const readCompletedExecutionLifecycle = (
         )
       if (generation === undefined) return undefined
       binding =
-        buildContinuation === null
-          ? researchCapitalGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation)
-          : researchCapitalBuildContinuationIsBound(buildContinuation, generation.previousGenerationHash, generation)
+        buildLineage === null
+          ? researchCapitalGenerationBinding(
+              request,
+              currentActivationBinding(plan),
+              generation.previousGenerationHash,
+              generation,
+              buildContinuation,
+              null,
+            )
+          : researchCapitalGenerationIsBoundToBuildLineage(
+              buildLineage,
+              request,
+              currentActivationBinding(plan),
+              generation.previousGenerationHash,
+              generation,
+            )
     } else {
       if (authorityStore.readAuthorityGeneration === undefined) return undefined
       generation = yield* authorityStore
@@ -522,6 +614,7 @@ export const recoverCapitalActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: CapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
   evidence: RuntimeEvidence | null,
   authorityStore: AuthorityGenerationStoreShape,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
@@ -550,13 +643,14 @@ export const recoverCapitalActivationGeneration = (
         'durable capital close recovery is outside its immutable close lease',
       )
     }
-    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, authorityStore)
+    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, buildLineage, authorityStore)
   })
 
 export const recoverCapitalReceiptFinalizationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: CapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
   evidence: RuntimeEvidence | null,
   authorityStore: AuthorityGenerationStoreShape,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
@@ -579,7 +673,7 @@ export const recoverCapitalReceiptFinalizationGeneration = (
       )
     }
     yield* restrictExpiredCapitalActivation(authorityRestrictionStore, writerFence)
-    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, authorityStore)
+    return yield* readBoundCapitalActivationGeneration(plan, request, buildContinuation, buildLineage, authorityStore)
   })
 
 export type CapitalActivationStartupResolution =
@@ -718,7 +812,7 @@ export const prepareOrRecoverQualifiedCapitalActivation = (
       Effect.mapError((cause) => capitalActivationOperationalError('qualified capital authority read failed', cause)),
     )
     if (authority.maximum === Authority.Execution) {
-      return yield* readBoundCapitalActivationGeneration(plan, request, null, authorityStore)
+      return yield* readBoundCapitalActivationGeneration(plan, request, null, null, authorityStore)
     }
     return (yield* prepare).generation
   })
@@ -817,6 +911,7 @@ export const readCurrentResearchCapitalGeneration = (
 export const prepareResearchCapitalActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchCapitalActivationRequest,
+  buildLineage: ResearchCapitalBuildLineage | null,
   sourceGenerationHash: string,
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
@@ -824,7 +919,7 @@ export const prepareResearchCapitalActivation = (
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    yield* Effect.fromResult(capitalActivationRequestIsCurrent(request, plan, null, observedAt)).pipe(
+    yield* Effect.fromResult(capitalActivationRequestIsCurrent(request, plan, null, observedAt, { buildLineage })).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
     yield* Effect.fromResult(validateResearchCapitalPreflight(request, session.preflight)).pipe(
@@ -833,7 +928,7 @@ export const prepareResearchCapitalActivation = (
     yield* validateResearchCapitalRiskPolicy(plan, request)
     yield* validateResearchCapitalCloseLease(request, session)
 
-    const proof = researchCapitalGrantProof(request)
+    const proof = researchCapitalGrantProof(request, buildLineage?.activation)
     const authority = yield* lifecycle
       .activateResearchCapitalGrant(proof, sourceGenerationHash)
       .pipe(
@@ -844,7 +939,7 @@ export const prepareResearchCapitalActivation = (
     yield* Effect.fromResult(validateActivatedResearchAuthority(authority)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
-    return yield* readBoundCapitalActivationGeneration(plan, request, null, authorityStore).pipe(
+    return yield* readBoundCapitalActivationGeneration(plan, request, null, buildLineage, authorityStore).pipe(
       Effect.flatMap((generation) =>
         generation.schemaVersion === legacyAuthorityGenerationV3SchemaVersion
           ? Effect.succeed(generation)
@@ -880,6 +975,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchCapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
+  buildLineage: ResearchCapitalBuildLineage | null,
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
@@ -922,9 +1018,14 @@ export const prepareOrRecoverResearchCapitalActivation = (
     const currentGenerationMatchesRequest =
       currentGeneration !== undefined &&
       Result.isSuccess(
-        buildContinuation === null
-          ? researchCapitalGenerationIsBoundToRequest(request, currentSourceGenerationHash, currentGeneration)
-          : researchCapitalBuildContinuationIsBound(buildContinuation, currentSourceGenerationHash, currentGeneration),
+        researchCapitalGenerationBinding(
+          request,
+          currentActivationBinding(plan),
+          currentSourceGenerationHash,
+          currentGeneration,
+          buildContinuation,
+          buildLineage,
+        ),
       )
     const decision = yield* Effect.fromResult(
       decideExecutionMandateAuthority({
@@ -948,9 +1049,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
     }
     const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
     if (activationRequired) {
-      yield* Effect.fromResult(capitalActivationRequestIsCurrent(request, plan, null, observedAt)).pipe(
-        Effect.mapError((message) => capitalActivationOperationalError(message)),
-      )
+      yield* Effect.fromResult(
+        capitalActivationRequestIsCurrent(request, plan, null, observedAt, { buildLineage }),
+      ).pipe(Effect.mapError((message) => capitalActivationOperationalError(message)))
     }
     const activationSourceGenerationHash =
       decision._tag === 'Rearm'
@@ -995,6 +1096,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
       return yield* prepareResearchCapitalActivation(
         plan,
         request,
+        buildLineage,
         activationSourceGenerationHash,
         session,
         authorityStore,

@@ -47,12 +47,27 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly candidateRuntime?: BaynCandidateRuntime
   readonly acceptedQualificationRunId?: string
+  /** Authored source whose ancestry and immutable strategy identity were proved by the release workflow. */
+  readonly researchLineageSourceSha?: string
   readonly deployedDeploymentPath?: string
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
   readonly applicationSetPath?: string
   readonly executionControllerPath?: string
   readonly executionActivationPath?: string
+}
+
+interface ResearchCapitalBuildLineage {
+  readonly schemaVersion: 'bayn.research-capital-build-lineage.v1'
+  readonly requestHash: string
+  readonly authoredActivation: ResearchCapitalBuildBinding
+  readonly activation: ResearchCapitalBuildBinding
+}
+
+interface ResearchCapitalBuildBinding {
+  readonly sourceRevision: string
+  readonly imageRepository: string
+  readonly imageDigest: string
 }
 
 export interface BaynManifestUpdate {
@@ -107,6 +122,7 @@ const environmentValue = (deployment: string, name: string): string => {
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
 const capitalActivationRequest = /            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n/
 const researchCapitalBuildContinuation = 'ResearchCapitalBuildContinuation'
+const researchCapitalBuildLineageSchemaVersion = 'bayn.research-capital-build-lineage.v1' as const
 const qualificationIdentityNames = [
   'BAYN_SIGNAL_SNAPSHOT_ID',
   'BAYN_SIGNAL_PUBLICATION_ASOF',
@@ -134,6 +150,75 @@ const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_TIGERBEETLE_ADDRESSES: environmentValue(deployment, 'BAYN_TIGERBEETLE_ADDRESSES'),
   BAYN_TIGERBEETLE_LEDGER: environmentValue(deployment, 'BAYN_TIGERBEETLE_LEDGER'),
 })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasExactKeys = (value: Record<string, unknown>, expected: readonly string[]): boolean => {
+  const actual = Object.keys(value).sort()
+  const required = [...expected].sort()
+  return actual.length === required.length && actual.every((key, index) => key === required[index])
+}
+
+const decodeResearchCapitalBuildBinding = (value: unknown): ResearchCapitalBuildBinding | undefined => {
+  if (!isRecord(value) || !hasExactKeys(value, ['imageDigest', 'imageRepository', 'sourceRevision'])) return undefined
+  return typeof value.sourceRevision === 'string' &&
+    sourceShaPattern.test(value.sourceRevision) &&
+    typeof value.imageRepository === 'string' &&
+    value.imageRepository.length > 0 &&
+    !/\s/.test(value.imageRepository) &&
+    typeof value.imageDigest === 'string' &&
+    digestPattern.test(value.imageDigest)
+    ? {
+        sourceRevision: value.sourceRevision,
+        imageRepository: value.imageRepository,
+        imageDigest: value.imageDigest,
+      }
+    : undefined
+}
+
+const researchCapitalBuildLineageFromManifest = (manifest: string, role: string): ResearchCapitalBuildLineage => {
+  let value: unknown
+  try {
+    value = JSON.parse(environmentValue(manifest, 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')) as unknown
+  } catch {
+    throw new Error(`${role} BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE is not valid JSON`)
+  }
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['activation', 'authoredActivation', 'requestHash', 'schemaVersion']) ||
+    value.schemaVersion !== researchCapitalBuildLineageSchemaVersion ||
+    typeof value.requestHash !== 'string' ||
+    !hashPattern.test(value.requestHash)
+  ) {
+    throw new Error(`${role} BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE is not canonical`)
+  }
+  const authoredActivation = decodeResearchCapitalBuildBinding(value.authoredActivation)
+  const activation = decodeResearchCapitalBuildBinding(value.activation)
+  if (authoredActivation === undefined || activation === undefined) {
+    throw new Error(`${role} BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE has an invalid build binding`)
+  }
+  if (authoredActivation.imageRepository !== activation.imageRepository) {
+    throw new Error(`${role} BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE changes image repository`)
+  }
+  return {
+    schemaVersion: researchCapitalBuildLineageSchemaVersion,
+    requestHash: value.requestHash,
+    authoredActivation,
+    activation,
+  }
+}
+
+const researchCapitalBuildBindingMatches = (
+  left: ResearchCapitalBuildBinding,
+  right: ResearchCapitalBuildBinding,
+): boolean =>
+  left.sourceRevision === right.sourceRevision &&
+  left.imageRepository === right.imageRepository &&
+  left.imageDigest === right.imageDigest
+
+const renderResearchCapitalBuildLineage = (lineage: ResearchCapitalBuildLineage): string =>
+  JSON.stringify(JSON.stringify(lineage))
 
 interface NativeExecutionManifests {
   readonly activation: string
@@ -204,6 +289,7 @@ const updateNativeExecutionManifest = (
   candidateRuntime: BaynCandidateRuntime,
   previousPlanHash: string,
   previousSourceRevision: string,
+  researchBuildLineage: ResearchCapitalBuildLineage | null,
 ): string => {
   let updated = replaceExactlyOnce(
     manifest,
@@ -227,6 +313,13 @@ const updateNativeExecutionManifest = (
   )
   for (const [name, value] of Object.entries(candidateRuntime)) {
     updated = replaceEnvironmentValue(updated, name, JSON.stringify(value))
+  }
+  if (researchBuildLineage !== null) {
+    updated = replaceEnvironmentValue(
+      updated,
+      'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+      renderResearchCapitalBuildLineage(researchBuildLineage),
+    )
   }
   return updated
 }
@@ -318,6 +411,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (options.acceptedQualificationRunId !== undefined && !hashPattern.test(options.acceptedQualificationRunId)) {
     throw new Error(`invalid accepted qualification run ID: ${options.acceptedQualificationRunId}`)
   }
+  if (options.researchLineageSourceSha !== undefined && !sourceShaPattern.test(options.researchLineageSourceSha)) {
+    throw new Error(`invalid research lineage source SHA: ${options.researchLineageSourceSha}`)
+  }
   if (Number.isNaN(Date.parse(options.rolloutTimestamp))) throw new Error('rollout timestamp must be ISO-8601')
 
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
@@ -385,6 +481,43 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     candidateDeploymentSourceSha,
     candidateDeploymentImageDigest,
   )
+  const candidateImageRepository = environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY')
+  let researchBuildLineage: ResearchCapitalBuildLineage | null = null
+  if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
+    researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
+    const candidateBinding = {
+      sourceRevision: candidateDeploymentSourceSha,
+      imageRepository: candidateImageRepository,
+      imageDigest: candidateDeploymentImageDigest,
+    }
+    if (!researchCapitalBuildBindingMatches(researchBuildLineage.activation, candidateBinding)) {
+      throw new Error('candidate research build lineage does not end at the manifest activation build')
+    }
+    if (nativeExecution !== undefined) {
+      const controllerLineage = researchCapitalBuildLineageFromManifest(
+        nativeExecution.controller,
+        'native execution controller',
+      )
+      const activationLineage = researchCapitalBuildLineageFromManifest(
+        nativeExecution.activation,
+        'native execution activation',
+      )
+      if (
+        JSON.stringify(controllerLineage) !== JSON.stringify(researchBuildLineage) ||
+        JSON.stringify(activationLineage) !== JSON.stringify(researchBuildLineage)
+      ) {
+        throw new Error('Bayn runtime manifests have different research build lineage')
+      }
+    }
+    if (
+      options.researchLineageSourceSha !== undefined &&
+      options.researchLineageSourceSha !== researchBuildLineage.authoredActivation.sourceRevision
+    ) {
+      throw new Error('release ancestry proof does not start at the authored research activation')
+    }
+  } else if (options.researchLineageSourceSha !== undefined) {
+    throw new Error('research lineage proof requires a raw research activation request')
+  }
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned && options.candidateRuntime === undefined) {
     throw new Error('installing an accepted qualification run requires an explicit candidate runtime')
   }
@@ -460,7 +593,10 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
       ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : !candidateStrategyIdentityMatches || !candidateRuntimeMatchesManifest)
+      : !candidateStrategyIdentityMatches ||
+        !candidateRuntimeMatchesManifest ||
+        ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&
+          options.researchLineageSourceSha === undefined))
   ) {
     return {
       promotionAction: 'hold',
@@ -471,6 +607,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
+  const promotedResearchBuildLineage =
+    researchBuildLineage === null
+      ? null
+      : {
+          ...researchBuildLineage,
+          activation: {
+            sourceRevision: options.sourceSha,
+            imageRepository: candidateImageRepository,
+            imageDigest: options.digest,
+          },
+        }
   const imageBlock =
     /(  - name: bayn-main\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
   const updatedKustomization = replaceExactlyOnce(
@@ -509,6 +656,13 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       updatedDeployment,
       'BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH',
       JSON.stringify(baynExecutionControllerPlanHash),
+    )
+  }
+  if (promotedResearchBuildLineage !== null) {
+    updatedDeployment = replaceEnvironmentValue(
+      updatedDeployment,
+      'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+      renderResearchCapitalBuildLineage(promotedResearchBuildLineage),
     )
   }
   updatedDeployment = transitionQualificationPin(updatedDeployment, candidateQualificationRunId)
@@ -561,6 +715,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       candidateRuntime,
       previousPlanHash,
       previousSourceRevision,
+      promotedResearchBuildLineage,
     )
     updatedExecutionActivation = updateNativeExecutionManifest(
       nativeExecution.activation,
@@ -568,6 +723,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       candidateRuntime,
       previousPlanHash,
       previousSourceRevision,
+      promotedResearchBuildLineage,
     )
     updatedExecutionActivation = replaceExactlyOnce(
       updatedExecutionActivation,
@@ -637,6 +793,7 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
     ...Object.keys(candidateRuntimeFlags),
     '--accepted-qualification-run-id',
     '--deployed-deployment-path',
+    '--research-lineage-source-sha',
   ])
   for (let index = 0; index < argumentsToParse.length; index += 2) {
     const flag = argumentsToParse[index]
@@ -678,6 +835,9 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
   const deployedDeploymentPath = values.has('--deployed-deployment-path')
     ? required('--deployed-deployment-path')
     : undefined
+  const researchLineageSourceSha = values.has('--research-lineage-source-sha')
+    ? required('--research-lineage-source-sha')
+    : undefined
   if (acceptedQualificationRunId !== undefined && candidateRuntime === undefined) {
     throw new Error('--accepted-qualification-run-id requires the complete candidate runtime')
   }
@@ -691,6 +851,7 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
     ...(candidateRuntime === undefined ? {} : { candidateRuntime }),
     ...(acceptedQualificationRunId === undefined ? {} : { acceptedQualificationRunId }),
     ...(deployedDeploymentPath === undefined ? {} : { deployedDeploymentPath }),
+    ...(researchLineageSourceSha === undefined ? {} : { researchLineageSourceSha }),
   }
 }
 

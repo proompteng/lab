@@ -68,6 +68,7 @@ export const runtimeConfigSource = Config.all({
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
   capitalActivationRequestJson: Config.option(nonEmptyString('BAYN_CAPITAL_ACTIVATION_REQUEST')),
+  researchCapitalBuildLineageJson: Config.option(nonEmptyString('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')),
   operation: Config.option(runtimeOperation),
   executionPrepareRequest: Config.option(
     Config.schema(Schema.fromJsonString(ExecutionPrepareRequestSchema), 'BAYN_EXECUTION_PREPARE_REQUEST'),
@@ -128,6 +129,7 @@ export const runtimeConfigSource = Config.all({
       port: config.port,
       qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
       capitalActivationRequestJson: Option.getOrUndefined(config.capitalActivationRequestJson),
+      researchCapitalBuildLineageJson: Option.getOrUndefined(config.researchCapitalBuildLineageJson),
       configuredOperation: Option.getOrUndefined(config.operation),
       executionPrepareRequest: Option.getOrUndefined(config.executionPrepareRequest),
       brokerAccess: config.brokerAccess,

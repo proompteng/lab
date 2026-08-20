@@ -18,6 +18,21 @@ const qualificationRunId = '9'.repeat(64)
 const deployedControllerPlanHash = '7'.repeat(64)
 const previousControllerPlanHash = '6'.repeat(64)
 const previousControllerSourceRevision = 'e'.repeat(40)
+const researchRequestHash = '3'.repeat(64)
+const researchBuildLineage = {
+  schemaVersion: 'bayn.research-capital-build-lineage.v1',
+  requestHash: researchRequestHash,
+  authoredActivation: {
+    sourceRevision: '0'.repeat(40),
+    imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
+    imageDigest: `sha256:${'0'.repeat(64)}`,
+  },
+  activation: {
+    sourceRevision: '0'.repeat(40),
+    imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
+    imageDigest: `sha256:${'0'.repeat(64)}`,
+  },
+} as const
 const currentBindings = {
   BAYN_SIGNAL_SNAPSHOT_ID: currentSnapshotId,
   BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-22',
@@ -61,6 +76,13 @@ afterEach(() => {
 const environmentBlock = (name: string, value: string): string =>
   `            - name: ${name}\n              value: ${JSON.stringify(value)}\n`
 
+const environmentValueForTest = (manifest: string, name: string): string => {
+  const match = manifest.match(new RegExp(`            - name: ${name}\\n              value: ([^\\n]+)\\n`))
+  const raw = match?.[1]?.trim()
+  if (raw === undefined) throw new Error(`missing ${name}`)
+  return raw.startsWith('"') ? String(JSON.parse(raw)) : raw
+}
+
 const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
   const paths = {
@@ -76,6 +98,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
+  const capitalActivationKind = options.capitalActivationKind ?? 'ResearchCapitalActivationRequest'
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
     environmentBlock('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH', deployedControllerPlanHash),
@@ -89,10 +112,10 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
       : `            - name: BAYN_CAPITAL_ACTIVATION_REQUEST\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: capital-activation-request\n`,
     options.capitalActivationRequest === undefined
       ? ''
-      : environmentBlock(
-          'BAYN_CAPITAL_ACTIVATION_KIND',
-          options.capitalActivationKind ?? 'ResearchCapitalActivationRequest',
-        ),
+      : environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', capitalActivationKind),
+    options.capitalActivationRequest === true && capitalActivationKind === 'ResearchCapitalActivationRequest'
+      ? environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(researchBuildLineage))
+      : '',
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 
@@ -116,7 +139,12 @@ const promote = (
   overrides: Partial<
     Pick<
       UpdateBaynManifestOptions,
-      'digest' | 'strategyBehaviorHash' | 'strategyParameterHash' | 'candidateRuntime' | 'acceptedQualificationRunId'
+      | 'digest'
+      | 'strategyBehaviorHash'
+      | 'strategyParameterHash'
+      | 'candidateRuntime'
+      | 'acceptedQualificationRunId'
+      | 'researchLineageSourceSha'
     >
   > & { readonly useDeployedRuntime?: boolean } = {},
   sourceSha = 'a'.repeat(40),
@@ -134,11 +162,16 @@ const promote = (
     ...(overrides.acceptedQualificationRunId === undefined
       ? {}
       : { acceptedQualificationRunId: overrides.acceptedQualificationRunId }),
+    ...(overrides.researchLineageSourceSha === undefined
+      ? {}
+      : { researchLineageSourceSha: overrides.researchLineageSourceSha }),
     ...paths,
   })
 }
 
-const installNativeExecutionManifests = (): {
+const installNativeExecutionManifests = (
+  includeResearchBuildLineage = false,
+): {
   readonly executionControllerPath: string
   readonly executionActivationPath: string
 } => {
@@ -152,6 +185,9 @@ const installNativeExecutionManifests = (): {
     environmentBlock('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION', previousControllerSourceRevision) +
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash) +
     environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash) +
+    (includeResearchBuildLineage
+      ? environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(researchBuildLineage))
+      : '') +
     Object.entries(currentBindings)
       .map(([name, value]) => environmentBlock(name, value))
       .join('')
@@ -241,7 +277,7 @@ describe('Bayn manifest promotion', () => {
 
   test('promotes an explicitly authored research activation over an older deployed build', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
-    const nativePaths = installNativeExecutionManifests()
+    const nativePaths = installNativeExecutionManifests(true)
     if (directory === undefined) throw new Error('fixture directory is unavailable')
     const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
     writeFileSync(deployedDeploymentPath, readFileSync(paths.deploymentPath, 'utf8'))
@@ -284,6 +320,53 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       `- name: BAYN_CODE_REVISION\n              value: ${sourceSha}`,
     )
+  })
+
+  test('atomically advances proved research build lineage across every runtime manifest', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const nativePaths = installNativeExecutionManifests(true)
+    const sourceSha = 'a'.repeat(40)
+    const digest = `sha256:${'b'.repeat(64)}`
+
+    const result = updateBaynManifests({
+      sourceSha,
+      tag: `sha-${sourceSha}`,
+      digest,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      rolloutTimestamp: '2026-07-22T10:00:00Z',
+      candidateRuntime: currentBindings,
+      researchLineageSourceSha: '0'.repeat(40),
+      ...paths,
+      ...nativePaths,
+    })
+
+    expect(result).toMatchObject({ promotionAction: 'promote', qualificationMode: 'research' })
+    for (const manifestPath of [
+      paths.deploymentPath,
+      nativePaths.executionControllerPath,
+      nativePaths.executionActivationPath,
+    ]) {
+      const lineage = JSON.parse(
+        environmentValueForTest(readFileSync(manifestPath, 'utf8'), 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'),
+      ) as typeof researchBuildLineage
+      expect(lineage.authoredActivation).toEqual(researchBuildLineage.authoredActivation)
+      expect(lineage.activation).toEqual({
+        sourceRevision: sourceSha,
+        imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
+        imageDigest: digest,
+      })
+    }
+  })
+
+  test('rejects a research lineage proof for a different authored source without writing', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths, { researchLineageSourceSha: 'f'.repeat(40) })).toThrow(
+      'release ancestry proof does not start at the authored research activation',
+    )
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('rejects mismatched native controller and activation image bindings', () => {
@@ -713,7 +796,7 @@ describe('Bayn manifest promotion', () => {
     )
   })
 
-  test('promotes a strategy-identical runtime build without rewriting raw research provenance', () => {
+  test('promotes a proved strategy-identical descendant while preserving raw research provenance', () => {
     const paths = makeFixture({
       qualificationRunId: null,
       capitalActivationRequest: true,
@@ -728,7 +811,7 @@ describe('Bayn manifest promotion', () => {
       environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalActivationRequest').trimEnd(),
     ].join('\n')
 
-    expect(promote(paths)).toMatchObject({
+    expect(promote(paths, { researchLineageSourceSha: '0'.repeat(40) })).toMatchObject({
       promotionAction: 'promote',
       promotionReason: 'eligible',
       qualificationMode: 'research',
@@ -737,6 +820,27 @@ describe('Bayn manifest promotion', () => {
       `- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`,
     )
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(capitalActivationConfiguration)
+    const updatedLineage = JSON.parse(
+      environmentValueForTest(readFileSync(paths.deploymentPath, 'utf8'), 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'),
+    ) as typeof researchBuildLineage
+    expect(updatedLineage.authoredActivation).toEqual(researchBuildLineage.authoredActivation)
+    expect(updatedLineage.activation).toEqual({
+      sourceRevision: 'a'.repeat(40),
+      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
+      imageDigest: `sha256:${'b'.repeat(64)}`,
+    })
+  })
+
+  test('holds a raw research build change without explicit ancestry evidence', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(promote(paths)).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'research-capital-activation-refresh-required',
+      qualificationMode: 'research',
+    })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('keeps an exact research capital release eligible', () => {
@@ -978,12 +1082,15 @@ describe('Bayn manifest promotion', () => {
         ...base,
         '--deployed-deployment-path',
         '.artifacts/bayn/deployed-deployment.yaml',
+        '--research-lineage-source-sha',
+        '0'.repeat(40),
         ...candidate,
       ]),
     ).toMatchObject({
       deployedDeploymentPath: '.artifacts/bayn/deployed-deployment.yaml',
       candidateRuntime: currentBindings,
       acceptedQualificationRunId: qualificationRunId,
+      researchLineageSourceSha: '0'.repeat(40),
     })
     expect(() =>
       parseUpdateBaynManifestArguments([...base, '--signal-snapshot-id', currentBindings.BAYN_SIGNAL_SNAPSHOT_ID]),
