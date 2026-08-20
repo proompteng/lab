@@ -54,8 +54,11 @@ const readOnlyPlan = (plan: ApplicationPlanFor<'AutonomousService'>): Applicatio
 
 const configuredCapitalActivation = (
   serialized: string | undefined,
+  serializedBuildLineage: string | undefined,
 ): Result.Result<ConfiguredCapitalActivation | null, string> =>
-  serialized === undefined ? Result.succeed(null) : decodeConfiguredCapitalActivation(serialized)
+  serialized === undefined
+    ? Result.succeed(null)
+    : decodeConfiguredCapitalActivation(serialized, serializedBuildLineage)
 
 const readReceiptHash = (sql: PgClient.PgClient, authorityGenerationHash: string) =>
   readForwardPerformanceReceiptByGeneration(sql, authorityGenerationHash).pipe(
@@ -142,7 +145,7 @@ export const refreshReadOnlyCapitalActivation = (
     }
 
     const observePlan = readOnlyPlan(plan)
-    const { request, buildContinuation } = configured.success
+    const { request, buildContinuation, buildLineage } = configured.success
     const current = yield* Ref.get(state)
     const observedAt = yield* currentUtcInstant
     const currentRequest = isResearchCapitalActivationRequest(request)
@@ -160,6 +163,7 @@ export const refreshReadOnlyCapitalActivation = (
       observePlan,
       request,
       buildContinuation,
+      buildLineage,
       store.authority,
       store.readReceiptHash,
     )
@@ -170,6 +174,7 @@ export const refreshReadOnlyCapitalActivation = (
       observePlan,
       request,
       buildContinuation,
+      buildLineage,
       store.authority,
     )
     yield* realizedCapitalActivation(
@@ -338,7 +343,10 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
     const controllerStatus = yield* ExecutionControllerStatusStore
     const brokerSession = yield* BrokerSession
     const observePlan = readOnlyPlan(plan)
-    const configured = configuredCapitalActivation(plan.config.capitalActivationRequestJson)
+    const configured = configuredCapitalActivation(
+      plan.config.capitalActivationRequestJson,
+      plan.config.researchCapitalBuildLineageJson,
+    )
     const activationStore = makeReadOnlyCapitalActivationStore(observePlan, sql)
     const activationRequestRequired = plan.config.execution.brokerAccess === BrokerAccess.Mutation
     const qualificationEvidenceRequired = readOnlyQualificationEvidenceRequired(
