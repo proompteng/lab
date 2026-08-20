@@ -1,7 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
-import { maximumIntradayObservationLagMs } from '../../market-data/intraday/verification'
+import { maximumIntradayObservationLagMs, maximumIntradayQuoteAgeMs } from '../../market-data/intraday/verification'
 import {
   PositiveIntegerSchema,
   PositiveMicrosSchema,
@@ -70,6 +70,9 @@ const protocolIssues = (protocol: typeof OpeningDriveProtocolBase.Type): readonl
   }
   if (protocol.decisionDelaySeconds * 1_000 > maximumIntradayObservationLagMs) {
     issues.push({ path: ['decisionDelaySeconds'], issue: 'must fit the verified post-range observation window' })
+  }
+  if (protocol.maximumQuoteAgeMs > maximumIntradayQuoteAgeMs) {
+    issues.push({ path: ['maximumQuoteAgeMs'], issue: 'must fit the verified quote and trade freshness window' })
   }
   if (protocol.entryCutoffMinutesAfterOpen * 60 <= protocol.openingRangeMinutes * 60 + protocol.decisionDelaySeconds) {
     issues.push({

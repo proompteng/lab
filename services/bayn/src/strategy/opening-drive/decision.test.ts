@@ -169,6 +169,14 @@ describe('opening-drive momentum strategy', () => {
       error(
         decodeOpeningDriveProtocol({
           ...defaultOpeningDriveProtocolDocument,
+          maximumQuoteAgeMs: 5 * 60_000 + 1,
+        }),
+      ),
+    ).toMatchObject({ _tag: 'OpeningDriveProtocolDecodeError' })
+    expect(
+      error(
+        decodeOpeningDriveProtocol({
+          ...defaultOpeningDriveProtocolDocument,
           maximumSymbolWeight: 0.0000001,
         }),
       ),
