@@ -124,7 +124,9 @@ jobs:
           if git fetch origin "+refs/heads/${DEPLOYMENT_BRANCH}:refs/remotes/origin/${DEPLOYMENT_BRANCH}"; then
             git show "refs/remotes/origin/${DEPLOYMENT_BRANCH}:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
             git switch --force-create bayn-release-generated "refs/remotes/origin/${DEPLOYMENT_BRANCH}"
-            git merge --no-edit "$SOURCE_SHA"
+            # Main is the reviewed configuration authority. The deployment branch only carries
+            # renderer-generated pins, whose prior values were captured above for comparison.
+            git merge --no-edit -X theirs "$SOURCE_SHA"
           else
             git show "$SOURCE_SHA:argocd/applications/bayn/deployment.yaml" > "$deployed_manifest"
             git switch --force-create bayn-release-generated "$SOURCE_SHA"

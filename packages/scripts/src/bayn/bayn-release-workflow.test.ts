@@ -54,8 +54,9 @@ test('promotes only the exact current main build to an immutable GitOps branch',
   )
   expect(releaseWorkflow).toContain('--deployed-deployment-path "$deployed_manifest"')
   expect(releaseWorkflow.indexOf('> "$deployed_manifest"')).toBeLessThan(
-    releaseWorkflow.indexOf('git merge --no-edit "$SOURCE_SHA"'),
+    releaseWorkflow.indexOf('git merge --no-edit -X theirs "$SOURCE_SHA"'),
   )
+  expect(releaseWorkflow).toContain('Main is the reviewed configuration authority')
   expect(releaseWorkflow).toContain('git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"')
   expect(releaseWorkflow).not.toContain('create-pull-request')
   expect(releaseWorkflow).not.toContain('pull-requests: write')
