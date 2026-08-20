@@ -22,11 +22,31 @@ import { TestClock } from 'effect/testing'
 import qualifiedCycleSnapshotBinding from '../../../migrations/0036_qualified_cycle_snapshot_binding'
 import {
   AccountStatus as BrokerAccountStatus,
+  AssetClass,
+  AssetExchange,
+  OrderClass,
+  OrderCollection,
+  OrderSide as BrokerOrderSide,
+  OrderStatus as BrokerOrderStatus,
+  OrderType as BrokerOrderType,
+  TimeInForce as BrokerTimeInForce,
+  TradeActivityType,
   BrokerRead,
+  type FillActivity,
+  type Order as BrokerOrder,
+  PositionSide,
+  type Position as BrokerPosition,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type ReadEvidence,
 } from '../../broker/alpaca'
+import {
+  MutationOperation,
+  orderRequestNotionalMicros,
+  type BrokerMutationShape,
+  type CompatibleOrderRequestBody,
+} from '../../broker/alpaca-mutations'
+import type { SubmitReceipt } from '../../broker/alpaca-mutations/model'
 import { unusedAssetBySymbol } from '../../broker/alpaca-test-support'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import type { RuntimeConfig } from '../../config'
@@ -52,11 +72,27 @@ import {
   type CycleRunResult,
 } from '../runner'
 import { runAutonomousCycleUntilSettled } from '../runner/program'
-import { AuthorityGenerationStore, ExecutionStoreLive } from '../../db/execution-store'
+import { AuthorityGenerationStore, CapitalGrantLifecycleStore, ExecutionStoreLive } from '../../db/execution-store'
+import { ExecutionCycleClosureStore } from '../../db/execution-cycle-closure'
+import { ExecutionCycleClosureStoreLive } from '../../db/execution-cycle-closure-postgres'
+import { readFinalExecutionRiskContext } from '../../db/reconciliation'
 import { WriterFence, WriterFenceLive } from '../../execution/writer-fence'
-import { BlockedCycleIntentStore, BlockedCycleIntentStoreLive } from '../../execution/intents'
+import {
+  BlockedCycleIntentStore,
+  BlockedCycleIntentStoreLive,
+  IntentStore,
+  IntentStoreLive,
+} from '../../execution/intents'
+import { MutationStore, MutationStoreLive } from '../../execution/mutations'
 import { canonicalHashV1, sha256 } from '../../hash'
-import { Journal, type JournalService } from '../../ledger'
+import {
+  assembleAccountPlan,
+  Journal,
+  JournalValidationError,
+  reconcileLedgerPlan,
+  type JournalService,
+  type LedgerPlan,
+} from '../../ledger'
 import {
   MarketData,
   type FinalizedPublicationInspection,
@@ -72,17 +108,30 @@ import {
   terminalizeBlockedExecutionCycle,
   type ObserveDecisionFailure,
 } from '../../observe-composition'
+import { runRecoveryFirstCyclePass } from '../../observe-composition/execution-cycle'
+import { executeMutationIntent } from '../../observe-composition/mutation-interpreter'
 import {
   AccountStatus,
   Authority,
   IntentState,
   KillState,
   makeResearchCapitalGrantGenerationResult,
+  OrderSide,
+  type Intent,
+  type Position as ExecutionPosition,
   ReconciliationStatus,
   RiskOutcome,
+  TerminalOutcome,
 } from '../../execution/contracts'
-import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
+import {
+  BrokerAccess,
+  grantedCapitalAuthority,
+  makeExecutionAuthority,
+  noCapitalAuthority,
+} from '../../execution/authority'
 import { planExecutionIntent } from '../../execution/intents'
+import { makeExecutionProgram } from '../../execution/runtime-program'
+import { encodeOrder } from '../../execution/coordinator-decisions'
 import { runOnce, type ReconciliationPassResult } from '../../reconciler'
 import { reconciledStateHash } from '../../reconciliation'
 import { readForwardPerformancePostgres } from '../../forward-performance/postgres'
@@ -96,7 +145,8 @@ import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
-import { utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../../time'
+import { currentUtcInstant, utcDateFromEpochMillis, utcInstantFromEpochMillis } from '../../time'
+import { roundUnsignedHalfUp } from '../../unsigned-round-half-up'
 import {
   DataFeed,
   DataSource,
@@ -303,6 +353,25 @@ const autonomousRuntimeConfig: RuntimeConfig = {
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
 }
 
+const validWindowObserveGenerationHash = 'e'.repeat(64)
+const validWindowRuntimeConfig: RuntimeConfig = {
+  ...autonomousRuntimeConfig,
+  alpaca: {
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    identity: dueBrokerIdentity,
+    baseUrl: 'https://paper-api.alpaca.markets',
+    expectedAccountId: dueAccountId,
+    authorityGenerationHash: validWindowObserveGenerationHash,
+    key: Redacted.make('unused'),
+    secret: Redacted.make('unused'),
+    proxyUrl: 'http://bayn-egress-proxy.invalid',
+    operationTimeoutMs: autonomousRuntimeConfig.operationTimeoutMs,
+    retryAttempts: 0,
+    reconciliationIntervalMs: 30_000,
+  },
+}
+
 const autonomousJournal: JournalService = {
   post: () => Effect.void,
   verifyAccount: () => Effect.succeed(true),
@@ -310,6 +379,76 @@ const autonomousJournal: JournalService = {
   check: Effect.void,
   checkRun: () => Effect.void,
 }
+
+interface StatefulAutonomousJournalControl {
+  readonly accounts: Map<bigint, LedgerPlan['accounts'][number]>
+  readonly transfers: Map<bigint, LedgerPlan['transfers'][number]>
+  postCalls: number
+  verificationCalls: number
+}
+
+const makeStatefulAutonomousJournalControl = (): StatefulAutonomousJournalControl => ({
+  accounts: new Map(),
+  transfers: new Map(),
+  postCalls: 0,
+  verificationCalls: 0,
+})
+
+const makeStatefulAutonomousJournal = (control: StatefulAutonomousJournalControl): JournalService => ({
+  post: (plan) =>
+    Effect.sync(() => {
+      control.postCalls += 1
+      for (const account of plan.accounts) {
+        if (!control.accounts.has(account.id)) {
+          control.accounts.set(account.id, {
+            ...account,
+            debits_pending: 0n,
+            debits_posted: 0n,
+            credits_pending: 0n,
+            credits_posted: 0n,
+          })
+        }
+      }
+      for (const transfer of plan.transfers) {
+        if (control.transfers.has(transfer.id)) continue
+        const debit = control.accounts.get(transfer.debit_account_id)
+        const credit = control.accounts.get(transfer.credit_account_id)
+        if (debit === undefined || credit === undefined) {
+          throw new Error(`stateful journal transfer ${transfer.id} references an unposted account`)
+        }
+        control.transfers.set(transfer.id, transfer)
+        if (debit.id === credit.id) {
+          control.accounts.set(debit.id, {
+            ...debit,
+            debits_posted: debit.debits_posted + transfer.amount,
+            credits_posted: debit.credits_posted + transfer.amount,
+          })
+        } else {
+          control.accounts.set(debit.id, { ...debit, debits_posted: debit.debits_posted + transfer.amount })
+          control.accounts.set(credit.id, { ...credit, credits_posted: credit.credits_posted + transfer.amount })
+        }
+      }
+    }),
+  verifyAccount: (accountId, plans) =>
+    Effect.gen(function* () {
+      control.verificationCalls += 1
+      const expected = yield* Effect.fromResult(assembleAccountPlan(accountId, plans)).pipe(
+        Effect.mapError((validation) => new JournalValidationError(validation)),
+      )
+      const expectedAccountIds = new Set(expected.accounts.map((account) => account.id))
+      const expectedTransferIds = new Set(expected.transfers.map((transfer) => transfer.id))
+      const actualAccounts = [...control.accounts.values()]
+        .filter((account) => expectedAccountIds.has(account.id))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      const actualTransfers = [...control.transfers.values()]
+        .filter((transfer) => expectedTransferIds.has(transfer.id))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      return Result.isSuccess(reconcileLedgerPlan(expected, actualAccounts, actualTransfers, 'verify-account'))
+    }),
+  journalAndReconcile: () => Effect.die(new Error('valid-window execution proof must not run simulation journaling')),
+  check: Effect.void,
+  checkRun: () => Effect.void,
+})
 
 const makeAutonomousRuntime = () =>
   ManagedRuntime.make(
@@ -320,6 +459,26 @@ const makeAutonomousRuntime = () =>
       Layer.provide(NodeServices.layer),
     ),
   )
+
+const makeMutationPersistenceRuntime = (journal: JournalService = autonomousJournal) => {
+  const postgres = PostgresClientLive(validWindowRuntimeConfig)
+  const writerFence = WriterFenceLive.pipe(Layer.provide(postgres))
+  return ManagedRuntime.make(
+    Layer.mergeAll(
+      WriterFencedCycleStoreLive,
+      ExecutionStoreLive(validWindowRuntimeConfig),
+      BlockedCycleIntentStoreLive,
+      IntentStoreLive,
+      MutationStoreLive,
+      ExecutionCycleClosureStoreLive,
+    ).pipe(
+      Layer.provideMerge(writerFence),
+      Layer.provideMerge(Layer.succeed(Journal, journal)),
+      Layer.provideMerge(postgres),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+}
 
 const weekdaySessions = (start: IsoDate, count: number): readonly IsoDate[] => {
   const sessions: IsoDate[] = []
@@ -1227,7 +1386,11 @@ const makePaperNoTradeDecision = (
 const plannedPaperGenerationHash = 'a'.repeat(64)
 const plannedPaperAccountingHash = '8'.repeat(64)
 
-const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecisionAt): ReconciliationPassResult => {
+const plannedPaperReconciliation = (
+  draft: CycleDraft,
+  observedAt = plannedDecisionAt,
+  positions: readonly ExecutionPosition[] = [],
+): ReconciliationPassResult => {
   const account = {
     schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
     accountId: draft.identity.accountId,
@@ -1241,7 +1404,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
   const stateHash = Result.getOrThrow(
     reconciledStateHash({
       account,
-      positions: [],
+      positions,
       positionsObservedAt: observedAt,
       orders: [],
       ordersObservedAt: observedAt,
@@ -1281,7 +1444,7 @@ const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecis
     },
     brokerState: {
       account,
-      positions: [],
+      positions,
       positionsObservedAt: observedAt,
       orders: [],
       ordersObservedAt: observedAt,
@@ -1475,7 +1638,10 @@ const buildPlannedExecutionDecision = (
   cycle: AutonomousCycle,
   boundSnapshotId: string,
   options: {
+    readonly authorityGenerationHash?: string
+    readonly decision?: DecisionPlan
     readonly evaluatedAt?: string
+    readonly reconciliation?: ReconciliationPassResult
     readonly snapshotFinalizedAt?: string
     readonly transformPolicy?: (policy: Policy) => Policy
   } = {},
@@ -1484,11 +1650,12 @@ const buildPlannedExecutionDecision = (
     const evaluatedAt = options.evaluatedAt ?? plannedDecisionAt
     const sourcePolicy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
-    const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
-    const decision = plannedExecutionDecisionPlan(cycle)
+    const reconciliation = options.reconciliation ?? plannedPaperReconciliation(cycle, evaluatedAt)
+    const decision = options.decision ?? plannedExecutionDecisionPlan(cycle)
+    const authorityGenerationHash = options.authorityGenerationHash ?? plannedPaperGenerationHash
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildMutationShadowCycleDecision({
-      authorityGenerationHash: plannedPaperGenerationHash,
+      authorityGenerationHash,
       cycle,
       executionModel: fixtureProtocol.executionModel,
       policy,
@@ -1503,6 +1670,205 @@ const buildPlannedExecutionDecision = (
     )
     return { document, reconciliation }
   })
+
+interface ValidWindowBrokerControl {
+  readonly submittedClientOrderIds: string[]
+  readonly filledOrders: BrokerOrder[]
+  cashMicros: bigint
+  marketPriceMicros: bigint
+  positionCostMicros: bigint
+  positionQuantityMicros: bigint
+}
+
+const makeValidWindowBroker = (
+  draft: CycleDraft,
+  control: ValidWindowBrokerControl,
+  observedAt: string,
+): { readonly read: BrokerReadShape; readonly mutation: BrokerMutationShape } => {
+  const symbol = fixtureProtocol.universe[0] ?? 'SPY'
+  const assetId = '00000000-0000-4000-8000-000000000001'
+  const latestObservedAt = () => control.filledOrders.at(-1)?.observedAt ?? observedAt
+  const roundedNotional = (quantityMicros: bigint, priceMicros: bigint): bigint =>
+    Result.getOrThrow(roundUnsignedHalfUp(quantityMicros * priceMicros, 1_000_000n))
+  const evidence = (identity: string, at = latestObservedAt()): ReadEvidence => ({
+    requestId: `valid-window-${identity}`,
+    status: 200,
+    contentHash: canonicalHashV1({ identity, observedAt: at }),
+    observedAt: at,
+  })
+  const observedOrder = (order: BrokerOrder, at = latestObservedAt()): BrokerOrder => ({ ...order, observedAt: at })
+  const brokerPosition = (): BrokerPosition => {
+    const quantityMicros = control.positionQuantityMicros.toString()
+    const marketValueMicros = roundedNotional(BigInt(quantityMicros), control.marketPriceMicros).toString()
+    const averageEntryPriceMicros =
+      control.filledOrders.find((order) => order.side === BrokerOrderSide.Buy)?.filledAveragePriceMicros ??
+      control.marketPriceMicros.toString()
+    return {
+      accountId: draft.identity.accountId,
+      assetId,
+      symbol,
+      exchange: AssetExchange.Nasdaq,
+      assetClass: AssetClass.UsEquity,
+      side: PositionSide.Long,
+      quantityMicros,
+      averageEntryPriceMicros,
+      marketPriceMicros: control.marketPriceMicros.toString(),
+      marketValueMicros,
+      unrealizedPnlMicros: (BigInt(marketValueMicros) - control.positionCostMicros).toString(),
+      observedAt: latestObservedAt(),
+    }
+  }
+  const makeOrder = (
+    intent: Intent,
+    status: BrokerOrderStatus,
+    orderObservedAt: string = observedAt,
+    request?: CompatibleOrderRequestBody,
+  ): BrokerOrder => {
+    const notionalMicros =
+      request !== undefined && 'notional' in request ? orderRequestNotionalMicros(request) : undefined
+    if (request !== undefined && 'notional' in request && notionalMicros === undefined) {
+      throw new Error('valid-window broker fixture could not decode its canonical notional request')
+    }
+    const filledAveragePriceMicros =
+      status === BrokerOrderStatus.Filled && notionalMicros !== undefined
+        ? ((BigInt(notionalMicros) * 1_000_000n) / BigInt(intent.quantityMicros)).toString()
+        : control.marketPriceMicros.toString()
+    if (status === BrokerOrderStatus.Filled && BigInt(filledAveragePriceMicros) <= 0n) {
+      throw new Error('valid-window broker fixture derived a non-positive fill price')
+    }
+    return {
+      accountId: intent.accountId,
+      brokerOrderId: `valid-window-${intent.intentId.slice(0, 24)}`,
+      clientOrderId: intent.clientOrderId,
+      createdAt: observedAt,
+      updatedAt: orderObservedAt,
+      submittedAt: observedAt,
+      ...(status === BrokerOrderStatus.Filled ? { filledAt: orderObservedAt } : {}),
+      assetId,
+      symbol: intent.symbol,
+      assetClass: AssetClass.UsEquity,
+      ...(notionalMicros === undefined ? { quantityMicros: intent.quantityMicros } : { notionalMicros }),
+      filledQuantityMicros: status === BrokerOrderStatus.Filled ? intent.quantityMicros : '0',
+      ...(status === BrokerOrderStatus.Filled ? { filledAveragePriceMicros } : {}),
+      orderClass: OrderClass.Simple,
+      orderType: BrokerOrderType.Market,
+      side: intent.side === OrderSide.Buy ? BrokerOrderSide.Buy : BrokerOrderSide.Sell,
+      timeInForce: BrokerTimeInForce.Day,
+      status,
+      extendedHours: false,
+      observedAt: orderObservedAt,
+    }
+  }
+  const unused = Effect.die(new Error('valid-window broker fixture used an unrelated capability'))
+  const read: BrokerReadShape = {
+    account: Effect.sync(() => {
+      const latest = latestObservedAt()
+      const marketValueMicros =
+        control.positionQuantityMicros === 0n
+          ? 0n
+          : roundedNotional(control.positionQuantityMicros, control.marketPriceMicros)
+      return {
+        value: {
+          id: draft.identity.accountId,
+          status: BrokerAccountStatus.Active,
+          currency: 'USD',
+          cashMicros: control.cashMicros.toString(),
+          equityMicros: (control.cashMicros + marketValueMicros).toString(),
+          lastEquityMicros: '1000000000',
+          buyingPowerMicros: control.cashMicros.toString(),
+          accountBlocked: false,
+          tradingBlocked: false,
+          tradeSuspendedByUser: false,
+          observedAt: latest,
+        },
+        evidence: evidence('account', latest),
+      }
+    }),
+    accountConfiguration: unused,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: Effect.sync(() => ({
+      value: control.positionQuantityMicros === 0n ? [] : [brokerPosition()],
+      evidence: evidence('positions'),
+    })),
+    orders: (query) =>
+      Effect.sync(() => {
+        const at = latestObservedAt()
+        return {
+          value:
+            query?.status === OrderCollection.Open ? [] : control.filledOrders.map((order) => observedOrder(order, at)),
+          evidence: evidence('orders', at),
+        }
+      }),
+    orderById: (brokerOrderId) => {
+      const order = control.filledOrders.find((candidate) => candidate.brokerOrderId === brokerOrderId)
+      if (order === undefined) return unused
+      const at = latestObservedAt()
+      return Effect.succeed({ value: observedOrder(order, at), evidence: evidence('order-by-id', at) })
+    },
+    orderByClientId: (clientOrderId) => {
+      const order = control.filledOrders.find((candidate) => candidate.clientOrderId === clientOrderId)
+      if (order === undefined) return unused
+      const at = latestObservedAt()
+      return Effect.succeed({ value: observedOrder(order, at), evidence: evidence('order-by-client-id', at) })
+    },
+    fillActivities: () =>
+      Effect.sync(() => {
+        const items: readonly FillActivity[] = control.filledOrders.map((order) => ({
+          accountId: order.accountId,
+          activityId: `valid-window-fill-${order.brokerOrderId}`,
+          cumulativeQuantityMicros: order.filledQuantityMicros,
+          leavesQuantityMicros: '0',
+          priceMicros: order.filledAveragePriceMicros ?? '100000000',
+          quantityMicros: order.filledQuantityMicros,
+          side: order.side,
+          symbol: order.symbol,
+          transactionTime: order.observedAt,
+          brokerOrderId: order.brokerOrderId,
+          type: TradeActivityType.Fill,
+          orderStatus: BrokerOrderStatus.Filled,
+        }))
+        return { value: { items }, evidence: evidence('fills') }
+      }),
+    marketCalendar: (query) => plannedPaperBrokerRead(draft, latestObservedAt()).marketCalendar(query),
+  }
+  const mutation: BrokerMutationShape = {
+    submit: (intent) =>
+      Effect.gen(function* () {
+        const dispatchObservedAt = yield* currentUtcInstant
+        control.submittedClientOrderIds.push(intent.clientOrderId)
+        const encoded = Result.getOrThrow(encodeOrder(MutationOperation.Submit, intent))
+        const submitObservedAt = utcInstantFromEpochMillis(
+          Math.max(Date.parse(intent.createdAt), Date.parse(dispatchObservedAt)) + 2,
+        )
+        const filled = makeOrder(intent, BrokerOrderStatus.Filled, submitObservedAt, encoded.request)
+        const quantityMicros = BigInt(filled.filledQuantityMicros)
+        const fillPriceMicros = BigInt(filled.filledAveragePriceMicros ?? control.marketPriceMicros.toString())
+        const notionalMicros = roundedNotional(quantityMicros, fillPriceMicros)
+        if (intent.side === OrderSide.Buy) {
+          control.positionQuantityMicros += quantityMicros
+          control.positionCostMicros += notionalMicros
+          control.cashMicros -= notionalMicros
+        } else {
+          control.positionQuantityMicros -= quantityMicros
+          control.positionCostMicros = control.positionQuantityMicros === 0n ? 0n : control.positionCostMicros
+          control.cashMicros += notionalMicros
+        }
+        control.filledOrders.push(filled)
+        return {
+          requestHash: encoded.requestHash,
+          order: filled,
+          evidence: {
+            requestId: 'valid-window-submit',
+            status: 200,
+            contentHash: canonicalHashV1({ requestHash: encoded.requestHash, brokerOrderId: filled.brokerOrderId }),
+            observedAt: submitObservedAt,
+          },
+        } satisfies SubmitReceipt
+      }),
+    cancel: () => Effect.die(new Error('valid-window execution lifecycle proof must not cancel')),
+  }
+  return { read, mutation }
+}
 
 const buildPlannedObserveDecision = (cycle: AutonomousCycle, boundSnapshotId: string) =>
   Effect.gen(function* () {
@@ -4268,7 +4634,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           const sql = yield* PgClient.PgClient
           const [clock] = yield* sql<{ evaluated_at: string }>`
             SELECT to_char(
-              (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+              (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
               'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
             ) AS evaluated_at
           `
@@ -4427,7 +4793,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const sql = yield* PgClient.PgClient
         const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
-            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
@@ -4765,7 +5131,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const sql = yield* PgClient.PgClient
         const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
-            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
@@ -5034,6 +5400,521 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       orders: 0,
     })
   })
+
+  test('executes one valid-window PAPER entry and close through production stores, reconciles flat, and replays without another broker submit', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const setup = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '10 seconds') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+        if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+        const {
+          evaluationAt: evaluatedAt,
+          executionOpenAt,
+          executionSessionDate,
+          signalSessionDate,
+          snapshotBoundAt,
+        } = monthEndExecutionWindow(clock.evaluated_at)
+        const draft = makeDraft(dueAccountId, {
+          executionPolicy,
+          executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+          executionOpenAt,
+          executionSessionDate,
+          signalSessionDate,
+        })
+        const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+        const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
+        const manifest = makeInputManifest(snapshotB, {
+          asOfSession: signalSessionDate,
+          finalizedAt: snapshotBoundAt,
+          lastSession: signalSessionDate,
+        })
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquisitionAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+        return {
+          activated: activated.cycle,
+          draft,
+          evaluatedAt,
+          snapshotBoundAt,
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    const brokerControl: ValidWindowBrokerControl = {
+      submittedClientOrderIds: [],
+      filledOrders: [],
+      cashMicros: 1_000_000_000n,
+      marketPriceMicros: 100_000_000n,
+      positionCostMicros: 0n,
+      positionQuantityMicros: 0n,
+    }
+    const broker = makeValidWindowBroker(setup.draft, brokerControl, setup.evaluatedAt)
+    const journalControl = makeStatefulAutonomousJournalControl()
+    const journal = makeStatefulAutonomousJournal(journalControl)
+    let mutationRuntime: ReturnType<typeof makeMutationPersistenceRuntime> | undefined =
+      makeMutationPersistenceRuntime(journal)
+    let intentId: string | undefined
+    let closeIntentId: string | undefined
+    let submitExpiresAt: string | undefined
+
+    try {
+      const first = await mutationRuntime.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(setup.evaluatedAt))
+          const intentStore = yield* IntentStore
+          const mutationStore = yield* MutationStore
+          const writerFence = yield* WriterFence
+          const executionCycleClosureStore = yield* ExecutionCycleClosureStore
+          const blockedCycleIntentStore = yield* BlockedCycleIntentStore
+          const authorityGenerationStore = yield* AuthorityGenerationStore
+          const capitalGrantLifecycleStore = yield* CapitalGrantLifecycleStore
+          const sql = yield* PgClient.PgClient
+          const policy = yield* loadObserveRiskPolicy(setup.draft.identity.accountId, fixtureProtocol.universe)
+          const syncClockAfter = (minimumAt: string) =>
+            Effect.gen(function* () {
+              yield* sql`
+                SELECT pg_sleep(
+                  GREATEST(
+                    0::double precision,
+                    EXTRACT(EPOCH FROM (${minimumAt}::timestamptz - clock_timestamp()))::double precision + 0.005
+                  )
+                )
+              `
+              const [clock] = yield* sql<{ observed_at: string }>`
+                SELECT to_char(
+                  clock_timestamp() AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                ) AS observed_at
+              `
+              if (clock === undefined || Date.parse(clock.observed_at) <= Date.parse(minimumAt)) {
+                return yield* Effect.die(new Error('database clock did not advance beyond valid-window evidence'))
+              }
+              yield* TestClock.setTime(Date.parse(clock.observed_at))
+              return clock.observed_at
+            })
+          const readOrInitializeObserveAuthority = authorityGenerationStore.readOrInitializeObserveAuthority
+          if (readOrInitializeObserveAuthority === undefined) {
+            return yield* Effect.die(
+              new Error('valid-window research activation requires OBSERVE authority initialization'),
+            )
+          }
+          const observeAuthority = yield* readOrInitializeObserveAuthority({
+            generationHash: validWindowObserveGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* syncClockAfter(observeAuthority.updatedAt)
+          const observeBaseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (observeBaseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(
+              new Error('valid-window research activation requires an exact production OBSERVE reconciliation'),
+            )
+          }
+          const researchPlanHash = canonicalHashV1({
+            schemaVersion: 'bayn.valid-window-research-plan.v1',
+            cycleId: setup.draft.identity.cycleId,
+          })
+          const activatedAuthority = yield* capitalGrantLifecycleStore.activateResearchCapitalGrant(
+            {
+              schemaVersion: 'bayn.research-paper-grant-proof.v1',
+              grant: { _tag: 'Research', planHash: researchPlanHash },
+              activationSourceRevision: autonomousRuntimeConfig.build.sourceRevision,
+              activationImageRepository: autonomousRuntimeConfig.build.imageRepository,
+              activationImageDigest: autonomousRuntimeConfig.build.imageDigest,
+              strategyName: dueStrategy.provenance.strategy.name,
+              strategyBehaviorHash: dueStrategy.provenance.strategy.behaviorHash,
+              strategyParameterHash: dueStrategy.provenance.strategy.parameterHash,
+              strategyParameterSchemaVersion: dueStrategy.provenance.strategy.parameterSchemaVersion,
+              strategyProtocolHash: setup.draft.identity.strategyProtocolHash,
+              accountId: setup.draft.identity.accountId,
+              brokerIdentityHash: dueBrokerIdentity.identityHash,
+              riskPolicyHash: canonicalHashV1(policy),
+              proofPlanHash: researchPlanHash,
+            },
+            observeAuthority.generationHash,
+          )
+          if (
+            activatedAuthority.maximum !== Authority.Execution ||
+            activatedAuthority.effective !== Authority.Execution
+          ) {
+            return yield* Effect.die(
+              new Error('valid-window research activation did not produce clear executable PAPER authority'),
+            )
+          }
+          yield* syncClockAfter(activatedAuthority.updatedAt)
+          const baseline = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (baseline.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(new Error('valid-window execution requires an exact production broker baseline'))
+          }
+          const baselineAuthority = baseline.riskContext.authority
+          const baselineAuthorityObservedAt = baseline.riskContext.authorityObservedAt
+          if (
+            baselineAuthority === null ||
+            baselineAuthority.generationHash !== activatedAuthority.generationHash ||
+            baselineAuthority.maximum !== Authority.Execution ||
+            baselineAuthority.effective !== Authority.Execution ||
+            baselineAuthorityObservedAt === null
+          ) {
+            return yield* Effect.die(
+              new Error(
+                'valid-window planning requires the production reconciler to observe executable PAPER authority',
+              ),
+            )
+          }
+          const planningAt = yield* syncClockAfter(baselineAuthorityObservedAt)
+          const planned = yield* buildPlannedExecutionDecision(setup.activated, snapshotB, {
+            authorityGenerationHash: activatedAuthority.generationHash,
+            decision: plannedExecutionDecisionPlan(setup.activated),
+            evaluatedAt: planningAt,
+            reconciliation: baseline,
+            snapshotFinalizedAt: setup.snapshotBoundAt,
+          })
+          if (
+            planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+            planned.document.riskBlock !== undefined ||
+            planned.document.orderedIntentIds.length !== 1
+          ) {
+            return yield* Effect.die(new Error('valid-window execution fixture requires one dispatchable buy intent'))
+          }
+          const cycleStore = yield* CycleStore
+          const bound = yield* cycleStore.bindDecision(setup.draft.identity.cycleId, planned.document, planningAt)
+          const forceCloseAt = utcInstantFromEpochMillis(Date.parse(planningAt) + 100)
+          const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 60_000)
+          const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(forceCloseAt) + 120_000)
+          const preparation = yield* Effect.fromResult(
+            prepareObserveStartup({
+              accountId: setup.draft.identity.accountId,
+              authorityGenerationHash: activatedAuthority.generationHash,
+              pollIntervalMs: 30_000,
+              reconciliationIntervalMs: 30_000,
+              reconciliationPassTimeoutMs: 30_000,
+              strategy: dueStrategy,
+            }),
+          )
+          const authority = yield* Effect.fromResult(
+            makeExecutionAuthority({
+              brokerIdentity: Result.getOrThrow(
+                makeBrokerIdentity({
+                  schemaVersion: 'bayn.broker-identity.v2',
+                  provider: BrokerProvider.Alpaca,
+                  environment: BrokerEnvironment.Sandbox,
+                  accountId: setup.draft.identity.accountId,
+                }),
+              ),
+              brokerAccess: BrokerAccess.Mutation,
+              capitalAuthority: grantedCapitalAuthority(activatedAuthority.generationHash),
+              strategy: dueStrategy.provenance.strategy,
+              observedAt: planningAt,
+            }),
+          )
+          const executionProgram = yield* Effect.fromResult(
+            makeExecutionProgram(authority, {
+              brokerRead: broker.read,
+              brokerMutation: broker.mutation,
+              intentStore,
+              mutationStore,
+              writerFence,
+              riskPolicy: policy,
+              readFinalExecutionRiskContext: (observedAt) =>
+                readFinalExecutionRiskContext(sql, setup.draft.identity.accountId, observedAt),
+              persistedCapitalGrants: {
+                read: () => Effect.die(new Error('sandbox valid-window proof must not read a persisted capital grant')),
+                lockForSubmit: () =>
+                  Effect.die(new Error('sandbox valid-window proof must not lock a persisted capital grant')),
+              },
+              currentUtcInstant,
+              entrySubmitExpiresAt: forceCloseAt,
+              closeSubmitExpiresAt: closeExpiresAt,
+              isCloseOnlyIntent: (candidateIntentId) =>
+                executionCycleClosureStore.containsIntent(candidateIntentId).pipe(Effect.orElseSucceed(() => false)),
+            }),
+          )
+          const input = {
+            accountId: setup.draft.identity.accountId,
+            authorityGenerationHash: activatedAuthority.generationHash,
+            pollIntervalMs: 30_000,
+            reconciliationIntervalMs: 30_000,
+            reconciliationPassTimeoutMs: 30_000,
+            strategy: dueStrategy,
+            executionCycleClosureStore,
+            blockedCycleIntentStore,
+            executionMandateCutoffAt: forceCloseAt,
+            executionMandateCloseSubmitCutoffAt: closeSubmitCutoffAt,
+            executionMandateExpiresAt: closeExpiresAt,
+          }
+          const recoveryContext: CycleRunContext = {
+            qualificationRunId: bound.cycle.identity.qualificationRunId,
+            strategyProtocolHash: bound.cycle.identity.strategyProtocolHash,
+            accountId: bound.cycle.identity.accountId,
+            executionPolicy,
+            buildDecision: () =>
+              Effect.die(new Error('bound valid-window recovery must not rebuild its immutable entry decision')),
+          }
+          const productionRecoveryPass = () =>
+            runRecoveryFirstCyclePass(input, preparation, policy, recoveryContext, runOnce, {
+              _tag: 'Mutation',
+              executionProgram,
+            }).pipe(
+              Effect.provideService(BrokerRead, broker.read),
+              Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
+            )
+          const closeReconciliation = runOnce.pipe(
+            Effect.tap((result) => {
+              const authorityObservedAt = result.riskContext.authorityObservedAt
+              if (authorityObservedAt === null) {
+                return Effect.die(new Error('valid-window close reconciliation requires an authority observation'))
+              }
+              return currentUtcInstant.pipe(
+                Effect.flatMap((clockObservedAt) =>
+                  TestClock.setTime(Math.max(Date.parse(clockObservedAt), Date.parse(authorityObservedAt))),
+                ),
+              )
+            }),
+          )
+          const productionCloseRecoveryPass = () =>
+            runRecoveryFirstCyclePass(input, preparation, policy, recoveryContext, closeReconciliation, {
+              _tag: 'Mutation',
+              executionProgram,
+            }).pipe(
+              Effect.provideService(BrokerRead, broker.read),
+              Effect.provideService(MarketData, plannedPaperMarketData(setup.draft, snapshotB, setup.snapshotBoundAt)),
+            )
+          const entryAdvance = yield* productionRecoveryPass()
+          if (!('_tag' in entryAdvance) || entryAdvance._tag !== 'PostMutationReconciliation') {
+            return yield* Effect.die(
+              new Error(`valid-window production entry selected ${JSON.stringify(entryAdvance)} instead of mutation`),
+            )
+          }
+          const entryIntentId = planned.document.orderedIntentIds[0]
+          if (entryIntentId === undefined || planned.document.orderedIntentIds.length !== 1) {
+            return yield* Effect.die(new Error('valid-window production entry requires one deterministic intent'))
+          }
+          const stored = Option.getOrUndefined(yield* intentStore.read(entryIntentId))
+          if (stored === undefined) return yield* Effect.die(new Error('executed intent disappeared from PostgreSQL'))
+          const latest = yield* mutationStore.latest(entryIntentId, MutationOperation.Submit)
+          if (latest === undefined) return yield* Effect.die(new Error('executed submit has no durable mutation event'))
+
+          const reconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(
+              new Error(
+                `valid-window production reconciliation was ${reconciliation.report.reconciliation.status} after broker fill`,
+              ),
+            )
+          }
+          const entrySettled = yield* productionRecoveryPass()
+          if (!('action' in entrySettled) || entrySettled.action !== 'WAITING') {
+            return yield* Effect.die(
+              new Error(
+                `valid-window entry with an open position selected ${JSON.stringify(entrySettled)} instead of wait`,
+              ),
+            )
+          }
+
+          yield* syncClockAfter(forceCloseAt)
+          const closeAdvance = yield* productionCloseRecoveryPass()
+          if (!('_tag' in closeAdvance) || closeAdvance._tag !== 'PostMutationReconciliation') {
+            return yield* Effect.die(
+              new Error(
+                `valid-window production close window selected ${JSON.stringify(closeAdvance)} instead of mutation`,
+              ),
+            )
+          }
+          const closure = Option.getOrUndefined(yield* executionCycleClosureStore.read(setup.draft.identity.cycleId))
+          if (closure === undefined) {
+            return yield* Effect.die(new Error('production close window did not persist its immutable closure'))
+          }
+          const closeDocument = closure.document
+          const closeIntentId = closeDocument.orderedIntentIds[0]
+          if (closeIntentId === undefined || closeDocument.orderedIntentIds.length !== 1) {
+            return yield* Effect.die(new Error('production close window requires one deterministic close intent'))
+          }
+          const closeStored = Option.getOrUndefined(yield* intentStore.read(closeIntentId))
+          if (closeStored === undefined) {
+            return yield* Effect.die(new Error('production close intent disappeared from PostgreSQL'))
+          }
+
+          const closeMutationAt = yield* currentUtcInstant
+          yield* syncClockAfter(closeMutationAt)
+          const flatReconciliation = yield* runOnce.pipe(Effect.provideService(BrokerRead, broker.read))
+          if (flatReconciliation.report.reconciliation.status !== ReconciliationStatus.Exact) {
+            return yield* Effect.die(
+              new Error(
+                `valid-window production reconciliation was ${flatReconciliation.report.reconciliation.status} after close fill`,
+              ),
+            )
+          }
+          const completed = yield* productionRecoveryPass()
+          if (!('outcome' in completed) || completed.outcome !== 'RECOVERED' || completed.action !== 'COMPLETED') {
+            return yield* Effect.die(
+              new Error('valid-window production recovery did not terminalize the flat execution cycle'),
+            )
+          }
+          const [counts] = yield* (yield* PgClient.PgClient)<{ intents: number; mutations: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM intents WHERE cycle_id = ${setup.draft.identity.cycleId}) AS intents,
+              (
+                SELECT count(*)::integer
+                FROM mutation_events AS event
+                JOIN intents AS intent USING (intent_id)
+                WHERE intent.cycle_id = ${setup.draft.identity.cycleId}
+              ) AS mutations
+          `
+          return {
+            authorityGenerationHash: activatedAuthority.generationHash,
+            baseline,
+            closeExpiresAt,
+            closeSubmitCutoffAt,
+            closeAdvance,
+            closeDocument,
+            closeStored,
+            completed,
+            counts,
+            entryAdvance,
+            entrySettled,
+            flatReconciliation,
+            forceCloseAt,
+            latest,
+            planned,
+            planningAt,
+            reconciliation,
+            stored,
+          }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      intentId = first.stored.intent.intentId
+      closeIntentId = first.closeStored.intent.intentId
+      submitExpiresAt = first.forceCloseAt
+      expect(first.baseline.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(first.baseline.report.metrics).toMatchObject({
+        accountingExact: true,
+        discrepancyCount: 0,
+      })
+      expect(first.planned.reconciliation).toEqual(first.baseline)
+      expect(first.planned.document.bindings.reconciliationId).toBe(
+        first.baseline.report.reconciliation.reconciliationId,
+      )
+      expect(first.planned.document.bindings.reconciliationHash).toBe(first.baseline.report.reconciliation.contentHash)
+      expect(first.entryAdvance).toMatchObject({
+        _tag: 'PostMutationReconciliation',
+        logContext: { mutationAction: 'SUBMIT', mutationPhase: 'ENTRY' },
+      })
+      expect(first.stored.intent.side).toBe(OrderSide.Buy)
+      expect(first.stored.intent.state).toBe(IntentState.Terminal)
+      expect(first.stored.intent.terminalOutcome).toBe(TerminalOutcome.Filled)
+      expect(first.reconciliation.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(first.reconciliation.report.metrics).toMatchObject({
+        accountingExact: true,
+        discrepancyCount: 0,
+      })
+      expect(first.reconciliation.brokerState.positions).toHaveLength(1)
+      expect(first.reconciliation.brokerState.orders).toHaveLength(1)
+      expect(first.entrySettled).toMatchObject({ outcome: 'RECOVERED', action: 'WAITING' })
+      expect(first.closeAdvance).toMatchObject({
+        _tag: 'PostMutationReconciliation',
+        logContext: { mutationAction: 'SUBMIT', mutationPhase: 'CLOSE' },
+      })
+      expect(first.closeDocument.targetPlan.status).toBe(TargetPlanStatus.Planned)
+      expect(first.closeDocument.orderedIntentIds).toEqual([first.closeStored.intent.intentId])
+      expect(first.closeStored.intent.side).toBe(OrderSide.Sell)
+      expect(first.closeStored.intent.state).toBe(IntentState.Terminal)
+      expect(first.closeStored.intent.terminalOutcome).toBe(TerminalOutcome.Filled)
+      expect(first.flatReconciliation.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(first.flatReconciliation.report.metrics).toMatchObject({
+        accountingExact: true,
+        discrepancyCount: 0,
+      })
+      expect(first.flatReconciliation.brokerState.positions).toHaveLength(0)
+      expect(first.flatReconciliation.brokerState.orders).toHaveLength(2)
+      expect(first.completed).toMatchObject({ outcome: 'RECOVERED', action: 'COMPLETED' })
+      expect(first.completed.cycle.state).toBe(CycleState.Completed)
+      expect(first.counts).toEqual({ intents: 2, mutations: 4 })
+      expect(brokerControl.submittedClientOrderIds).toEqual([
+        first.stored.intent.clientOrderId,
+        first.closeStored.intent.clientOrderId,
+      ])
+      expect(journalControl.postCalls).toBeGreaterThan(0)
+      expect(journalControl.verificationCalls).toBeGreaterThan(0)
+      expect(journalControl.transfers.size).toBeGreaterThan(0)
+
+      await mutationRuntime.dispose()
+      mutationRuntime = makeMutationPersistenceRuntime(journal)
+      const replayed = await mutationRuntime.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(first.closeExpiresAt) + 1)
+          const intentStore = yield* IntentStore
+          const mutationStore = yield* MutationStore
+          const writerFence = yield* WriterFence
+          const executionCycleClosureStore = yield* ExecutionCycleClosureStore
+          const sql = yield* PgClient.PgClient
+          const policy = yield* loadObserveRiskPolicy(setup.draft.identity.accountId, fixtureProtocol.universe)
+          const authority = yield* Effect.fromResult(
+            makeExecutionAuthority({
+              brokerIdentity: Result.getOrThrow(
+                makeBrokerIdentity({
+                  schemaVersion: 'bayn.broker-identity.v2',
+                  provider: BrokerProvider.Alpaca,
+                  environment: BrokerEnvironment.Sandbox,
+                  accountId: setup.draft.identity.accountId,
+                }),
+              ),
+              brokerAccess: BrokerAccess.Mutation,
+              capitalAuthority: grantedCapitalAuthority(first.authorityGenerationHash),
+              strategy: dueStrategy.provenance.strategy,
+              observedAt: first.planningAt,
+            }),
+          )
+          const executionProgram = yield* Effect.fromResult(
+            makeExecutionProgram(authority, {
+              brokerRead: broker.read,
+              brokerMutation: broker.mutation,
+              intentStore,
+              mutationStore,
+              writerFence,
+              riskPolicy: policy,
+              readFinalExecutionRiskContext: (observedAt) =>
+                readFinalExecutionRiskContext(sql, setup.draft.identity.accountId, observedAt),
+              persistedCapitalGrants: {
+                read: () => Effect.die(new Error('sandbox replay must not read a persisted capital grant')),
+                lockForSubmit: () => Effect.die(new Error('sandbox replay must not lock a persisted capital grant')),
+              },
+              currentUtcInstant,
+              entrySubmitExpiresAt: first.forceCloseAt,
+              closeSubmitExpiresAt: first.closeExpiresAt,
+              isCloseOnlyIntent: (candidateIntentId) =>
+                executionCycleClosureStore.containsIntent(candidateIntentId).pipe(Effect.orElseSucceed(() => false)),
+            }),
+          )
+          if (intentId === undefined || closeIntentId === undefined || submitExpiresAt === undefined) {
+            return yield* Effect.die(new Error('valid-window replay lost a deterministic submit identity'))
+          }
+          const entry = yield* executeMutationIntent(executionProgram, intentId, 'SUBMIT', submitExpiresAt)
+          const close = yield* executeMutationIntent(
+            executionProgram,
+            closeIntentId,
+            'SUBMIT',
+            first.closeSubmitCutoffAt,
+          )
+          return { close, entry }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      expect(replayed.entry.mutationAdvanced).toBe(false)
+      expect(replayed.entry.settlement.outcome).toBe('accepted')
+      expect(replayed.close.mutationAdvanced).toBe(false)
+      expect(replayed.close.settlement.outcome).toBe('accepted')
+      expect(brokerControl.submittedClientOrderIds).toHaveLength(2)
+    } finally {
+      await mutationRuntime?.dispose()
+    }
+  }, 20_000)
 
   test('finishes the exact no-trade decision once after cutoff and preserves terminal history across runtimes', async () => {
     const draft = makeDraft()
