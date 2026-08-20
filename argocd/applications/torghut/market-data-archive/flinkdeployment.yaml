@@ -11,10 +11,10 @@ spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c4fe8147a4579e7ab4907ff73e03955c83a0498982034ae8c0eed6888c0552cb
   imagePullPolicy: IfNotPresent
-  # One-time recovery from the pre-quote/trade topology. The Kafka source resumes from the
-  # consumer group's committed offsets, while ClickHouse deduplicates replay by Kafka lineage.
+  # One-time cutover to the v2 consumer group. Existing archived bars remain immutable in
+  # ClickHouse; new quote/trade streams begin at the live edge for the next market session.
   # Return to last-state after this deployment completes its first checkpoint.
-  restartNonce: 9
+  restartNonce: 10
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   flinkConfiguration:
