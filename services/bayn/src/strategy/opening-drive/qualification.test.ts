@@ -551,8 +551,9 @@ describe('opening-drive after-cost qualification', () => {
     )
 
     expect(openingDriveReplayCostModelDocument).toMatchObject({
-      schemaVersion: 'bayn.opening-drive.replay-cost-model.v2',
-      benchmarkExposure: 'equal-weight-universe-matched-to-candidate-target-gross-exposure',
+      schemaVersion: 'bayn.opening-drive.replay-cost-model.v3',
+      benchmarkExposure: 'equal-weight-universe-matched-to-candidate-executed-entry-notional',
+      benchmarkExecution: 'synthetic-fractional-full-fill-without-top-of-book-size-cap',
     })
     expect(BigInt(replay.benchmark.entryNotionalMicros)).toBeLessThan(maximumMatchedGross)
     expect(maximumMatchedGross - BigInt(replay.benchmark.entryNotionalMicros)).toBeGreaterThanOrEqual(10_000n)
@@ -604,6 +605,29 @@ describe('opening-drive after-cost qualification', () => {
     expect(referenceBoundary.candidate.executedSymbols).not.toContain('AMD')
   })
 
+  test('keeps the equal-weight benchmark invested when one executable candidate sleeve is smaller than a whole share', () => {
+    const oneSymbolProtocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        minimumOpeningReturnBps: 155,
+      }),
+    )
+    const replay = success(
+      replayOpeningDriveSession(replayInput(0, 0.02), oneSymbolProtocol, defaultOpeningDriveQualificationPolicy),
+    )
+    const candidateEntryNotional = BigInt(replay.candidate.entryNotionalMicros)
+    const benchmarkEntryNotional = BigInt(replay.benchmark.entryNotionalMicros)
+    const notionalDifference =
+      candidateEntryNotional >= benchmarkEntryNotional
+        ? candidateEntryNotional - benchmarkEntryNotional
+        : benchmarkEntryNotional - candidateEntryNotional
+
+    expect(replay.candidate.executedSymbols).toHaveLength(1)
+    expect(replay.benchmark.executedSymbols).toEqual(symbols)
+    expect(candidateEntryNotional).toBeGreaterThan(0n)
+    expect(notionalDifference).toBeLessThanOrEqual(100_000n)
+  })
+
   test('applies the bound deterministic partial-fill model to entry and exit quantities', () => {
     const input = replayInput(3, 0.02)
     const defaultProtocol = success(decodeDefaultOpeningDriveProtocol())
@@ -629,7 +653,7 @@ describe('opening-drive after-cost qualification', () => {
     expect(fullFill.candidate.terminalRemainderNotionalMicros).toBe('0')
   })
 
-  test('terminal-values synthetic benchmark exit remainders instead of making them a structural failure', () => {
+  test('fully flattens the synthetic fractional benchmark at the verified exit', () => {
     const replay = success(
       replayOpeningDriveSession(
         replayInput(1, 0.02),
@@ -638,9 +662,9 @@ describe('opening-drive after-cost qualification', () => {
       ),
     )
 
-    expect(BigInt(replay.benchmark.unclosedQuantityMicros)).toBeGreaterThan(0n)
-    expect(BigInt(replay.benchmark.terminalRemainderNotionalMicros)).toBeGreaterThan(0n)
-    expect(replay.benchmark.flat).toBe(false)
+    expect(replay.benchmark.unclosedQuantityMicros).toBe('0')
+    expect(replay.benchmark.terminalRemainderNotionalMicros).toBe('0')
+    expect(replay.benchmark.flat).toBe(true)
     expect(BigInt(replay.benchmark.netPnlMicros)).toBe(
       BigInt(replay.benchmark.exitNotionalMicros) +
         BigInt(replay.benchmark.terminalRemainderNotionalMicros) -
