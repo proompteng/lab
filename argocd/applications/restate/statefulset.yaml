@@ -65,10 +65,11 @@ spec:
                 restate-1|restate-2)
                   shopt -s nullglob dotglob
                   retained_entries=("$data_dir"/*)
-                  if [ "${#retained_entries[@]}" -gt 0 ]; then
+                  for entry in "${retained_entries[@]}"; do
+                    [ "${entry##*/}" = lost+found ] && continue
                     echo "Retained follower storage is already initialized; skipping first-time snapshot gate"
                     exit 0
-                  fi
+                  done
                   ;;
                 *)
                   echo "Unexpected Restate StatefulSet ordinal: $POD_NAME" >&2

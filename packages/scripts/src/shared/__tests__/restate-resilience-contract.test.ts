@@ -105,6 +105,23 @@ esac
     expect(run('restate-2').exitCode).toBe(0)
 
     rmSync(calls, { force: true })
+    mkdirSync(`${dataDir}/lost+found`)
+    const freshFollowerWithExt4Scaffolding = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: {
+        ...process.env,
+        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+        POD_NAME: 'restate-2',
+        RESTATE_DATA_DIR: dataDir,
+        SEED_UNAVAILABLE: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(freshFollowerWithExt4Scaffolding.exitCode).not.toBe(0)
+    expect(freshFollowerWithExt4Scaffolding.stderr.toString()).toContain(
+      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
+    )
+
     writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
     const retainedFollower = Bun.spawnSync(['/bin/bash', '-ceu', script], {
       env: {
