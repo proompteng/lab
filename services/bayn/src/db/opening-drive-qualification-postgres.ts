@@ -1,20 +1,14 @@
 import { PgClient } from '@effect/sql-pg'
-import { Data, Effect, Option, Result, Schema } from 'effect'
+import { Data, Effect, Option, Schema } from 'effect'
 
-import { verifyIntradaySnapshotRequest, type IntradaySnapshotRequest } from '../market-data'
 import type { OpeningDriveQualificationRun } from '../strategy/opening-drive/qualification-model'
 import type {
   OpeningDriveQualificationLock,
   OpeningDriveQualificationVersionedSession,
 } from '../strategy/opening-drive/qualification-runner'
-import {
-  decodeOpeningDriveQualificationLock,
-  versionOpeningDriveQualificationSession,
-} from '../strategy/opening-drive/qualification-runner'
-import { hashOpeningDriveReplayVersionGraph } from '../strategy/opening-drive/qualification-version'
 
 export class OpeningDriveQualificationStoreError extends Data.TaggedError('OpeningDriveQualificationStoreError')<{
-  readonly operation: 'prior-trials' | 'recover' | 'open' | 'persist'
+  readonly operation: 'prior-trials' | 'incomplete-lock' | 'open' | 'persist'
   readonly failure: 'query' | 'conflict' | 'invariant' | 'decode'
   readonly message: string
   readonly cause?: unknown
@@ -42,20 +36,6 @@ const VersionHashRow = Schema.Struct({
   opening_request_hash: Schema.String,
   exit_request_hash: Schema.String,
 })
-const RecoveryLockRow = Schema.Struct({
-  lock_id: Schema.String,
-  candidate_key: Schema.String,
-  schema_version: Schema.String,
-  binding_json: Schema.String,
-  calendar_json: Schema.String,
-})
-const RecoveryVersionRow = Schema.Struct({
-  session_date: Schema.String,
-  opening_request_hash: Schema.String,
-  exit_request_hash: Schema.String,
-  opening_request_json: Schema.String,
-  exit_request_json: Schema.String,
-})
 const decodeHashRows = Schema.decodeUnknownEffect(Schema.Array(HashRow))
 const decodeExistingResultRows = Schema.decodeUnknownEffect(
   Schema.Array(ExistingResultRow).check(Schema.isMaxLength(1)),
@@ -63,9 +43,7 @@ const decodeExistingResultRows = Schema.decodeUnknownEffect(
 const decodeIncompleteLockRows = Schema.decodeUnknownEffect(Schema.Array(IncompleteLockRow))
 const decodeCandidateRows = Schema.decodeUnknownEffect(Schema.Array(CandidateRow).check(Schema.isMaxLength(1)))
 const decodeVersionHashRows = Schema.decodeUnknownEffect(Schema.Array(VersionHashRow))
-const decodeRecoveryLockRows = Schema.decodeUnknownEffect(Schema.Array(RecoveryLockRow).check(Schema.isMaxLength(2)))
-const decodeRecoveryVersionRows = Schema.decodeUnknownEffect(Schema.Array(RecoveryVersionRow))
-const decodeJsonResult = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
@@ -81,7 +59,6 @@ export const readOpeningDrivePriorTrialReceiptHashes = (
   sql<Record<string, unknown>>`
     SELECT receipt_hash
     FROM opening_drive_qualification_results
-    WHERE verdict IN ('QUALIFIED', 'REJECTED')
     ORDER BY receipt_hash
   `.pipe(
     Effect.flatMap(decodeHashRows),
@@ -94,24 +71,13 @@ export const readOpeningDrivePriorTrialReceiptHashes = (
     mapQueryFailure('prior-trials', 'opening-drive prior trial receipt query failed'),
   )
 
-export const readIncompleteOpeningDriveQualification = (
+export const readIncompleteOpeningDriveQualificationLockId = (
   sql: PgClient.PgClient,
-): Effect.Effect<
-  Option.Option<{
-    readonly lock: OpeningDriveQualificationLock
-    readonly versions: readonly OpeningDriveQualificationVersionedSession[]
-  }>,
-  OpeningDriveQualificationStoreError
-> =>
+): Effect.Effect<Option.Option<string>, OpeningDriveQualificationStoreError> =>
   Effect.gen(function* () {
-    const rows = yield* decodeRecoveryLockRows(
+    const rows = yield* decodeIncompleteLockRows(
       yield* sql<Record<string, unknown>>`
-        SELECT
-          lock.lock_id,
-          lock.candidate_key,
-          lock.schema_version,
-          lock.binding::text AS binding_json,
-          lock.calendar::text AS calendar_json
+        SELECT lock.lock_id
         FROM opening_drive_qualification_locks AS lock
         LEFT JOIN opening_drive_qualification_results AS result ON result.lock_id = lock.lock_id
         WHERE result.lock_id IS NULL
@@ -120,95 +86,19 @@ export const readIncompleteOpeningDriveQualification = (
       `,
     )
     if (rows.length > 1) {
-      return yield* error('recover', 'invariant', 'multiple incomplete opening-drive qualification locks exist')
+      return yield* error('incomplete-lock', 'invariant', 'multiple incomplete opening-drive qualification locks exist')
     }
     const row = rows[0]
     if (row === undefined) return Option.none()
-    const binding = decodeJsonResult(row.binding_json)
-    const calendar = decodeJsonResult(row.calendar_json)
-    if (Result.isFailure(binding) || Result.isFailure(calendar)) {
-      return yield* error('recover', 'decode', 'incomplete opening-drive qualification lock JSON is invalid')
-    }
-    const lockResult = decodeOpeningDriveQualificationLock({
-      schemaVersion: row.schema_version,
-      lockId: row.lock_id,
-      candidateKey: row.candidate_key,
-      binding: binding.success,
-      calendar: calendar.success,
-    })
-    if (Result.isFailure(lockResult)) {
-      return yield* error(
-        'recover',
-        'decode',
-        'incomplete opening-drive qualification lock failed validation',
-        lockResult.failure,
-      )
-    }
-    const lock = lockResult.success
-    const versionRows = yield* decodeRecoveryVersionRows(
-      yield* sql<Record<string, unknown>>`
-        SELECT
-          session_date::text AS session_date,
-          opening_request_hash,
-          exit_request_hash,
-          opening_request::text AS opening_request_json,
-          exit_request::text AS exit_request_json
-        FROM opening_drive_qualification_replay_versions
-        WHERE lock_id = ${lock.lockId}
-        ORDER BY session_date
-      `,
-    )
-    if (versionRows.length !== lock.calendar.sessions.length) {
-      return yield* error('recover', 'invariant', 'incomplete qualification lock does not contain every replay version')
-    }
-    const versions: OpeningDriveQualificationVersionedSession[] = []
-    for (const [index, versionRow] of versionRows.entries()) {
-      const openingJson = decodeJsonResult(versionRow.opening_request_json)
-      const exitJson = decodeJsonResult(versionRow.exit_request_json)
-      if (Result.isFailure(openingJson) || Result.isFailure(exitJson)) {
-        return yield* error('recover', 'decode', 'stored opening-drive replay request JSON is invalid')
-      }
-      // The verifier is the runtime contract boundary; the cast only bridges its historically typed input signature.
-      const opening = verifyIntradaySnapshotRequest(openingJson.success as IntradaySnapshotRequest)
-      const exit = verifyIntradaySnapshotRequest(exitJson.success as IntradaySnapshotRequest)
-      if (Result.isFailure(opening) || Result.isFailure(exit)) {
-        return yield* error('recover', 'decode', 'stored opening-drive replay request failed verification')
-      }
-      const plan = {
-        sessionDate: lock.calendar.sessions[index]?.sessionDate ?? opening.success.sessionDate,
-        openingQuery: opening.success,
-        exitQuery: exit.success,
-      }
-      if (plan.sessionDate !== versionRow.session_date) {
-        return yield* error('recover', 'invariant', 'stored opening-drive replay versions do not match calendar order')
-      }
-      const version = versionOpeningDriveQualificationSession(plan, opening.success, exit.success)
-      if (
-        Result.isFailure(version) ||
-        version.success.version.openingRequestHash !== versionRow.opening_request_hash ||
-        version.success.version.exitRequestHash !== versionRow.exit_request_hash
-      ) {
-        return yield* error(
-          'recover',
-          'invariant',
-          'stored opening-drive replay request hash does not match its content',
-        )
-      }
-      versions.push(version.success)
-    }
-    const versionGraph = hashOpeningDriveReplayVersionGraph(versions.map(({ version }) => version))
-    if (Result.isFailure(versionGraph) || versionGraph.success !== lock.binding.replayVersionGraphHash) {
-      return yield* error('recover', 'invariant', 'stored opening-drive replay version graph does not match its lock')
-    }
-    return Option.some({ lock, versions: Object.freeze(versions) })
-  }).pipe(mapQueryFailure('recover', 'incomplete opening-drive qualification recovery query failed'))
+    return Option.some(row.lock_id)
+  }).pipe(mapQueryFailure('incomplete-lock', 'incomplete opening-drive qualification lock query failed'))
 
 export const openOpeningDriveQualification = (
   sql: PgClient.PgClient,
   lock: OpeningDriveQualificationLock,
   versions: readonly OpeningDriveQualificationVersionedSession[],
 ): Effect.Effect<
-  | { readonly state: 'ACQUIRED' | 'RESUMED'; readonly lockId: string }
+  | { readonly state: 'ACQUIRED'; readonly lockId: string }
   | {
       readonly state: 'TERMINAL'
       readonly lockId: string
@@ -249,18 +139,17 @@ export const openOpeningDriveQualification = (
             sessionCount: existingCandidate.session_count,
           }
         }
-        if (existingCandidate !== undefined && existingCandidate.lock_id !== lock.lockId) {
+        if (existingCandidate !== undefined) {
           return yield* error(
             'open',
             'conflict',
-            'existing incomplete opening-drive candidate has a different sequential lock identity',
+            'opening-drive candidate is already opened incomplete and cannot be retried',
           )
         }
         const priorRows = yield* decodeHashRows(
           yield* sql<Record<string, unknown>>`
           SELECT receipt_hash
           FROM opening_drive_qualification_results
-          WHERE verdict IN ('QUALIFIED', 'REJECTED')
           ORDER BY receipt_hash
         `,
         )
@@ -282,14 +171,13 @@ export const openOpeningDriveQualification = (
           ORDER BY lock.created_at, lock.lock_id
         `,
         )
-        if (incomplete.some(({ lock_id }) => lock_id !== lock.lockId)) {
+        if (incomplete.length > 0) {
           return yield* error(
             'open',
             'conflict',
-            'another opening-drive qualification lock is opened incomplete and must be resumed before a new trial',
+            'an opening-drive qualification lock is opened incomplete and blocks every later trial',
           )
         }
-        const resumed = incomplete.some(({ lock_id }) => lock_id === lock.lockId)
 
         yield* sql`
         INSERT INTO opening_drive_qualification_locks (
@@ -302,7 +190,7 @@ export const openOpeningDriveQualification = (
           ${lock.binding.protocolHash}, ${lock.binding.policyHash}, ${lock.binding.costModelHash},
           ${lock.binding.evaluationCalendarHash}, ${lock.binding.replayVersionGraphHash},
           ${lock.calendar.firstSession}, ${lock.calendar.lastSession},
-          ${sql.json(lock.binding.priorTrialReceiptHashes)}, ${sql.json(lock.binding)}, ${sql.json(lock.calendar)}
+          ${sql.json(encodeSqlJson(lock.binding.priorTrialReceiptHashes))}, ${sql.json(lock.binding)}, ${sql.json(lock.calendar)}
         )
         ON CONFLICT (lock_id) DO NOTHING
       `
@@ -336,7 +224,7 @@ export const openOpeningDriveQualification = (
         if (JSON.stringify(storedVersions) !== JSON.stringify(expectedVersions)) {
           return yield* error('open', 'conflict', 'stored opening-drive replay versions differ from the immutable lock')
         }
-        return { state: resumed ? ('RESUMED' as const) : ('ACQUIRED' as const), lockId: lock.lockId }
+        return { state: 'ACQUIRED' as const, lockId: lock.lockId }
       }),
     )
     .pipe(mapQueryFailure('open', 'opening-drive qualification lock transaction failed'))

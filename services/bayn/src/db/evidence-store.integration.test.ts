@@ -69,7 +69,7 @@ import { canonicalHashV1 } from '../hash'
 import type { SignalSessionRow } from '../market-data/rows'
 import {
   openOpeningDriveQualification,
-  readIncompleteOpeningDriveQualification,
+  readIncompleteOpeningDriveQualificationLockId,
   readOpeningDrivePriorTrialReceiptHashes,
 } from './opening-drive-qualification-postgres'
 import {
@@ -1187,11 +1187,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'live_capital_grant_revocations',
       'live_capital_grants',
       'mutation_events',
-      'orders',
       'opening_drive_qualification_locks',
       'opening_drive_qualification_replay_versions',
       'opening_drive_qualification_results',
       'opening_drive_qualification_session_replays',
+      'orders',
       'position_snapshots',
       'positions',
       'protocol_locks',
@@ -1257,7 +1257,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ])
   })
 
-  test('resumes the exact opening-drive replay lock and never spends another trial on the same terminal candidate', async () => {
+  test('never retries an opened-incomplete qualification lock and counts every terminal receipt in later trial lineage', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1301,7 +1301,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           }),
         )
         const opened = yield* openOpeningDriveQualification(sql, lock, [versioned])
-        const recovered = yield* readIncompleteOpeningDriveQualification(sql)
+        const incompleteLockId = yield* readIncompleteOpeningDriveQualificationLockId(sql)
+        const exactRetry = yield* Effect.exit(openOpeningDriveQualification(sql, lock, [versioned]))
         const changedSequentialLock = successOfResult(
           bindOpeningDriveQualificationVersions([versioned], {
             sourceRevision: 'a'.repeat(40),
@@ -1329,16 +1330,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         const terminal = yield* openOpeningDriveQualification(sql, changedSequentialLock, [versioned])
         const priorTrials = yield* readOpeningDrivePriorTrialReceiptHashes(sql)
-        return { opened, recovered, conflict, terminal, priorTrials, lock, versioned, changedSequentialLock }
+        return { opened, incompleteLockId, exactRetry, conflict, terminal, priorTrials, lock, changedSequentialLock }
       }),
     )
 
     expect(result.opened).toEqual({ state: 'ACQUIRED', lockId: result.lock.lockId })
-    expect(Option.isSome(result.recovered)).toBe(true)
-    if (Option.isSome(result.recovered)) {
-      expect(result.recovered.value.lock).toEqual(result.lock)
-      expect(result.recovered.value.versions).toEqual([result.versioned])
-    }
+    expect(result.incompleteLockId).toEqual(Option.some(result.lock.lockId))
+    expect(result.exactRetry).toMatchObject({
+      _tag: 'Failure',
+      cause: { _tag: 'Fail', error: { _tag: 'OpeningDriveQualificationStoreError', failure: 'conflict' } },
+    })
     expect(Exit.isFailure(result.conflict)).toBe(true)
     expect(result.changedSequentialLock.candidateKey).toBe(result.lock.candidateKey)
     expect(result.changedSequentialLock.lockId).not.toBe(result.lock.lockId)
@@ -1349,7 +1350,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       verdict: 'INSUFFICIENT',
       sessionCount: 1,
     })
-    expect(result.priorTrials).toEqual([])
+    expect(result.priorTrials).toEqual(['e'.repeat(64)])
   })
 
   test('preserves legacy grants and persists the neutral grant contract for either broker environment', async () => {

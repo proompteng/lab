@@ -6,7 +6,7 @@ import type { LoadedRuntimeConfig } from '../../config'
 import {
   openOpeningDriveQualification,
   persistOpeningDriveQualification,
-  readIncompleteOpeningDriveQualification,
+  readIncompleteOpeningDriveQualificationLockId,
   readOpeningDrivePriorTrialReceiptHashes,
 } from '../../db/opening-drive-qualification-postgres'
 import type { OperationalError } from '../../errors'
@@ -39,7 +39,7 @@ export interface OpeningDriveQualificationRequest {
 export interface OpeningDriveQualificationProgramReceipt {
   readonly schemaVersion: 'bayn.opening-drive.qualification-program-receipt.v1'
   readonly lockId: string
-  readonly lockState: 'ACQUIRED' | 'RESUMED' | 'TERMINAL'
+  readonly lockState: 'ACQUIRED' | 'TERMINAL'
   readonly persistenceState: 'PERSISTED' | 'EXISTING'
   readonly qualification: {
     readonly receiptHash: string
@@ -211,60 +211,41 @@ export const runOpeningDriveQualification = (
     const clickhouse = yield* ClickhouseClient.ClickhouseClient
     const postgres = yield* PgClient.PgClient
     const marketData = yield* IntradayMarketData
-    const incomplete = yield* readIncompleteOpeningDriveQualification(postgres).pipe(
-      Effect.mapError((cause) => error('store', 'incomplete qualification recovery read failed', cause)),
+    const incompleteLockId = yield* readIncompleteOpeningDriveQualificationLockId(postgres).pipe(
+      Effect.mapError((cause) => error('store', 'incomplete qualification lock read failed', cause)),
     )
-    const prepared = Option.isSome(incomplete)
-      ? Object.freeze({ calendar: incomplete.value.lock.calendar, sessions: Object.freeze([]) })
-      : yield* Effect.gen(function* () {
-          const signal = yield* loadSignalCalendar(clickhouse, config, requestInput).pipe(
-            Effect.mapError((cause) =>
-              cause instanceof OpeningDriveQualificationProgramError
-                ? cause
-                : error('calendar', 'Signal qualification calendar query failed', cause),
-            ),
-          )
-          return yield* Effect.fromResult(
-            prepareOpeningDriveQualificationCalendar({
-              sessions: signal.sessions,
-              finalizedAt: signal.finalizedAt,
-              protocol,
-            }),
-          ).pipe(Effect.mapError((cause) => error('calendar', 'qualification calendar preparation failed', cause)))
-        })
-    if (
-      Option.isSome(incomplete) &&
-      (incomplete.value.lock.binding.sourceRevision !== config.build.sourceRevision ||
-        incomplete.value.lock.binding.strategyBehaviorHash !== openingDriveBehaviorHash ||
-        incomplete.value.lock.binding.protocolHash !== protocolHash.success ||
-        incomplete.value.lock.binding.policyHash !== policyHash.success ||
-        incomplete.value.lock.binding.costModelHash !== costModelHash.success ||
-        requestInput.start > incomplete.value.lock.calendar.firstSession ||
-        requestInput.end < incomplete.value.lock.calendar.lastSession)
-    ) {
+    if (Option.isSome(incompleteLockId)) {
       return yield* error(
         'store',
-        'an incomplete opening-drive qualification lock exists for another build, contract, or requested range and must be resumed exactly',
+        `opening-drive qualification lock ${incompleteLockId.value} is incomplete and cannot be retried or bypassed`,
       )
     }
-    const versions = Option.isSome(incomplete)
-      ? incomplete.value.versions
-      : yield* captureVersions(marketData, prepared.sessions)
-    const lock = Option.isSome(incomplete)
-      ? incomplete.value.lock
-      : yield* Effect.gen(function* () {
-          const priorTrials = yield* readOpeningDrivePriorTrialReceiptHashes(postgres).pipe(
-            Effect.mapError((cause) => error('store', 'prior opening-drive qualification trial read failed', cause)),
-          )
-          return yield* Effect.fromResult(
-            bindOpeningDriveQualificationVersions(versions, {
-              sourceRevision: config.build.sourceRevision,
-              protocol,
-              calendar: prepared.calendar,
-              priorTrialReceiptHashes: priorTrials,
-            }),
-          ).pipe(Effect.mapError((cause) => error('build-binding', 'qualification lock construction failed', cause)))
-        })
+    const signal = yield* loadSignalCalendar(clickhouse, config, requestInput).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof OpeningDriveQualificationProgramError
+          ? cause
+          : error('calendar', 'Signal qualification calendar query failed', cause),
+      ),
+    )
+    const prepared = yield* Effect.fromResult(
+      prepareOpeningDriveQualificationCalendar({
+        sessions: signal.sessions,
+        finalizedAt: signal.finalizedAt,
+        protocol,
+      }),
+    ).pipe(Effect.mapError((cause) => error('calendar', 'qualification calendar preparation failed', cause)))
+    const versions = yield* captureVersions(marketData, prepared.sessions)
+    const priorTrials = yield* readOpeningDrivePriorTrialReceiptHashes(postgres).pipe(
+      Effect.mapError((cause) => error('store', 'prior opening-drive qualification trial read failed', cause)),
+    )
+    const lock = yield* Effect.fromResult(
+      bindOpeningDriveQualificationVersions(versions, {
+        sourceRevision: config.build.sourceRevision,
+        protocol,
+        calendar: prepared.calendar,
+        priorTrialReceiptHashes: priorTrials,
+      }),
+    ).pipe(Effect.mapError((cause) => error('build-binding', 'qualification lock construction failed', cause)))
     const opened = yield* openOpeningDriveQualification(postgres, lock, versions).pipe(
       Effect.mapError((cause) => error('store', 'qualification lock persistence failed', cause)),
     )
