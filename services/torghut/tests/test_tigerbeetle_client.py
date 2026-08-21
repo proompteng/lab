@@ -168,6 +168,14 @@ class TestTigerBeetleClient(TestCase):
             rpc_timeout_seconds=settings.tigerbeetle_rpc_timeout_seconds,
         )
 
+    def test_create_tigerbeetle_client_accepts_operation_timeout(self) -> None:
+        settings = Settings(TORGHUT_TIGERBEETLE_CLUSTER_ID=77)
+
+        with patch("app.trading.tigerbeetle_client.RealTigerBeetleClient") as cls:
+            create_tigerbeetle_client(settings, rpc_timeout_seconds=0.25)
+
+        self.assertEqual(cls.call_args.kwargs["rpc_timeout_seconds"], 0.25)
+
     def test_timeout_helper_normalizes_operation_errors(self) -> None:
         with self.assertRaisesRegex(
             TigerBeetleClientError,

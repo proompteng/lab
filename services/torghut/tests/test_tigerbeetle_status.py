@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,8 +49,18 @@ class TestTigerBeetleStatus(TestCase):
         settings.tigerbeetle_reconcile_required = False
         settings.tigerbeetle_reconcile_max_age_seconds = 3600
         settings.tigerbeetle_health_timeout_seconds = 1.0
+        health_checks_context.close_tigerbeetle_protocol_health_client()
+        self.protocol_client = MagicMock()
+        self._create_protocol_client_patch = patch.object(
+            health_checks_context,
+            "create_tigerbeetle_client",
+            return_value=self.protocol_client,
+        )
+        self.create_protocol_client = self._create_protocol_client_patch.start()
 
     def tearDown(self) -> None:
+        health_checks_context.close_tigerbeetle_protocol_health_client()
+        self._create_protocol_client_patch.stop()
         settings.tigerbeetle_enabled = self._orig_enabled
         settings.tigerbeetle_required = self._orig_required
         settings.tigerbeetle_journal_enabled = self._orig_journal_enabled
@@ -591,31 +600,72 @@ class TestTigerBeetleStatus(TestCase):
         self.assertIsNone(payload["last_error"])
         health_mock.assert_not_called()
 
-    def test_required_protocol_timeout_blocks_readiness_dependency(self) -> None:
+    def test_required_protocol_probe_reuses_one_bounded_client(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_required = True
-        settings.tigerbeetle_health_timeout_seconds = 0.01
-
-        def slow_health(_settings: object) -> TigerBeetleHealth:
-            time.sleep(0.2)
-            return TigerBeetleHealth(
-                enabled=True,
-                required=True,
-                ok=True,
-                cluster_id=2001,
-                replica_addresses=["tb:3000"],
-                last_error=None,
-            )
+        settings.tigerbeetle_health_timeout_seconds = 0.25
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
 
         with patch.object(
-            health_checks_context, "check_tigerbeetle_health", side_effect=slow_health
-        ):
-            payload = check_tigerbeetle_protocol_health()
+            health_checks_context,
+            "check_tigerbeetle_health",
+            return_value=health,
+        ) as health_mock:
+            first = check_tigerbeetle_protocol_health()
+            second = check_tigerbeetle_protocol_health()
 
-        self.assertFalse(payload["ok"])
-        self.assertFalse(payload["protocol_ok"])
-        self.assertFalse(payload["protocol_probe_skipped"])
-        self.assertIn("TimeoutError", str(payload["last_error"]))
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.create_protocol_client.assert_called_once_with(
+            settings,
+            rpc_timeout_seconds=0.25,
+        )
+        self.assertEqual(health_mock.call_count, 2)
+        for call in health_mock.call_args_list:
+            self.assertIs(call.kwargs["client"], self.protocol_client)
+
+    def test_failed_protocol_probe_discards_client_before_retry(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        first_client = MagicMock()
+        second_client = MagicMock()
+        self.create_protocol_client.side_effect = [first_client, second_client]
+        failed = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=False,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error="TigerBeetleClientTimeoutError: timed out",
+        )
+        healthy = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
+
+        with patch.object(
+            health_checks_context,
+            "check_tigerbeetle_health",
+            side_effect=[failed, healthy],
+        ):
+            first = check_tigerbeetle_protocol_health()
+            second = check_tigerbeetle_protocol_health()
+
+        self.assertFalse(first["ok"])
+        self.assertTrue(second["ok"])
+        first_client.close.assert_called_once_with()
+        self.assertEqual(self.create_protocol_client.call_count, 2)
 
     def test_latest_reconciliation_blockers_are_reported(self) -> None:
         settings.tigerbeetle_enabled = True
