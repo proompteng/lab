@@ -18,7 +18,7 @@ export const isEverySessionCycleCadence = (cadence: CycleCadence | undefined): b
   cadence === 'EVERY_SESSION' || cadence === 'CAPITAL_BOOTSTRAP'
 
 export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuildError')<{
-  readonly failure: 'contract' | 'database' | 'market-data' | 'operational' | 'store'
+  readonly failure: 'contract' | 'database' | 'market-data' | 'not-ready' | 'operational' | 'store'
   readonly message: string
   readonly cause?: unknown
 }> {}

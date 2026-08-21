@@ -33,6 +33,7 @@ import {
 } from './index'
 import {
   boundedCyclePublications,
+  CycleDecisionBuildError,
   CycleRunnerError,
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
@@ -2212,6 +2213,47 @@ describe('autonomous cycle runner', () => {
     expect(calendarReads).toBe(1)
     expect(control.acquisitions).toHaveLength(1)
     expect(control.binds).toBe(1)
+  })
+
+  test('keeps an armed cycle active when the strategy can still produce an entry before cutoff', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const persistence = makeCycleStorePersistence()
+    const store = cycleStore(control, persistence)
+    const read = brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence }))
+    const marketData = marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection())
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        yield* provide(runAutonomousCyclePass(context()), read, store, marketData)
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:21:00.000Z'))
+        yield* provide(runAutonomousCyclePass(context()), read, store, marketData)
+        yield* TestClock.setTime(Date.parse('2026-02-02T14:20:00.000Z'))
+        return yield* provide(
+          runAutonomousCyclePass(
+            context(undefined, () =>
+              Effect.fail(
+                new CycleDecisionBuildError({
+                  failure: 'not-ready',
+                  message: 'entry remains armed',
+                }),
+              ),
+            ),
+          ),
+          read,
+          store,
+          marketData,
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      observedAt: '2026-02-02T14:20:00.000Z',
+      cycle: { state: CycleState.Active, bindings: { snapshotId } },
+    })
+    expect(persistence.documents.size).toBe(0)
   })
 
   test('finishes an exact pre-cutoff decision at the post-read Clock time after cutoff and a protocol change', async () => {

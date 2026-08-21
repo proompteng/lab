@@ -6,8 +6,21 @@ import { TestClock } from 'effect/testing'
 import type { AutonomousCycle } from '../cycle'
 import { fixtureRuntime } from '../app-test-support'
 import type { Policy } from '../risk'
+import { ObserveDecisionAwaitingSignal, decisionBuildError } from './decision-builder'
 import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
 import { mutationDecisionBuilder, runRestateAdvanceWithinTimeout } from './recovery-driver'
+
+test('maps an expected armed-entry wait to a non-terminal decision outcome', () => {
+  const error = decisionBuildError(
+    new ObserveDecisionAwaitingSignal({
+      message: 'entry remains armed',
+      observedAt: '2026-08-18T13:35:01.000Z',
+      submissionCutoffAt: '2026-08-18T14:00:00.000Z',
+    }),
+  )
+
+  expect(error).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
+})
 
 test('an every-session mutation rejects the multi-session strategy before reconciliation or decision I/O', async () => {
   let reconciled = false

@@ -11,6 +11,7 @@ import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } fro
 import { strictParseOptions } from '../schemas'
 import type {
   OpeningDriveProtocol,
+  OpeningDriveRejectionReason,
   OpeningDriveStrategyDefinition,
   OpeningDriveTargetPortfolio,
 } from '../strategy/opening-drive'
@@ -172,6 +173,37 @@ export interface CompiledOpeningDriveDecision {
 export interface AdverseQuotePrices {
   readonly bidPriceMicros: Readonly<Record<string, string>>
   readonly askPriceMicros: Readonly<Record<string, string>>
+}
+
+export type OpeningDriveEntryDisposition = 'AWAIT_SIGNAL' | 'EXECUTE' | 'NO_TRADE'
+
+const mutableEntryRejectionReasons = new Set<OpeningDriveRejectionReason>([
+  'breakout',
+  'displayed-liquidity',
+  'opening-return',
+  'range-location',
+  'spread',
+])
+
+/**
+ * An opening range is immutable after it is finalized, while breakout, spread, and displayed liquidity can still
+ * improve before the entry cutoff. Keep the cycle unbound only when at least one symbol can still become eligible and
+ * another full controller pass fits before the cutoff.
+ */
+export const openingDriveEntryDisposition = (
+  decision: OpeningDriveTargetPortfolio,
+  submissionCutoffAt: string,
+  finalizationHeadroomMs: number,
+): OpeningDriveEntryDisposition => {
+  if (decision.selectedSymbols.length > 0) return 'EXECUTE'
+  const canStillBecomeEligible = decision.signals.some(
+    (signal) =>
+      signal.rejectionReasons.length > 0 &&
+      signal.rejectionReasons.every((reason) => mutableEntryRejectionReasons.has(reason)),
+  )
+  if (!canStillBecomeEligible) return 'NO_TRADE'
+  const remainingMs = Date.parse(submissionCutoffAt) - Date.parse(decision.observedAt)
+  return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
 
 export const adverseQuotePrices = (

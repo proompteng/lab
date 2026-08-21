@@ -58,6 +58,7 @@ import type {
   RecoveryFirstCyclePassResult,
   RecoveryFirstRuntime,
 } from './model'
+import { executionDecisionFinalizationHeadroomMs } from './model'
 import {
   buildClosingExecutionCycleDecision,
   decisionBuildError,
@@ -366,6 +367,7 @@ export const mutationDecisionInput = (
   policy,
   reconcile,
   strategy: input.strategy,
+  decisionFinalizationHeadroomMs: executionDecisionFinalizationHeadroomMs(input),
   ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
 })
 
@@ -393,7 +395,11 @@ const readMutationPreparationFacts = (
     const facts = yield* readObserveDecisionFacts(decisionInput, reads).pipe(
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
-        return mutationRunnerError({ message: converted.message, cause, failure: converted.failure })
+        return mutationRunnerError({
+          message: converted.message,
+          cause,
+          failure: converted.failure === 'not-ready' ? 'contract' : converted.failure,
+        })
       }),
     )
     const authority = yield* Effect.fromResult(

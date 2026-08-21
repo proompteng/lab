@@ -534,38 +534,54 @@ const recoverCycle = <R>(
       })
     case 'BUILD_DECISION':
       return context.buildDecision(selection.cycle).pipe(
-        Effect.mapError((cause) =>
-          runnerError({ operation: 'build-decision', failure: cause.failure, message: cause.message, cause }),
-        ),
-        Effect.flatMap((document) =>
-          pipe(
-            currentIsoTime,
-            Effect.flatMap((bindObservedAt) =>
-              pipe(
-                CycleStore,
-                Effect.flatMap((store) =>
-                  store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt),
-                ),
-                Effect.mapError((cause) =>
+        Effect.matchEffect({
+          onFailure: (cause) =>
+            cause.failure === 'not-ready'
+              ? currentIsoTime.pipe(
+                  Effect.map((observedAt) => ({
+                    outcome: 'RECOVERED' as const,
+                    action: 'WAITING' as const,
+                    observedAt,
+                    cycle: selection.cycle,
+                  })),
+                )
+              : Effect.fail(
                   runnerError({
-                    operation: 'recover-cycle',
-                    failure: 'store',
-                    message: 'durable shadow decision binding failed',
+                    operation: 'build-decision',
+                    failure: cause.failure,
+                    message: cause.message,
                     cause,
                   }),
                 ),
-                Effect.map(
-                  (binding): CycleRunResult => ({
-                    outcome: 'RECOVERED',
-                    action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
-                    observedAt: binding.cycle.updatedAt,
-                    cycle: binding.cycle,
-                  }),
+          onSuccess: (document) =>
+            pipe(
+              currentIsoTime,
+              Effect.flatMap((bindObservedAt) =>
+                pipe(
+                  CycleStore,
+                  Effect.flatMap((store) =>
+                    store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt),
+                  ),
+                  Effect.mapError((cause) =>
+                    runnerError({
+                      operation: 'recover-cycle',
+                      failure: 'store',
+                      message: 'durable shadow decision binding failed',
+                      cause,
+                    }),
+                  ),
+                  Effect.map(
+                    (binding): CycleRunResult => ({
+                      outcome: 'RECOVERED',
+                      action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
+                      observedAt: binding.cycle.updatedAt,
+                      cycle: binding.cycle,
+                    }),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+        }),
       )
     case 'READ_DECISION':
       return pipe(
