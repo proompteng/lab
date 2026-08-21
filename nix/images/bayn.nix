@@ -32,9 +32,9 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after the Bayn package manifest entry mapping changed.
-    x86_64-linux = "sha256-dclgSPM8KBLnQp/bzJwyX5QjpogTH/xgQXgRctUWxHI=";
-    aarch64-linux = "sha256-xhBnMeKBsdXhZrYGyaiSnOl0FVkkdJuZ7DskAy3RHYM=";
+    # Refreshed from the two authoritative Linux image builders after adding the qualification command entrypoint.
+    x86_64-linux = "sha256-0+bD1yA5nmAT+mEryYOv6JuZf3Rdw7pb9e29xzFYE/U=";
+    aarch64-linux = "sha256-m1ejvamc0U4O3fV6u3UrQ/fQloPcslAQptefZEdckYs=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
