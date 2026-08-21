@@ -40,6 +40,11 @@ spec:
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          # Restate intentionally retains older worker ReplicaSets while their
+          # deployments drain. Scope spreading to this ReplicaSet revision so
+          # those retained pods cannot make two current replicas look spread.
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-execution-controller
