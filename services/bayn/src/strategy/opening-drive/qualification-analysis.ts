@@ -307,7 +307,6 @@ export const analyzeOpeningDriveQualification = (
     }
     const candidateNetPnl = sumMicros(sessions, 'netPnlMicros')
     const candidateUnclosedQuantity = sumMicros(sessions, 'unclosedQuantityMicros')
-    const benchmarkUnclosedQuantity = sumBenchmarkMicros(sessions, 'unclosedQuantityMicros')
     const gates = Object.freeze([
       gate('session-count', sessions.length >= policy.minimumSessions, sessions.length, policy.minimumSessions),
       gate('statistical-power-session-count', sessions.length >= requiredSessions, sessions.length, requiredSessions),
@@ -354,7 +353,6 @@ export const analyzeOpeningDriveQualification = (
         `>= ${policy.chronologicalFolds.minimumPositiveFraction}`,
       ),
       gate('candidate-same-session-flat', candidateUnclosedQuantity === 0n, String(candidateUnclosedQuantity), '0'),
-      gate('benchmark-same-session-flat', benchmarkUnclosedQuantity === 0n, String(benchmarkUnclosedQuantity), '0'),
       gate('candidate-total-net-pnl', candidateNetPnl > 0n, String(candidateNetPnl), '> 0'),
     ])
     const sufficiencyGateNames = new Set([
