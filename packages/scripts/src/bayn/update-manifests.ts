@@ -136,6 +136,13 @@ const qualificationIdentityNames = [
   'BAYN_TIGERBEETLE_LEDGER',
 ] as const
 const candidateRuntimeNames = [...qualificationIdentityNames, 'BAYN_TIGERBEETLE_ADDRESSES'] as const
+const researchRequestIdentityNames = [
+  'BAYN_STRATEGY_BEHAVIOR_HASH',
+  'BAYN_STRATEGY_PARAMETER_HASH',
+  'BAYN_STRATEGY_NAME',
+  'BAYN_STRATEGY_PROTOCOL_HASH',
+  'BAYN_EXECUTION_RISK_POLICY_HASH',
+] as const
 
 const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_SIGNAL_SNAPSHOT_ID: environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID'),
@@ -481,6 +488,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateStrategyIdentityMatches =
     candidateDeploymentBehaviorHash === options.strategyBehaviorHash &&
     candidateDeploymentParameterHash === options.strategyParameterHash
+  const researchRequestIdentityMatches = researchRequestIdentityNames.every(
+    (name) => environmentValue(deployedDeployment, name) === environmentValue(deployment, name),
+  )
   const deployedBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
@@ -607,8 +617,8 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
-      ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : (!strategyIdentityMatches && !researchRequestAuthoredForCandidate) ||
+      ? !researchRequestIdentityMatches || !candidateStrategyIdentityMatches || !candidateRuntimeMatchesDeployment
+      : (!researchRequestIdentityMatches && !researchRequestAuthoredForCandidate) ||
         !candidateStrategyIdentityMatches ||
         !candidateRuntimeMatchesManifest ||
         ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&

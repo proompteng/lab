@@ -15,6 +15,9 @@ import {
 const currentSnapshotId = '840c75885270b349d4a992e003918ce7e6fe39730f981a20b2e88ae2db45a2e2'
 const strategyBehaviorHash = '1'.repeat(64)
 const strategyParameterHash = '2'.repeat(64)
+const strategyName = 'opening-drive-momentum'
+const strategyProtocolHash = '4'.repeat(64)
+const executionRiskPolicyHash = '5'.repeat(64)
 const qualificationRunId = '9'.repeat(64)
 const deployedControllerPlanHash = '7'.repeat(64)
 const previousControllerPlanHash = '6'.repeat(64)
@@ -56,6 +59,9 @@ interface FixtureOptions {
   readonly tigerBeetleAddresses?: string
   readonly behaviorHash?: string
   readonly parameterHash?: string
+  readonly strategyName?: string
+  readonly strategyProtocolHash?: string
+  readonly executionRiskPolicyHash?: string
   readonly qualificationRunId?: string | null
   readonly capitalActivationRequest?: boolean
   readonly capitalActivationKind?: 'ResearchCapitalActivationRequest' | 'ResearchCapitalBuildContinuation'
@@ -115,6 +121,9 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
     environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', options.parameterHash ?? strategyParameterHash),
+    environmentBlock('BAYN_STRATEGY_NAME', options.strategyName ?? strategyName),
+    environmentBlock('BAYN_STRATEGY_PROTOCOL_HASH', options.strategyProtocolHash ?? strategyProtocolHash),
+    environmentBlock('BAYN_EXECUTION_RISK_POLICY_HASH', options.executionRiskPolicyHash ?? executionRiskPolicyHash),
     pin === null ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
     options.capitalActivationRequest === undefined
       ? ''
@@ -298,6 +307,25 @@ describe('Bayn manifest promotion', () => {
     const digest = `sha256:${'b'.repeat(64)}`
     const nextBehaviorHash = '3'.repeat(64)
     const nextParameterHash = '4'.repeat(64)
+    const nextStrategyName = 'opening-drive-momentum-v2'
+    const nextStrategyProtocolHash = '8'.repeat(64)
+    const nextExecutionRiskPolicyHash = '7'.repeat(64)
+    writeFileSync(
+      paths.deploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8')
+        .replace(
+          environmentBlock('BAYN_STRATEGY_NAME', strategyName),
+          environmentBlock('BAYN_STRATEGY_NAME', nextStrategyName),
+        )
+        .replace(
+          environmentBlock('BAYN_STRATEGY_PROTOCOL_HASH', strategyProtocolHash),
+          environmentBlock('BAYN_STRATEGY_PROTOCOL_HASH', nextStrategyProtocolHash),
+        )
+        .replace(
+          environmentBlock('BAYN_EXECUTION_RISK_POLICY_HASH', executionRiskPolicyHash),
+          environmentBlock('BAYN_EXECUTION_RISK_POLICY_HASH', nextExecutionRiskPolicyHash),
+        ),
+    )
     for (const path of [
       paths.deploymentPath,
       nativePaths.executionControllerPath,
@@ -814,6 +842,49 @@ describe('Bayn manifest promotion', () => {
     )
   })
 
+  test.each([
+    ['BAYN_STRATEGY_NAME', strategyName, 'opening-drive-momentum-v2'],
+    ['BAYN_STRATEGY_PROTOCOL_HASH', strategyProtocolHash, '6'.repeat(64)],
+    ['BAYN_EXECUTION_RISK_POLICY_HASH', executionRiskPolicyHash, '6'.repeat(64)],
+  ] as const)(
+    'holds a research build continuation when request-bound identity %s changes',
+    (name, deployedValue, candidateValue) => {
+      const paths = makeFixture({
+        qualificationRunId: null,
+        capitalActivationRequest: true,
+        capitalActivationKind: 'ResearchCapitalBuildContinuation',
+      })
+      if (directory === undefined) throw new Error('fixture directory is unavailable')
+      const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+      const deployed = readFileSync(paths.deploymentPath, 'utf8')
+      writeFileSync(deployedDeploymentPath, deployed)
+      writeFileSync(
+        paths.deploymentPath,
+        deployed.replace(environmentBlock(name, deployedValue), environmentBlock(name, candidateValue)),
+      )
+      const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+      expect(
+        updateBaynManifests({
+          sourceSha: 'a'.repeat(40),
+          tag: `sha-${'a'.repeat(40)}`,
+          digest: `sha256:${'b'.repeat(64)}`,
+          strategyBehaviorHash,
+          strategyParameterHash,
+          rolloutTimestamp: '2026-07-22T10:00:00Z',
+          candidateRuntime: currentBindings,
+          deployedDeploymentPath,
+          ...paths,
+        }),
+      ).toMatchObject({
+        promotionAction: 'hold',
+        promotionReason: 'research-capital-activation-refresh-required',
+        qualificationMode: 'research',
+      })
+      expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+    },
+  )
+
   test('promotes a proved strategy-identical descendant while preserving raw research provenance', () => {
     const paths = makeFixture({
       qualificationRunId: null,
@@ -849,46 +920,51 @@ describe('Bayn manifest promotion', () => {
     })
   })
 
-  test('holds a proved raw research descendant when strategy identity changed after the authored activation', () => {
-    const paths = makeFixture({
-      qualificationRunId: null,
-      capitalActivationRequest: true,
-      capitalActivationKind: 'ResearchCapitalActivationRequest',
-    })
-    if (directory === undefined) throw new Error('fixture directory is unavailable')
-    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
-    const deployed = readFileSync(paths.deploymentPath, 'utf8')
-    const changedBehaviorHash = '6'.repeat(64)
-    writeFileSync(deployedDeploymentPath, deployed)
-    writeFileSync(
-      paths.deploymentPath,
-      deployed.replace(
-        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash),
-        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', changedBehaviorHash),
-      ),
-    )
-    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+  test.each([
+    ['BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash, '6'.repeat(64)],
+    ['BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash, '6'.repeat(64)],
+    ['BAYN_STRATEGY_NAME', strategyName, 'opening-drive-momentum-v2'],
+    ['BAYN_STRATEGY_PROTOCOL_HASH', strategyProtocolHash, '6'.repeat(64)],
+    ['BAYN_EXECUTION_RISK_POLICY_HASH', executionRiskPolicyHash, '6'.repeat(64)],
+  ] as const)(
+    'holds a proved raw research descendant when request-bound identity %s changed after the authored activation',
+    (name, deployedValue, candidateValue) => {
+      const paths = makeFixture({
+        qualificationRunId: null,
+        capitalActivationRequest: true,
+        capitalActivationKind: 'ResearchCapitalActivationRequest',
+      })
+      if (directory === undefined) throw new Error('fixture directory is unavailable')
+      const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+      const deployed = readFileSync(paths.deploymentPath, 'utf8')
+      writeFileSync(deployedDeploymentPath, deployed)
+      writeFileSync(
+        paths.deploymentPath,
+        deployed.replace(environmentBlock(name, deployedValue), environmentBlock(name, candidateValue)),
+      )
+      const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
-    expect(
-      updateBaynManifests({
-        sourceSha: 'a'.repeat(40),
-        tag: `sha-${'a'.repeat(40)}`,
-        digest: `sha256:${'b'.repeat(64)}`,
-        strategyBehaviorHash: changedBehaviorHash,
-        strategyParameterHash,
-        rolloutTimestamp: '2026-07-22T10:00:00Z',
-        candidateRuntime: currentBindings,
-        researchLineageSourceSha: '0'.repeat(40),
-        deployedDeploymentPath,
-        ...paths,
-      }),
-    ).toMatchObject({
-      promotionAction: 'hold',
-      promotionReason: 'research-capital-activation-refresh-required',
-      qualificationMode: 'research',
-    })
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
-  })
+      expect(
+        updateBaynManifests({
+          sourceSha: 'a'.repeat(40),
+          tag: `sha-${'a'.repeat(40)}`,
+          digest: `sha256:${'b'.repeat(64)}`,
+          strategyBehaviorHash: name === 'BAYN_STRATEGY_BEHAVIOR_HASH' ? candidateValue : strategyBehaviorHash,
+          strategyParameterHash: name === 'BAYN_STRATEGY_PARAMETER_HASH' ? candidateValue : strategyParameterHash,
+          rolloutTimestamp: '2026-07-22T10:00:00Z',
+          candidateRuntime: currentBindings,
+          researchLineageSourceSha: '0'.repeat(40),
+          deployedDeploymentPath,
+          ...paths,
+        }),
+      ).toMatchObject({
+        promotionAction: 'hold',
+        promotionReason: 'research-capital-activation-refresh-required',
+        qualificationMode: 'research',
+      })
+      expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+    },
+  )
 
   test('holds a raw research build change without explicit ancestry evidence', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
