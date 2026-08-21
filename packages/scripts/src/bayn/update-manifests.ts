@@ -503,8 +503,14 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateImageRepository = environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY')
   let researchBuildLineage: ResearchCapitalBuildLineage | null = null
   let researchRequestAuthoredForCandidate = false
+  let researchRequestHashChanged = false
   if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
     researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
+    const deployedResearchBuildLineage = researchCapitalBuildLineageFromManifest(
+      deployedDeployment,
+      'deployed deployment',
+    )
+    researchRequestHashChanged = deployedResearchBuildLineage.requestHash !== researchBuildLineage.requestHash
     const candidateBinding = {
       sourceRevision: candidateDeploymentSourceSha,
       imageRepository: candidateImageRepository,
@@ -618,7 +624,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
       ? !researchRequestIdentityMatches || !candidateStrategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : (!researchRequestIdentityMatches && !researchRequestAuthoredForCandidate) ||
+      : (!researchRequestIdentityMatches && !(researchRequestAuthoredForCandidate && researchRequestHashChanged)) ||
         !candidateStrategyIdentityMatches ||
         !candidateRuntimeMatchesManifest ||
         ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&
