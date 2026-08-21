@@ -43,7 +43,8 @@ export const openingDriveReplayCostModelDocument = Object.freeze({
   entryPriceReference: 'verified-opening-ask',
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
-  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected',
+  liquidity:
+    'entry-sized-from-entry-ask; exit-filled-at-exit-bid; candidate-residual-rejected; benchmark-residual-hard-flat-zero-marked',
   executionModel: 'bound-protocol-execution-model',
   spreadOverride: 'observed-top-of-book-spread-separate-from-execution-model-half-spread',
   adverseSlippageMultiplier: 'bound-protocol-double-cost-multiplier',
@@ -365,6 +366,7 @@ const replayPortfolio = (
   opening: IntradayMarketSnapshot,
   exit: IntradayMarketSnapshot,
   model: ExecutionModel,
+  remainderPolicy: 'reject' | 'hard-flat-zero-mark',
 ): Result.Result<OpeningDrivePortfolioReplay, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const positionsAtScale = (scalePpm: bigint) =>
@@ -443,7 +445,9 @@ const replayPortfolio = (
       0n,
     )
     const exitNotional = positions.reduce((sum, position) => sum + (position.exit?.notionalMicros ?? 0n), 0n)
-    const unclosedQuantity = positions.reduce((sum, position) => sum + position.unclosedQuantityMicros, 0n)
+    const actualUnclosedQuantity = positions.reduce((sum, position) => sum + position.unclosedQuantityMicros, 0n)
+    const zeroMarkedRemainderQuantity = remainderPolicy === 'hard-flat-zero-mark' ? actualUnclosedQuantity : 0n
+    const unclosedQuantity = remainderPolicy === 'hard-flat-zero-mark' ? 0n : actualUnclosedQuantity
     const netPnl = exitNotional - entryNotional - fees.totalMicros
     const replayReturn = unclosedQuantity > 0n ? -1 : Number(netPnl) / Number(allocationMicros)
     if (!Number.isFinite(replayReturn) || replayReturn < -1) {
@@ -458,6 +462,7 @@ const replayPortfolio = (
       entryNotionalMicros: String(entryNotional),
       exitNotionalMicros: String(exitNotional),
       unclosedQuantityMicros: String(unclosedQuantity),
+      zeroMarkedRemainderQuantityMicros: String(zeroMarkedRemainderQuantity),
       flat: unclosedQuantity === 0n,
       midpointGrossPnlMicros: String(midpointGrossPnl),
       quotedSpreadCostMicros: String(quotedSpreadCost),
@@ -496,6 +501,7 @@ export const replayOpeningDriveSession = (
         input.opening.snapshot,
         input.exit,
         model,
+        'reject',
       ),
       benchmark: replayPortfolio(
         protocol.universe,
@@ -504,6 +510,7 @@ export const replayOpeningDriveSession = (
         input.opening.snapshot,
         input.exit,
         model,
+        'hard-flat-zero-mark',
       ),
     })
     const decisionHash = yield* canonicalHash(

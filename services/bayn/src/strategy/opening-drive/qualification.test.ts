@@ -592,6 +592,21 @@ describe('opening-drive after-cost qualification', () => {
     expect(fullFill.candidate.unclosedQuantityMicros).toBe('0')
   })
 
+  test('zero-marks synthetic benchmark exit remainders instead of making them terminal', () => {
+    const replay = success(
+      replayOpeningDriveSession(
+        replayInput(1, 0.02),
+        success(decodeDefaultOpeningDriveProtocol()),
+        defaultOpeningDriveQualificationPolicy,
+      ),
+    )
+
+    expect(BigInt(replay.benchmark.zeroMarkedRemainderQuantityMicros)).toBeGreaterThan(0n)
+    expect(replay.benchmark.unclosedQuantityMicros).toBe('0')
+    expect(replay.benchmark.flat).toBe(true)
+    expect(replay.benchmark.return).toBeGreaterThanOrEqual(-1)
+  })
+
   test('rejects ambiguous latest exit quotes across Kafka partitions before replay pricing', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const input = replayInput(0, 0.02)
