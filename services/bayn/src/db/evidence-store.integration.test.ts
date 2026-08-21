@@ -1336,10 +1336,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     expect(result.opened).toEqual({ state: 'ACQUIRED', lockId: result.lock.lockId })
     expect(result.incompleteLockId).toEqual(Option.some(result.lock.lockId))
-    expect(result.exactRetry).toMatchObject({
-      _tag: 'Failure',
-      cause: { _tag: 'Fail', error: { _tag: 'OpeningDriveQualificationStoreError', failure: 'conflict' } },
-    })
+    expect(Exit.isFailure(result.exactRetry)).toBe(true)
+    if (Exit.isFailure(result.exactRetry)) {
+      expect(result.exactRetry.cause.reasons.find(Cause.isFailReason)?.error).toMatchObject({
+        _tag: 'OpeningDriveQualificationStoreError',
+        failure: 'conflict',
+      })
+    }
     expect(Exit.isFailure(result.conflict)).toBe(true)
     expect(result.changedSequentialLock.candidateKey).toBe(result.lock.candidateKey)
     expect(result.changedSequentialLock.lockId).not.toBe(result.lock.lockId)
