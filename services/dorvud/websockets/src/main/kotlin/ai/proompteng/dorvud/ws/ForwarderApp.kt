@@ -2010,14 +2010,15 @@ internal fun optionsEventStarved(
     return false
   }
 
+  val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
+  return Duration.between(lastHealthyEvent, now) >= grace
+}
+
 internal fun marketDataSessionReady(
   authOk: Boolean,
   subscribedOk: Boolean,
   eventStarved: Boolean,
 ): Boolean = authOk && subscribedOk && !eventStarved
-  val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
-  return Duration.between(lastHealthyEvent, now) >= grace
-}
 
 internal data class ObservedMarketDataMessage(
   val channel: String,
