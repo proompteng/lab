@@ -1400,21 +1400,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           }),
         )
         const receiptHash = 'e'.repeat(64)
-        yield* sql`
-          INSERT INTO opening_drive_qualification_locks (
-            lock_id, candidate_key, schema_version, source_revision, strategy_behavior_hash,
-            protocol_hash, policy_hash, cost_model_hash, evaluation_calendar_hash,
-            replay_version_graph_hash, first_session, last_session,
-            prior_trial_receipt_hashes, binding, calendar
-          ) VALUES (
-            ${terminalLock.lockId}, ${terminalLock.candidateKey}, ${terminalLock.schemaVersion},
-            ${terminalLock.binding.sourceRevision}, ${terminalLock.binding.strategyBehaviorHash},
-            ${terminalLock.binding.protocolHash}, ${terminalLock.binding.policyHash}, ${terminalLock.binding.costModelHash},
-            ${terminalLock.binding.evaluationCalendarHash}, ${terminalLock.binding.replayVersionGraphHash},
-            ${terminalLock.calendar.firstSession}, ${terminalLock.calendar.lastSession},
-            ${sql.json(terminalLock.binding.priorTrialReceiptHashes)}, ${sql.json(terminalLock.binding)}, ${sql.json(terminalLock.calendar)}
-          )
-        `
+        yield* openOpeningDriveQualification(sql, terminalLock, [versioned])
         yield* sql`
           INSERT INTO opening_drive_qualification_results (lock_id, receipt_hash, verdict, document)
           VALUES (
@@ -1431,21 +1417,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             priorTrialReceiptHashes: [receiptHash],
           }),
         )
-        yield* sql`
-          INSERT INTO opening_drive_qualification_locks (
-            lock_id, candidate_key, schema_version, source_revision, strategy_behavior_hash,
-            protocol_hash, policy_hash, cost_model_hash, evaluation_calendar_hash,
-            replay_version_graph_hash, first_session, last_session,
-            prior_trial_receipt_hashes, binding, calendar
-          ) VALUES (
-            ${incompleteLock.lockId}, ${incompleteLock.candidateKey}, ${incompleteLock.schemaVersion},
-            ${incompleteLock.binding.sourceRevision}, ${incompleteLock.binding.strategyBehaviorHash},
-            ${incompleteLock.binding.protocolHash}, ${incompleteLock.binding.policyHash}, ${incompleteLock.binding.costModelHash},
-            ${incompleteLock.binding.evaluationCalendarHash}, ${incompleteLock.binding.replayVersionGraphHash},
-            ${incompleteLock.calendar.firstSession}, ${incompleteLock.calendar.lastSession},
-            ${sql.json(incompleteLock.binding.priorTrialReceiptHashes)}, ${sql.json(incompleteLock.binding)}, ${sql.json(incompleteLock.calendar)}
-          )
-        `
+        yield* openOpeningDriveQualification(sql, incompleteLock, [versioned])
 
         return yield* Effect.exit(openOpeningDriveQualification(sql, terminalLock, [versioned]))
       }),
