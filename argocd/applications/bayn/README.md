@@ -7,13 +7,15 @@ access and no capital authority. A source-versioned Argo sync hook authenticates
 exact source/image/strategy/account plan and current native binding, then idempotently activates or rotates the
 account-keyed native controller. The public Bayn deployment rolls out after that verified native binding.
 
-The execution controller runs two ready replicas spread across Kubernetes hostnames. Restate remains the only scheduler
-and serializes the account-keyed virtual object; replicas do not become independent execution owners. Every durable
-cycle-state and authority-state mutation, and the aggregate execution transaction, acquires the same transaction-scoped
-PostgreSQL advisory writer fence. A crashed or disconnected transaction releases that ownership automatically so a
-healthy replica can take the next durable invocation without waiting for a process-lifetime lease. A disruption budget
-keeps at least one controller pod available during voluntary node maintenance. The controller and activation hook remain
-architecture-neutral and use the reviewed multi-architecture image.
+The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
+operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
+leave both current workers on one node. Restate remains the only scheduler and serializes the account-keyed virtual
+object; replicas do not become independent execution owners. Every durable cycle-state and authority-state mutation, and
+the aggregate execution transaction, acquires the same transaction-scoped PostgreSQL advisory writer fence. A crashed or
+disconnected transaction releases that ownership automatically so a healthy replica can take the next durable invocation
+without waiting for a process-lifetime lease. A disruption budget keeps at least one controller pod available during
+voluntary node maintenance. The controller and activation hook remain architecture-neutral and use the reviewed
+multi-architecture image.
 
 The public Bayn process is read-only status/health only and owns no writer fence or scheduler. It runs two replicas,
 spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. Its stateless
