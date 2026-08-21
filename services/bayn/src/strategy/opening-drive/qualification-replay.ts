@@ -43,7 +43,9 @@ export const openingDriveReplayCostModelDocument = Object.freeze({
   entryPriceReference: 'verified-opening-ask',
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
-  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected',
+  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-terminal-valued-at-verified-flatten-bid',
+  containment:
+    'candidate-residual-rejected-by-qualification-gate; benchmark-residual-is-comparator-mark-to-market-only',
   executionModel: 'bound-protocol-execution-model',
   spreadOverride: 'observed-top-of-book-spread-separate-from-execution-model-half-spread',
   adverseSlippageMultiplier: 'bound-protocol-double-cost-multiplier',
@@ -184,6 +186,7 @@ interface PositionReplay {
   readonly entryQuantityMicros: bigint
   readonly exitQuantityMicros: bigint
   readonly unclosedQuantityMicros: bigint
+  readonly terminalRemainderNotionalMicros: bigint
   readonly entry: FillTerms
   readonly exit: FillTerms | null
   readonly midpointGrossPnlMicros: bigint
@@ -294,6 +297,7 @@ const replayPosition = (
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     const exitQuantity = exitOutcome.filledQuantityMicros
+    const unclosedQuantity = entryQuantity - exitQuantity
     const exitFill =
       exitQuantity === 0n
         ? null
@@ -305,9 +309,10 @@ const replayPosition = (
     const notionals = yield* Result.mapError(
       Result.all({
         entryMidpoint: notionalMicros(entryQuantity, entryMidpoint),
-        exitMidpoint: notionalMicros(exitQuantity, exitMidpoint),
+        exitMidpoint: notionalMicros(entryQuantity, exitMidpoint),
         entrySpread: notionalMicros(entryQuantity, values.entryAsk - entryMidpoint),
-        exitSpread: notionalMicros(exitQuantity, exitMidpoint - values.exitBid),
+        exitSpread: notionalMicros(entryQuantity, exitMidpoint - values.exitBid),
+        terminalRemainder: notionalMicros(unclosedQuantity, values.exitBid),
       }),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
@@ -315,7 +320,8 @@ const replayPosition = (
       symbol,
       entryQuantityMicros: entryQuantity,
       exitQuantityMicros: exitQuantity,
-      unclosedQuantityMicros: entryQuantity - exitQuantity,
+      unclosedQuantityMicros: unclosedQuantity,
+      terminalRemainderNotionalMicros: notionals.terminalRemainder,
       entry,
       exit: exitFill,
       midpointGrossPnlMicros: notionals.exitMidpoint - notionals.entryMidpoint,
@@ -444,8 +450,12 @@ const replayPortfolio = (
     )
     const exitNotional = positions.reduce((sum, position) => sum + (position.exit?.notionalMicros ?? 0n), 0n)
     const unclosedQuantity = positions.reduce((sum, position) => sum + position.unclosedQuantityMicros, 0n)
-    const netPnl = exitNotional - entryNotional - fees.totalMicros
-    const replayReturn = unclosedQuantity > 0n ? -1 : Number(netPnl) / Number(allocationMicros)
+    const terminalRemainderNotional = positions.reduce(
+      (sum, position) => sum + position.terminalRemainderNotionalMicros,
+      0n,
+    )
+    const netPnl = exitNotional + terminalRemainderNotional - entryNotional - fees.totalMicros
+    const replayReturn = Number(netPnl) / Number(allocationMicros)
     if (!Number.isFinite(replayReturn) || replayReturn < -1) {
       return yield* Result.fail(
         failure('statistic', 'opening-drive replay return is outside its finite simple-return domain', {
@@ -458,6 +468,7 @@ const replayPortfolio = (
       entryNotionalMicros: String(entryNotional),
       exitNotionalMicros: String(exitNotional),
       unclosedQuantityMicros: String(unclosedQuantity),
+      terminalRemainderNotionalMicros: String(terminalRemainderNotional),
       flat: unclosedQuantity === 0n,
       midpointGrossPnlMicros: String(midpointGrossPnl),
       quotedSpreadCostMicros: String(quotedSpreadCost),

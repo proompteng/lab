@@ -589,7 +589,36 @@ describe('opening-drive after-cost qualification', () => {
       BigInt(fullFill.candidate.entryNotionalMicros),
     )
     expect(BigInt(deterministic.candidate.unclosedQuantityMicros)).toBeGreaterThan(0n)
+    expect(BigInt(deterministic.candidate.terminalRemainderNotionalMicros)).toBeGreaterThan(0n)
+    expect(BigInt(deterministic.candidate.netPnlMicros)).toBe(
+      BigInt(deterministic.candidate.exitNotionalMicros) +
+        BigInt(deterministic.candidate.terminalRemainderNotionalMicros) -
+        BigInt(deterministic.candidate.entryNotionalMicros) -
+        BigInt(deterministic.candidate.feeCostMicros),
+    )
     expect(fullFill.candidate.unclosedQuantityMicros).toBe('0')
+    expect(fullFill.candidate.terminalRemainderNotionalMicros).toBe('0')
+  })
+
+  test('terminal-values synthetic benchmark exit remainders instead of making them a structural failure', () => {
+    const replay = success(
+      replayOpeningDriveSession(
+        replayInput(1, 0.02),
+        success(decodeDefaultOpeningDriveProtocol()),
+        defaultOpeningDriveQualificationPolicy,
+      ),
+    )
+
+    expect(BigInt(replay.benchmark.unclosedQuantityMicros)).toBeGreaterThan(0n)
+    expect(BigInt(replay.benchmark.terminalRemainderNotionalMicros)).toBeGreaterThan(0n)
+    expect(replay.benchmark.flat).toBe(false)
+    expect(BigInt(replay.benchmark.netPnlMicros)).toBe(
+      BigInt(replay.benchmark.exitNotionalMicros) +
+        BigInt(replay.benchmark.terminalRemainderNotionalMicros) -
+        BigInt(replay.benchmark.entryNotionalMicros) -
+        BigInt(replay.benchmark.feeCostMicros),
+    )
+    expect(replay.benchmark.return).toBeGreaterThanOrEqual(-1)
   })
 
   test('rejects ambiguous latest exit quotes across Kafka partitions before replay pricing', () => {
@@ -886,7 +915,8 @@ describe('opening-drive after-cost qualification', () => {
     expect(constrained?.candidate.flat).toBe(false)
     expect(BigInt(constrained?.candidate.unclosedQuantityMicros ?? '0')).toBeGreaterThan(0n)
     expect(BigInt(constrained?.candidate.unclosedQuantityMicros ?? '0') % 1_000_000n).toBe(0n)
-    expect(constrained?.candidate.return).toBe(-1)
+    expect(BigInt(constrained?.candidate.terminalRemainderNotionalMicros ?? '0')).toBeGreaterThan(0n)
+    expect(constrained?.candidate.return).toBeGreaterThan(-1)
     expect(result.receipt.verdict).toBe('REJECTED')
     expect(result.receipt.reasonCodes).toContain('candidate-same-session-flat')
   })
