@@ -27,7 +27,7 @@ import type { OpeningDriveProtocol } from './protocol'
 const micros = 1_000_000
 const weightScale = 1_000_000
 
-export const openingDriveBehaviorVersion = 'bayn.opening-drive-momentum.behavior.v2' as const
+export const openingDriveBehaviorVersion = 'bayn.opening-drive-momentum.behavior.v3' as const
 export const openingDriveBehaviorHash = sha256(openingDriveBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -232,9 +232,9 @@ const validateSnapshot = (
     manifest.barCount !== snapshot.bars.length ||
     manifest.quoteCount !== snapshot.quotes.length ||
     manifest.tradeCount !== snapshot.trades.length ||
-    snapshot.bars.length !== protocol.universe.length * protocol.openingRangeMinutes
+    snapshot.bars.length > protocol.universe.length * protocol.openingRangeMinutes
   ) {
-    return fail('snapshot-coverage', 'intraday snapshot counts do not cover the opening-drive universe')
+    return fail('snapshot-coverage', 'intraday snapshot counts exceed the opening-drive decision window')
   }
   if (snapshot.bars.some((bar) => !bar.final)) {
     return fail('snapshot-coverage', 'opening-drive decision requires only final opening bars')
@@ -324,8 +324,8 @@ const signalFor = (
 ): Result.Result<OpeningDriveSignal, OpeningDriveFailure> => {
   const orderedBars = bars.toSorted((left, right) => left.eventAt.localeCompare(right.eventAt))
   const first = orderedBars[0]
-  if (first === undefined || orderedBars.length !== protocol.openingRangeMinutes) {
-    return fail('snapshot-coverage', 'opening-drive symbol does not have one complete opening bar range', {
+  if (first === undefined || orderedBars.length > protocol.openingRangeMinutes) {
+    return fail('snapshot-coverage', 'opening-drive symbol lacks a usable sparse opening bar range', {
       symbol,
       observed: orderedBars.length,
     })
