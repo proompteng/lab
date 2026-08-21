@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-21T03:17:04Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-21T03:29:55Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -56,7 +56,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 061da9d23ebafb2493611c5add9f3e10bd6b5f22
+              value: 17799059d04ea1ee482a5c9dc624e840757baa5b
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -72,7 +72,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:052f85e8488a37411068255a16cb4e50fa13dae050ae0e61b6cafb90355b8f42
+              value: sha256:1f5cb0d2e4f71321ce08a88833c3e7bef081e58ca8d1773d2c2ad939f82983a3
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"3b252797045a776291d14957a4dcde3255b428e0f96150f60b957b6f86d55755\",\"authoredActivation\":{\"sourceRevision\":\"5dbb887f926325b36eabc32245adb26b2f25d05e\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:c433389487ebb4414ec45cbb761f37f3c19617411f067575d53b560739681fac\"},\"activation\":{\"sourceRevision\":\"061da9d23ebafb2493611c5add9f3e10bd6b5f22\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:052f85e8488a37411068255a16cb4e50fa13dae050ae0e61b6cafb90355b8f42\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"3b252797045a776291d14957a4dcde3255b428e0f96150f60b957b6f86d55755\",\"authoredActivation\":{\"sourceRevision\":\"5dbb887f926325b36eabc32245adb26b2f25d05e\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:c433389487ebb4414ec45cbb761f37f3c19617411f067575d53b560739681fac\"},\"activation\":{\"sourceRevision\":\"17799059d04ea1ee482a5c9dc624e840757baa5b\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:1f5cb0d2e4f71321ce08a88833c3e7bef081e58ca8d1773d2c2ad939f82983a3\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
