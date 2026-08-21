@@ -446,6 +446,13 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         `
         yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
         yield* executionControllerPlanStatus
+        yield* sql`
+          DROP TABLE
+            opening_drive_qualification_session_replays,
+            opening_drive_qualification_replay_versions,
+            opening_drive_qualification_results,
+            opening_drive_qualification_locks
+        `
         yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47)`
         yield* sql`
           INSERT INTO execution_controller_status (
