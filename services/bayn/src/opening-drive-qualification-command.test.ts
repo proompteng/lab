@@ -23,6 +23,7 @@ describe('opening-drive qualification command arguments', () => {
       ['--start', '2026-01-05', '--until', '2026-01-07'],
       ['--start', '--end', '2026-01-07', '2026-01-08'],
       ['--start', '2026/01/05', '--end', '2026-01-07'],
+      ['--start', '2026-01-32', '--end', '2026-02-05'],
       ['--start', '2026-01-08', '--end', '2026-01-07'],
     ] as const) {
       const result = parseOpeningDriveQualificationCommand(args)

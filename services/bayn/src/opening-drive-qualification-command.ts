@@ -1,9 +1,10 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, Result, Stdio, Stream } from 'effect'
+import { Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
 import { loadConfig } from './config'
 import { OpeningDriveQualificationResourcesLive } from './composition/resources'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
+import { IsoDateSchema } from './schemas'
 import {
   OpeningDriveQualificationProgramError,
   runOpeningDriveQualification,
@@ -24,6 +25,8 @@ const commandError = (message: string): OpeningDriveQualificationProgramError =>
     message: `${message}; ${OPENING_DRIVE_QUALIFICATION_COMMAND_USAGE}`,
   })
 
+const decodeIsoDate = Schema.decodeUnknownResult(IsoDateSchema)
+
 export const parseOpeningDriveQualificationCommand = (
   args: readonly string[],
 ): Result.Result<OpeningDriveQualificationCommand, OpeningDriveQualificationProgramError> => {
@@ -42,16 +45,15 @@ export const parseOpeningDriveQualificationCommand = (
 
   const start = values.get('--start')
   const end = values.get('--end')
-  if (
-    start === undefined ||
-    end === undefined ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(start) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(end) ||
-    start > end
-  ) {
+  const decodedStart = decodeIsoDate(start)
+  const decodedEnd = decodeIsoDate(end)
+  if (Result.isFailure(decodedStart) || Result.isFailure(decodedEnd) || decodedStart.success > decodedEnd.success) {
     return Result.fail(commandError('opening-drive qualification requires an ordered ISO session range'))
   }
-  return Result.succeed({ action: 'qualify' as const, request: { start, end } })
+  return Result.succeed({
+    action: 'qualify' as const,
+    request: { start: decodedStart.success, end: decodedEnd.success },
+  })
 }
 
 const printUsage = Effect.gen(function* () {
