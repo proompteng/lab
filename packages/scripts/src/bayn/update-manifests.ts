@@ -47,7 +47,7 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly candidateRuntime?: BaynCandidateRuntime
   readonly acceptedQualificationRunId?: string
-  /** Authored source whose ancestry and immutable strategy identity were proved by the release workflow. */
+  /** Authored source whose ancestry was proved by the release workflow. Strategy identity is checked separately. */
   readonly researchLineageSourceSha?: string
   readonly deployedDeploymentPath?: string
   readonly kustomizationPath?: string
@@ -492,6 +492,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   )
   const candidateImageRepository = environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY')
   let researchBuildLineage: ResearchCapitalBuildLineage | null = null
+  let researchRequestAuthoredForCandidate = false
   if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
     researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
     const candidateBinding = {
@@ -502,6 +503,11 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     if (!researchCapitalBuildBindingMatches(researchBuildLineage.activation, candidateBinding)) {
       throw new Error('candidate research build lineage does not end at the manifest activation build')
     }
+    researchRequestAuthoredForCandidate = researchCapitalBuildBindingMatches(researchBuildLineage.authoredActivation, {
+      sourceRevision: options.sourceSha,
+      imageRepository: candidateImageRepository,
+      imageDigest: options.digest,
+    })
     if (nativeExecution !== undefined) {
       const controllerLineage = researchCapitalBuildLineageFromManifest(
         nativeExecution.controller,
@@ -602,7 +608,8 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
       ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : !candidateStrategyIdentityMatches ||
+      : (!strategyIdentityMatches && !researchRequestAuthoredForCandidate) ||
+        !candidateStrategyIdentityMatches ||
         !candidateRuntimeMatchesManifest ||
         ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&
           options.researchLineageSourceSha === undefined))
