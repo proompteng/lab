@@ -112,6 +112,15 @@ export const openOpeningDriveQualification = (
     .withTransaction(
       Effect.gen(function* () {
         yield* sql`LOCK TABLE opening_drive_qualification_locks IN SHARE ROW EXCLUSIVE MODE`
+        const incomplete = yield* decodeIncompleteLockRows(
+          yield* sql<Record<string, unknown>>`
+          SELECT lock.lock_id
+          FROM opening_drive_qualification_locks AS lock
+          LEFT JOIN opening_drive_qualification_results AS result ON result.lock_id = lock.lock_id
+          WHERE result.lock_id IS NULL
+          ORDER BY lock.created_at, lock.lock_id
+        `,
+        )
         const candidateRows = yield* decodeCandidateRows(
           yield* sql<Record<string, unknown>>`
             SELECT
@@ -125,6 +134,14 @@ export const openOpeningDriveQualification = (
           `,
         )
         const existingCandidate = candidateRows[0]
+        const foreignIncomplete = incomplete.find(({ lock_id }) => lock_id !== existingCandidate?.lock_id)
+        if (foreignIncomplete !== undefined) {
+          return yield* error(
+            'open',
+            'conflict',
+            'an opening-drive qualification lock is opened incomplete and blocks every later trial',
+          )
+        }
         if (
           existingCandidate !== undefined &&
           existingCandidate.receipt_hash !== null &&
@@ -162,15 +179,6 @@ export const openOpeningDriveQualification = (
           )
         }
 
-        const incomplete = yield* decodeIncompleteLockRows(
-          yield* sql<Record<string, unknown>>`
-          SELECT lock.lock_id
-          FROM opening_drive_qualification_locks AS lock
-          LEFT JOIN opening_drive_qualification_results AS result ON result.lock_id = lock.lock_id
-          WHERE result.lock_id IS NULL
-          ORDER BY lock.created_at, lock.lock_id
-        `,
-        )
         if (incomplete.length > 0) {
           return yield* error(
             'open',
@@ -237,6 +245,7 @@ export const persistOpeningDriveQualification = (
   sql
     .withTransaction(
       Effect.gen(function* () {
+        yield* sql`LOCK TABLE opening_drive_qualification_locks IN SHARE ROW EXCLUSIVE MODE`
         const existing = yield* decodeExistingResultRows(
           yield* sql<Record<string, unknown>>`
           SELECT receipt_hash

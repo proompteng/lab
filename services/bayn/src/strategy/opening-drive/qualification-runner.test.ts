@@ -3,11 +3,13 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { DataSource } from '../../contracts'
-import type { SignalSessionRow } from '../../market-data/rows'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from '../../contracts'
+import { canonicalHashV1 } from '../../hash'
+import type { SignalManifestRow, SignalSessionRow } from '../../market-data/rows'
 import {
   bindOpeningDriveQualificationVersions,
   prepareOpeningDriveQualificationCalendar,
+  verifyOpeningDriveQualificationCalendarPublication,
   versionOpeningDriveQualificationSession,
 } from './qualification-runner'
 import { decodeDefaultOpeningDriveProtocol } from './protocol'
@@ -34,6 +36,35 @@ const watermarks = (offset: string) => [
   { sourceTopic: 'torghut.quotes.v1', sourcePartition: 0, inclusiveLastOffset: offset },
   { sourceTopic: 'torghut.trades.v1', sourcePartition: 0, inclusiveLastOffset: offset },
 ]
+
+const manifestFixture = (sessions: readonly SignalSessionRow[]): SignalManifestRow => {
+  const snapshotId = sessions[0]?.snapshot_id ?? 'a'.repeat(64)
+  const sessionMaterial = sessions.map(({ snapshot_id: _, ...session }) => session)
+  const manifestMaterial = {
+    snapshot_id: snapshotId,
+    schema_version: PublicationSchema.AdjustedDailySnapshotV2,
+    publisher_source_revision: 'b'.repeat(40),
+    publisher_image_repository: 'registry.ide-newton.ts.net/lab/signal-publisher',
+    publisher_image_digest: `sha256:${'c'.repeat(64)}`,
+    universe_id: 'cross-asset-taa-v1' as const,
+    universe_symbol_hash: 'd'.repeat(64),
+    provider: DataSource.Alpaca,
+    source_feed: DataFeed.Sip,
+    adjustment: PriceAdjustment.All,
+    calendar_version: sessions[0]?.calendar_version ?? 'alpaca-us-equity-calendar-v1',
+    requested_start: sessions[0]?.session_date ?? '2026-01-05',
+    publication_asof: sessions.at(-1)?.session_date ?? '2026-01-07',
+    first_session: sessions[0]?.session_date ?? '2026-01-05',
+    last_session: sessions.at(-1)?.session_date ?? '2026-01-07',
+    symbol_count: 1,
+    session_count: sessions.length,
+    bar_count: sessions.length,
+    bars_content_hash: 'e'.repeat(64),
+    sessions_content_hash: canonicalHashV1(sessionMaterial),
+    finalized_at: '2026-01-08 01:00:00.000',
+  }
+  return { ...manifestMaterial, manifest_content_hash: canonicalHashV1(manifestMaterial) }
+}
 
 describe('opening-drive qualification runner', () => {
   test('freezes Signal calendar sessions into DST-correct entry and flatten snapshot plans', () => {
@@ -147,5 +178,40 @@ describe('opening-drive qualification runner', () => {
       protocol,
     })
     expect(Result.isFailure(mixed)).toBe(true)
+  })
+
+  test('verifies the complete finalized Signal calendar before selecting the requested subset', () => {
+    const sessions = [row('2026-01-05'), row('2026-01-06'), row('2026-01-07')]
+    const manifest = manifestFixture(sessions)
+    const input = {
+      manifests: [manifest],
+      sessions,
+      snapshotId: manifest.snapshot_id,
+      calendarVersion: manifest.calendar_version,
+      publicationAsOf: manifest.publication_asof,
+      start: '2026-01-06',
+      end: '2026-01-07',
+    }
+
+    const verified = success(verifyOpeningDriveQualificationCalendarPublication(input))
+    expect(verified.sessions.map(({ session_date }) => session_date)).toEqual(['2026-01-06', '2026-01-07'])
+    expect(verified.finalizedAt).toBe(manifest.finalized_at)
+
+    expect(
+      Result.isFailure(verifyOpeningDriveQualificationCalendarPublication({ ...input, sessions: sessions.slice(1) })),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        verifyOpeningDriveQualificationCalendarPublication({ ...input, start: '2026-01-04', end: '2026-01-07' }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        verifyOpeningDriveQualificationCalendarPublication({
+          ...input,
+          manifests: [{ ...manifest, session_count: manifest.session_count - 1 }],
+        }),
+      ),
+    ).toBe(true)
   })
 })

@@ -446,7 +446,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         `
         yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
         yield* executionControllerPlanStatus
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46)`
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47)`
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,

@@ -1356,6 +1356,110 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(result.priorTrials).toEqual(['e'.repeat(64)])
   })
 
+  test('blocks terminal candidate replay while any other qualification lock remains incomplete', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const protocol = successOfResult(decodeDefaultOpeningDriveProtocol())
+        const signalSession: SignalSessionRow = {
+          snapshot_id: 'a'.repeat(64),
+          calendar_version: 'alpaca-us-equity-calendar-v1',
+          session_date: '2026-07-06',
+          open_time: '09:30',
+          close_time: '16:00',
+          timezone: 'America/New_York',
+          provider: DataSource.Alpaca,
+        }
+        const prepared = successOfResult(
+          prepareOpeningDriveQualificationCalendar({
+            sessions: [signalSession],
+            finalizedAt: '2026-07-06 22:00:00.000',
+            protocol,
+          }),
+        )
+        const plan = prepared.sessions[0]
+        assert(plan !== undefined)
+        const archiveWatermarks = (offset: string) => [
+          { sourceTopic: 'torghut.bars.1m.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.quotes.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.trades.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+        ]
+        const versioned = successOfResult(
+          versionOpeningDriveQualificationSession(
+            plan,
+            { ...plan.openingQuery, archiveWatermarks: archiveWatermarks('100') },
+            { ...plan.exitQuery, archiveWatermarks: archiveWatermarks('200') },
+          ),
+        )
+        const terminalLock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'a'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: [],
+          }),
+        )
+        const receiptHash = 'e'.repeat(64)
+        yield* sql`
+          INSERT INTO opening_drive_qualification_locks (
+            lock_id, candidate_key, schema_version, source_revision, strategy_behavior_hash,
+            protocol_hash, policy_hash, cost_model_hash, evaluation_calendar_hash,
+            replay_version_graph_hash, first_session, last_session,
+            prior_trial_receipt_hashes, binding, calendar
+          ) VALUES (
+            ${terminalLock.lockId}, ${terminalLock.candidateKey}, ${terminalLock.schemaVersion},
+            ${terminalLock.binding.sourceRevision}, ${terminalLock.binding.strategyBehaviorHash},
+            ${terminalLock.binding.protocolHash}, ${terminalLock.binding.policyHash}, ${terminalLock.binding.costModelHash},
+            ${terminalLock.binding.evaluationCalendarHash}, ${terminalLock.binding.replayVersionGraphHash},
+            ${terminalLock.calendar.firstSession}, ${terminalLock.calendar.lastSession},
+            ${sql.json(terminalLock.binding.priorTrialReceiptHashes)}, ${sql.json(terminalLock.binding)}, ${sql.json(terminalLock.calendar)}
+          )
+        `
+        yield* sql`
+          INSERT INTO opening_drive_qualification_results (lock_id, receipt_hash, verdict, document)
+          VALUES (
+            ${terminalLock.lockId}, ${receiptHash}, 'INSUFFICIENT',
+            ${sql.json({ schemaVersion: 'bayn.opening-drive.qualification-receipt.v1', receiptHash, verdict: 'INSUFFICIENT', sessionCount: 1 })}
+          )
+        `
+
+        const incompleteLock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'b'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: [receiptHash],
+          }),
+        )
+        yield* sql`
+          INSERT INTO opening_drive_qualification_locks (
+            lock_id, candidate_key, schema_version, source_revision, strategy_behavior_hash,
+            protocol_hash, policy_hash, cost_model_hash, evaluation_calendar_hash,
+            replay_version_graph_hash, first_session, last_session,
+            prior_trial_receipt_hashes, binding, calendar
+          ) VALUES (
+            ${incompleteLock.lockId}, ${incompleteLock.candidateKey}, ${incompleteLock.schemaVersion},
+            ${incompleteLock.binding.sourceRevision}, ${incompleteLock.binding.strategyBehaviorHash},
+            ${incompleteLock.binding.protocolHash}, ${incompleteLock.binding.policyHash}, ${incompleteLock.binding.costModelHash},
+            ${incompleteLock.binding.evaluationCalendarHash}, ${incompleteLock.binding.replayVersionGraphHash},
+            ${incompleteLock.calendar.firstSession}, ${incompleteLock.calendar.lastSession},
+            ${sql.json(incompleteLock.binding.priorTrialReceiptHashes)}, ${sql.json(incompleteLock.binding)}, ${sql.json(incompleteLock.calendar)}
+          )
+        `
+
+        return yield* Effect.exit(openOpeningDriveQualification(sql, terminalLock, [versioned]))
+      }),
+    )
+
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) {
+      expect(result.cause.reasons.find(Cause.isFailReason)?.error).toMatchObject({
+        _tag: 'OpeningDriveQualificationStoreError',
+        failure: 'conflict',
+      })
+    }
+  })
+
   test('preserves legacy grants and persists the neutral grant contract for either broker environment', async () => {
     const auditedPaper = await activateAuditedCapitalGrant()
     const result = await runtime.runPromise(

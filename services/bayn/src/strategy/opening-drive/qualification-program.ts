@@ -12,7 +12,7 @@ import {
 import type { OperationalError } from '../../errors'
 import type { IntradayMarketDataService } from '../../market-data'
 import { IntradayMarketData } from '../../market-data'
-import { decodeSessions } from '../../market-data/rows'
+import { decodeManifests, decodeSessions } from '../../market-data/rows'
 import { openingDriveBehaviorHash } from './decision'
 import { qualifyOpeningDrive } from './qualification'
 import type {
@@ -25,6 +25,7 @@ import { hashOpeningDriveReplayCostModel } from './qualification-replay'
 import {
   bindOpeningDriveQualificationVersions,
   prepareOpeningDriveQualificationCalendar,
+  verifyOpeningDriveQualificationCalendarPublication,
   versionOpeningDriveQualificationSession,
   type OpeningDriveQualificationSessionPlan,
   type OpeningDriveQualificationVersionedSession,
@@ -68,14 +69,7 @@ const error = (
 ): OpeningDriveQualificationProgramError => new OpeningDriveQualificationProgramError({ operation, message, cause })
 
 const IsoDate = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/))
-const ManifestRow = Schema.Struct({
-  calendar_version: Schema.String,
-  finalized_at: Schema.String,
-})
 const decodeRequest = Schema.decodeUnknownResult(Schema.Struct({ start: IsoDate, end: IsoDate }))
-const decodeManifestRows = Schema.decodeUnknownEffect(
-  Schema.Array(ManifestRow).check(Schema.isMinLength(1), Schema.isMaxLength(1)),
-)
 
 const loadSignalCalendar = (
   sql: ClickhouseClient.ClickhouseClient,
@@ -83,36 +77,70 @@ const loadSignalCalendar = (
   request: OpeningDriveQualificationRequest,
 ) =>
   Effect.gen(function* () {
-    const manifestRows = yield* decodeManifestRows(
-      yield* sql<Record<string, unknown>>`
-        SELECT calendar_version, toString(finalized_at) AS finalized_at
+    const manifests = yield* Effect.fromResult(
+      decodeManifests(
+        yield* sql<Record<string, unknown>>`
+        SELECT
+          snapshot_id,
+          schema_version,
+          publisher_source_revision,
+          publisher_image_repository,
+          publisher_image_digest,
+          universe_id,
+          universe_symbol_hash,
+          provider,
+          source_feed,
+          adjustment,
+          calendar_version,
+          toString(requested_start) AS requested_start,
+          toString(publication_asof) AS publication_asof,
+          toString(first_session) AS first_session,
+          toString(last_session) AS last_session,
+          symbol_count,
+          session_count,
+          bar_count,
+          bars_content_hash,
+          sessions_content_hash,
+          manifest_content_hash,
+          toString(finalized_at) AS finalized_at
         FROM signal.snapshot_manifests_v2
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+        ORDER BY finalized_at
       `,
+      ),
+    ).pipe(Effect.mapError((cause) => error('calendar', 'Signal qualification manifest failed row validation', cause)))
+    const sessions = yield* Effect.fromResult(
+      decodeSessions(
+        yield* sql<Record<string, unknown>>`
+          SELECT
+            snapshot_id,
+            calendar_version,
+            toString(session_date) AS session_date,
+            open_time,
+            close_time,
+            timezone,
+            provider
+          FROM signal.exchange_sessions_v1
+          WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+          ORDER BY session_date
+        `,
+      ),
+    ).pipe(Effect.mapError((cause) => error('calendar', 'Signal qualification sessions failed row validation', cause)))
+    return yield* Effect.fromResult(
+      verifyOpeningDriveQualificationCalendarPublication({
+        manifests,
+        sessions,
+        snapshotId: config.clickhouse.snapshotId,
+        publicationAsOf: config.clickhouse.publicationAsOf,
+        calendarVersion: config.clickhouse.calendarVersion,
+        start: request.start,
+        end: request.end,
+      }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        error('calendar', 'configured Signal snapshot calendar failed finalized-manifest verification', cause),
+      ),
     )
-    const manifest = manifestRows[0]
-    if (manifest === undefined || manifest.calendar_version !== config.clickhouse.calendarVersion) {
-      return yield* error('calendar', 'configured Signal snapshot does not match its calendar version')
-    }
-    const rawSessions = yield* sql<Record<string, unknown>>`
-      SELECT
-        snapshot_id,
-        calendar_version,
-        toString(session_date) AS session_date,
-        open_time,
-        close_time,
-        timezone,
-        provider
-      FROM signal.exchange_sessions_v1
-      WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
-        AND session_date >= toDate(${sql.param('String', request.start)})
-        AND session_date <= toDate(${sql.param('String', request.end)})
-      ORDER BY session_date
-    `
-    const sessions = yield* Effect.fromResult(decodeSessions(rawSessions)).pipe(
-      Effect.mapError((cause) => error('calendar', 'Signal qualification sessions failed row validation', cause)),
-    )
-    return { sessions, finalizedAt: manifest.finalized_at }
   })
 
 const captureVersions = (

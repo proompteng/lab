@@ -5,7 +5,7 @@ import { normalizeMarketCalendarResult } from '../../broker/alpaca/normalizers'
 import { makeExecutionCalendarObservation } from '../../cycle'
 import { canonicalHashV1Result } from '../../hash'
 import type { IntradaySnapshotQuery, IntradaySnapshotRequest } from '../../market-data'
-import type { SignalSessionRow } from '../../market-data/rows'
+import type { SignalManifestRow, SignalSessionRow } from '../../market-data/rows'
 import {
   IsoDateSchema,
   Sha256Schema,
@@ -107,6 +107,88 @@ const failure = (message: string, cause?: unknown): OpeningDriveQualificationFai
 
 const hashFailure = (message: string, cause?: unknown): OpeningDriveQualificationFailure =>
   new OpeningDriveQualificationFailure({ reason: 'canonicalization', message, cause })
+
+const withoutSnapshotId = <A extends { readonly snapshot_id: string }>({ snapshot_id: _, ...value }: A) => value
+const withoutManifestContentHash = <A extends { readonly manifest_content_hash: string }>({
+  manifest_content_hash: _,
+  ...value
+}: A) => value
+
+export const verifyOpeningDriveQualificationCalendarPublication = (input: {
+  readonly manifests: readonly SignalManifestRow[]
+  readonly sessions: readonly SignalSessionRow[]
+  readonly snapshotId: string
+  readonly calendarVersion: string
+  readonly publicationAsOf: string
+  readonly start: string
+  readonly end: string
+}): Result.Result<
+  { readonly sessions: readonly SignalSessionRow[]; readonly finalizedAt: string },
+  OpeningDriveQualificationFailure
+> =>
+  Result.gen(function* () {
+    const manifest = input.manifests[0]
+    if (input.manifests.length !== 1 || manifest === undefined) {
+      return yield* Result.fail(failure('Qualification Signal snapshot must contain exactly one finalized manifest'))
+    }
+    if (
+      manifest.snapshot_id !== input.snapshotId ||
+      manifest.calendar_version !== input.calendarVersion ||
+      manifest.publication_asof !== input.publicationAsOf
+    ) {
+      return yield* Result.fail(
+        failure('Qualification Signal manifest does not match the configured publication identity'),
+      )
+    }
+    const expectedManifestHash = yield* Result.mapError(
+      canonicalHashV1Result(withoutManifestContentHash(manifest)),
+      (cause) => hashFailure('Qualification Signal manifest is not canonically hashable', cause),
+    )
+    if (manifest.manifest_content_hash !== expectedManifestHash) {
+      return yield* Result.fail(failure('Qualification Signal manifest content hash does not match its content'))
+    }
+
+    const orderedSessions = [...input.sessions].sort((left, right) =>
+      left.session_date.localeCompare(right.session_date),
+    )
+    const duplicate = orderedSessions.find(
+      (session, index) => index > 0 && orderedSessions[index - 1]?.session_date === session.session_date,
+    )
+    if (
+      duplicate !== undefined ||
+      orderedSessions.length !== manifest.session_count ||
+      orderedSessions.some(
+        (session) =>
+          session.snapshot_id !== manifest.snapshot_id ||
+          session.calendar_version !== manifest.calendar_version ||
+          session.provider !== manifest.provider ||
+          session.open_time >= session.close_time,
+      ) ||
+      orderedSessions[0]?.session_date !== manifest.first_session ||
+      orderedSessions.at(-1)?.session_date !== manifest.last_session
+    ) {
+      return yield* Result.fail(failure('Qualification Signal session calendar does not match its finalized manifest'))
+    }
+    const sessionsContentHash = yield* Result.mapError(
+      canonicalHashV1Result(orderedSessions.map(withoutSnapshotId)),
+      (cause) => hashFailure('Qualification Signal session calendar is not canonically hashable', cause),
+    )
+    if (sessionsContentHash !== manifest.sessions_content_hash) {
+      return yield* Result.fail(
+        failure('Qualification Signal session calendar content hash does not match its manifest'),
+      )
+    }
+    if (input.start < manifest.first_session || input.end > manifest.last_session) {
+      return yield* Result.fail(failure('Qualification range exceeds the finalized Signal calendar bounds'))
+    }
+    const sessions = orderedSessions.filter(
+      ({ session_date: sessionDate }) => sessionDate >= input.start && sessionDate <= input.end,
+    )
+    if (sessions.length === 0) {
+      return yield* Result.fail(failure('Qualification range contains no finalized Signal sessions'))
+    }
+    return Object.freeze({ sessions: Object.freeze(sessions), finalizedAt: manifest.finalized_at })
+  })
 
 export const decodeOpeningDriveQualificationLock = (
   input: unknown,
