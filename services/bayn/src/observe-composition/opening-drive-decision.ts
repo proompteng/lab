@@ -6,7 +6,13 @@ import type { AutonomousCycle } from '../cycle'
 import type { OperationalError } from '../errors'
 import { MICROS, numberToMicros } from '../execution-model'
 import { utcInstantFromEpochMillis } from '../time'
-import type { IntradayMarketDataService, IntradayMarketSnapshot, IntradaySnapshotQuery } from '../market-data'
+import {
+  intradayAgeNanos,
+  millisecondsAsNanos,
+  type IntradayMarketDataService,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotQuery,
+} from '../market-data'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { strictParseOptions } from '../schemas'
 import type {
@@ -183,6 +189,7 @@ const mutableEntryRejectionReasons = new Set<OpeningDriveRejectionReason>([
   'opening-return',
   'range-location',
   'spread',
+  'market-data-freshness',
 ])
 
 /**
@@ -206,7 +213,7 @@ export const openingDriveEntryDisposition = (
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
 
-export const adverseQuotePrices = (
+const adverseQuotePrices = (
   snapshot: IntradayMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, OpeningDriveRuntimeDecisionFailure> => {
@@ -231,6 +238,47 @@ export const adverseQuotePrices = (
     bidPriceMicros: Object.freeze(bidPriceMicros),
     askPriceMicros: Object.freeze(askPriceMicros),
   })
+}
+
+export const adverseClosingQuotePrices = (
+  snapshot: IntradayMarketSnapshot,
+  symbols: readonly string[],
+): Result.Result<AdverseQuotePrices, OpeningDriveRuntimeDecisionFailure> => {
+  const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
+  for (const symbol of [...new Set(symbols)].sort()) {
+    const quote = snapshot.latestQuotes[symbol]
+    if (quote === undefined) {
+      return Result.fail(failure('close-prices', `intraday snapshot has no verified quote for ${symbol}`))
+    }
+    const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
+    if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
+      return Result.fail(failure('close-prices', `closing quote for ${symbol} is outside the freshness window`))
+    }
+  }
+  return adverseQuotePrices(snapshot, symbols)
+}
+
+export const requireFreshOpeningDrivePositionQuotes = (
+  snapshot: IntradayMarketSnapshot,
+  positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
+): Result.Result<void, OpeningDriveRuntimeDecisionFailure> => {
+  const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
+  for (const position of positions) {
+    if (BigInt(position.quantityMicros) === 0n) continue
+    const quote = snapshot.latestQuotes[position.symbol]
+    if (quote === undefined) {
+      return Result.fail(
+        failure('entry-decision', `existing position ${position.symbol} has no verified entry-cycle quote`),
+      )
+    }
+    const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
+    if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
+      return Result.fail(
+        failure('entry-decision', `existing position ${position.symbol} has no fresh entry-cycle liquidation quote`),
+      )
+    }
+  }
+  return Result.succeed(undefined)
 }
 
 const maximumBuyQuantities = (
@@ -302,4 +350,4 @@ export const closeBidPrices = (
   snapshot: IntradayMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<Readonly<Record<string, string>>, OpeningDriveRuntimeDecisionFailure> =>
-  Result.map(adverseQuotePrices(snapshot, symbols), (prices) => prices.bidPriceMicros)
+  Result.map(adverseClosingQuotePrices(snapshot, symbols), (prices) => prices.bidPriceMicros)

@@ -133,6 +133,17 @@ describe('immutable intraday market snapshot', () => {
     expect(reordered.manifest.contentHash).toBe(snapshot.manifest.contentHash)
   })
 
+  test('binds complete post-range evidence without requiring every symbol to be selection-fresh simultaneously', () => {
+    const snapshot = success(verifyIntradaySnapshot({ ...request, observedAt: '2026-08-18T13:36:30.000Z' }, makeRows()))
+
+    expect(snapshot.manifest).toMatchObject({
+      observedAt: '2026-08-18T13:36:30.000Z',
+      quoteCount: symbols.length,
+      tradeCount: symbols.length,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+  })
+
   test('publishes detached immutable archive watermarks', () => {
     const rows = makeRows()
     const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))
@@ -529,7 +540,7 @@ describe('immutable intraday market snapshot', () => {
     ).toMatchObject({ reason: 'ordering' })
   })
 
-  test('fails closed on stale quotes and missing trades', () => {
+  test('fails closed on pre-range quotes and missing or pre-range trades', () => {
     const rows = makeRows()
     const staleQuotes = rows.quotes.map((quote) => ({ ...quote, event_at: '2026-08-18T13:33:00.000Z' }))
     expect(error(verifyIntradaySnapshot(request, { ...rows, quotes: staleQuotes }))).toMatchObject({

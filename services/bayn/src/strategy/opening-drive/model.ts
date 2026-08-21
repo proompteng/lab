@@ -22,6 +22,7 @@ export type OpeningDriveRejectionReason =
   | 'spread'
   | 'dollar-volume'
   | 'displayed-liquidity'
+  | 'market-data-freshness'
 
 const OpeningDriveRejectionReasonSchema = Schema.Literals([
   'opening-return',
@@ -30,6 +31,7 @@ const OpeningDriveRejectionReasonSchema = Schema.Literals([
   'spread',
   'dollar-volume',
   'displayed-liquidity',
+  'market-data-freshness',
 ])
 
 export const OpeningDriveSignalSchema = Schema.Struct({

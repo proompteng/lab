@@ -321,6 +321,62 @@ describe('opening-drive momentum strategy', () => {
     })
   })
 
+  test('rejects only symbols whose own post-range quote or trade is no longer fresh', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    for (const staleEvidence of ['quote', 'trade'] as const) {
+      const rows = makeRows()
+      const staleAmdRows = {
+        ...rows,
+        quotes: rows.quotes.map((quote) =>
+          staleEvidence === 'quote' && quote.symbol === 'AMD'
+            ? { ...quote, event_at: '2026-08-18T13:35:00.500Z', ingested_at: '2026-08-18T13:35:00.600Z' }
+            : quote,
+        ),
+        trades: rows.trades.map((trade) =>
+          staleEvidence === 'trade' && trade.symbol === 'AMD'
+            ? { ...trade, event_at: '2026-08-18T13:35:00.400Z', ingested_at: '2026-08-18T13:35:00.500Z' }
+            : trade,
+        ),
+      }
+      const market = success(verifyIntradaySnapshot(request, staleAmdRows))
+      const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
+      const amdSignal = decision.signals.find((signal) => signal.symbol === 'AMD')
+
+      expect(decision.selectedSymbols).toEqual(['AVGO', 'NVDA'])
+      expect(amdSignal?.eligible).toBe(false)
+      expect(amdSignal?.rejectionReasons).toContain('market-data-freshness')
+      expect(
+        Result.isSuccess(Schema.decodeUnknownResult(OpeningDriveTargetPortfolioSchema, strictParseOptions)(decision)),
+      ).toBe(true)
+    }
+  })
+
+  test('returns a schema-valid flat target when every symbol lacks fresh market evidence', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const rows = makeRows()
+    const staleRows = {
+      ...rows,
+      quotes: rows.quotes.map((quote) => ({
+        ...quote,
+        event_at: '2026-08-18T13:35:00.500Z',
+        ingested_at: '2026-08-18T13:35:00.600Z',
+      })),
+      trades: rows.trades.map((trade) => ({
+        ...trade,
+        event_at: '2026-08-18T13:35:00.400Z',
+        ingested_at: '2026-08-18T13:35:00.500Z',
+      })),
+    }
+    const market = success(verifyIntradaySnapshot(request, staleRows))
+    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
+
+    expect(decision.selectedSymbols).toEqual([])
+    expect(decision.signals.every((signal) => signal.rejectionReasons.includes('market-data-freshness'))).toBe(true)
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(OpeningDriveTargetPortfolioSchema, strictParseOptions)(decision)),
+    ).toBe(true)
+  })
+
   test('rejects executable weights that diverge from selection evidence', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const flat = success(decideOpeningDrive(marketContext(0.001), protocol))

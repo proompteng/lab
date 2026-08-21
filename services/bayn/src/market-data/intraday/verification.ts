@@ -623,27 +623,21 @@ const latestQuotes = (
   const expectedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
   const minimumDelay = millisecondsAsNanos(expectedDelayMs)
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs)
+  // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
+  // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
   for (const symbol of request.universe) {
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
-    if (
-      quote === undefined ||
-      intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) ||
-      intradayAgeNanos(request.observedAt, quote.ingestedAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
-    ) {
+    if (quote === undefined || intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
       return Result.fail(
-        failure('freshness', 'intraday snapshot lacks a fresh post-range quote for every symbol', {
+        failure('freshness', 'intraday snapshot lacks a post-range quote for every symbol', {
           symbol,
         }),
       )
     }
-    if (
-      trade === undefined ||
-      intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt) ||
-      intradayAgeNanos(request.observedAt, trade.ingestedAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
-    ) {
+    if (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
       return Result.fail(
-        failure('freshness', 'intraday snapshot lacks a fresh post-range trade for every symbol', { symbol }),
+        failure('freshness', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
       )
     }
     for (const evidence of [quote, trade]) {
