@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.opening-drive-momentum.behavior.v2, verified by the production executable.
-  strategyBehaviorHash = "1de2e321a6d895469c8d8d78d1f4e0defd78fa2cdff1f01134f8607302246e10";
+  # SHA-256 identity for bayn.opening-drive-momentum.behavior.v3, verified by the production executable.
+  strategyBehaviorHash = "6644f644d83bda5104de9c7bbcf4ec6d5a7db4b5e7ab43b82dc27df0b1fdb94e";
   # Canonical hash of the compiled bayn.opening-drive.protocol.v2 document.
   strategyParameterHash = "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329";
   strategyName = "opening-drive-momentum";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "91c6306c12ab766463f97828bee5d590fea7934e83a98b295dda335e0136486f";
+  strategyProtocolHash = "23cbcd451a16c515ab9e9c28c5f8d47064bfbd38d60a21c7b45e998956847b5a";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f";

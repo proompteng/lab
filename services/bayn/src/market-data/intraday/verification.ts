@@ -507,6 +507,12 @@ const validateBarCoverage = (
   const feedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
   const minimumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs)
   const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs)
+  const rangeStart = epoch(request.rangeStartAt)
+  const rangeStartNanos = intradayInstantNanos(request.rangeStartAt)
+  const rangeEndNanos = intradayInstantNanos(request.rangeEndAt)
+  const minuteNanos = millisecondsAsNanos(minuteMs)
+  const rangeMinutes = (epoch(request.rangeEndAt) - rangeStart) / minuteMs
+  const maximumCount = request.universe.length * rangeMinutes
   const observed = new Map<string, number>()
   for (const bar of bars) {
     const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
@@ -521,37 +527,49 @@ const validateBarCoverage = (
         }),
       )
     }
-    const key = `${bar.symbol}\u0000${bar.eventAt}`
-    observed.set(key, (observed.get(key) ?? 0) + 1)
+    const eventAt = intradayInstantNanos(bar.eventAt)
+    if ((eventAt - rangeStartNanos) % minuteNanos !== 0n) {
+      return Result.fail(
+        failure('coverage', 'intraday bar is not aligned to the requested one-minute grid', {
+          symbol: bar.symbol,
+          eventAt: bar.eventAt,
+        }),
+      )
+    }
+    const key = `${bar.symbol}\u0000${eventAt}`
+    if (observed.has(key)) {
+      return Result.fail(
+        failure('coverage', 'intraday snapshot duplicates a one-minute bar', {
+          symbol: bar.symbol,
+          eventAt: bar.eventAt,
+        }),
+      )
+    }
+    observed.set(key, 1)
   }
-  const expectedCount = request.universe.length * ((epoch(request.rangeEndAt) - epoch(request.rangeStartAt)) / minuteMs)
-  if (bars.length !== expectedCount) {
+  if (bars.length > maximumCount) {
     return Result.fail(
-      failure('coverage', 'intraday snapshot does not contain the exact one-minute bar grid', {
-        expectedCount,
+      failure('coverage', 'intraday snapshot exceeds the requested one-minute bar grid', {
+        maximumCount,
         observedCount: bars.length,
       }),
     )
   }
+  const completionEventAt = rangeEndNanos - minuteNanos
   for (const symbol of request.universe) {
-    for (let time = epoch(request.rangeStartAt); time < epoch(request.rangeEndAt); time += minuteMs) {
-      const eventAt = new Date(time).toISOString()
-      if (observed.get(`${symbol}\u0000${eventAt}`) !== 1) {
-        return Result.fail(
-          failure('coverage', 'intraday snapshot is missing or duplicates a required bar', {
-            symbol,
-            eventAt,
-          }),
-        )
-      }
-    }
-    const finalBar = bars.findLast((bar) => bar.symbol === symbol)
-    if (finalBar === undefined || epoch(finalBar.ingestedAt) < epoch(request.rangeEndAt)) {
+    if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
       return Result.fail(
-        failure('freshness', 'intraday bar watermark has not crossed the requested range end', { symbol }),
+        failure('coverage', 'intraday snapshot lacks a per-symbol range-completion bar', {
+          symbol,
+          eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
+        }),
       )
     }
   }
+  // Alpaca stock bars are trade aggregates: an interior minute with no qualifying trade has no emitted bar. Accept
+  // that sparse evidence only after every symbol's valid final-range bar proves its ordered stream crossed the full
+  // decision window. Finality, event-time alignment, uniqueness, bounded count, feed delay, and Kafka watermarks
+  // remain fail-closed.
   return Result.succeed(undefined)
 }
 

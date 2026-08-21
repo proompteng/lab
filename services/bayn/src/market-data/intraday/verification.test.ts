@@ -241,10 +241,73 @@ describe('immutable intraday market snapshot', () => {
     expect(error(reverifyIntradayMarketSnapshot(forged))).toMatchObject({ reason: 'hash' })
   })
 
-  test('fails closed when the one-minute grid is incomplete', () => {
+  test('accepts sparse trade-aggregated bars while rejecting duplicate or misaligned minutes', () => {
     const rows = makeRows()
-    const failure = error(verifyIntradaySnapshot(request, { ...rows, bars: rows.bars.slice(1) }))
-    expect(failure).toMatchObject({ _tag: 'IntradaySnapshotFailure', reason: 'coverage' })
+    const sparse = success(verifyIntradaySnapshot(request, { ...rows, bars: rows.bars.slice(1) }))
+
+    expect(sparse.manifest.barCount).toBe(9)
+    expect(success(reverifyIntradayMarketSnapshot(sparse))).toEqual(sparse)
+
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: rows.bars.filter((bar) => !(bar.symbol === 'AMD' && bar.event_at === '2026-08-18T13:34:00.000Z')),
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'IntradaySnapshotFailure',
+      reason: 'coverage',
+      message: 'intraday snapshot lacks a per-symbol range-completion bar',
+      facts: {
+        symbol: 'AMD',
+        eventAt: '2026-08-18T13:34:00.000Z',
+      },
+    })
+
+    const firstSparseBar = rows.bars[1]
+    if (firstSparseBar === undefined) throw new Error('sparse bar fixture is incomplete')
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: [
+            ...rows.bars.slice(1),
+            {
+              ...firstSparseBar,
+              event_at: firstSparseBar.event_at.replace('.000Z', '.000000000Z'),
+              ingested_at: firstSparseBar.ingested_at.replace('.000Z', '.000000000Z'),
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'IntradaySnapshotFailure',
+      reason: 'coverage',
+      message: 'intraday snapshot duplicates a one-minute bar',
+    })
+
+    const firstBar = rows.bars[0]
+    if (firstBar === undefined) throw new Error('bar fixture is incomplete')
+    expect(
+      error(
+        verifyIntradaySnapshot(request, {
+          ...rows,
+          bars: [
+            {
+              ...firstBar,
+              event_at: '2026-08-18T13:30:00.000000001Z',
+              ingested_at: '2026-08-18T13:31:00.000000001Z',
+            },
+            ...rows.bars.slice(1),
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'IntradaySnapshotFailure',
+      reason: 'coverage',
+      message: 'intraday bar is not aligned to the requested one-minute grid',
+    })
   })
 
   test('rejects non-aligned requests and non-canonical numeric rows', () => {

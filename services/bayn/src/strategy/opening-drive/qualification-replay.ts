@@ -41,10 +41,11 @@ const replayExecutionModel = (protocol: OpeningDriveProtocol): ExecutionModel =>
   })
 
 export const openingDriveReplayCostModelDocument = Object.freeze({
-  schemaVersion: 'bayn.opening-drive.replay-cost-model.v1',
+  schemaVersion: 'bayn.opening-drive.replay-cost-model.v2',
   entryPriceReference: 'verified-opening-ask',
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
+  benchmarkExposure: 'equal-weight-universe-matched-to-candidate-target-gross-exposure',
   liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-terminal-valued-at-verified-flatten-bid',
   containment:
     'candidate-residual-rejected-by-qualification-gate; benchmark-residual-is-comparator-mark-to-market-only',
@@ -520,7 +521,19 @@ export const replayOpeningDriveSession = (
       }),
     )
     const allocationMicros = BigInt(policy.allocationMicros)
-    const benchmarkWeight = 1 / protocol.universe.length
+    const candidateGrossWeight = Object.values(decision.targetWeights).reduce((sum, weight) => sum + weight, 0)
+    if (
+      !Number.isFinite(candidateGrossWeight) ||
+      candidateGrossWeight < 0 ||
+      candidateGrossWeight > protocol.maximumGrossWeight + Number.EPSILON * protocol.universe.length
+    ) {
+      return yield* Result.fail(
+        failure('strategy-decision', 'opening-drive target gross exposure is outside the bound protocol', {
+          sessionDate: input.opening.session.sessionDate,
+        }),
+      )
+    }
+    const benchmarkWeight = candidateGrossWeight / protocol.universe.length
     const benchmarkWeights = Object.fromEntries(protocol.universe.map((symbol) => [symbol, benchmarkWeight]))
     const portfolios = yield* Result.all({
       candidate: replayPortfolio(

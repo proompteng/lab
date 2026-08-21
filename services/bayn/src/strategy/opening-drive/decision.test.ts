@@ -268,6 +268,49 @@ describe('opening-drive momentum strategy', () => {
     expect(replay).toEqual(decision)
   })
 
+  test('aggregates sparse trade-based opening bars without synthesizing the absent minute', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const completeRows = makeRows()
+    const sparseRows = {
+      ...completeRows,
+      bars: completeRows.bars.filter((bar) => !(bar.symbol === 'AMD' && bar.event_at === '2026-08-18T13:31:00.000Z')),
+    }
+    const complete = success(decideOpeningDrive({ snapshot: snapshot(), session }, protocol))
+    const sparseSnapshot = success(verifyIntradaySnapshot(request, sparseRows))
+    const sparse = success(decideOpeningDrive({ snapshot: sparseSnapshot, session }, protocol))
+    const completeAmd = complete.signals.find((signal) => signal.symbol === 'AMD')
+    const sparseAmd = sparse.signals.find((signal) => signal.symbol === 'AMD')
+
+    expect(sparseSnapshot.manifest.barCount).toBe(symbols.length * 5 - 1)
+    expect(sparse.selectedSymbols).toEqual(complete.selectedSymbols)
+    expect(sparseAmd).toMatchObject({
+      openingPriceMicros: completeAmd?.openingPriceMicros,
+      rangeHighPriceMicros: completeAmd?.rangeHighPriceMicros,
+      rangeLowPriceMicros: completeAmd?.rangeLowPriceMicros,
+      eligible: true,
+      rank: 1,
+    })
+    expect(BigInt(sparseAmd?.openingDollarVolumeMicros ?? '0')).toBeLessThan(
+      BigInt(completeAmd?.openingDollarVolumeMicros ?? '0'),
+    )
+  })
+
+  test('fails closed before decision when a symbol lacks range-completion evidence', () => {
+    const rows = makeRows()
+    const failure = error(
+      verifyIntradaySnapshot(request, {
+        ...rows,
+        bars: rows.bars.filter((bar) => !(bar.symbol === 'AMD' && bar.event_at === '2026-08-18T13:34:00.000Z')),
+      }),
+    )
+
+    expect(failure).toMatchObject({
+      reason: 'coverage',
+      message: 'intraday snapshot lacks a per-symbol range-completion bar',
+      facts: { symbol: 'AMD' },
+    })
+  })
+
   test('returns a deterministic flat target when no symbol clears the frozen gates', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const decision = success(decideOpeningDrive(marketContext(0.001), protocol))

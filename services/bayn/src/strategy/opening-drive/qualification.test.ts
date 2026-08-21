@@ -544,12 +544,18 @@ describe('opening-drive after-cost qualification', () => {
   test('reserves entry fees and excludes orders below the execution minimum', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const fullAllocation = BigInt(defaultOpeningDriveQualificationPolicy.allocationMicros)
+    const maximumMatchedGross =
+      (fullAllocation * BigInt(Math.round(protocol.maximumGrossWeight * 1_000_000))) / 1_000_000n
     const replay = success(
       replayOpeningDriveSession(replayInput(0, 0.02), protocol, defaultOpeningDriveQualificationPolicy),
     )
 
-    expect(BigInt(replay.benchmark.entryNotionalMicros)).toBeLessThan(fullAllocation)
-    expect(fullAllocation - BigInt(replay.benchmark.entryNotionalMicros)).toBeGreaterThanOrEqual(10_000n)
+    expect(openingDriveReplayCostModelDocument).toMatchObject({
+      schemaVersion: 'bayn.opening-drive.replay-cost-model.v2',
+      benchmarkExposure: 'equal-weight-universe-matched-to-candidate-target-gross-exposure',
+    })
+    expect(BigInt(replay.benchmark.entryNotionalMicros)).toBeLessThan(maximumMatchedGross)
+    expect(maximumMatchedGross - BigInt(replay.benchmark.entryNotionalMicros)).toBeGreaterThanOrEqual(10_000n)
     expect(BigInt(replay.benchmark.feeCostMicros)).toBeGreaterThan(0n)
 
     const subminimum = success(
@@ -560,6 +566,18 @@ describe('opening-drive after-cost qualification', () => {
     )
     expect(subminimum.benchmark.executedSymbols).toEqual([])
     expect(subminimum.benchmark.entryNotionalMicros).toBe('0')
+
+    const noTradeProtocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        minimumOpeningReturnBps: 10_000,
+      }),
+    )
+    const noTrade = success(
+      replayOpeningDriveSession(replayInput(0, 0.02), noTradeProtocol, defaultOpeningDriveQualificationPolicy),
+    )
+    expect(noTrade.candidate.entryNotionalMicros).toBe('0')
+    expect(noTrade.benchmark.entryNotionalMicros).toBe('0')
 
     const boundaryInput = replayInput(0, 0.02)
     const boundaryOpening = snapshotFor({
