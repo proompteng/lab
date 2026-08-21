@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,6 +82,14 @@ const environmentValueForTest = (manifest: string, name: string): string => {
   const raw = match?.[1]?.trim()
   if (raw === undefined) throw new Error(`missing ${name}`)
   return raw.startsWith('"') ? String(JSON.parse(raw)) : raw
+}
+
+const expectedActivationGeneration = (sourceSha: string, digest: string, requestHash?: string): string => {
+  const binding =
+    requestHash === undefined
+      ? ['bayn.execution-controller-activation.v2', baynExecutionControllerPlanHash, sourceSha, digest]
+      : ['bayn.execution-controller-activation.v3', baynExecutionControllerPlanHash, sourceSha, digest, requestHash]
+  return createHash('sha256').update(binding.join('\0')).digest('hex')
 }
 
 const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
@@ -250,6 +259,9 @@ describe('Bayn manifest promotion', () => {
     }
     expect(activation).toContain(`name: bayn-execution-activate-${'a'.repeat(12)}`)
     expect(activation).not.toContain(environmentBlock('BAYN_EXECUTION_ACTIVATION_GENERATION', '5'.repeat(64)).trim())
+    expect(environmentValueForTest(activation, 'BAYN_EXECUTION_ACTIVATION_GENERATION')).toBe(
+      expectedActivationGeneration('a'.repeat(40), `sha256:${'b'.repeat(64)}`),
+    )
 
     updateBaynManifests({
       sourceSha: 'c'.repeat(40),
@@ -342,6 +354,12 @@ describe('Bayn manifest promotion', () => {
     })
 
     expect(result).toMatchObject({ promotionAction: 'promote', qualificationMode: 'research' })
+    expect(
+      environmentValueForTest(
+        readFileSync(nativePaths.executionActivationPath, 'utf8'),
+        'BAYN_EXECUTION_ACTIVATION_GENERATION',
+      ),
+    ).toBe(expectedActivationGeneration(sourceSha, digest, researchRequestHash))
     for (const manifestPath of [
       paths.deploymentPath,
       nativePaths.executionControllerPath,
