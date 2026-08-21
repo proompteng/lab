@@ -125,6 +125,8 @@ interface SnapshotRowsOptions {
   readonly quoteIngestedAtBySymbol?: Readonly<Record<string, string>>
   readonly observedAt?: string
   readonly quoteMidpointBySymbol?: Readonly<Record<string, number>>
+  readonly openingPriceBySymbol?: Readonly<Record<string, number>>
+  readonly volumeBySymbol?: Readonly<Record<string, number>>
 }
 
 const rowsFor = (options: SnapshotRowsOptions) => {
@@ -135,7 +137,7 @@ const rowsFor = (options: SnapshotRowsOptions) => {
   const minutes = phase === 'opening' ? 5 : 1
   let offset = 1
   const bars = symbols.flatMap((symbol, symbolIndex) => {
-    const openingPrice = 100 + symbolIndex
+    const openingPrice = options.openingPriceBySymbol?.[symbol] ?? 100 + symbolIndex
     const openingMidpoint = openingPrice * (1 + openingMoveBySymbol(symbol))
     const move = symbol === 'AMD' || symbol === 'AVGO' || symbol === 'NVDA' ? candidateMove : benchmarkMove
     const phasePrice = phase === 'opening' ? openingPrice : openingMidpoint * (1 + move)
@@ -162,14 +164,14 @@ const rowsFor = (options: SnapshotRowsOptions) => {
         high: String(phase === 'opening' ? openingPrice * 1.011 : phasePrice * 1.001),
         low: String(phase === 'opening' ? openingPrice * 0.995 : phasePrice * 0.999),
         close: String(phase === 'opening' ? openingPrice * (1 + minute * 0.001) : phasePrice),
-        volume: '1000',
+        volume: String(options.volumeBySymbol?.[symbol] ?? 1000),
         vwap: String(phasePrice),
         trade_count: '100',
       }
     })
   })
   const quotes = symbols.map((symbol, symbolIndex) => {
-    const openingPrice = 100 + symbolIndex
+    const openingPrice = options.openingPriceBySymbol?.[symbol] ?? 100 + symbolIndex
     const openingMidpoint = openingPrice * (1 + openingMoveBySymbol(symbol))
     const move = symbol === 'AMD' || symbol === 'AVGO' || symbol === 'NVDA' ? candidateMove : benchmarkMove
     const midpoint =
@@ -260,11 +262,29 @@ type ReplayOptions = Pick<
   'quoteBidSize' | 'quoteAskSize' | 'quoteEventAt' | 'quoteIngestedAt' | 'observedAt'
 >
 
-const replayInput = (ordinal: number, candidateMove: number, benchmarkMove = 0, exitOptions: ReplayOptions = {}) => {
+type SharedReplayOptions = Pick<
+  SnapshotRowsOptions,
+  'quoteBidSize' | 'quoteAskSize' | 'openingPriceBySymbol' | 'volumeBySymbol'
+>
+
+const replayInput = (
+  ordinal: number,
+  candidateMove: number,
+  benchmarkMove = 0,
+  exitOptions: ReplayOptions = {},
+  sharedOptions: SharedReplayOptions = {},
+) => {
   const sessionDate = dateAt(ordinal)
   const times = timesFor(sessionDate)
-  const opening = snapshotFor({ sessionDate, phase: 'opening', candidateMove, benchmarkMove })
-  const exit = snapshotFor({ sessionDate, phase: 'exit', candidateMove, benchmarkMove, ...exitOptions })
+  const opening = snapshotFor({ sessionDate, phase: 'opening', candidateMove, benchmarkMove, ...sharedOptions })
+  const exit = snapshotFor({
+    sessionDate,
+    phase: 'exit',
+    candidateMove,
+    benchmarkMove,
+    ...sharedOptions,
+    ...exitOptions,
+  })
   const calendarSession = opening.manifest.calendar.sessions.find(({ date }) => date === sessionDate)
   if (calendarSession === undefined)
     throw new Error('qualification snapshot fixture requires its bound calendar session')
@@ -544,12 +564,19 @@ describe('opening-drive after-cost qualification', () => {
   test('reserves entry fees and excludes orders below the execution minimum', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const fullAllocation = BigInt(defaultOpeningDriveQualificationPolicy.allocationMicros)
+    const maximumMatchedGross =
+      (fullAllocation * BigInt(Math.round(protocol.maximumGrossWeight * 1_000_000))) / 1_000_000n
     const replay = success(
       replayOpeningDriveSession(replayInput(0, 0.02), protocol, defaultOpeningDriveQualificationPolicy),
     )
 
-    expect(BigInt(replay.benchmark.entryNotionalMicros)).toBeLessThan(fullAllocation)
-    expect(fullAllocation - BigInt(replay.benchmark.entryNotionalMicros)).toBeGreaterThanOrEqual(10_000n)
+    expect(openingDriveReplayCostModelDocument).toMatchObject({
+      schemaVersion: 'bayn.opening-drive.replay-cost-model.v3',
+      benchmarkExposure: 'equal-weight-universe-matched-to-candidate-executed-entry-notional',
+      benchmarkExecution: 'synthetic-fractional-full-fill-without-top-of-book-size-cap-or-per-sleeve-minimum-notional',
+    })
+    expect(BigInt(replay.benchmark.entryNotionalMicros)).toBeLessThan(maximumMatchedGross)
+    expect(maximumMatchedGross - BigInt(replay.benchmark.entryNotionalMicros)).toBeGreaterThanOrEqual(10_000n)
     expect(BigInt(replay.benchmark.feeCostMicros)).toBeGreaterThan(0n)
 
     const subminimum = success(
@@ -560,6 +587,18 @@ describe('opening-drive after-cost qualification', () => {
     )
     expect(subminimum.benchmark.executedSymbols).toEqual([])
     expect(subminimum.benchmark.entryNotionalMicros).toBe('0')
+
+    const noTradeProtocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        minimumOpeningReturnBps: 10_000,
+      }),
+    )
+    const noTrade = success(
+      replayOpeningDriveSession(replayInput(0, 0.02), noTradeProtocol, defaultOpeningDriveQualificationPolicy),
+    )
+    expect(noTrade.candidate.entryNotionalMicros).toBe('0')
+    expect(noTrade.benchmark.entryNotionalMicros).toBe('0')
 
     const boundaryInput = replayInput(0, 0.02)
     const boundaryOpening = snapshotFor({
@@ -584,6 +623,76 @@ describe('opening-drive after-cost qualification', () => {
       ),
     )
     expect(referenceBoundary.candidate.executedSymbols).not.toContain('AMD')
+  })
+
+  test('keeps the equal-weight benchmark invested when one executable candidate sleeve is smaller than a whole share', () => {
+    const oneSymbolProtocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        minimumOpeningReturnBps: 155,
+      }),
+    )
+    const replay = success(
+      replayOpeningDriveSession(replayInput(0, 0.02), oneSymbolProtocol, defaultOpeningDriveQualificationPolicy),
+    )
+    const candidateEntryNotional = BigInt(replay.candidate.entryNotionalMicros)
+    const benchmarkEntryNotional = BigInt(replay.benchmark.entryNotionalMicros)
+    const notionalDifference =
+      candidateEntryNotional >= benchmarkEntryNotional
+        ? candidateEntryNotional - benchmarkEntryNotional
+        : benchmarkEntryNotional - candidateEntryNotional
+
+    expect(replay.candidate.executedSymbols).toHaveLength(1)
+    expect(replay.benchmark.executedSymbols).toEqual(symbols)
+    expect(candidateEntryNotional).toBeGreaterThan(0n)
+    expect(notionalDifference).toBeLessThanOrEqual(100_000n)
+  })
+
+  test('keeps sub-dollar synthetic benchmark sleeves when executable candidate gross is below ten dollars', () => {
+    const lowNotionalProtocol = success(
+      decodeOpeningDriveProtocol({
+        ...defaultOpeningDriveProtocolDocument,
+        minimumOpeningReturnBps: 155,
+        maximumSpreadBps: 100,
+        executionModel: {
+          ...defaultOpeningDriveProtocolDocument.executionModel,
+          partialFills: {
+            ...defaultOpeningDriveProtocolDocument.executionModel.partialFills,
+            probabilityPpm: 0,
+          },
+        },
+      }),
+    )
+    const replay = success(
+      replayOpeningDriveSession(
+        replayInput(
+          0,
+          0.02,
+          0,
+          {},
+          {
+            quoteBidSize: 1,
+            quoteAskSize: 1,
+            openingPriceBySymbol: { AMD: 5 },
+            volumeBySymbol: { AMD: 20_000 },
+          },
+        ),
+        lowNotionalProtocol,
+        defaultOpeningDriveQualificationPolicy,
+      ),
+    )
+    const candidateEntryNotional = BigInt(replay.candidate.entryNotionalMicros)
+    const benchmarkEntryNotional = BigInt(replay.benchmark.entryNotionalMicros)
+    const notionalDifference =
+      candidateEntryNotional >= benchmarkEntryNotional
+        ? candidateEntryNotional - benchmarkEntryNotional
+        : benchmarkEntryNotional - candidateEntryNotional
+
+    expect(replay.candidate.executedSymbols).toEqual(['AMD'])
+    expect(candidateEntryNotional).toBeGreaterThan(1_000_000n)
+    expect(candidateEntryNotional).toBeLessThan(10_000_000n)
+    expect(replay.benchmark.executedSymbols).toEqual(symbols)
+    expect(notionalDifference).toBeLessThanOrEqual(100_000n)
   })
 
   test('applies the bound deterministic partial-fill model to entry and exit quantities', () => {
@@ -611,7 +720,7 @@ describe('opening-drive after-cost qualification', () => {
     expect(fullFill.candidate.terminalRemainderNotionalMicros).toBe('0')
   })
 
-  test('terminal-values synthetic benchmark exit remainders instead of making them a structural failure', () => {
+  test('fully flattens the synthetic fractional benchmark at the verified exit', () => {
     const replay = success(
       replayOpeningDriveSession(
         replayInput(1, 0.02),
@@ -620,9 +729,9 @@ describe('opening-drive after-cost qualification', () => {
       ),
     )
 
-    expect(BigInt(replay.benchmark.unclosedQuantityMicros)).toBeGreaterThan(0n)
-    expect(BigInt(replay.benchmark.terminalRemainderNotionalMicros)).toBeGreaterThan(0n)
-    expect(replay.benchmark.flat).toBe(false)
+    expect(replay.benchmark.unclosedQuantityMicros).toBe('0')
+    expect(replay.benchmark.terminalRemainderNotionalMicros).toBe('0')
+    expect(replay.benchmark.flat).toBe(true)
     expect(BigInt(replay.benchmark.netPnlMicros)).toBe(
       BigInt(replay.benchmark.exitNotionalMicros) +
         BigInt(replay.benchmark.terminalRemainderNotionalMicros) -

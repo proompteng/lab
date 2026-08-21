@@ -20,7 +20,7 @@ import {
   quantizeDown,
   referencePriceMicros,
 } from '../execution-model/fixed-point'
-import { MICROS, PPM } from '../execution-model/model'
+import { MICROS, PPM, WEIGHT_SCALE } from '../execution-model/model'
 import { decideOpeningDrive } from './decision'
 import {
   OpeningDriveQualificationFailure,
@@ -40,14 +40,32 @@ const replayExecutionModel = (protocol: OpeningDriveProtocol): ExecutionModel =>
     }),
   })
 
+const benchmarkReplayExecutionModel = (protocol: OpeningDriveProtocol): ExecutionModel => {
+  const model = replayExecutionModel(protocol)
+  return Object.freeze({
+    ...model,
+    precision: Object.freeze({
+      ...model.precision,
+      quantityIncrementMicros: '1',
+      minimumBuyNotionalMicros: '1',
+    }),
+    partialFills: Object.freeze({
+      ...model.partialFills,
+      probabilityPpm: 0,
+    }),
+  })
+}
+
 export const openingDriveReplayCostModelDocument = Object.freeze({
-  schemaVersion: 'bayn.opening-drive.replay-cost-model.v1',
+  schemaVersion: 'bayn.opening-drive.replay-cost-model.v3',
   entryPriceReference: 'verified-opening-ask',
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
-  liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-terminal-valued-at-verified-flatten-bid',
-  containment:
-    'candidate-residual-rejected-by-qualification-gate; benchmark-residual-is-comparator-mark-to-market-only',
+  benchmarkExposure: 'equal-weight-universe-matched-to-candidate-executed-entry-notional',
+  benchmarkExecution: 'synthetic-fractional-full-fill-without-top-of-book-size-cap-or-per-sleeve-minimum-notional',
+  candidateLiquidity:
+    'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-terminal-valued-at-verified-flatten-bid',
+  containment: 'candidate-residual-rejected-by-qualification-gate; synthetic-benchmark-fully-flattens-at-verified-exit',
   executionModel: 'bound-protocol-execution-model',
   spreadOverride: 'observed-top-of-book-spread-separate-from-execution-model-half-spread',
   adverseSlippageMultiplier: 'bound-protocol-double-cost-multiplier',
@@ -215,6 +233,8 @@ interface PositionReplay {
   readonly quotedSpreadCostMicros: bigint
 }
 
+type ReplayLiquidityPolicy = 'top-of-book' | 'synthetic-fractional'
+
 const executionFailure = (sessionDate: string, symbol: string, cause: unknown): OpeningDriveQualificationFailure =>
   failure('execution-cost', 'opening-drive replay could not calculate conservative execution terms', {
     sessionDate,
@@ -231,6 +251,7 @@ const replayPosition = (
   sessionDate: string,
   scalePpm: bigint,
   model: ExecutionModel,
+  liquidityPolicy: ReplayLiquidityPolicy,
 ): Result.Result<PositionReplay | null, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const values = yield* Result.mapError(
@@ -260,11 +281,10 @@ const replayPosition = (
     const scaledDesired = yield* Result.mapError(scaleQuantityMicros(desired, scalePpm, model), (cause) =>
       executionFailure(sessionDate, symbol, cause),
     )
+    const entryBoundedDesired =
+      liquidityPolicy === 'top-of-book' && values.entrySize < scaledDesired ? values.entrySize : scaledDesired
     const quantity = yield* Result.mapError(
-      quantizeDown(
-        scaledDesired < values.entrySize ? scaledDesired : values.entrySize,
-        BigInt(model.precision.quantityIncrementMicros),
-      ),
+      quantizeDown(entryBoundedDesired, BigInt(model.precision.quantityIncrementMicros)),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     if (quantity === 0n) return null
@@ -295,11 +315,10 @@ const replayPosition = (
       makeFillTerms('buy', entryQuantity, values.entryAsk, model, costMultiplier),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
+    const exitBoundedQuantity =
+      liquidityPolicy === 'top-of-book' && values.exitSize < entryQuantity ? values.exitSize : entryQuantity
     const exitRequestedQuantity = yield* Result.mapError(
-      quantizeDown(
-        entryQuantity < values.exitSize ? entryQuantity : values.exitSize,
-        BigInt(model.precision.quantityIncrementMicros),
-      ),
+      quantizeDown(exitBoundedQuantity, BigInt(model.precision.quantityIncrementMicros)),
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     const exitOutcome = yield* Result.mapError(
@@ -393,6 +412,7 @@ const replayPortfolio = (
   opening: IntradayMarketSnapshot,
   exit: IntradayMarketSnapshot,
   model: ExecutionModel,
+  liquidityPolicy: ReplayLiquidityPolicy,
 ): Result.Result<OpeningDrivePortfolioReplay, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     const positionsAtScale = (scalePpm: bigint) =>
@@ -417,6 +437,7 @@ const replayPortfolio = (
                   opening.manifest.sessionDate,
                   scalePpm,
                   model,
+                  liquidityPolicy,
                 )
           }),
         ),
@@ -520,26 +541,43 @@ export const replayOpeningDriveSession = (
       }),
     )
     const allocationMicros = BigInt(policy.allocationMicros)
-    const benchmarkWeight = 1 / protocol.universe.length
+    const candidateGrossWeight = Object.values(decision.targetWeights).reduce((sum, weight) => sum + weight, 0)
+    if (
+      !Number.isFinite(candidateGrossWeight) ||
+      candidateGrossWeight < 0 ||
+      candidateGrossWeight > protocol.maximumGrossWeight + Number.EPSILON * protocol.universe.length
+    ) {
+      return yield* Result.fail(
+        failure('strategy-decision', 'opening-drive target gross exposure is outside the bound protocol', {
+          sessionDate: input.opening.session.sessionDate,
+        }),
+      )
+    }
+    const candidate = yield* replayPortfolio(
+      decision.selectedSymbols,
+      decision.targetWeights,
+      allocationMicros,
+      input.opening.snapshot,
+      input.exit,
+      model,
+      'top-of-book',
+    )
+    const candidateEntryNotionalMicros = BigInt(candidate.entryNotionalMicros)
+    const candidateExecutedGrossWeightUnits =
+      allocationMicros === 0n ? 0n : (candidateEntryNotionalMicros * WEIGHT_SCALE) / allocationMicros
+    const benchmarkWeightUnits = candidateExecutedGrossWeightUnits / BigInt(protocol.universe.length)
+    const benchmarkWeight = Number(benchmarkWeightUnits) / Number(WEIGHT_SCALE)
     const benchmarkWeights = Object.fromEntries(protocol.universe.map((symbol) => [symbol, benchmarkWeight]))
-    const portfolios = yield* Result.all({
-      candidate: replayPortfolio(
-        decision.selectedSymbols,
-        decision.targetWeights,
-        allocationMicros,
-        input.opening.snapshot,
-        input.exit,
-        model,
-      ),
-      benchmark: replayPortfolio(
-        protocol.universe,
-        benchmarkWeights,
-        allocationMicros,
-        input.opening.snapshot,
-        input.exit,
-        model,
-      ),
-    })
+    const benchmark = yield* replayPortfolio(
+      protocol.universe,
+      benchmarkWeights,
+      allocationMicros,
+      input.opening.snapshot,
+      input.exit,
+      benchmarkReplayExecutionModel(protocol),
+      'synthetic-fractional',
+    )
+    const portfolios = { candidate, benchmark }
     const decisionHash = yield* canonicalHash(
       decision,
       'opening-drive decision is not canonically hashable',
