@@ -58,8 +58,12 @@ spec:
                 *"Secrets:     no"*) ;;
                 *) echo 'migration preview did not prove that secret migration is disabled' >&2; exit 1 ;;
               esac
+              if printf '%s\n' "$migration_output" | grep -Fqx 'directory not found: /opt/data/migration/source'; then
+                echo 'migration preview contains a conflict or refusal' >&2
+                exit 1
+              fi
               case "$migration_output" in
-                *"Conflicts ("*|*" conflict(s)"*|*"Refusing to apply"*|*"Migration preview failed"*|*"directory not found: /opt/data/migration/source"*)
+                *"Conflicts ("*|*" conflict(s)"*|*"Refusing to apply"*|*"Migration preview failed"*)
                   echo 'migration preview contains a conflict or refusal' >&2
                   exit 1
                   ;;

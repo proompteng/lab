@@ -81,12 +81,14 @@ export const causeSummary = (cause: unknown): Readonly<Record<string, string>> =
     const path = stringFact(cause, 'path')
     const actualType = stringFact(cause, 'actualType')
     const failure = stringFact(cause, 'failure')
+    const message = cause._tag === 'HttpClientError' ? undefined : stringFact(cause, 'message')
     return {
       tag: cause._tag,
       ...(reason === undefined ? {} : { reason }),
       ...(path === undefined ? {} : { path }),
       ...(actualType === undefined ? {} : { actualType }),
       ...(failure === undefined ? {} : { failure }),
+      ...(message === undefined ? {} : { message }),
     }
   }
   if (cause instanceof Error) return { tag: cause.name }

@@ -30,6 +30,13 @@ rbac:
       verbs:
         - list
         - watch
+    - apiGroups:
+        - restate.dev
+      resources:
+        - restatedeployments
+      verbs:
+        - list
+        - watch
 
 customResourceState:
   enabled: true
@@ -121,6 +128,27 @@ customResourceState:
                   path:
                     - status
                     - lastScheduleTime
+        - groupVersionKind:
+            group: restate.dev
+            version: v1beta1
+            kind: RestateDeployment
+          metricNamePrefix: kube_restate
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            restate_deployment:
+              - metadata
+              - name
+          metrics:
+            - name: deployment_spec_replicas
+              help: Desired replica count from the RestateDeployment specification.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - spec
+                    - replicas
 
 resources:
   requests:

@@ -489,4 +489,38 @@ describe('execution coordinator decisions', () => {
       evidence,
     })
   })
+
+  test('recovers a partially filled canceled legacy limit order using the durable submit request', () => {
+    const acknowledged = { ...intent, state: IntentState.Acknowledged }
+    const legacyRequest = Result.getOrThrow(legacyBoundedLimitOrderRequestBody(acknowledged))
+    const submitted = {
+      ...mutation(MutationOperation.Submit, MutationEventType.SubmitAccepted, acknowledged),
+      requestHash: canonicalHashV1(legacyRequest),
+    }
+    const cancel = mutation(MutationOperation.Cancel, MutationEventType.CancelUnknown, acknowledged)
+    const { notionalMicros: _notionalMicros, ...currentOrder } = order()
+    const legacyCanceled: Order = {
+      ...currentOrder,
+      status: OrderStatus.Canceled,
+      filledQuantityMicros: '500000',
+      quantityMicros: intent.quantityMicros,
+      orderType: BrokerOrderType.Limit,
+      limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(intent)).toString(),
+    }
+
+    expect(
+      decideRecoverySuccess(
+        acknowledged,
+        MutationOperation.Cancel,
+        cancel,
+        { value: legacyCanceled, evidence },
+        submitted,
+      ),
+    ).toEqual({
+      _tag: 'RecoveryFound',
+      brokerOrderId,
+      evidence,
+      terminalOutcome: TerminalOutcome.Canceled,
+    })
+  })
 })

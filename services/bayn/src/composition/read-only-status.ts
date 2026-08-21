@@ -132,6 +132,8 @@ export const refreshReadOnlyCapitalActivation = (
     })
 
   return Effect.gen(function* () {
+    const startupState = yield* Ref.get(state)
+    if (startupState.status === 'FAILED') return
     if (Result.isFailure(configured)) {
       yield* pendingCapitalActivation(state, null, 'REQUEST_INVALID')
       return yield* logActivationUnavailable('REQUEST_INVALID')

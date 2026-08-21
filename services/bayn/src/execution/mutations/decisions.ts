@@ -115,6 +115,7 @@ const intentStateForIdentifiedSubmit = (
   intentId: string,
   expectedMutationId: string,
   brokerOrderId: string,
+  currentIntentState: IntentState,
 ): IntentState | undefined => {
   if (
     event?.operation !== MutationOperation.Submit ||
@@ -129,9 +130,12 @@ const intentStateForIdentifiedSubmit = (
     case MutationEventType.RecoveryFound:
       return IntentState.Acknowledged
     case MutationEventType.SubmitUnknown:
+      return IntentState.Unknown
     case MutationEventType.RecoveryNotFound:
     case MutationEventType.RecoveryUnknown:
-      return IntentState.Unknown
+      return currentIntentState === IntentState.Acknowledged || currentIntentState === IntentState.Unknown
+        ? currentIntentState
+        : undefined
     default:
       return undefined
   }
@@ -421,6 +425,7 @@ const decideMutationStartDataFirst = (
             input.intentId,
             expectedSubmittedMutationId.success,
             input.brokerOrderId,
+            intent.state,
           )
   if (requiredState === undefined) {
     return Result.fail(
@@ -596,7 +601,7 @@ export const decideMutationOutcomeDefinition = (definition: MutationOutcomeDefin
                 },
               }),
         cancelFirst:
-          definition.operation === MutationOperation.Submit && definition.terminalOutcome !== undefined
+          definition.operation === MutationOperation.Submit
             ? { _tag: 'RequireNoDurableCancellation' }
             : { _tag: 'SkipCancelFirstRead' },
       }
@@ -605,14 +610,20 @@ export const decideMutationOutcomeDefinition = (definition: MutationOutcomeDefin
         operation: definition.operation,
         eventType: MutationEventType.RecoveryNotFound,
         transition: { _tag: 'KeepIntentState' },
-        cancelFirst: { _tag: 'SkipCancelFirstRead' },
+        cancelFirst:
+          definition.operation === MutationOperation.Submit
+            ? { _tag: 'RequireNoDurableCancellation' }
+            : { _tag: 'SkipCancelFirstRead' },
       }
     case 'RecoveryUnknown':
       return {
         operation: definition.operation,
         eventType: MutationEventType.RecoveryUnknown,
         transition: { _tag: 'KeepIntentState' },
-        cancelFirst: { _tag: 'SkipCancelFirstRead' },
+        cancelFirst:
+          definition.operation === MutationOperation.Submit
+            ? { _tag: 'RequireNoDurableCancellation' }
+            : { _tag: 'SkipCancelFirstRead' },
       }
   }
 }
@@ -864,7 +875,7 @@ const decideCancelFirstDataFirst = (
         storeError({
           operation: 'record-recovery',
           failure: 'conflict',
-          message: 'terminal submit recovery cannot overtake a durable cancellation',
+          message: 'submit recovery cannot overtake a durable cancellation',
         }),
       )
     : Result.succeed(undefined)

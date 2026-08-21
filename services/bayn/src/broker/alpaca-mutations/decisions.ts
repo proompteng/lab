@@ -42,6 +42,7 @@ export interface ResolvedMutationCapability {
   readonly connection: BrokerConnection
   readonly expectedAccountId: string
   readonly operationTimeoutMs: number
+  readonly fractionalTrading: boolean
   readonly key: string
   readonly secret: string
 }
@@ -309,6 +310,7 @@ const resolveMutationCapabilityDataFirst = (
       connection,
       expectedAccountId: connection.expectedAccountId,
       operationTimeoutMs: connection.operationTimeoutMs,
+      fractionalTrading: preflight.fractionalTrading,
       key: Redacted.value(connection.key),
       secret: Redacted.value(connection.secret),
     }
@@ -500,6 +502,13 @@ export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<Orde
   return Result.isFailure(brokerNotional)
     ? Result.fail(brokerNotional.failure)
     : Result.succeed({ ...common, notional: microsToDecimal(BigInt(brokerNotional.success)) })
+}
+
+export const orderRequestRequiresFractionalTrading = (request: OrderRequestBody): boolean => {
+  if ('notional' in request) return true
+  if (!('qty' in request)) return false
+  const [, fractional = ''] = request.qty.split('.', 2)
+  return fractional.replace(/0+$/, '').length > 0
 }
 
 const legacyUnquantizedNotionalMarketOrderRequestBody = (

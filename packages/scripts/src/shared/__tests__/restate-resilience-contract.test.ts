@@ -31,6 +31,74 @@ test('Restate cluster uses three stable 1.7.2 nodes with hard host separation', 
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__DESTINATION')).toBe('s3://restate-snapshots/partitions')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL')).toBe('30m')
   expect(env.get('RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED')).toBe('2')
+  expect(statefulSet.spec.template.spec.initContainers).toHaveLength(1)
+  expect(statefulSet.spec.template.spec.initContainers[0]).toMatchObject({
+    name: 'snapshot-scale-up-gate',
+    image: 'docker.restate.dev/restatedev/restate:1.7.2',
+  })
+})
+
+test('Restate followers cannot start before singleton snapshot coverage is complete', () => {
+  const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
+  const script = statefulSet.spec.template.spec.initContainers[0].command[2] as string
+  const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
+  const restatectl = `${tempDir}/restatectl`
+  const sleep = `${tempDir}/sleep`
+  const calls = `${tempDir}/calls`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" status "*) exit 0 ;;
+  *" partitions list "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      archived=100
+      if { [ "$i" -eq 0 ] && [ ! -f "${tempDir}/p0" ]; } || { [ "$i" -eq 1 ] && [ ! -f "${tempDir}/p1" ]; }; then archived=-; fi
+      echo "$i N1:6 Leader Active e6 100 100 $archived 0 1 v62 - journal_v2 now"
+      i=$((i + 1))
+    done
+    ;;
+  *" snapshots create 0 "*) echo 0 >>"${calls}"; touch "${tempDir}/p0"; echo 'Snapshot created for partition 0' ;;
+  *" snapshots create 1 "*) echo 1 >>"${calls}"; touch "${tempDir}/p1"; echo 'Snapshot created for partition 1' ;;
+  *" snapshots create "*) echo "unexpected snapshot request: $*" >&2; exit 91 ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const run = (podName: string) =>
+      Bun.spawnSync(['/bin/bash', '-ceu', script], {
+        env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}`, POD_NAME: podName },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+
+    expect(run('restate-1').exitCode).toBe(0)
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
+
+    rmSync(`${tempDir}/p0`, { force: true })
+    rmSync(`${tempDir}/p1`, { force: true })
+    rmSync(calls, { force: true })
+    const followerWithoutSnapshot = run('restate-2')
+    expect(followerWithoutSnapshot.exitCode).not.toBe(0)
+    expect(followerWithoutSnapshot.stderr.toString()).toContain(
+      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
+    )
+    expect(Bun.file(calls).size).toBe(0)
+
+    writeFileSync(`${tempDir}/p0`, '')
+    writeFileSync(`${tempDir}/p1`, '')
+    expect(run('restate-2').exitCode).toBe(0)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate HA migration preserves quorum and changes existing replication only after membership converges', () => {
@@ -374,10 +442,75 @@ test('Restate snapshots use the existing Rook OBC contract and block rollout unt
   expect(rollback).toContain('metadata-server remove-node "$remove_ids"')
   expect(rollback).toContain('create_all_partition_snapshots --trim-log')
   expect(rollback).toContain('$8 ~ /^[1-9][0-9]*$/')
-  expect(rollback).toContain('Refusing rollback before all safety snapshots are archived')
+  expect(rollback).toContain('Refusing rollback before safety snapshots cover every rollback target LSN')
   expect(kustomization).toContain('- objectbucketclaim.yaml')
   expect(kustomization).not.toContain('- singleton-rollback-guard.yaml')
   expect(kustomization).toContain('- snapshot-bootstrap-job.yaml')
+})
+
+test('Restate singleton rollback waits until archived snapshots cover the pre-request durable LSN', () => {
+  const rollback = YAML.parse(readRepoFile('argocd/applications/restate/singleton-rollback-guard.yaml')) as Record<
+    string,
+    any
+  >
+  const script = rollback.spec.template.spec.containers[0].command[2] as string
+  const start = script.indexOf('create_all_partition_snapshots() {')
+  const end = script.indexOf('\n\nsingleton_converged() {', start)
+  expect(start).toBeGreaterThanOrEqual(0)
+  expect(end).toBeGreaterThan(start)
+  const functions = script.slice(start, end)
+  const tempDir = mkdtempSync('/tmp/restate-rollback-snapshot-target-')
+  const restatectl = `${tempDir}/restatectl`
+  const sleep = `${tempDir}/sleep`
+  const partitionReads = `${tempDir}/partition-reads`
+
+  try {
+    writeFileSync(
+      restatectl,
+      `#!/bin/sh
+set -eu
+case " $* " in
+  *" partitions list "*)
+    reads=$(cat "${partitionReads}" 2>/dev/null || echo 0)
+    reads=$((reads + 1))
+    echo "$reads" >"${partitionReads}"
+    i=0
+    while [ "$i" -lt 24 ]; do
+      archived=100
+      [ "$reads" -lt 3 ] || archived=200
+      echo "$i N1:6 Leader Active e6 200 200 $archived 0 1 v62 - journal_v2 now"
+      i=$((i + 1))
+    done
+    ;;
+  *" snapshots create "*)
+    i=0
+    while [ "$i" -lt 24 ]; do
+      echo "Snapshot created for partition $i: snap"
+      i=$((i + 1))
+    done
+    ;;
+  *) echo "unexpected restatectl invocation: $*" >&2; exit 90 ;;
+esac
+`,
+    )
+    writeFileSync(sleep, '#!/bin/sh\nexit 0\n')
+    chmodSync(restatectl, 0o755)
+    chmodSync(sleep, 0o755)
+
+    const result = Bun.spawnSync(
+      [
+        '/bin/bash',
+        '-ceu',
+        `address=http://restate-0\n${functions}\ncapture_snapshot_targets\ncreate_all_partition_snapshots\nwait_all_partitions_archived`,
+      ],
+      { env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}` }, stdout: 'pipe', stderr: 'pipe' },
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(Number(readFileSync(partitionReads, 'utf8').trim())).toBe(3)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('Restate snapshot bootstrap retries only partitions whose repository status is missing or invalid', () => {

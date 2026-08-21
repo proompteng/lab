@@ -10,6 +10,7 @@ import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {
   classifyCancelResponse,
   classifySubmitResponse,
+  orderRequestRequiresFractionalTrading,
   prepareCancel,
   prepareSubmit,
   resolveMutationCapability,
@@ -118,6 +119,12 @@ const makeMutationDataFirst = (
     })(
       function* (input: Intent) {
         const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
+        if (!runtime.fractionalTrading && orderRequestRequiresFractionalTrading(prepared.request)) {
+          return yield* invalidRequest({
+            operation: MutationOperation.Submit,
+            message: 'order requires fractional trading but the broker account configuration disables it',
+          })
+        }
         const request = yield* HttpClientRequest.bodyJson(
           HttpClientRequest.post(submitOrderUrl(runtime.connection), {
             acceptJson: true,

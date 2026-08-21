@@ -906,7 +906,7 @@ describe('Bayn continuous health', () => {
         maximumCloseSessions: 3,
       },
     }
-    const transition = deriveHealthTransition(current, {
+    const input = {
       config,
       evidenceAvailable: true,
       results: {
@@ -941,10 +941,20 @@ describe('Bayn continuous health', () => {
       broker: undefined,
       cycleFiber: { _tag: 'NotProvided' },
       clock: availableClock(checkedAt),
-    })
+    } as const
+    const transition = deriveHealthTransition(current, input)
 
     expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+
+    const terminal = deriveHealthTransition(
+      { ...current, status: 'FAILED', error: 'terminal qualification failure' },
+      input,
+    )
+    expect(terminal.next).toMatchObject({
+      status: 'FAILED',
+      error: 'terminal qualification failure',
+    })
   })
 
   test('projects a completed execution episode against returned OBSERVE authority', () => {

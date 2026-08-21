@@ -548,6 +548,35 @@ class ForwarderApp(
     }) {
       var authOk = false
       var subscribedOk = false
+      val subscribedSince = AtomicReference<Instant?>(null)
+      val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
+      val starvationStatusPublished = AtomicBoolean(false)
+      var readyNotified = false
+
+      fun updateWsReady() {
+        val now = Instant.ofEpochMilli(nowMs())
+        val eventStarved =
+          optionsEventStarved(
+            now = now,
+            lastEventAt = lastOptionsMarketDataEventAt.get(),
+            subscribedSince = subscribedSince.get(),
+            subscribedCount = if (subscribedOk) 1 else 0,
+            marketType = config.alpacaMarketType,
+            marketHolidays = config.optionsMarketHolidays,
+          )
+        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+          metrics.setOptionsEventStarvation(eventStarved)
+          if (eventStarved) {
+            recordFeedError(feed, ReadinessErrorClass.OptionsEventStarvation)
+          }
+        }
+        val nowReady = marketDataSessionReady(authOk, subscribedOk, eventStarved)
+        setFeedWsReady(feed, nowReady)
+        if (nowReady && !readyNotified) {
+          onReady()
+          readyNotified = true
+        }
+      }
 
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
         while (true) {
@@ -556,9 +585,10 @@ class ForwarderApp(
               incoming.receive()
             }
           if (frame == null) {
+            updateWsReady()
             val reconnect =
               marketDataIdleRequiresReconnect(
-                sessionReady = authOk && subscribedOk,
+                sessionReady = feed.websocketReady.get(),
                 now = Instant.ofEpochMilli(nowMs()),
                 marketType = config.alpacaMarketType,
                 marketHolidays = config.optionsMarketHolidays,
@@ -596,34 +626,6 @@ class ForwarderApp(
 
       val subscribedSymbols = mutableSetOf<String>()
       val subscribedLock = Mutex()
-      var readyNotified = false
-      val subscribedSince = AtomicReference<Instant?>(null)
-      val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
-      val starvationStatusPublished = AtomicBoolean(false)
-
-      fun updateWsReady() {
-        val eventStarved =
-          optionsEventStarved(
-            now = Instant.ofEpochMilli(nowMs()),
-            lastEventAt = lastOptionsMarketDataEventAt.get(),
-            subscribedSince = subscribedSince.get(),
-            subscribedCount = if (subscribedOk) 1 else 0,
-            marketType = config.alpacaMarketType,
-            marketHolidays = config.optionsMarketHolidays,
-          )
-        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-          metrics.setOptionsEventStarvation(eventStarved)
-          if (eventStarved) {
-            recordFeedError(feed, ReadinessErrorClass.OptionsEventStarvation)
-          }
-        }
-        val nowReady = authOk && subscribedOk && !eventStarved
-        setFeedWsReady(feed, nowReady)
-        if (nowReady && !readyNotified) {
-          onReady()
-          readyNotified = true
-        }
-      }
 
       suspend fun awaitAuthOrThrow() {
         // Alpaca rejects subscribe requests before a successful auth handshake; if we get an error,
@@ -1583,6 +1585,7 @@ class ForwarderApp(
     msg: AlpacaMessage,
   ) {
     val observed = observedMarketDataMessage(msg) ?: return
+    feed.channelFreshness.recordDeliveryFailure(observed.channel, observed.symbol)
     val reason = marketDataEnvelopeDropReason(msg)
     metrics.recordMarketDataDrop(config.alpacaMarketType, feed.config.feed, observed.channel, reason)
     if (feed.envelopeDropLogged.compareAndSet(false, true)) {
@@ -2006,6 +2009,12 @@ internal fun optionsEventStarved(
   if (marketType != AlpacaMarketType.OPTIONS || subscribedCount <= 0 || !isRegularMarketSession(now, marketHolidays)) {
     return false
   }
+
+internal fun marketDataSessionReady(
+  authOk: Boolean,
+  subscribedOk: Boolean,
+  eventStarved: Boolean,
+): Boolean = authOk && subscribedOk && !eventStarved
   val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
   return Duration.between(lastHealthyEvent, now) >= grace
 }

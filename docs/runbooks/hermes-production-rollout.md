@@ -15,6 +15,7 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.
 - Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.
 - Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
+- Every Exa API key rotation must restart `hermes-0` and repeat both native-web and Exa MCP canaries before acceptance.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
 - Roll out and cut over only from merged `main`; do not deploy manifests from an unmerged worktree.
@@ -531,6 +532,90 @@ Stop and roll back the 1Password value if the Secret does not refresh, the repla
 key remains accepted, the replacement port-forward does not become ready, or the new key fails. Use 1Password item history
 from a new private shell if the fail-fast process has already exited. ExternalSecret `Ready` alone is not rotation proof.
 
+## Exa API key rotation
+
+`EXA_API_KEY` is injected as a container environment variable, so an ExternalSecret refresh alone does not update the
+running gateway. Rotate/revoke the key in the Exa dashboard first, then enter the replacement only in a dedicated private
+shell. The bounded procedure below updates the single concealed 1Password field, forces the ExternalSecret refresh, waits
+for a new Kubernetes Secret resource version, restarts `hermes-0`, and proves both Exa integration paths with the new
+process environment. It emits no key material:
+
+```bash
+set -euo pipefail
+new_exa_api_key=
+cleanup_exa_rotation() {
+  unset new_exa_api_key previous_exa_secret_version current_exa_secret_version
+}
+trap cleanup_exa_rotation EXIT
+trap 'exit 1' HUP INT TERM
+IFS= read -r -s -p 'New Exa API key: ' new_exa_api_key
+printf '\n' >&2
+test "${#new_exa_api_key}" -ge 32
+previous_exa_secret_version=$(kubectl -n hermes get secret hermes-exa-auth -o jsonpath='{.metadata.resourceVersion}')
+op item get --vault infra hermes-runtime --format json | \
+  jq --rawfile exa_api_key <(printf '%s' "$new_exa_api_key") '
+    ([.fields[] | select(.label == "EXA_API_KEY")] | length) as $count
+    | if $count == 1 then
+        .fields |= map(if .label == "EXA_API_KEY" then .type = "CONCEALED" | .value = $exa_api_key else . end)
+      else
+        error("exactly one EXA_API_KEY field is required")
+      end
+  ' | op item edit --vault infra hermes-runtime >/dev/null
+op item get --vault infra hermes-runtime --format json | \
+  jq -e --rawfile exa_api_key <(printf '%s' "$new_exa_api_key") \
+    '[.fields[] | select(.label == "EXA_API_KEY" and .type == "CONCEALED" and .value == $exa_api_key)] | length == 1' \
+    >/dev/null
+kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync="$(date +%s)" --overwrite
+current_exa_secret_version=$previous_exa_secret_version
+for _ in $(seq 1 72); do
+  current_exa_secret_version=$(kubectl -n hermes get secret hermes-exa-auth -o jsonpath='{.metadata.resourceVersion}')
+  [ "$current_exa_secret_version" != "$previous_exa_secret_version" ] && break
+  sleep 5
+done
+test "$current_exa_secret_version" != "$previous_exa_secret_version"
+kubectl -n hermes delete pod hermes-0
+kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+kubectl -n hermes exec -i hermes-0 -c hermes -- /opt/hermes/.venv/bin/python - <<'PY'
+import asyncio
+import json
+
+from tools.web_tools import web_extract_tool, web_search_tool
+
+search = json.loads(web_search_tool("Hermes Agent GitHub", limit=2))
+assert search.get("success") is True, search
+results = search.get("data", {}).get("web", [])
+assert len(results) == 2, search
+extract = json.loads(
+    asyncio.run(
+        web_extract_tool(
+            ["https://exa.ai/docs/reference/exa-mcp"],
+            format="markdown",
+            char_limit=4000,
+        )
+    )
+)
+pages = extract.get("results", [])
+assert len(pages) == 1 and not pages[0].get("error"), extract
+print(f"exa_rotation_native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
+PY
+kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
+  set -eu
+  mcp_test=$(hermes mcp test exa 2>&1)
+  printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
+  printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
+  printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
+  printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
+  printf "exa_rotation_mcp_canary=ok tools=2\n"
+'
+cleanup_exa_rotation
+trap - EXIT HUP INT TERM
+```
+
+If the Secret does not change, the replacement Pod does not become Ready, or either canary fails, restore the prior
+1Password value from item history, force-sync `hermes-exa-auth`, restart `hermes-0` again, and rerun both canaries. A
+successful ExternalSecret condition without a gateway restart is not proof that the running process uses the replacement
+key.
+
 ## Maintenance lock recovery
 
 Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC.
@@ -825,11 +910,14 @@ Cutover sequence:
    set -euo pipefail
    test -n "${maintenance_holder:-}"
    test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
-   if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then
+   openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)
+   if [ -n "$openclaw_cluster_admin_binding" ]; then
      argocd app sync openclaw --prune \
        --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin
    fi
-   test -z "$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)"
+   openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)
+   test -z "$openclaw_cluster_admin_binding"
+   unset openclaw_cluster_admin_binding
    openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json | jq -r '
      if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"
      elif .spec.runStrategy == "Always" and (.spec | has("running") | not) then "runstrategy-running"

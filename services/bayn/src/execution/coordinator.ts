@@ -453,6 +453,7 @@ const recoverAtBroker = (
   stored: StoredIntent,
   operation: MutationOperation,
   interrupted: MutationEvent,
+  submitted?: MutationEvent,
 ) =>
   services.broker.orderByClientId(stored.intent.clientOrderId).pipe(
     Effect.matchEffect({
@@ -472,7 +473,7 @@ const recoverAtBroker = (
           operation,
           interrupted.requestHash,
           interrupted,
-          decideRecoverySuccess(stored.intent, operation, interrupted, result),
+          decideRecoverySuccess(stored.intent, operation, interrupted, result, submitted),
         ),
     }),
   )
@@ -483,21 +484,21 @@ const continueRecovery = (
   operation: MutationOperation,
   event: MutationEvent,
 ) =>
-  (operation === MutationOperation.Submit
-    ? services.mutations.latest(stored.intent.intentId, MutationOperation.Cancel)
-    : Effect.as(Effect.void, undefined)
-  ).pipe(
-    Effect.flatMap((cancellation) => liftDecision(validateRecovery(stored.intent, event, cancellation))),
-    Effect.andThen(Clock.currentTimeMillis),
-    Effect.flatMap((currentMillis) =>
-      liftDecision(ensureRecoveryDelay(operation, event, currentMillis)).pipe(
-        Effect.flatMap((ready) =>
-          markInterruptedStart(services.mutations, ready, utcInstantFromEpochMillis(currentMillis)),
-        ),
-      ),
-    ),
-    Effect.flatMap((interrupted) => recoverAtBroker(services, stored, operation, interrupted)),
-  )
+  Effect.gen(function* () {
+    const cancellation =
+      operation === MutationOperation.Submit
+        ? yield* services.mutations.latest(stored.intent.intentId, MutationOperation.Cancel)
+        : undefined
+    yield* liftDecision(validateRecovery(stored.intent, event, cancellation))
+    const currentMillis = yield* Clock.currentTimeMillis
+    const ready = yield* liftDecision(ensureRecoveryDelay(operation, event, currentMillis))
+    const interrupted = yield* markInterruptedStart(services.mutations, ready, utcInstantFromEpochMillis(currentMillis))
+    const submitted =
+      operation === MutationOperation.Cancel
+        ? yield* services.mutations.latest(stored.intent.intentId, MutationOperation.Submit)
+        : undefined
+    return yield* recoverAtBroker(services, stored, operation, interrupted, submitted)
+  })
 
 const runRecovery = (services: RecoveryServices, intentId: string, operation: MutationOperation) =>
   readIntent(operation, intentId).pipe(

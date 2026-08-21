@@ -549,6 +549,7 @@ const decideRecoverySuccessDataFirst = (
   operation: MutationOperation,
   interrupted: MutationEvent,
   result: ReadResult<Order>,
+  submitted?: MutationEvent,
 ): RecoveryPersistenceDecision => {
   const evidence = mutationEvidence(result.evidence)
   const outcome = terminalOutcome(result.value.status)
@@ -560,11 +561,10 @@ const decideRecoverySuccessDataFirst = (
     outcome !== TerminalOutcome.Filled
   const exactBrokerOrderId =
     interrupted.brokerOrderId === undefined || interrupted.brokerOrderId === result.value.brokerOrderId
-  const request =
-    operation === MutationOperation.Submit
-      ? compatibleOrderRequestBody(intent, interrupted.requestHash)
-      : orderRequestBody(intent)
-  const matchesIntent = Result.isSuccess(request) && exactOrder(intent, request.success, result.value)
+  const requestHash = operation === MutationOperation.Submit ? interrupted.requestHash : submitted?.requestHash
+  const request = requestHash === undefined ? undefined : compatibleOrderRequestBody(intent, requestHash)
+  const matchesIntent =
+    request !== undefined && Result.isSuccess(request) && exactOrder(intent, request.success, result.value)
 
   return (!exactBrokerOrderId || !matchesIntent) && !neutralizedMismatchedOrder
     ? { _tag: 'RecoveryUnknown', evidence }

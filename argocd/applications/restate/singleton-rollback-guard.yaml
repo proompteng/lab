@@ -59,20 +59,52 @@ spec:
                 '
               }
 
+              snapshot_targets=/tmp/restate-rollback-snapshot-targets.$$
+              capture_snapshot_targets() {
+                local partitions
+                partitions="$(restatectl --address "$address" partitions list 2>&1)" || {
+                  printf '%s\n' "$partitions" >&2
+                  return 1
+                }
+                printf '%s\n' "$partitions"
+                printf '%s\n' "$partitions" | awk '
+                  $1 ~ /^[0-9]+$/ && $7 ~ /^[0-9]+$/ {
+                    seen[$1] = 1
+                    if (!($1 in durable) || $7 + 0 > durable[$1] + 0) durable[$1] = $7
+                  }
+                  END {
+                    for (i = 0; i < 24; i += 1) {
+                      if (!(i in seen) || !(i in durable)) exit 1
+                      print i, durable[i]
+                    }
+                  }
+                ' >"$snapshot_targets"
+              }
+
               wait_all_partitions_archived() {
                 local partitions
                 for attempt in $(seq 1 90); do
                   if partitions="$(restatectl --address "$address" partitions list 2>&1)"; then
                     printf '%s\n' "$partitions"
-                    if printf '%s\n' "$partitions" | awk '
+                    if awk '
+                      NR == FNR {
+                        target[$1] = $2
+                        next
+                      }
                       $1 ~ /^[0-9]+$/ {
                         seen[$1] = 1
-                        if ($8 ~ /^[1-9][0-9]*$/) archived[$1] = 1
+                        if ($8 ~ /^[1-9][0-9]*$/ && (!($1 in archived) || $8 + 0 > archived[$1] + 0)) {
+                          archived[$1] = $8
+                        }
                       }
                       END {
-                        for (i = 0; i < 24; i += 1) if (!(i in seen) || !(i in archived)) exit 1
+                        for (i = 0; i < 24; i += 1) {
+                          if (!(i in target) || !(i in seen) || !(i in archived) || archived[i] + 0 < target[i] + 0) {
+                            exit 1
+                          }
+                        }
                       }
-                    '; then
+                    ' "$snapshot_targets" - <<<"$partitions"; then
                       return 0
                     fi
                   fi
@@ -124,8 +156,9 @@ spec:
                 }
               done
 
+              capture_snapshot_targets || { echo "Refusing rollback without a durable LSN target for all 24 partitions" >&2; exit 1; }
               create_all_partition_snapshots || { echo "Refusing rollback without 24 successful safety snapshots" >&2; exit 1; }
-              wait_all_partitions_archived || { echo "Refusing rollback before all safety snapshots are archived" >&2; exit 1; }
+              wait_all_partitions_archived || { echo "Refusing rollback before safety snapshots cover every rollback target LSN" >&2; exit 1; }
               config="$(restatectl --address "$address" config get)"
               if printf '%s\n' "$config" | grep -Fq 'Partition replication: {node: 2}' && printf '%s\n' "$config" | grep -Fq 'Log replication: {node: 2}'; then
                 restatectl --yes --address "$address" config set --replication 1

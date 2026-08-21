@@ -107,7 +107,7 @@ import {
 import { executionControllerConfig } from './composition/native-execution-runtime'
 import { recoverPendingCapitalActivationToObserve } from './composition/autonomous-runtime'
 import { ReconciliationError } from './reconciler'
-import { initialState, type RuntimeEvidence } from './runtime-state'
+import { initialState, type RuntimeEvidence, type RuntimeState } from './runtime-state'
 import { decodeDefaultOpeningDriveProtocol, makeOpeningDriveDefinition } from './strategy'
 import { openingDriveBehaviorHash } from './strategy/opening-drive'
 import { fixtureProtocol } from './test-fixtures'
@@ -995,6 +995,48 @@ describe('Bayn capital startup recovery boundary', () => {
     })
   })
 
+  test('preserves terminal startup failure instead of projecting capital afterward', async () => {
+    const state = await Effect.runPromise(
+      Ref.make<RuntimeState>({
+        ...initialState({
+          broker: {
+            expectedAccountId: continuationAccountId,
+            executionEligible: false,
+            executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+          },
+        }),
+        status: 'FAILED' as const,
+        error: 'terminal pinned qualification failure',
+      }),
+    )
+    const unreachable = Effect.die(new Error('terminal startup failure must not inspect capital authority'))
+
+    await Effect.runPromise(
+      refreshReadOnlyCapitalActivation(
+        continuationApplicationPlan,
+        Result.succeed({
+          request: continuationRequest,
+          buildContinuation: researchBuildContinuation,
+          buildLineage: null,
+        }),
+        state,
+        {
+          authority: {
+            ensureAuthorityGeneration: () => unreachable,
+            readAuthorityState: unreachable,
+          },
+          readReceiptHash: () => unreachable,
+        },
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      capitalActivation: { _tag: 'NotConfigured' },
+      error: 'terminal pinned qualification failure',
+    })
+  })
+
   test('fails closed on invalid activation configuration before durable reads', async () => {
     const state = await Effect.runPromise(
       Ref.make(
@@ -1811,8 +1853,9 @@ describe('Bayn capital startup recovery boundary', () => {
       activateCapitalGrant: () => Effect.die(new Error('research activation must not activate qualified authority')),
       activatePreparedCapitalGrant: () =>
         Effect.die(new Error('research activation must not activate prepared qualified authority')),
-      activateResearchCapitalGrant: (_proof, sourceGenerationHash) =>
+      activateResearchCapitalGrant: (_proof, sourceGenerationHash, cutoffAt) =>
         Effect.sync(() => {
+          expect(cutoffAt).toBe(researchRequest.cutoffAt)
           operations.push(`activate:${sourceGenerationHash}`)
           authority = {
             schemaVersion: 'bayn.paper-authority.v1',

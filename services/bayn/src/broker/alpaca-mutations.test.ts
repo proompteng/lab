@@ -111,6 +111,7 @@ const verifiedSession = (
   options: {
     readonly operationTimeoutMs?: number
     readonly read?: Partial<BrokerReadShape>
+    readonly preflight?: Partial<ReadPreflight>
   } = {},
 ): BrokerSessionShape => ({
   connection: {
@@ -129,7 +130,7 @@ const verifiedSession = (
     marketCalendar: unusedMarketCalendar,
     ...options.read,
   },
-  preflight,
+  preflight: { ...preflight, ...options.preflight },
 })
 
 interface MutationHarnessOptions {
@@ -361,6 +362,49 @@ describe('Alpaca broker mutations', () => {
       failure: 'invalid-order',
       notionalLimitMicros: '999999',
     })
+  })
+
+  test('preserves typed order-request detail at the broker boundary', async () => {
+    const client = HttpClient.make(() => Effect.die(new Error('invalid request must not reach broker I/O')))
+    const invalidIntent = {
+      ...intent,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.submit(invalidIntent))),
+    )
+
+    expect(failure).toMatchObject({
+      failure: MutationFailure.InvalidRequest,
+      cause: {
+        tag: 'OrderRequestError',
+        failure: 'invalid-order',
+        message: 'fractional market orders require DAY time in force',
+      },
+    })
+  })
+
+  test('allows a read-valid account with fractional trading disabled but blocks a notional mutation before broker I/O', async () => {
+    let calls = 0
+    const client = HttpClient.make(() => {
+      calls += 1
+      return Effect.die(new Error('fractional-ineligible mutation must not reach broker I/O'))
+    })
+    const session = verifiedSession({ preflight: { fractionalTrading: false } })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.submit(intent), { session })),
+    )
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.InvalidRequest,
+      outcome: MutationOutcome.Known,
+      message: 'order requires fractional trading but the broker account configuration disables it',
+    })
+    expect(calls).toBe(0)
   })
 
   test('refuses to construct mutation capability without explicit submit-orders access', async () => {

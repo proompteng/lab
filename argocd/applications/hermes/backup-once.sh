@@ -41,6 +41,7 @@ import sqlite3
 import sys
 import tempfile
 import zipfile
+from pathlib import Path
 
 archive = sys.argv[1]
 database_count = 0
@@ -49,7 +50,7 @@ with zipfile.ZipFile(archive) as backup:
     if corrupt_entry is not None:
         raise RuntimeError(f"corrupt zip entry: {corrupt_entry}")
     for entry in (candidate for candidate in backup.infolist() if candidate.filename.endswith(".db")):
-        with tempfile.NamedTemporaryFile(dir="/tmp", suffix=".db") as extracted:
+        with tempfile.NamedTemporaryFile(dir=Path(archive).parent, suffix=".db") as extracted:
             with backup.open(entry) as source:
                 shutil.copyfileobj(source, extracted)
             extracted.flush()

@@ -198,7 +198,15 @@ class RealTigerBeetleClient:
                 return
             self._closed = True
             client = self._client
-        client.close()
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+            return
+        exit_context = getattr(client, "__exit__", None)
+        if callable(exit_context):
+            exit_context(None, None, None)
+            return
+        raise TigerBeetleClientError("tigerbeetle_client_cleanup_unavailable")
 
     def _run(self, operation_name: str, operation: Callable[[], _T]) -> _T:
         with self._close_lock:
