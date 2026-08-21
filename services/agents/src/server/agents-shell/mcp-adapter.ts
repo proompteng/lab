@@ -26,6 +26,11 @@ export type EffectToolContext = {
   config: AgentsShellConfig
   runner: AgentsShellRunner
   auth: AuthContext
+  sessionId: string
+}
+
+export type EffectToolContextSource = Omit<EffectToolContext, 'auth'> & {
+  auth: AuthContext | (() => AuthContext)
 }
 
 export class AgentsShellServices extends Context.Tag('agents-shell/Services')<
@@ -129,39 +134,59 @@ const callEffectTool = (tool: EffectTool, value: unknown) =>
     })
   })
 
+export const effectToolsToWireTools = (tools: readonly EffectTool<any, any>[]) =>
+  tools.map((tool) => ({
+    name: tool.name,
+    title: tool.title,
+    description: tool.description,
+    inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
+    annotations: tool.annotations,
+    securitySchemes: tool.securitySchemes,
+    _meta: tool._meta,
+  }))
+
+export const measureEffectToolSchemaBytes = (tools: readonly EffectTool<any, any>[]) =>
+  Buffer.byteLength(JSON.stringify({ tools: effectToolsToWireTools(tools) }))
+
 export const installEffectToolHandlers = (
   server: McpServer,
   tools: readonly EffectTool<any, any>[],
-  context: EffectToolContext,
+  context: EffectToolContextSource,
 ) => {
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]))
-  const toolLayer = makeAgentsShellServicesLayer(context)
+  const wireTools = effectToolsToWireTools(tools)
+  const toolSchemaBytes = measureEffectToolSchemaBytes(tools)
+  if (!Number.isSafeInteger(context.config.maxToolSchemaBytes) || context.config.maxToolSchemaBytes < 1) {
+    throw new Error('maxToolSchemaBytes must be a positive safe integer')
+  }
+  if (toolSchemaBytes > context.config.maxToolSchemaBytes) {
+    throw new Error(
+      `agents-shell tool schema is ${toolSchemaBytes} bytes, exceeding explicit ceiling ${context.config.maxToolSchemaBytes}`,
+    )
+  }
 
   server.server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: tools.map((tool) => ({
-      name: tool.name,
-      title: tool.title,
-      description: tool.description,
-      inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
-      annotations: tool.annotations,
-      securitySchemes: tool.securitySchemes,
-      _meta: tool._meta,
-    })),
+    tools: wireTools,
   }))
 
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const tool = toolByName.get(request.params.name)
     if (!tool) return errorResult(`Tool ${request.params.name} not found`)
+    const toolContext: EffectToolContext = {
+      ...context,
+      auth: typeof context.auth === 'function' ? context.auth() : context.auth,
+    }
+    const toolLayer = makeAgentsShellServicesLayer(toolContext)
 
     try {
       return await Effect.runPromise(
         callEffectTool(tool, request.params.arguments ?? {}).pipe(
-          Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
+          Effect.catchAll((error) => Effect.succeed(mapToolError(toolContext.config, error))),
           Effect.provide(toolLayer),
         ),
       )
     } catch (error) {
-      return mapToolError(context.config, error)
+      return mapToolError(toolContext.config, error)
     }
   })
 }

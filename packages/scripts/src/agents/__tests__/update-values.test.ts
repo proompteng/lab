@@ -37,6 +37,17 @@ agentsShell:
     repository: old/shell
     tag: old
     digest: sha256:old-shell
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  workspace:
+    seedReadOnly: false
 controllers:
   image:
     repository: old/controller
@@ -73,6 +84,12 @@ controllers:
       expect(updated).toContain(`digest: ${controlPlaneDigest}`)
       expect(updated).toContain(`digest: ${agentsShellDigest}`)
       expect(updated).toContain(`digest: ${runnerDigest}`)
+      expect(updated).toContain('seedReadOnly: true')
+      expect(updated).toContain('runAsNonRoot: false')
+      expect(updated).toContain('runAsUser: 0')
+      for (const capability of ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETGID', 'SETUID']) {
+        expect(updated).toContain(`- ${capability}`)
+      }
       expect(updated).toContain(`AGENTS_SOURCE_HEAD_SHA: ${sha}`)
       expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "123456"')
     } finally {

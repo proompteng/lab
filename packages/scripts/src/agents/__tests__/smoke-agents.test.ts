@@ -321,6 +321,21 @@ describe('postgres smoke bootstrap', () => {
 })
 
 describe('smoke fixtures', () => {
+  it('namespaces every production isolation kubectl invocation', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/agents-ci.yml'), 'utf8')
+    const step = workflow.slice(
+      workflow.indexOf('      - name: Verify agents-shell production UID isolation'),
+      workflow.indexOf('      - name: Run Agents integration smoke test'),
+    )
+
+    expect(step).toContain('kubectl -n "${namespace}" create namespace "${namespace}"')
+    expect(step).toContain('cat <<YAML | kubectl -n "${namespace}" apply -f -')
+    expect(step).toContain('kubectl -n "${namespace}" delete namespace "${namespace}"')
+    for (const line of step.split('\n').filter((line) => line.includes('kubectl'))) {
+      expect(line).toContain('kubectl -n "${namespace}"')
+    }
+  })
+
   it('keeps the smoke agent fixture aligned with the system prompt policy', () => {
     const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'), 'utf8')
 
@@ -488,11 +503,52 @@ describe('scheduled AgentRun templates', () => {
     expect(deploymentTemplate).toContain('hasKey $workspaceBootstrap "depth"')
     expect(deploymentTemplate).toContain('value: {{ $workspaceBootstrap.depth | quote }}')
     expect(deploymentTemplate).not.toContain('default 1 $workspaceBootstrap.depth')
+    expect(deploymentTemplate).toContain(
+      'git clone --no-hardlinks "${clone_args[@]}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"',
+    )
     expect(deploymentTemplate).toContain('git -C "${GIT_TARGET_PATH}" fetch --unshallow origin "${GIT_BRANCH}"')
     expect(deploymentTemplate).toContain('timeout 60s git -C "${GIT_TARGET_PATH}" diff --quiet')
-    expect(deploymentTemplate).toContain('/workspace/.agents-shell/checkouts')
+    expect(deploymentTemplate).toContain('umask 022')
+    expect(deploymentTemplate).toContain('if [[ -L /workspace/.agents-shell ]]')
+    expect(deploymentTemplate).toContain('find /workspace/.agents-shell -type l -print -quit')
+    expect(deploymentTemplate).toContain('find /workspace/.agents-shell -type f -links +1 -print -quit')
+    expect(deploymentTemplate).toContain('discarding untrusted legacy agents-shell lease state')
+    expect(deploymentTemplate).toContain('find "${GIT_TARGET_PATH}/.git" -type l -print -quit')
+    expect(deploymentTemplate).toContain('find "${GIT_TARGET_PATH}/.git" -type f -links +1 -print -quit')
+    expect(deploymentTemplate).toContain('chown -hR 0:0 /workspace/.agents-shell')
+    expect(deploymentTemplate).toContain('chmod 0711 /workspace/.agents-shell')
+    expect(deploymentTemplate.indexOf('chown -hR 0:0 /workspace/.agents-shell')).toBeLessThan(
+      deploymentTemplate.indexOf('git -C "${GIT_TARGET_PATH}" remote set-url origin'),
+    )
+    expect(deploymentTemplate).toContain('chown -hR 0:0 "${GIT_TARGET_PATH}"')
+    expect(deploymentTemplate).toContain('git config --file "${temporary}" core.hooksPath /dev/null')
+    expect(deploymentTemplate).toContain('git config --file "${temporary}" core.fsmonitor false')
+    expect(deploymentTemplate).toContain('mv -f "${temporary}" "${config}"')
+    expect(deploymentTemplate).toContain('chmod -R a+rX "${GIT_TARGET_PATH}"')
+    expect(deploymentTemplate.indexOf('chown -hR 0:0 "${GIT_TARGET_PATH}"')).toBeLessThan(
+      deploymentTemplate.indexOf('chmod -R a+rX "${GIT_TARGET_PATH}"'),
+    )
+    expect(
+      deploymentTemplate.indexOf('migrate_checkout\n                git -C "${GIT_TARGET_PATH}" remote'),
+    ).toBeGreaterThan(0)
+    expect(deploymentTemplate).toContain('/workspace/.agents-shell-preserved-checkouts')
+    expect(deploymentTemplate).toContain('agents-shell preserved checkout root metadata is invalid')
+    expect(deploymentTemplate).toContain('migrating legacy preserved checkouts')
+    expect(deploymentTemplate).toContain('discard_rejected_link "${GIT_TARGET_PATH}" "target path is a symlink"')
+    expect(deploymentTemplate).toContain('discard_rejected_link "${GIT_TARGET_PATH}/.git" "git metadata is a symlink"')
+    expect(deploymentTemplate).toContain('preserve_checkout "git metadata symlink was discarded"')
+    expect(deploymentTemplate).not.toContain('preserve_checkout "target path is a symlink"')
+    expect(deploymentTemplate).not.toContain('preserve_checkout "git metadata is a symlink"')
     expect(deploymentTemplate).toContain('preserve_checkout "local changes or git dirty-check timeout"')
     expect(deploymentTemplate).toContain('preserve_checkout "target exists and is not an empty git checkout"')
+    const nixImage = readFileSync(resolve(process.cwd(), 'nix/images/agents.nix'), 'utf8')
+    expect(nixImage).toContain('"charts/agents/templates/agents-shell-deployment.yaml"')
+    expect(nixImage).toContain('$out/app/charts/agents/templates/agents-shell-deployment.yaml')
+    expect(nixImage).toContain('agentsShellGit = pkgs.git.overrideAttrs')
+    expect(nixImage).toContain('fcntl(fd, F_GETFD)')
+    expect(nixImage).toContain('if (fd > 2)')
+    expect(nixImage).toContain('agentsShellContents = commonContentsWithoutGit ++ [')
+    expect(nixImage).toContain('agentsShellGit')
   })
 
   it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {

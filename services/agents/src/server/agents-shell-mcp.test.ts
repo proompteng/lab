@@ -1,9 +1,8 @@
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { execFileSync, spawn } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -16,127 +15,111 @@ import {
   oauthIdentityAllowed,
   oauthProtectedResourceMetadata,
   resolveWorkspacePath,
-  startAgentsShellServer,
-  type AgentsShellConfig,
-  type AuthContext,
 } from './agents-shell-mcp'
-
-const tempRoots: string[] = []
-
-const collectTypeScriptFiles = (root: string): string[] => {
-  const files: string[] = []
-  for (const entry of readdirSync(root)) {
-    const path = join(root, entry)
-    const stat = statSync(path)
-    if (stat.isDirectory()) {
-      files.push(...collectTypeScriptFiles(path))
-    } else if (path.endsWith('.ts')) {
-      files.push(path)
-    }
-  }
-  return files
-}
-
-const makeConfig = (): AgentsShellConfig => {
-  const root = join(tmpdir(), `agents-shell-${crypto.randomUUID()}`)
-  mkdirSync(root, { recursive: true })
-  tempRoots.push(root)
-  return defaultAgentsShellConfigFromEnv({
-    AGENTS_SHELL_RESOURCE: 'https://agents-shell.example.test',
-    AGENTS_SHELL_OAUTH_ISSUER: 'https://auth.example.test/realms/master',
-    AGENTS_SHELL_WORKSPACE_ROOT: root,
-    AGENTS_SHELL_AUDIT_LOG_PATH: '',
-    AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: 'agents',
-    AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS: '5',
-    AGENTS_SHELL_MAX_TIMEOUT_SECONDS: '30',
-  })
-}
-
-const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthContext => ({
-  subject: 'user-1',
-  email: 'greg@proompteng.ai',
-  username: 'greg',
-  scopes: new Set(scopes),
-  payload: {
-    sub: 'user-1',
-    email: 'greg@proompteng.ai',
-    preferred_username: 'greg',
-    scope: scopes.join(' '),
-  },
-})
+import {
+  cleanupFixtures,
+  closeFixtureConnection,
+  connectFixture,
+  findTestExecutable,
+  fixtureExecutables,
+  listToolsOnWire,
+  makeAuth,
+  makeFixture,
+  writeTrustedExecutable,
+} from './agents-shell-test-helpers'
 
 const linkedOauthScheme = [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }]
 
-const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
-
-const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
-  const runner = new AgentsShellRunner(config)
-  const server = createAgentsShellServer(config, runner, auth)
-  const client = new Client({ name: 'agents-shell-test', version: '0.0.0' })
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
-  return { client, server, clientTransport, serverTransport }
-}
-
-const listToolsOnWire = async (config: AgentsShellConfig, auth = makeAuth()) => {
-  const runner = new AgentsShellRunner(config)
-  const server = createAgentsShellServer(config, runner, auth)
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-  await server.connect(serverTransport)
-
-  const response = await new Promise<{
-    result?: {
-      tools?: Array<{
-        name?: string
-        description?: string
-        inputSchema?: Record<string, unknown>
-        outputSchema?: Record<string, unknown>
-        securitySchemes?: unknown
-        _meta?: Record<string, unknown>
-      }>
-    }
-  }>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('timed out waiting for tools/list response')), 1000)
-    clientTransport.onmessage = (message) => {
-      clearTimeout(timeout)
-      resolve(
-        message as {
-          result?: {
-            tools?: Array<{
-              name?: string
-              description?: string
-              inputSchema?: Record<string, unknown>
-              outputSchema?: Record<string, unknown>
-              securitySchemes?: unknown
-              _meta?: Record<string, unknown>
-            }>
-          }
-        },
-      )
-    }
-    void clientTransport.send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+const mcpRequest = (body: unknown, headers: Record<string, string> = {}) =>
+  new Request('https://agents-shell.example.test/mcp', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      ...headers,
+    },
+    body: JSON.stringify(body),
   })
 
-  await clientTransport.close()
-  await serverTransport.close()
-  await server.close()
-  return response.result?.tools ?? []
+const initializeBody = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: {
+    protocolVersion: '2025-06-18',
+    capabilities: {},
+    clientInfo: { name: 'agents-shell-test', version: '0.0.0' },
+  },
 }
 
 afterEach(() => {
-  for (const root of tempRoots.splice(0)) {
-    rmSync(root, { recursive: true, force: true })
-  }
+  cleanupFixtures()
+  vi.restoreAllMocks()
 })
 
-describe('agents-shell MCP OAuth metadata', () => {
-  it('ignores Kubernetes service AGENTS_SHELL_PORT env when selecting its listen port', () => {
-    expect(
-      defaultAgentsShellConfigFromEnv({
-        AGENTS_SHELL_PORT: 'tcp://10.96.0.1:80',
-      }).port,
-    ).toBe(8080)
+describe('agents-shell OAuth and HTTP transport', () => {
+  it('stops the Bun server and exits after SIGTERM', async () => {
+    const fixture = makeFixture()
+    const script = join(fixture.root, 'termination-server.ts')
+    const httpModule = pathToFileURL(resolve(process.cwd(), 'src/server/agents-shell/http.ts')).href
+    const helperModule = pathToFileURL(resolve(process.cwd(), 'src/server/agents-shell-test-helpers.ts')).href
+    writeFileSync(
+      script,
+      `import { startAgentsShellServer } from ${JSON.stringify(httpModule)}
+import { makeFixture } from ${JSON.stringify(helperModule)}
+const fixture = makeFixture()
+fixture.config.port = 0
+const server = startAgentsShellServer(fixture.config)
+console.log('termination-server-ready:' + server.port)
+`,
+    )
 
+    const child = spawn(findTestExecutable('bun'), [script], {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    try {
+      await Promise.race([
+        new Promise<void>((resolveReady, reject) => {
+          const inspect = () => {
+            if (stdout.includes('termination-server-ready:')) resolveReady()
+            else if (child.exitCode != null) reject(new Error(`termination server exited early: ${stderr || stdout}`))
+            else setTimeout(inspect, 10)
+          }
+          inspect()
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`termination server did not become ready: ${stderr || stdout}`)), 3000),
+        ),
+      ])
+      child.kill('SIGTERM')
+      const outcome = await Promise.race([
+        new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveClose) => {
+          child.once('close', (code, signal) => resolveClose({ code, signal }))
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`termination server remained alive after SIGTERM: ${stderr || stdout}`)),
+            2000,
+          ),
+        ),
+      ])
+      expect(outcome).toEqual({ code: 0, signal: null })
+    } finally {
+      if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL')
+    }
+  }, 10_000)
+
+  it('ignores Kubernetes service env when selecting the listen port', () => {
+    expect(defaultAgentsShellConfigFromEnv({ AGENTS_SHELL_PORT: 'tcp://10.96.0.1:80' }).port).toBe(8080)
     expect(
       defaultAgentsShellConfigFromEnv({
         AGENTS_SHELL_PORT: 'tcp://10.96.0.1:80',
@@ -145,9 +128,9 @@ describe('agents-shell MCP OAuth metadata', () => {
     ).toBe(8090)
   })
 
-  it('publishes protected-resource metadata for ChatGPT OAuth discovery', () => {
-    const config = makeConfig()
-    expect(oauthProtectedResourceMetadata(config)).toEqual({
+  it('publishes protected-resource metadata and normalizes ChatGPT Accept headers', () => {
+    const fixture = makeFixture()
+    expect(oauthProtectedResourceMetadata(fixture.config)).toEqual({
       resource: 'https://agents-shell.example.test',
       authorization_servers: ['https://auth.example.test/realms/master'],
       scopes_supported: [
@@ -161,705 +144,833 @@ describe('agents-shell MCP OAuth metadata', () => {
       ],
       bearer_methods_supported: ['header'],
     })
-    expect(buildBearerChallenge(config)).toBe(
+    expect(buildBearerChallenge(fixture.config)).toBe(
       'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource"',
     )
-  })
-
-  it('allows a configured Keycloak username when the token has no email claim', () => {
-    const config = defaultAgentsShellConfigFromEnv({
-      AGENTS_SHELL_ALLOWED_EMAILS: 'greg@proompteng.ai',
-      AGENTS_SHELL_ALLOWED_USERNAMES: 'admin,agents-shell-chatgpt',
-    })
-
-    expect(oauthIdentityAllowed(config, { subject: 'user-1', email: 'greg@proompteng.ai', username: null })).toBe(true)
-    expect(oauthIdentityAllowed(config, { subject: 'user-2', email: null, username: 'admin' })).toBe(true)
-    expect(oauthIdentityAllowed(config, { subject: 'user-3', email: null, username: 'unknown' })).toBe(false)
-  })
-
-  it('normalizes MCP Accept headers for ChatGPT metadata clients', () => {
-    expect(normalizeMcpAcceptHeader('application/json')).toBe('application/json, text/event-stream')
     expect(normalizeMcpAcceptHeader('*/*')).toBe('application/json, text/event-stream')
     expect(normalizeMcpAcceptHeader('application/json, text/event-stream')).toBe('application/json, text/event-stream')
   })
 
-  it('serves MCP over a fetch-native HTTP handler', async () => {
-    const config = makeConfig()
-    const handler = createAgentsShellRequestHandler(config)
-
-    const response = await handler(
-      new Request('https://agents-shell.example.test/mcp', {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
-      }),
-    )
-
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+  it('allows configured email or username identities', () => {
+    const config = defaultAgentsShellConfigFromEnv({
+      AGENTS_SHELL_ALLOWED_EMAILS: 'greg@proompteng.ai',
+      AGENTS_SHELL_ALLOWED_USERNAMES: 'admin,agents-shell-chatgpt',
+    })
+    expect(oauthIdentityAllowed(config, { subject: '1', email: 'greg@proompteng.ai', username: null })).toBe(true)
+    expect(oauthIdentityAllowed(config, { subject: '2', email: null, username: 'admin' })).toBe(true)
+    expect(oauthIdentityAllowed(config, { subject: '3', email: null, username: 'unknown' })).toBe(false)
   })
 
-  it('keeps invalid bearer tokens inside the MCP challenge flow with safe diagnostics', async () => {
-    const config = makeConfig()
-    const handler = createAgentsShellRequestHandler(config)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  it('keeps stateless tools/list compatibility while rejecting ephemeral lease acquisition', async () => {
+    const fixture = makeFixture()
+    const handler = createAgentsShellRequestHandler(fixture.config)
+    const list = await handler(mcpRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }))
+    expect(list.status).toBe(200)
+    const body = (await list.json()) as { result?: { tools?: Array<{ name?: string }> } }
+    expect(body.result?.tools?.map((tool) => tool.name)).toContain('workspace_acquire')
 
-    try {
-      const response = await handler(
-        new Request('https://agents-shell.example.test/mcp', {
-          method: 'POST',
-          headers: {
-            accept: 'application/json',
-            authorization: 'Bearer not-a-jwt',
-            'content-type': 'application/json',
+    const acquire = await handler(
+      mcpRequest({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'workspace_acquire',
+          arguments: { task: 'ephemeral', existingPath: fixture.existingWorkspace },
+        },
+      }),
+    )
+    expect(acquire.status).toBe(200)
+    expect(((await acquire.json()) as { result?: { isError?: boolean } }).result?.isError).toBe(true)
+  })
+
+  it('issues an unforgeable stateful MCP session during initialize', async () => {
+    const fixture = makeFixture()
+    const auth = makeAuth()
+    const verifier = { verify: vi.fn(async () => auth) }
+    const handler = createAgentsShellRequestHandler(fixture.config, undefined, verifier)
+    const initialized = await handler(mcpRequest(initializeBody, { authorization: 'Bearer valid' }))
+    expect(initialized.status).toBe(200)
+    const sessionId = initialized.headers.get('mcp-session-id')
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/)
+
+    const acquired = await handler(
+      mcpRequest(
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: {
+            name: 'workspace_acquire',
+            arguments: { task: 'stateful', existingPath: fixture.existingWorkspace },
           },
-          body: JSON.stringify({
+        },
+        { authorization: 'Bearer valid', 'mcp-session-id': sessionId! },
+      ),
+    )
+    expect(acquired.status).toBe(200)
+    const acquiredBody = (await acquired.json()) as { result?: { isError?: boolean; structuredContent?: unknown } }
+    expect(acquiredBody.result?.isError).not.toBe(true)
+    expect(acquiredBody.result?.structuredContent).toMatchObject({ status: 'active' })
+    expect(readFileSync(fixture.auditLogPath, 'utf8')).not.toContain(sessionId!)
+  })
+
+  it('keeps overlapping stateful request authentication immutable and request-local', async () => {
+    const fixture = makeFixture()
+    const owner = makeAuth(undefined, 'owner-subject')
+    const foreign = makeAuth(undefined, 'foreign-subject')
+    let markForeignAuthenticated!: () => void
+    const foreignAuthenticated = new Promise<void>((resolve) => {
+      markForeignAuthenticated = resolve
+    })
+    const verifier = {
+      verify: vi.fn(async (token: string) => {
+        if (token === 'owner-token') return owner
+        if (token === 'foreign-token') {
+          markForeignAuthenticated()
+          return foreign
+        }
+        throw new Error('unexpected token')
+      }),
+    }
+    let enteredAnonymousDispatch!: () => void
+    let releaseAnonymousDispatch!: () => void
+    const anonymousDispatchEntered = new Promise<void>((resolve) => {
+      enteredAnonymousDispatch = resolve
+    })
+    const anonymousDispatchReleased = new Promise<void>((resolve) => {
+      releaseAnonymousDispatch = resolve
+    })
+    const handler = createAgentsShellRequestHandler(fixture.config, undefined, verifier, {
+      beforeStatefulDispatch: async (auth) => {
+        if (auth.subject !== 'unauthenticated') return
+        enteredAnonymousDispatch()
+        await anonymousDispatchReleased
+      },
+    })
+    const initialized = await handler(mcpRequest(initializeBody, { authorization: 'Bearer owner-token' }))
+    const sessionId = initialized.headers.get('mcp-session-id')!
+    const kubectlCall = (id: number, headers: Record<string, string>) =>
+      handler(
+        mcpRequest(
+          {
             jsonrpc: '2.0',
-            id: 1,
+            id,
             method: 'tools/call',
-            params: {
-              name: 'shell_run',
-              arguments: { command: 'echo should-not-run' },
-            },
-          }),
-        }),
+            params: { name: 'kubectl', arguments: { args: ['version', '--client'] } },
+          },
+          { 'mcp-session-id': sessionId, ...headers },
+        ),
       )
 
-      expect(response.status).toBe(200)
-      const body = (await response.json()) as {
-        result?: { isError?: boolean; _meta?: Record<string, unknown> }
-      }
-      expect(body.result?.isError).toBe(true)
-      expect(body.result?._meta?.['mcp/www_authenticate']).toEqual([
-        'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="invalid_token", error_description="The access token is invalid or expired."',
-      ])
+    const anonymousRequest = kubectlCall(2, {})
+    await anonymousDispatchEntered
+    const foreignRequest = kubectlCall(3, { authorization: 'Bearer foreign-token' })
+    await foreignAuthenticated
+    releaseAnonymousDispatch()
 
-      const diagnostic = warn.mock.calls
-        .map(([message]) => (typeof message === 'string' ? JSON.parse(message) : null))
-        .find((entry) => entry?.msg === 'agents-shell oauth token rejected')
-      expect(diagnostic).toMatchObject({
-        msg: 'agents-shell oauth token rejected',
-        method: 'POST',
-        path: '/mcp',
-        token: { decodeError: expect.any(String) },
-      })
-      expect(JSON.stringify(diagnostic)).not.toContain('not-a-jwt')
+    const [anonymousResponse, foreignResponse] = await Promise.all([anonymousRequest, foreignRequest])
+    expect(foreignResponse.status).toBe(404)
+    expect(JSON.stringify(await foreignResponse.json())).not.toContain('kubectl-fixture')
+    expect(anonymousResponse.status).toBe(200)
+    const anonymousBody = (await anonymousResponse.json()) as { result?: { isError?: boolean } }
+    expect(anonymousBody.result?.isError).toBe(true)
+    expect(JSON.stringify(anonymousBody)).not.toContain('kubectl-fixture')
+    expect(readFileSync(fixture.auditLogPath, 'utf8')).toContain('token_revoked_or_missing')
+  })
+
+  it('rejects unauthenticated initialize without retaining stateful sessions', async () => {
+    const fixture = makeFixture()
+    const runner = new AgentsShellRunner(fixture.config, { uidAllocator: () => process.geteuid?.() ?? 0 })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const verifier = { verify: vi.fn(async () => Promise.reject(new Error('invalid token'))) }
+    const handler = createAgentsShellRequestHandler(fixture.config, runner, verifier)
+    try {
+      const unauthenticatedHeaders: Array<Record<string, string>> = [{}, { authorization: 'Bearer invalid' }]
+      for (const headers of unauthenticatedHeaders) {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const response = await handler(mcpRequest(initializeBody, headers))
+          expect(response.status).toBe(401)
+          expect(response.headers.get('mcp-session-id')).toBeNull()
+          expect(response.headers.get('www-authenticate')).toContain('resource_metadata=')
+        }
+      }
+      const ready = await handler(new Request('https://agents-shell.example.test/readyz'))
+      expect(await ready.json()).toMatchObject({ activeSessions: 0 })
+      expect(readFileSync(fixture.auditLogPath, 'utf8')).not.toContain('mcp_session_issued')
     } finally {
-      warn.mockRestore()
+      runner.shutdown()
     }
   })
 
-  it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
-    'serves MCP through Bun.serve without hanging',
-    async () => {
-      const config = { ...makeConfig(), host: '127.0.0.1', port: randomListenPort() }
-      const server = startAgentsShellServer(config)
-
-      try {
-        const response = await fetch(`http://${server.hostname}:${server.port}/mcp`, {
-          method: 'POST',
-          headers: {
-            accept: 'application/json',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
-          signal: AbortSignal.timeout(2000),
-        })
-
-        expect(response.status).toBe(200)
-        const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
-      } finally {
-        server.stop(true)
-      }
-    },
-  )
-
-  it('rejects workspace paths outside the configured root', () => {
-    const config = makeConfig()
-    expect(() => resolveWorkspacePath(config.workspaceRoot, '../escape')).toThrow(/path must stay under/)
-    expect(resolveWorkspacePath(config.workspaceRoot, '.')).toBe(config.workspaceRoot)
+  it('keeps invalid bearer tokens inside the MCP OAuth challenge flow', async () => {
+    const fixture = makeFixture()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const verifier = { verify: vi.fn(async () => Promise.reject(new Error('bad token'))) }
+    const handler = createAgentsShellRequestHandler(fixture.config, undefined, verifier)
+    const response = await handler(
+      mcpRequest(
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'shell_run', arguments: { command: 'echo should-not-run' } },
+        },
+        { authorization: 'Bearer not-a-jwt' },
+      ),
+    )
+    const body = (await response.json()) as { result?: { isError?: boolean; _meta?: Record<string, unknown> } }
+    expect(body.result?.isError).toBe(true)
+    expect(body.result?._meta?.['mcp/www_authenticate']).toEqual([
+      'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="invalid_token", error_description="The access token is invalid or expired."',
+    ])
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('not-a-jwt')
   })
 })
 
-describe('agents-shell MCP tools', () => {
-  it('lists focused tools with annotations and OAuth metadata', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    const tools = await client.listTools()
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
-      [
-        'search',
-        'read_file',
-        'apply_patch',
-        'agent_guide',
-        'shell_run',
-        'shell_start',
-        'shell_read',
-        'shell_kill',
-        'shell_status',
-        'git',
-        'git_write',
-        'kubectl',
-        'kubectl_admin',
-        'agent_start',
-        'agent_status',
-        'agent_read',
-        'agent_cancel',
-      ].sort(),
-    )
-
-    const search = tools.tools.find((tool) => tool.name === 'search')
-    expect(search?.annotations?.readOnlyHint).toBe(true)
-    expect(search?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-      ui: { visibility: ['model'] },
-      'openai/visibility': 'public',
-      'openai/toolInvocation/invoking': 'Running tool',
-      'openai/toolInvocation/invoked': 'Tool complete',
-    })
-
-    const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
-    expect(shellRun?.annotations?.destructiveHint).toBe(false)
-    expect(shellRun?.annotations?.openWorldHint).toBe(true)
-
-    const applyPatch = tools.tools.find((tool) => tool.name === 'apply_patch')
-    expect(applyPatch?.annotations?.readOnlyHint).toBe(false)
-    expect(applyPatch?.annotations?.destructiveHint).toBe(false)
-    expect(applyPatch?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    const git = tools.tools.find((tool) => tool.name === 'git')
-    expect(git?.annotations?.readOnlyHint).toBe(true)
-    expect(git?.annotations?.destructiveHint).toBe(false)
-    expect(git?.annotations?.openWorldHint).toBe(false)
-    expect(git?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    const gitWrite = tools.tools.find((tool) => tool.name === 'git_write')
-    expect(gitWrite?.annotations?.destructiveHint).toBe(true)
-    expect(gitWrite?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    const kubectl = tools.tools.find((tool) => tool.name === 'kubectl')
-    expect(kubectl?.annotations?.readOnlyHint).toBe(true)
-    expect(kubectl?.annotations?.destructiveHint).toBe(false)
-    expect(kubectl?.annotations?.openWorldHint).toBe(true)
-    expect(kubectl?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    const kubectlAdmin = tools.tools.find((tool) => tool.name === 'kubectl_admin')
-    expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
-    expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
-    expect(kubectlAdmin?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
-    expect(agentStart?.annotations?.destructiveHint).toBe(true)
-    expect(agentStart?.annotations?.openWorldHint).toBe(true)
-    expect(agentStart?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-    })
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
-
-    const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
-
-    const rawSearch = rawTools.find((tool) => tool.name === 'search')
-    expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
-    expect(rawSearch?._meta).toMatchObject({
-      securitySchemes: linkedOauthScheme,
-      ui: { visibility: ['model'] },
-      'openai/visibility': 'public',
-      'openai/toolInvocation/invoking': 'Running tool',
-      'openai/toolInvocation/invoked': 'Tool complete',
-    })
-    expect(rawSearch?.inputSchema?.$schema).toBeUndefined()
-    expect(rawSearch?.inputSchema?.additionalProperties).toBe(false)
-
-    const rawShellRun = rawTools.find((tool) => tool.name === 'shell_run')
-    expect(rawShellRun).toBeDefined()
-    const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
-    expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
-    expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
-    expect(rawShellRunInputProperties.timeoutSeconds.description).toBe(
-      'Timeout in seconds. Default: 60. Server cap: 1800.',
-    )
-    expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
-      'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
-    )
-
-    const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
-    expect(rawKubectl?.securitySchemes).toEqual(linkedOauthScheme)
-    expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
-
-    for (const tool of rawTools) {
-      expect(tool.description?.length ?? 0).toBeLessThanOrEqual(140)
-      expect(tool.outputSchema).toBeUndefined()
-      expect(tool.securitySchemes).toEqual(linkedOauthScheme)
-      expect(tool.securitySchemes).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['agents-shell.admin']) })]),
-      )
-      expect(tool.securitySchemes).toEqual(
-        expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['offline_access']) })]),
-      )
-    }
-  })
-
-  it('keeps agents-shell implementation on Effect Schema without Zod fallback', () => {
-    const serverRoot = join(process.cwd(), 'src/server')
-    const agentsShellFiles = collectTypeScriptFiles(join(serverRoot, 'agents-shell'))
-    const checkedFiles = [...agentsShellFiles, join(serverRoot, 'agents-shell-mcp.ts')]
-
-    for (const file of checkedFiles) {
-      const content = readFileSync(file, 'utf8')
-      expect(content).not.toMatch(/from ['"]zod['"]/)
-      expect(content).not.toContain('zod-compat')
-      expect(content).not.toContain('zod-json-schema-compat')
-      expect(content).not.toContain('registerTool(')
-    }
-
-    const entrypoint = readFileSync(join(serverRoot, 'agents-shell-mcp.ts'), 'utf8')
-    expect(entrypoint.split('\n').length).toBeLessThanOrEqual(150)
-  })
-
-  it('lists tools before OAuth but challenges protected tool calls', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth([]))
-
-    const tools = await client.listTools()
-    expect(tools.tools.some((tool) => tool.name === 'shell_run')).toBe(true)
-
-    const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
-    })
-    expect(result.isError).toBe(true)
-    expect(result._meta?.['mcp/www_authenticate']).toEqual([
-      'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="insufficient_scope", error_description="The requested agents-shell tool requires additional OAuth scopes."',
-    ])
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
-  })
-
-  it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
-    const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'git'),
-      `#!/bin/sh
-if [ "$1" = "fetch" ]; then
-  (sleep 3) &
-  printf '%s\\n' 'fetched origin main'
-  exit 0
-fi
-printf '%s\\n' "$@"
-`,
-    )
-    chmodSync(join(bin, 'git'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
+describe('agents-shell tool contract', () => {
+  it('lists the bounded measured tool schema with OAuth metadata', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture)
     try {
-      const startedAt = Date.now()
-      const result = await client.callTool({
-        name: 'git_write',
-        arguments: { args: ['fetch', 'origin', 'main'], cwd: 'lab', timeoutSeconds: 1 },
-      })
-      const elapsedMs = Date.now() - startedAt
-      expect(result.isError).not.toBe(true)
-      const content = result.structuredContent as {
-        exitCode?: number | null
-        stdout?: string
-        timedOut?: boolean
+      const tools = await connection.client.listTools()
+      expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
+        [
+          'workspace_acquire',
+          'workspace_status',
+          'workspace_release',
+          'search',
+          'read_file',
+          'apply_patch',
+          'agent_guide',
+          'shell_run',
+          'shell_start',
+          'shell_read',
+          'shell_kill',
+          'shell_status',
+          'git',
+          'git_write',
+          'kubectl',
+          'kubectl_admin',
+          'agent_start',
+          'agent_status',
+          'agent_read',
+          'agent_cancel',
+        ].sort(),
+      )
+      for (const tool of tools.tools) {
+        expect(tool.description?.length ?? 0).toBeLessThanOrEqual(140)
+        expect(tool.inputSchema.additionalProperties).toBe(false)
       }
-      expect(content.exitCode).toBe(0)
-      expect(content.timedOut).toBe(false)
-      expect(content.stdout).toContain('fetched origin main')
-      expect(elapsedMs).toBeLessThan(2_000)
+      expect(tools.tools.find((tool) => tool.name === 'workspace_acquire')?.annotations?.destructiveHint).toBe(true)
+      expect(tools.tools.find((tool) => tool.name === 'read_file')?.annotations?.readOnlyHint).toBe(true)
     } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
+      await closeFixtureConnection(connection)
+    }
 
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
-      }
+    const rawTools = await listToolsOnWire(fixture)
+    const bytes = Buffer.byteLength(JSON.stringify({ tools: rawTools }))
+    expect(bytes).toBe(19_744)
+    expect(bytes).toBeLessThanOrEqual(fixture.config.maxToolSchemaBytes)
+    for (const tool of rawTools) {
+      expect(tool.securitySchemes).toEqual(linkedOauthScheme)
+      expect(tool.inputSchema?.additionalProperties).toBe(false)
     }
   })
 
-  it('reads files and blocks apply_patch paths outside /workspace', async () => {
-    const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
-    writeFileSync(join(config.workspaceRoot, 'hello.txt'), 'hello from agents-shell\n')
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    const read = await client.callTool({
-      name: 'read_file',
-      arguments: { path: 'hello.txt' },
-    })
-    expect((read.structuredContent as { content?: string } | undefined)?.content).toBe('hello from agents-shell\n')
-
-    const blocked = await client.callTool({
-      name: 'apply_patch',
-      arguments: {
-        patch: '*** Begin Patch\n*** Update File: ../../escape.txt\n@@\n-old\n+new\n*** End Patch\n',
-      },
-    })
-    expect(blocked.isError).toBe(true)
-    const blockedContent = blocked.content as Array<{ type: string; text?: string }>
-    expect(blockedContent[0]?.type).toBe('text')
-    expect(blockedContent[0]?.text ?? '').toContain('patch path must stay under workspace')
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
+  it('fails startup rather than truncating a tool schema over the explicit ceiling', () => {
+    const fixture = makeFixture({ maxToolSchemaBytes: 100 })
+    const runner = new AgentsShellRunner(fixture.config)
+    expect(() => createAgentsShellServer(fixture.config, runner, makeAuth(), crypto.randomUUID())).toThrow(
+      /tool schema is .* exceeding explicit ceiling 100/,
+    )
+    runner.shutdown()
   })
 
-  it('applies Codex patch syntax through the apply_patch executable', async () => {
-    const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'apply_patch'),
-      '#!/bin/sh\ncat > .patch-input\nprintf "%s\\n" "Success. Updated the following files:" "M src/example.ts"\n',
-    )
-    chmodSync(join(bin, 'apply_patch'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
+  it('lists tools before OAuth but challenges protected calls', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture, { auth: makeAuth([]) })
     try {
-      const result = await client.callTool({
+      expect((await connection.client.listTools()).tools.some((tool) => tool.name === 'shell_run')).toBe(true)
+      const result = await connection.client.callTool({
+        name: 'shell_run',
+        arguments: { command: 'echo should-not-run' },
+      })
+      expect(result.isError).toBe(true)
+      expect(result._meta?.['mcp/www_authenticate']).toBeDefined()
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('requires a lease for mutation and supports the normal one-task path', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture)
+    try {
+      const blocked = await connection.client.callTool({ name: 'shell_run', arguments: { command: 'touch blocked' } })
+      expect(blocked.isError).toBe(true)
+      expect(JSON.stringify(blocked.content)).toContain('active workspace lease is required')
+
+      const acquired = await connection.client.callTool({
+        name: 'workspace_acquire',
+        arguments: { task: 'normal', existingPath: fixture.existingWorkspace },
+      })
+      expect(acquired.isError).not.toBe(true)
+      const success = await connection.client.callTool({
+        name: 'shell_run',
+        arguments: { command: 'printf normal > normal.txt && git add normal.txt && git commit -m normal' },
+      })
+      expect(success.isError).not.toBe(true)
+      expect((success.structuredContent as { exitCode?: number }).exitCode).toBe(0)
+      expect(readFileSync(join(fixture.existingWorkspace, 'normal.txt'), 'utf8')).toBe('normal')
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('reads only the seed before acquisition and the owned workspace after acquisition', async () => {
+    const fixture = makeFixture()
+    writeFileSync(join(fixture.seedPath, 'seed-only.txt'), 'seed-readable\n')
+    const connection = await connectFixture(fixture)
+    try {
+      const seed = await connection.client.callTool({ name: 'read_file', arguments: { path: 'seed-only.txt' } })
+      expect((seed.structuredContent as { content?: string }).content).toBe('seed-readable\n')
+      await connection.client.callTool({
+        name: 'workspace_acquire',
+        arguments: { task: 'read', existingPath: fixture.existingWorkspace },
+      })
+      writeFileSync(join(fixture.existingWorkspace, 'owned.txt'), 'owned\n')
+      const owned = await connection.client.callTool({ name: 'read_file', arguments: { path: 'owned.txt' } })
+      expect((owned.structuredContent as { content?: string }).content).toBe('owned\n')
+      const foreign = await connection.client.callTool({ name: 'read_file', arguments: { path: fixture.seedPath } })
+      expect(foreign.isError).toBe(true)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('inspects the root-owned read-only seed with only a server-controlled safe.directory', async () => {
+    const fixture = makeFixture()
+    mkdirSync(join(fixture.seedPath, 'nested'))
+    const connection = await connectFixture(fixture)
+    try {
+      const status = await connection.client.callTool({
+        name: 'git',
+        arguments: { args: ['status', '--short'], cwd: 'nested' },
+      })
+      expect(status.isError).not.toBe(true)
+      expect((status.structuredContent as { exitCode?: number }).exitCode).toBe(0)
+      expect(connection.runner.leases.inspectionEnvironment(null, join(fixture.seedPath, 'nested'))).toMatchObject({
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'safe.directory',
+        GIT_CONFIG_VALUE_0: fixture.seedPath,
+      })
+      const injected = await connection.client.callTool({
+        name: 'git',
+        arguments: { args: ['-c', 'safe.directory=*', 'status'] },
+      })
+      expect(injected.isError).toBe(true)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('validates patch traversal and applies a normal Codex patch', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture, { acquire: true })
+    try {
+      const blocked = await connection.client.callTool({
         name: 'apply_patch',
         arguments: {
-          cwd: 'lab',
-          patch: '*** Begin Patch\n*** Add File: src/example.ts\n+export const value = 1\n*** End Patch\n',
+          patch: '*** Begin Patch\n*** Add File: ../../escape.txt\n+escape\n*** End Patch\n',
         },
-      })
-      expect(result.isError).not.toBe(true)
-      const content = result.structuredContent as { command?: string; changedFiles?: string[]; stdout?: string }
-      expect(content.command).toBe('apply_patch')
-      expect(content.changedFiles).toEqual(['src/example.ts'])
-      expect(content.stdout).toContain('Success. Updated the following files')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
-      }
-    }
-  })
-
-  it('starts and observes delegated AgentRun lifecycle through generic kubectl', async () => {
-    const config = makeConfig()
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'kubectl'),
-      `#!/bin/sh
-printf '%s\\n' "$@" >> "\${PWD}/kubectl-calls.txt"
-if [ "$1" = "apply" ]; then
-  cat > "\${PWD}/kubectl-stdin.json"
-  printf '%s\\n' 'agentrun.agents.proompteng.ai/created configured'
-elif [ "$1" = "get" ] && [ "$2" = "agentrun" ]; then
-  printf '%s\\n' '{"status":{"phase":"Running","vcs":{"headBranch":"codex/demo"}}}'
-elif [ "$1" = "get" ] && [ "$2" = "jobs" ]; then
-  printf '%s\\n' '{"items":[{"metadata":{"name":"job-1"}}]}'
-elif [ "$1" = "logs" ]; then
-  printf '%s\\n' 'delegated log line'
-elif [ "$1" = "delete" ]; then
-  printf '%s\\n' 'agentrun deleted'
-fi
-`,
-    )
-    chmodSync(join(bin, 'kubectl'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(
-      config,
-      makeAuth(['agents-shell.read', 'agents-shell.write']),
-    )
-
-    try {
-      const start = await client.callTool({
-        name: 'agent_start',
-        arguments: {
-          task: 'Make a small repo change, test it, commit, push, create a PR, and monitor CI.',
-          headBranch: 'codex/demo',
-        },
-      })
-      expect(start.isError).not.toBe(true)
-      const startContent = start.structuredContent as {
-        agentRunName?: string
-        headBranch?: string
-        apply?: { stdout?: string }
-      }
-      expect(startContent.headBranch).toBe('codex/demo')
-      expect(startContent.apply?.stdout).toContain('agentrun.agents.proompteng.ai/created configured')
-
-      const manifest = JSON.parse(readFileSync(join(config.workspaceRoot, 'kubectl-stdin.json'), 'utf8')) as {
-        spec?: {
-          implementation?: { inline?: { text?: string } }
-          parameters?: { repository?: string; base?: string; head?: string }
-          vcsPolicy?: { mode?: string }
-        }
-      }
-      expect(manifest.spec?.implementation?.inline?.text).toContain('Make a small repo change')
-      expect(manifest.spec?.parameters).toMatchObject({
-        repository: 'proompteng/lab',
-        base: 'main',
-        head: 'codex/demo',
-      })
-      expect(manifest.spec?.vcsPolicy?.mode).toBe('read-write')
-
-      const agentRunName = startContent.agentRunName!
-      const status = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
-      expect((status.structuredContent as { agentRun?: { status?: { phase?: string } } }).agentRun?.status?.phase).toBe(
-        'Running',
-      )
-
-      const logs = await client.callTool({ name: 'agent_read', arguments: { agentRunName } })
-      expect((logs.structuredContent as { stdout?: string }).stdout).toContain('delegated log line')
-
-      const cancel = await client.callTool({ name: 'agent_cancel', arguments: { agentRunName } })
-      expect((cancel.structuredContent as { stdout?: string }).stdout).toContain('agentrun deleted')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
-      }
-    }
-  })
-
-  it('searches files with ripgrep instead of empty piped stdin', async () => {
-    const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
-    writeFileSync(
-      join(config.workspaceRoot, 'lab', 'src', 'agents-shell.ts'),
-      'export const createAgentsShellServer = true\n',
-    )
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(
-      join(bin, 'rg'),
-      '#!/bin/sh\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
-    )
-    chmodSync(join(bin, 'rg'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    try {
-      const result = await client.callTool({
-        name: 'search',
-        arguments: { query: 'createAgentsShellServer', path: 'lab', fixedStrings: true },
-      })
-      const content = result.structuredContent as {
-        command?: string
-        exitCode?: number
-        stdout?: string
-      }
-      expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
-      expect(content.command).toContain('-g !.git/**')
-      expect(content.command).toContain('-g !node_modules/**')
-      expect(content.command).toContain('-g !schemas/custom/**')
-      expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
-      expect(content.exitCode).toBe(0)
-      expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
-      }
-    }
-  })
-
-  it('returns Codex-style operating guidance for the current ChatGPT model', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    try {
-      const result = await client.callTool({ name: 'agent_guide', arguments: {} })
-      const content = result.structuredContent as { guide?: string }
-      expect(content.guide).toContain('current ChatGPT model')
-      expect(content.guide).toContain('AGENTS.md')
-      expect(content.guide).toContain('Respect dirty worktrees')
-      expect(content.guide).toContain('/workspace/worktrees/lab')
-      expect(content.guide).toContain('cwd: "worktrees/lab/<branch-slug>"')
-      expect(content.guide).toContain('Never share a worktree or branch')
-      expect(content.guide).toContain('Do not use agent_start/status/read/cancel')
-      expect(content.guide).toContain('apply_patch')
-      expect(content.guide).toContain('Commit as Greg Konush')
-      expect(content.guide).toContain('create a pull request with gh')
-    } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-    }
-  })
-
-  it('returns an OAuth challenge when auth lacks the linked agents-shell scope', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(['openid']))
-
-    const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
-    })
-    expect(result.isError).toBe(true)
-    expect(result._meta?.['mcp/www_authenticate']).toEqual([
-      'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="insufficient_scope", error_description="The requested agents-shell tool requires additional OAuth scopes."',
-    ])
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
-  })
-
-  it('does not turn ordinary tool failures into OAuth reconnect challenges', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', cwd: 'missing-worktree' },
-    })
-
-    expect(result.isError).toBe(true)
-    expect(JSON.stringify(result.content)).toContain('cwd does not exist')
-    expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
-  })
-
-  it('returns readable Effect Schema validation errors without OAuth reconnect metadata', async () => {
-    const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
-
-    const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', timeoutSeconds: 'bad' },
-    })
-
-    expect(result.isError).toBe(true)
-    expect(JSON.stringify(result.content)).toContain('Input validation error')
-    expect(JSON.stringify(result.content)).toContain('shell_run')
-    expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
-
-    await clientTransport.close()
-    await serverTransport.close()
-    await client.close()
-    await server.close()
-  })
-
-  it('forwards generic read-only kubectl argv without using the admin tool', async () => {
-    const config = makeConfig()
-    const bin = join(config.workspaceRoot, 'bin')
-    mkdirSync(bin, { recursive: true })
-    writeFileSync(join(bin, 'kubectl'), '#!/bin/sh\nprintf "%s\\n" "$@"\n')
-    chmodSync(join(bin, 'kubectl'), 0o755)
-
-    const previousPath = process.env.PATH
-    process.env.PATH = `${bin}:${previousPath ?? ''}`
-
-    const { client, server, clientTransport, serverTransport } = await connectServer(
-      config,
-      makeAuth(['agents-shell.read', 'agents-shell.write']),
-    )
-
-    try {
-      const result = await client.callTool({
-        name: 'kubectl',
-        arguments: { args: ['get', 'pods', '-n', 'agents', '-o', 'wide'] },
-      })
-      expect(result.isError).not.toBe(true)
-      expect((result.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
-        'get\npods\n-n\nagents\n-o\nwide\n',
-      )
-
-      const blocked = await client.callTool({
-        name: 'kubectl',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
       })
       expect(blocked.isError).toBe(true)
-      const blockedContent = blocked.content as Array<{ type: string; text?: string }>
-      expect(blockedContent[0]?.text ?? '').toContain('use kubectl_admin')
+      expect(JSON.stringify(blocked.content)).toContain('must stay under leased workspace')
 
-      const admin = await client.callTool({
-        name: 'kubectl_admin',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+      const applied = await connection.client.callTool({
+        name: 'apply_patch',
+        arguments: {
+          patch: '*** Begin Patch\n*** Add File: safe.txt\n+safe\n*** End Patch\n',
+        },
       })
-      expect(admin.isError).not.toBe(true)
-      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
-        'exec\npod/example\n--\necho\nok\n',
-      )
+      expect(applied.isError).not.toBe(true)
+      expect(readFileSync(join(fixture.existingWorkspace, 'safe.txt'), 'utf8')).toBe('safe\n')
     } finally {
-      await clientTransport.close()
-      await serverTransport.close()
-      await client.close()
-      await server.close()
-
-      if (previousPath == null) {
-        delete process.env.PATH
-      } else {
-        process.env.PATH = previousPath
-      }
+      await closeFixtureConnection(connection)
     }
+  })
+
+  it('rejects read-only Git selectors and external command hooks', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture, { acquire: true })
+    try {
+      for (const args of [
+        ['-C', fixture.seedPath, 'status'],
+        ['--git-dir', join(fixture.seedPath, '.git'), 'status'],
+        ['--work-tree', fixture.seedPath, 'status'],
+        ['-c', 'core.pager=touch /tmp/pwn', 'status'],
+        ['diff', '--ext-diff'],
+      ]) {
+        const result = await connection.client.callTool({ name: 'git', arguments: { args } })
+        expect(result.isError).toBe(true)
+      }
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('rejects every git grep pager command form before command, secret, or cluster action', async () => {
+    const fixture = makeFixture()
+    const commandMarker = join(fixture.root, 'grep-pager-command')
+    const secretMarker = join(fixture.root, 'grep-pager-secret')
+    const clusterMarker = join(fixture.root, 'grep-pager-cluster')
+    const serviceAccountToken = join(fixture.root, 'service-account-token')
+    writeFileSync(serviceAccountToken, 'service-account-secret\n')
+    const fakeKubectl = writeTrustedExecutable(
+      fixture.trustedBin,
+      'pager-kubectl',
+      `#!${fixtureExecutables.bash}\nprintf cluster-action > ${JSON.stringify(clusterMarker)}\n`,
+    )
+    const pager = writeTrustedExecutable(
+      fixture.trustedBin,
+      'hostile-grep-pager',
+      `#!${fixtureExecutables.bash}\nprintf invoked > ${JSON.stringify(commandMarker)}\ncat ${JSON.stringify(
+        serviceAccountToken,
+      )} > ${JSON.stringify(secretMarker)}\n${JSON.stringify(fakeKubectl)} get secrets\n`,
+    )
+    const connection = await connectFixture(fixture, { acquire: true })
+    const previousToken = process.env.GH_TOKEN
+    const previousHost = process.env.KUBERNETES_SERVICE_HOST
+    process.env.GH_TOKEN = 'mounted-github-secret'
+    process.env.KUBERNETES_SERVICE_HOST = '10.96.0.1'
+    try {
+      for (const args of [
+        ['grep', '-O', pager, 'seed'],
+        ['grep', `-O${pager}`, 'seed'],
+        ['grep', `-nO${pager}`, 'seed'],
+        ['grep', '--open-files-in-pager', 'seed'],
+        ['grep', `--open-files-in-pager=${pager}`, 'seed'],
+        ['grep', `--open-files-in-page=${pager}`, 'seed'],
+        ['grep', `--open-files-in-p=${pager}`, 'seed'],
+        ['grep', `--open-files=${pager}`, 'seed'],
+      ]) {
+        const result = await connection.client.callTool({ name: 'git', arguments: { args } })
+        expect(result.isError, args.join(' ')).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('rejects explicit pager commands')
+      }
+      const normal = await connection.client.callTool({
+        name: 'git',
+        arguments: { args: ['grep', 'seed', '--', 'README.md'] },
+      })
+      expect(normal.isError).not.toBe(true)
+      expect(existsSync(commandMarker)).toBe(false)
+      expect(existsSync(secretMarker)).toBe(false)
+      expect(existsSync(clusterMarker)).toBe(false)
+    } finally {
+      if (previousToken == null) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = previousToken
+      if (previousHost == null) delete process.env.KUBERNETES_SERVICE_HOST
+      else process.env.KUBERNETES_SERVICE_HOST = previousHost
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('disables repository-configured execution during read-only Git inspection', async () => {
+    const fixture = makeFixture()
+    const marker = join(fixture.root, 'git-helper-invoked')
+    const helper = writeTrustedExecutable(
+      fixture.trustedBin,
+      'git-config-helper',
+      `#!${fixtureExecutables.bash}\nprintf invoked >> ${JSON.stringify(marker)}\n`,
+    )
+    writeFileSync(join(fixture.existingWorkspace, '.gitattributes'), 'README.md diff=hostile filter=hostile\n')
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'add', '.gitattributes'])
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'commit', '-m', 'test: hostile attributes'])
+    for (const [key, value] of [
+      ['diff.hostile.command', helper],
+      ['diff.hostile.textconv', helper],
+      ['diff.external', helper],
+      ['core.fsmonitor', helper],
+      ['pager.diff', helper],
+      ['interactive.diffFilter', helper],
+      ['filter.hostile.clean', helper],
+      ['filter.hostile.smudge', helper],
+      ['filter.hostile.process', `${helper} process`],
+      ['filter.hostile.required', 'true'],
+    ]) {
+      execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'config', key, value])
+    }
+
+    const connection = await connectFixture(fixture, { acquire: true })
+    try {
+      const changed = await connection.client.callTool({
+        name: 'shell_run',
+        arguments: { command: 'printf changed > README.md' },
+      })
+
+      expect(changed.isError).not.toBe(true)
+      for (const args of [
+        ['diff', '--', 'README.md'],
+        ['status', '--short'],
+        ['log', '-1', '--', 'README.md'],
+        ['show', 'HEAD:README.md'],
+      ]) {
+        const result = await connection.client.callTool({ name: 'git', arguments: { args } })
+        expect(result.isError, args.join(' ')).not.toBe(true)
+      }
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('neutralizes core.alternateRefsCommand before accepted log inspection can expose readable credentials', async () => {
+    const fixture = makeFixture()
+    const alternate = join(fixture.root, 'alternate-object-repository')
+    const marker = join(fixture.root, 'alternate-refs-invoked')
+    const token = join(fixture.root, 'projected-service-account-token')
+    const helper = join(fixture.root, 'alternate-refs-helper')
+    mkdirSync(alternate)
+    execFileSync(fixtureExecutables.git, ['init', '--quiet', '--initial-branch=main', alternate])
+    execFileSync(fixtureExecutables.git, ['-C', alternate, 'config', 'user.name', 'Alternate Ref Test'])
+    execFileSync(fixtureExecutables.git, ['-C', alternate, 'config', 'user.email', 'alternate@example.test'])
+    writeFileSync(join(alternate, 'ALT'), 'alternate\n')
+    execFileSync(fixtureExecutables.git, ['-C', alternate, 'add', 'ALT'])
+    execFileSync(fixtureExecutables.git, ['-C', alternate, 'commit', '-m', 'test: alternate object'])
+    mkdirSync(join(fixture.existingWorkspace, '.git', 'objects', 'info'), { recursive: true })
+    writeFileSync(
+      join(fixture.existingWorkspace, '.git', 'objects', 'info', 'alternates'),
+      `${join(alternate, '.git', 'objects')}\n`,
+    )
+    writeFileSync(token, 'mounted-service-account-secret\n', { mode: 0o644 })
+    writeFileSync(
+      helper,
+      `#!${fixtureExecutables.bash}\nprintf invoked > ${JSON.stringify(marker)} || true\ncat ${JSON.stringify(token)}\n`,
+      { mode: 0o755 },
+    )
+    execFileSync(fixtureExecutables.git, [
+      '-C',
+      fixture.existingWorkspace,
+      'config',
+      'core.alternateRefsCommand',
+      helper,
+    ])
+    const raw = execFileSync(
+      fixtureExecutables.git,
+      ['-C', fixture.existingWorkspace, 'log', '--alternate-refs', '-1'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    expect(raw).toContain('commit')
+    expect(readFileSync(marker, 'utf8')).toBe('invoked')
+    rmSync(marker)
+
+    const connection = await connectFixture(fixture, { acquire: true, sessionId: 'alternate-refs-owner' })
+    try {
+      const inspected = await connection.client.callTool({
+        name: 'git',
+        arguments: { args: ['log', '--alternate-refs', '-1'] },
+      })
+      expect(inspected.isError).not.toBe(true)
+      expect(JSON.stringify(inspected)).not.toContain('mounted-service-account-secret')
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('neutralizes format-specific GPG verifier programs before accepted signature inspection', async () => {
+    const fixture = makeFixture()
+    const marker = join(fixture.root, 'gpg-verifier-invoked')
+    const token = join(fixture.root, 'projected-signature-token')
+    const leak = join(fixture.root, 'gpg-verifier-leak')
+    const helper = join(fixture.root, 'gpg-openpgp-helper')
+    const parent = execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim()
+    const tree = execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'rev-parse', 'HEAD^{tree}'], {
+      encoding: 'utf8',
+    }).trim()
+    const identity = 'Signature Test <signature@example.test> 1700000000 +0000'
+    const commit = execFileSync(
+      fixtureExecutables.git,
+      ['-C', fixture.existingWorkspace, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+      {
+        input: [
+          `tree ${tree}`,
+          `parent ${parent}`,
+          `author ${identity}`,
+          `committer ${identity}`,
+          'gpgsig -----BEGIN PGP SIGNATURE-----',
+          ' fake-signature',
+          ' -----END PGP SIGNATURE-----',
+          '',
+          'synthetic signed commit',
+          '',
+        ].join('\n'),
+        encoding: 'utf8',
+      },
+    ).trim()
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'update-ref', 'refs/heads/main', commit])
+    writeFileSync(token, 'mounted-signature-secret\n', { mode: 0o644 })
+    writeFileSync(
+      helper,
+      `#!${fixtureExecutables.bash}\nprintf invoked > ${JSON.stringify(marker)}\ncat ${JSON.stringify(token)} > ${JSON.stringify(leak)}\nexit 1\n`,
+      { mode: 0o755 },
+    )
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'config', 'gpg.format', 'openpgp'])
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'config', 'gpg.openpgp.program', helper])
+    execFileSync(fixtureExecutables.git, ['-C', fixture.existingWorkspace, 'log', '--show-signature', '-1'])
+    expect(readFileSync(marker, 'utf8')).toBe('invoked')
+    expect(readFileSync(leak, 'utf8')).toBe('mounted-signature-secret\n')
+    rmSync(marker)
+    rmSync(leak)
+
+    const connection = await connectFixture(fixture, { acquire: true, sessionId: 'gpg-verifier-owner' })
+    try {
+      const inspected = await connection.client.callTool({
+        name: 'git',
+        arguments: { args: ['log', '--show-signature', '-1'] },
+      })
+      expect(inspected.isError).not.toBe(true)
+      expect(JSON.stringify(inspected)).not.toContain('mounted-signature-secret')
+      expect(existsSync(marker)).toBe(false)
+      expect(existsSync(leak)).toBe(false)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('rejects recursive submodule rendering before child repository filters execute', async () => {
+    const fixture = makeFixture()
+    const child = join(fixture.root, 'hostile-submodule')
+    const marker = join(fixture.root, 'submodule-filter-invoked')
+    const helper = writeTrustedExecutable(
+      fixture.trustedBin,
+      'submodule-clean-filter',
+      `#!${fixtureExecutables.bash}\nprintf invoked >> ${JSON.stringify(marker)}\ncat\n`,
+    )
+    execFileSync(fixtureExecutables.git, ['init', '--quiet', child])
+    execFileSync(fixtureExecutables.git, ['-C', child, 'config', 'user.name', 'Submodule Fixture'])
+    execFileSync(fixtureExecutables.git, ['-C', child, 'config', 'user.email', 'submodule@example.test'])
+    writeFileSync(join(child, 'file.txt'), 'base\n')
+    writeFileSync(join(child, '.gitattributes'), 'file.txt filter=hostile\n')
+    execFileSync(fixtureExecutables.git, ['-C', child, 'add', '.'])
+    execFileSync(fixtureExecutables.git, ['-C', child, 'commit', '-m', 'test: hostile submodule'])
+    execFileSync(fixtureExecutables.git, [
+      '-c',
+      'protocol.file.allow=always',
+      '-C',
+      fixture.seedPath,
+      'submodule',
+      'add',
+      '--quiet',
+      child,
+      'hostile-submodule',
+    ])
+    execFileSync(fixtureExecutables.git, ['-C', fixture.seedPath, 'commit', '-am', 'test: add hostile submodule'])
+    const initialized = join(fixture.seedPath, 'hostile-submodule')
+    execFileSync(fixtureExecutables.git, ['-C', initialized, 'config', 'filter.hostile.clean', helper])
+    execFileSync(fixtureExecutables.git, ['-C', initialized, 'config', 'filter.hostile.required', 'true'])
+    writeFileSync(join(initialized, 'file.txt'), 'changed\n')
+
+    execFileSync(fixtureExecutables.git, ['-C', fixture.seedPath, 'diff', '--submodule=diff'])
+    expect(existsSync(marker)).toBe(true)
+    rmSync(marker)
+
+    const connection = await connectFixture(fixture)
+    try {
+      for (const args of [
+        ['diff', '--submodule=diff'],
+        ['diff', '--submodule', 'diff'],
+        ['diff', '--ignore-submodules=none'],
+        ['grep', '--recurse-submodules', 'base'],
+        ['ls-files', '--recurse-submodules'],
+      ]) {
+        const result = await connection.client.callTool({ name: 'git', arguments: { args } })
+        expect(result.isError, args.join(' ')).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('rejects recursive submodule')
+      }
+      const normal = await connection.client.callTool({ name: 'git', arguments: { args: ['diff'] } })
+      expect(normal.isError).not.toBe(true)
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('isolates shell jobs by MCP session', async () => {
+    const firstFixture = makeFixture()
+    const sharedRunner = new AgentsShellRunner(firstFixture.config, { uidAllocator: () => process.geteuid?.() ?? 0 })
+    const first = await connectFixture(firstFixture, {
+      acquire: true,
+      sessionId: 'session-one',
+      runner: sharedRunner,
+    })
+    const second = await connectFixture(firstFixture, { sessionId: 'session-two', runner: sharedRunner })
+    try {
+      const started = await first.client.callTool({
+        name: 'shell_start',
+        arguments: { command: 'sleep 10', timeoutSeconds: 20 },
+      })
+      const jobId = (started.structuredContent as { jobId: string }).jobId
+      const foreignRead = await second.client.callTool({ name: 'shell_read', arguments: { jobId } })
+      expect(foreignRead.isError).toBe(true)
+      const foreignKill = await second.client.callTool({ name: 'shell_kill', arguments: { jobId } })
+      expect(foreignKill.isError).toBe(true)
+      const killed = await first.client.callTool({ name: 'shell_kill', arguments: { jobId, signal: 'SIGKILL' } })
+      expect(killed.isError).not.toBe(true)
+    } finally {
+      await closeFixtureConnection(second)
+      await closeFixtureConnection(first)
+      sharedRunner.shutdown()
+    }
+  })
+
+  it('pins trusted executables before user-controlled PATH changes', async () => {
+    const fixture = makeFixture()
+    const fakeRg = writeTrustedExecutable(fixture.trustedBin, 'trusted-rg', '#!/bin/sh\nprintf trusted-rg\n')
+    fixture.config.trustedExecutables.executables.rg = fakeRg
+    const connection = await connectFixture(fixture)
+    const previousPath = process.env.PATH
+    process.env.PATH = fixture.workspaceRoot
+    try {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const result = await connection.client.callTool({ name: 'search', arguments: { query: 'anything' } })
+        expect((result.structuredContent as { stdout?: string }).stdout).toBe('trusted-rg')
+      }
+    } finally {
+      process.env.PATH = previousPath
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('preserves in-cluster discovery without leaking secrets to read-only kubectl calls', async () => {
+    const fixture = makeFixture()
+    const execMarker = join(fixture.root, 'kubectl-exec-plugin-invoked')
+    const kubectl = writeTrustedExecutable(
+      fixture.trustedBin,
+      'kubectl-in-cluster',
+      `#!${fixtureExecutables.bash}\nset -euo pipefail\nif [[ -x "\${HOME:-}/.kube/exec-plugin" ]]; then "\${HOME}/.kube/exec-plugin"; fi\ntest "\${HOME:-}" = /nonexistent\ntest "\${KUBECONFIG:-}" = /dev/null\ntest "\${KUBERNETES_SERVICE_HOST:-}" = 10.96.0.1\ntest "\${KUBERNETES_SERVICE_PORT:-}" = 443\ntest -z "\${GH_TOKEN:-}"\nprintf '{"kind":"List","items":[]}\\n'\n`,
+    )
+    fixture.config.trustedExecutables.executables.kubectl = kubectl
+    const previousHost = process.env.KUBERNETES_SERVICE_HOST
+    const previousPort = process.env.KUBERNETES_SERVICE_PORT
+    const previousToken = process.env.GH_TOKEN
+    process.env.KUBERNETES_SERVICE_HOST = '10.96.0.1'
+    process.env.KUBERNETES_SERVICE_PORT = '443'
+    process.env.GH_TOKEN = 'must-not-reach-read-only-kubectl'
+    const connection = await connectFixture(fixture, { sessionId: 'in-cluster-read-owner', acquire: true })
+    try {
+      const planted = await connection.client.callTool({
+        name: 'shell_run',
+        arguments: {
+          command: `mkdir -p "$HOME/.kube" && printf '%s\n' '#!${fixtureExecutables.bash}' 'printf invoked > ${execMarker}' > "$HOME/.kube/exec-plugin" && chmod +x "$HOME/.kube/exec-plugin" && printf 'users: [{name: hostile, user: {exec: {command: %s}}}]\n' "$HOME/.kube/exec-plugin" > "$HOME/.kube/config"`,
+        },
+      })
+      expect(planted.isError).not.toBe(true)
+      const direct = await connection.client.callTool({
+        name: 'kubectl',
+        arguments: { args: ['get', 'pods', '-n', 'agents', '-o', 'json'] },
+      })
+      expect(direct.isError).not.toBe(true)
+      const status = await connection.client.callTool({
+        name: 'agent_status',
+        arguments: { agentRunName: 'fixture-agent' },
+      })
+      expect(status.isError).not.toBe(true)
+      const read = await connection.client.callTool({
+        name: 'agent_read',
+        arguments: { agentRunName: 'fixture-agent' },
+      })
+      expect(read.isError).not.toBe(true)
+      expect(existsSync(execMarker)).toBe(false)
+    } finally {
+      if (previousHost == null) delete process.env.KUBERNETES_SERVICE_HOST
+      else process.env.KUBERNETES_SERVICE_HOST = previousHost
+      if (previousPort == null) delete process.env.KUBERNETES_SERVICE_PORT
+      else process.env.KUBERNETES_SERVICE_PORT = previousPort
+      if (previousToken == null) delete process.env.GH_TOKEN
+      else process.env.GH_TOKEN = previousToken
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('rejects caller-controlled kubectl client loading, credentials, endpoints, and impersonation', async () => {
+    const fixture = makeFixture()
+    const marker = join(fixture.root, 'kubectl-exec-plugin-invoked')
+    const plugin = writeTrustedExecutable(
+      fixture.trustedBin,
+      'hostile-kubectl-exec-plugin',
+      `#!${fixtureExecutables.bash}\nprintf invoked > ${JSON.stringify(marker)}\nprintf '%s\\n' '{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","status":{"token":"hostile"}}'\n`,
+    )
+    const kubeconfig = join(fixture.root, 'hostile-kubeconfig')
+    writeFileSync(
+      kubeconfig,
+      `apiVersion: v1\nkind: Config\nclusters:\n- name: hostile\n  cluster:\n    server: https://127.0.0.1:1\n    insecure-skip-tls-verify: true\nusers:\n- name: hostile\n  user:\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: ${plugin}\n      interactiveMode: Never\ncontexts:\n- name: hostile\n  context:\n    cluster: hostile\n    user: hostile\ncurrent-context: hostile\n`,
+    )
+    const kubectl = findTestExecutable('kubectl')
+    try {
+      execFileSync(kubectl, ['get', 'pods', `--kubeconfig=${kubeconfig}`, '--request-timeout=1s'])
+    } catch {
+      // The hostile endpoint is intentionally unreachable after the plugin runs.
+    }
+    expect(existsSync(marker)).toBe(true)
+    rmSync(marker)
+
+    const connection = await connectFixture(fixture, { acquire: true })
+    try {
+      for (const args of [
+        ['get', 'pods', '--kubeconfig', kubeconfig],
+        ['get', 'pods', `--kubeconfig=${kubeconfig}`],
+        ['get', 'pods', '--server=https://127.0.0.1:1'],
+        ['get', 'pods', '-s', 'https://127.0.0.1:1'],
+        ['get', 'pods', '-shttps://127.0.0.1:1'],
+        ['get', 'pods', '--token=hostile'],
+        ['get', 'pods', '--client-certificate', 'client.crt'],
+        ['get', 'pods', '--client-key=client.key'],
+        ['get', 'pods', '--certificate-authority=ca.crt'],
+        ['get', 'pods', '--insecure-skip-tls-verify=true'],
+        ['get', 'pods', '--context=hostile'],
+        ['get', 'pods', '--cluster=hostile'],
+        ['get', 'pods', '--user=hostile'],
+        ['get', 'pods', '--username=hostile'],
+        ['get', 'pods', '--password=hostile'],
+        ['get', 'pods', '--as=system:admin'],
+        ['get', 'pods', '--as-group=system:masters'],
+        ['get', 'pods', '--as-uid=0'],
+        ['get', 'pods', '--tls-server-name=hostile'],
+      ]) {
+        const result = await connection.client.callTool({ name: 'kubectl', arguments: { args } })
+        expect(result.isError, args.join(' ')).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('rejects caller-controlled client authentication')
+      }
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('returns operating guidance centered on server-owned workspace leases', async () => {
+    const fixture = makeFixture()
+    const connection = await connectFixture(fixture)
+    try {
+      const result = await connection.client.callTool({ name: 'agent_guide', arguments: {} })
+      const guide = (result.structuredContent as { guide?: string }).guide ?? ''
+      expect(guide).toContain('workspace_acquire')
+      expect(guide).toContain('server-issued')
+      expect(guide).toContain('shared read-only seed')
+      expect(guide).not.toContain('worktree add -B')
+    } finally {
+      await closeFixtureConnection(connection)
+    }
+  })
+
+  it('rejects paths outside the configured workspace root', () => {
+    const fixture = makeFixture()
+    expect(() => resolveWorkspacePath(fixture.config.workspaceRoot, '../escape')).toThrow(/path must stay under/)
   })
 })

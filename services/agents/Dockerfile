@@ -10,6 +10,8 @@ ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 ARG UV_VERSION=0.11.14
+ARG GIT_VERSION=2.51.2
+ARG GIT_SHA256=233d7143a2d58e60755eee9b76f559ec73ea2b3c297f5b503162ace95966b4e3
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -302,8 +304,60 @@ ENV AGENTS_VERSION=${AGENTS_VERSION} \
 
 CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
 
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS patched-git-build
+ARG GIT_VERSION
+ARG GIT_SHA256
+
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
+  set -eux; \
+  export DEBIAN_FRONTEND=noninteractive; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends \
+  build-essential \
+  ca-certificates \
+  curl \
+  libcurl4-gnutls-dev \
+  libexpat1-dev \
+  libssl-dev \
+  python3 \
+  xz-utils \
+  zlib1g-dev; \
+  rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    "https://www.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz" \
+    -o /tmp/git.tar.xz; \
+  printf '%s  %s\n' "${GIT_SHA256}" /tmp/git.tar.xz | sha256sum -c -; \
+  mkdir -p /tmp/git-source; \
+  tar -xJf /tmp/git.tar.xz -C /tmp/git-source --strip-components=1; \
+  cd /tmp/git-source; \
+  python3 -c 'from pathlib import Path; p=Path("setup.c"); s=p.read_text(); old="void sanitize_stdfds(void)\n{\n\tint fd = xopen(\"/dev/null\", O_RDWR);\n\twhile (fd < 2)\n\t\tfd = xdup(fd);\n\tif (fd > 2)\n\t\tclose(fd);\n}\n"; new="void sanitize_stdfds(void)\n{\n\tint fd;\n\n\tfor (fd = 0; fd <= 2; fd++) {\n\t\tif (fcntl(fd, F_GETFD) < 0) {\n\t\t\tif (errno == EBADF)\n\t\t\t\tbreak;\n\t\t\tdie_errno(_(\"could not inspect standard file descriptor %d\"), fd);\n\t\t}\n\t}\n\tif (fd > 2)\n\t\treturn;\n\n\tfd = xopen(\"/dev/null\", O_RDWR);\n\twhile (fd < 2)\n\t\tfd = xdup(fd);\n\tif (fd > 2)\n\t\tclose(fd);\n}\n"; old in s or (_ for _ in ()).throw(SystemExit("Git sanitize_stdfds implementation changed")); p.write_text(s.replace(old, new, 1))'
+RUN set -eux; \
+  cd /tmp/git-source; \
+  make -j"$(nproc)" \
+    prefix=/usr/local \
+    NO_GETTEXT=YesPlease \
+    NO_INSTALL_HARDLINKS=YesPlease \
+    NO_PERL=YesPlease \
+    NO_PYTHON=YesPlease \
+    NO_TCLTK=YesPlease; \
+  make \
+    prefix=/usr/local \
+    DESTDIR=/opt/agents-shell-git \
+    NO_GETTEXT=YesPlease \
+    NO_INSTALL_HARDLINKS=YesPlease \
+    NO_PERL=YesPlease \
+    NO_PYTHON=YesPlease \
+    NO_TCLTK=YesPlease \
+    install; \
+  test -x /opt/agents-shell-git/usr/local/bin/git; \
+  rm -rf /tmp/git-source /tmp/git.tar.xz
+
 FROM controller AS agents-shell
 ARG UV_VERSION
+ARG GIT_VERSION
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
@@ -333,11 +387,20 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}" \
   && uv --version
 
+COPY --from=patched-git-build /opt/agents-shell-git/usr/local/bin/ /usr/local/bin/
+COPY --from=patched-git-build /opt/agents-shell-git/usr/local/libexec/git-core/ /usr/local/libexec/git-core/
+COPY --from=patched-git-build /opt/agents-shell-git/usr/local/share/git-core/ /usr/local/share/git-core/
+
 WORKDIR /app/services/agents
 RUN install -o root -g root -m 0755 ./scripts/apply_patch.py /usr/local/bin/apply_patch \
+  && cc -O2 -Wall -Wextra -Werror -o /usr/local/bin/agents-shell-landlock ./src/server/agents-shell/native/landlock-exec.c \
+  && strip /usr/local/bin/agents-shell-landlock \
   && chmod +x ./scripts/agents-shell-entrypoint.sh \
   && mkdir -p /workspace /workspace/.agents-shell \
-  && command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch \
+  && command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch agents-shell-landlock \
+  && test "$(command -v git)" = /usr/local/bin/git \
+  && git --version | grep -F "git version ${GIT_VERSION}" \
+  && agents-shell-landlock --check \
   && tmp="$(mktemp -d)" \
   && cd "$tmp" \
   && printf '%s\n' old > smoke.txt \
@@ -357,7 +420,12 @@ ENV AGENTS_SERVER_PROFILE=agents-shell \
   AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
   AGENTS_RUNTIME_SERVICE=agents-shell \
   AGENTS_SHELL_WORKSPACE_ROOT=/workspace \
+  AGENTS_SHELL_WORKSPACE_SEED_PATH=/workspace/lab \
+  AGENTS_SHELL_WORKSPACE_LEASE_ROOT=/workspace/worktrees/lab \
+  AGENTS_SHELL_SESSION_RUNTIME_ROOT=/workspace/.agents-shell/sessions \
+  AGENTS_SHELL_LEASE_STATE_PATH=/workspace/.agents-shell/leases.json \
   AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl \
+  AGENTS_SHELL_LANDLOCK_EXECUTABLE=/usr/local/bin/agents-shell-landlock \
   AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai \
   AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master \
   AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents

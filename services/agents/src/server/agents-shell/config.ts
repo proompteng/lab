@@ -10,6 +10,7 @@ import {
   DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
   DEFAULT_AGENT_VCS_REF,
   DEFAULT_ISSUER,
+  DEFAULT_MAX_TOOL_SCHEMA_BYTES,
   DEFAULT_OUTPUT_BYTES,
   DEFAULT_RESOURCE,
   DEFAULT_TIMEOUT_SECONDS,
@@ -17,6 +18,7 @@ import {
   MAX_TIMEOUT_SECONDS,
   SCOPES,
 } from './constants'
+import { pinTrustedExecutables, type TrustedExecutables } from './trusted-executables'
 
 export type AgentsShellConfig = {
   name: string
@@ -29,6 +31,17 @@ export type AgentsShellConfig = {
   allowedUsernames: Set<string>
   allowedSubjects: Set<string>
   workspaceRoot: string
+  workspaceSeedPath: string
+  workspaceLeaseRoot: string
+  sessionRuntimeRoot: string
+  leaseStatePath: string
+  leaseTtlSeconds: number
+  sessionUidStart: number
+  sessionUidEnd: number
+  inspectionUid: number
+  inspectionGid: number
+  maxToolSchemaBytes: number
+  trustedExecutables: TrustedExecutables
   defaultTimeoutSeconds: number
   maxTimeoutSeconds: number
   defaultOutputBytes: number
@@ -78,6 +91,7 @@ const parseListenPort = (env: NodeJS.ProcessEnv) => {
 export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): AgentsShellConfig => {
   const issuer = env.AGENTS_SHELL_OAUTH_ISSUER ?? DEFAULT_ISSUER
   const resource = env.AGENTS_SHELL_RESOURCE ?? DEFAULT_RESOURCE
+  const workspaceRoot = env.AGENTS_SHELL_WORKSPACE_ROOT ?? '/workspace'
 
   return {
     name: 'agents-shell',
@@ -89,7 +103,18 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     allowedEmails: parseList(env.AGENTS_SHELL_ALLOWED_EMAILS),
     allowedUsernames: parseList(env.AGENTS_SHELL_ALLOWED_USERNAMES),
     allowedSubjects: parseList(env.AGENTS_SHELL_ALLOWED_SUBJECTS),
-    workspaceRoot: env.AGENTS_SHELL_WORKSPACE_ROOT ?? '/workspace',
+    workspaceRoot,
+    workspaceSeedPath: env.AGENTS_SHELL_WORKSPACE_SEED_PATH ?? `${workspaceRoot}/lab`,
+    workspaceLeaseRoot: env.AGENTS_SHELL_WORKSPACE_LEASE_ROOT ?? `${workspaceRoot}/worktrees/lab`,
+    sessionRuntimeRoot: env.AGENTS_SHELL_SESSION_RUNTIME_ROOT ?? `${workspaceRoot}/.agents-shell/sessions`,
+    leaseStatePath: env.AGENTS_SHELL_LEASE_STATE_PATH ?? `${workspaceRoot}/.agents-shell/leases.json`,
+    leaseTtlSeconds: Number(env.AGENTS_SHELL_LEASE_TTL_SECONDS ?? '21600'),
+    sessionUidStart: Number(env.AGENTS_SHELL_SESSION_UID_START ?? '200000'),
+    sessionUidEnd: Number(env.AGENTS_SHELL_SESSION_UID_END ?? '299999'),
+    inspectionUid: Number(env.AGENTS_SHELL_INSPECTION_UID ?? '65534'),
+    inspectionGid: Number(env.AGENTS_SHELL_INSPECTION_GID ?? '65534'),
+    maxToolSchemaBytes: Number(env.AGENTS_SHELL_MAX_TOOL_SCHEMA_BYTES ?? String(DEFAULT_MAX_TOOL_SCHEMA_BYTES)),
+    trustedExecutables: pinTrustedExecutables(workspaceRoot, env),
     defaultTimeoutSeconds: Number(env.AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS ?? String(DEFAULT_TIMEOUT_SECONDS)),
     maxTimeoutSeconds: Number(env.AGENTS_SHELL_MAX_TIMEOUT_SECONDS ?? String(MAX_TIMEOUT_SECONDS)),
     defaultOutputBytes: Number(env.AGENTS_SHELL_DEFAULT_OUTPUT_BYTES ?? String(DEFAULT_OUTPUT_BYTES)),

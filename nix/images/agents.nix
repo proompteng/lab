@@ -268,6 +268,7 @@ let
 
   serviceSourcePaths = [
     "charts/agents/crds"
+    "charts/agents/templates/agents-shell-deployment.yaml"
     "packages/agent-contracts"
     "packages/codex"
     "packages/cx-tools"
@@ -328,7 +329,7 @@ let
   ];
 
   runtimeInstallPhase = ''
-    mkdir -p "$out/app/packages" "$out/app/services/agents"
+    mkdir -p "$out/app/charts/agents/templates" "$out/app/packages" "$out/app/services/agents"
 
     copyWorkspaceNodeModules() {
       local source_path="$1"
@@ -360,6 +361,8 @@ let
     }
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
+    cp "$TMPDIR/work/charts/agents/templates/agents-shell-deployment.yaml" \
+      "$out/app/charts/agents/templates/agents-shell-deployment.yaml"
     for package in agent-contracts codex cx-tools otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
       copyWorkspaceNodeModules "$TMPDIR/work/packages/$package/node_modules" "$out/app/packages/$package/node_modules"
@@ -396,18 +399,88 @@ let
     exec ${pkgs.python3}/bin/python3 /app/services/agents/scripts/apply_patch.py "$@"
   '';
 
-  commonContents = [
+  # Git opens /dev/null read-write unconditionally during common startup even
+  # when stdin/stdout/stderr are already valid. Read-only agents-shell Git runs
+  # intentionally grant write access only to their verified scratch directory,
+  # so avoid that unnecessary device open without weakening Landlock.
+  agentsShellGit = pkgs.git.overrideAttrs (old: {
+    nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
+    postPatch = (old.postPatch or "") + ''
+      python3 - <<'PY'
+      from pathlib import Path
+
+      path = Path("setup.c")
+      source = path.read_text()
+      old = """void sanitize_stdfds(void)
+      {
+      \tint fd = xopen("/dev/null", O_RDWR);
+      \twhile (fd < 2)
+      \t\tfd = xdup(fd);
+      \tif (fd > 2)
+      \t\tclose(fd);
+      }
+      """
+      new = """void sanitize_stdfds(void)
+      {
+      \tint fd;
+
+      \tfor (fd = 0; fd <= 2; fd++) {
+      \t\tif (fcntl(fd, F_GETFD) < 0) {
+      \t\t\tif (errno == EBADF)
+      \t\t\t\tbreak;
+      \t\t\tdie_errno(_("could not inspect standard file descriptor %d"), fd);
+      \t\t}
+      \t}
+      \tif (fd > 2)
+      \t\treturn;
+
+      \tfd = xopen("/dev/null", O_RDWR);
+      \twhile (fd < 2)
+      \t\tfd = xdup(fd);
+      \tif (fd > 2)
+      \t\tclose(fd);
+      }
+      """
+      if old not in source:
+          raise SystemExit("Git sanitize_stdfds implementation changed")
+      path.write_text(source.replace(old, new, 1))
+      PY
+    '';
+  });
+
+  agentsShellLandlock = pkgs.stdenv.mkDerivation {
+    pname = "agents-shell-landlock";
+    version = "0.1.0";
+    dontUnpack = true;
+    buildPhase = ''
+      runHook preBuild
+      $CC -O2 -Wall -Wextra -Werror \
+        -o agents-shell-landlock \
+        ${repoRoot}/services/agents/src/server/agents-shell/native/landlock-exec.c
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 agents-shell-landlock "$out/usr/local/bin/agents-shell-landlock"
+      runHook postInstall
+    '';
+  };
+
+  commonContentsWithoutGit = [
     kubectl
     nodejs
     pkgs.bash
     pkgs.curl
-    pkgs.git
     pkgs.jq
     natsCli
     yq
   ] ++ cxTools;
 
-  agentsShellContents = commonContents ++ [
+  commonContents = commonContentsWithoutGit ++ [ pkgs.git ];
+
+  agentsShellContents = commonContentsWithoutGit ++ [
+    agentsShellGit
+    agentsShellLandlock
     applyPatch
     pkgs.gh
     pkgs.openssh
@@ -640,7 +713,12 @@ in
       "AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true"
       "AGENTS_RUNTIME_SERVICE=agents-shell"
       "AGENTS_SHELL_WORKSPACE_ROOT=/workspace"
+      "AGENTS_SHELL_WORKSPACE_SEED_PATH=/workspace/lab"
+      "AGENTS_SHELL_WORKSPACE_LEASE_ROOT=/workspace/worktrees/lab"
+      "AGENTS_SHELL_SESSION_RUNTIME_ROOT=/workspace/.agents-shell/sessions"
+      "AGENTS_SHELL_LEASE_STATE_PATH=/workspace/.agents-shell/leases.json"
       "AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl"
+      "AGENTS_SHELL_LANDLOCK_EXECUTABLE=/usr/local/bin/agents-shell-landlock"
       "AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai"
       "AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master"
       "AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents"

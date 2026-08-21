@@ -35,10 +35,10 @@ export const createShellTools = (): EffectTool[] => [
     annotations: shellAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellInput, { runner, auth }) =>
+    handler: (args: ShellInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
-          const input = runner.parseCommandInput(args)
+          const input = runner.parseCommandInput(args, auth, sessionId)
           const job = await runner.run(input, auth)
           return jsonTextResult(summarizeJob(job, input.maxOutputBytes))
         },
@@ -54,10 +54,10 @@ export const createShellTools = (): EffectTool[] => [
     annotations: shellAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellInput, { runner, auth }) =>
+    handler: (args: ShellInput, { runner, auth, sessionId }) =>
       Effect.try({
         try: () => {
-          const input = runner.parseCommandInput(args)
+          const input = runner.parseCommandInput(args, auth, sessionId)
           const job = runner.start(input, auth)
           return jsonTextResult(summarizeJob(job, input.maxOutputBytes))
         },
@@ -73,7 +73,7 @@ export const createShellTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellReadInput, { config, runner }) =>
+    handler: (args: ShellReadInput, { config, runner, sessionId }) =>
       Effect.try({
         try: () => {
           const maxOutputBytes = asPositiveInteger(
@@ -84,7 +84,7 @@ export const createShellTools = (): EffectTool[] => [
             1024,
           )
           return jsonTextResult(
-            summarizeJob(runner.requireJob(args.jobId), maxOutputBytes, {
+            summarizeJob(runner.requireOwnedJob(args.jobId, sessionId), maxOutputBytes, {
               stdoutOffset: args.stdoutOffset ?? null,
               stderrOffset: args.stderrOffset ?? null,
             }),
@@ -102,10 +102,10 @@ export const createShellTools = (): EffectTool[] => [
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellKillInput, { config, runner, auth }) =>
+    handler: (args: ShellKillInput, { config, runner, auth, sessionId }) =>
       Effect.try({
         try: () => {
-          const job = runner.kill(args.jobId, auth, args.signal ?? 'SIGTERM')
+          const job = runner.kill(args.jobId, sessionId, auth, (args.signal ?? 'SIGTERM') as NodeJS.Signals)
           return jsonTextResult(summarizeJob(job, config.defaultOutputBytes))
         },
         catch: agentsShellErrorFromUnknown,
@@ -120,12 +120,13 @@ export const createShellTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellStatusInput, { config, runner }) =>
+    handler: (args: ShellStatusInput, { config, runner, sessionId }) =>
       Effect.try({
         try: () => {
           const jobs = args.jobId
-            ? [runner.requireJob(args.jobId)]
-            : Array.from(runner.jobs.values())
+            ? [runner.requireOwnedJob(args.jobId, sessionId)]
+            : runner
+                .jobsForSession(sessionId)
                 .slice(-asPositiveInteger(args.limit, 'limit', 20, 100, 1))
                 .reverse()
           return jsonTextResult({ jobs: jobs.map((job) => summarizeJob(job, config.defaultOutputBytes)) })

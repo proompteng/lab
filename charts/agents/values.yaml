@@ -142,7 +142,18 @@ agentsShell:
       AGENTS_SHELL_LISTEN_PORT: '8080'
       AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: agents
       AGENTS_SHELL_WORKSPACE_ROOT: /workspace
+      AGENTS_SHELL_WORKSPACE_SEED_PATH: /workspace/lab
+      AGENTS_SHELL_WORKSPACE_LEASE_ROOT: /workspace/worktrees/lab
+      AGENTS_SHELL_SESSION_RUNTIME_ROOT: /workspace/.agents-shell/sessions
+      AGENTS_SHELL_LEASE_STATE_PATH: /workspace/.agents-shell/leases.json
       AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
+      AGENTS_SHELL_LEASE_TTL_SECONDS: '21600'
+      AGENTS_SHELL_SESSION_UID_START: '200000'
+      AGENTS_SHELL_SESSION_UID_END: '299999'
+      AGENTS_SHELL_INSPECTION_UID: '65534'
+      AGENTS_SHELL_INSPECTION_GID: '65534'
+      AGENTS_SHELL_MAX_TOOL_SCHEMA_BYTES: '24576'
+      AGENTS_SHELL_LANDLOCK_EXECUTABLE: /usr/local/bin/agents-shell-landlock
       AGENTS_SHELL_ENABLE_K8S_APPLY: 'false'
       HOME: /workspace/.agents-shell/home
       AGENTS_SHELL_GIT_USER_NAME: Greg Konush
@@ -160,6 +171,7 @@ agentsShell:
   workspace:
     enabled: true
     volumeMode: persistentVolumeClaim
+    seedReadOnly: false
     existingClaim: ''
     claimName: ''
     accessModes:
@@ -207,6 +219,9 @@ agentsShell:
   podAnnotations: {}
   podLabels: {}
   securityContext:
+    # Keep the currently deployed pre-isolation image non-root. The normal
+    # image-promotion renderer replaces this atomically with the lease-aware
+    # root context when it pins the matching agents-shell digest.
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
