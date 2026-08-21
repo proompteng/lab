@@ -67,6 +67,7 @@ export interface OpeningDrivePortfolioReplay {
   readonly entryNotionalMicros: string
   readonly exitNotionalMicros: string
   readonly unclosedQuantityMicros: string
+  readonly zeroMarkedRemainderQuantityMicros: string
   readonly flat: boolean
   readonly midpointGrossPnlMicros: string
   readonly quotedSpreadCostMicros: string
