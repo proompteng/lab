@@ -817,6 +817,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: hermes-toolchain-release-contract',
     'nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64',
     'argocd/applications/hermes/statefulset.yaml',
+    'if [ "$old_digest" != "$new_digest" ]; then',
+    'Hermes toolchain digest is already current: sha256:${new_digest}',
     'automated-pr',
     'nix-oci',
     'agents',

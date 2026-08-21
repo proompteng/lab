@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
@@ -45,14 +45,16 @@ test('Restate followers cannot start before singleton snapshot coverage is compl
   const restatectl = `${tempDir}/restatectl`
   const sleep = `${tempDir}/sleep`
   const calls = `${tempDir}/calls`
+  const dataDir = `${tempDir}/data`
 
   try {
+    mkdirSync(dataDir)
     writeFileSync(
       restatectl,
       `#!/bin/sh
 set -eu
 case " $* " in
-  *" status "*) exit 0 ;;
+  *" status "*) [ "\${SEED_UNAVAILABLE:-0}" -eq 0 ] ;;
   *" partitions list "*)
     i=0
     while [ "$i" -lt 24 ]; do
@@ -75,7 +77,12 @@ esac
 
     const run = (podName: string) =>
       Bun.spawnSync(['/bin/bash', '-ceu', script], {
-        env: { ...process.env, PATH: `${tempDir}:${process.env.PATH ?? ''}`, POD_NAME: podName },
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+          POD_NAME: podName,
+          RESTATE_DATA_DIR: dataDir,
+        },
         stdout: 'pipe',
         stderr: 'pipe',
       })
@@ -96,6 +103,25 @@ esac
     writeFileSync(`${tempDir}/p0`, '')
     writeFileSync(`${tempDir}/p1`, '')
     expect(run('restate-2').exitCode).toBe(0)
+
+    rmSync(calls, { force: true })
+    writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
+    const retainedFollower = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+      env: {
+        ...process.env,
+        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+        POD_NAME: 'restate-2',
+        RESTATE_DATA_DIR: dataDir,
+        SEED_UNAVAILABLE: '1',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(retainedFollower.exitCode).toBe(0)
+    expect(retainedFollower.stdout.toString()).toContain(
+      'Retained follower storage is already initialized; skipping first-time snapshot gate',
+    )
+    expect(Bun.file(calls).size).toBe(0)
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }

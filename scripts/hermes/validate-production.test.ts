@@ -60,6 +60,18 @@ test('rejects a mutable Hermes toolchain image volume', async () => {
   )
 })
 
+test('rejects a Hermes toolchain release that treats an already-current digest as stale', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainReleaseWorkflow = files.toolchainReleaseWorkflow.replace(
+    'if [ "$old_digest" != "$new_digest" ]; then',
+    'if true; then',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.toolchainReleaseWorkflow}: missing production invariant "if [ \\"$old_digest\\" != \\"$new_digest\\" ]; then"`,
+  )
+})
+
 test('rejects omitting the Hermes toolchain bin mount from one container', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(

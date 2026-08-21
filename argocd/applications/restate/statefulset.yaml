@@ -56,12 +56,20 @@ spec:
             - -ceu
             - |
               set -o pipefail
+              data_dir=${RESTATE_DATA_DIR:-/restate-data}
               case "$POD_NAME" in
                 restate-0)
                   echo "Singleton seed does not require the follower snapshot gate"
                   exit 0
                   ;;
-                restate-1|restate-2) ;;
+                restate-1|restate-2)
+                  shopt -s nullglob dotglob
+                  retained_entries=("$data_dir"/*)
+                  if [ "${#retained_entries[@]}" -gt 0 ]; then
+                    echo "Retained follower storage is already initialized; skipping first-time snapshot gate"
+                    exit 0
+                  fi
+                  ;;
                 *)
                   echo "Unexpected Restate StatefulSet ordinal: $POD_NAME" >&2
                   exit 1
@@ -120,6 +128,10 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.name
+          volumeMounts:
+            - mountPath: /restate-data
+              name: storage
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

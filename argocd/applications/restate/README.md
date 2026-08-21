@@ -87,12 +87,14 @@ before Argo can apply the singleton StatefulSet.
 
 ## Recovery proof and control-plane telemetry
 
-The StatefulSet keeps an in-revision follower startup gate: `restate-0` starts normally, while `restate-1` and
-`restate-2` cannot start the Restate process until the singleton seed reports positive archived snapshot LSNs for every
-partition. `restate-1` requests snapshots for any missing partition while both followers wait. This keeps a direct
-sync to the three-replica revision safe without relying on a previously merged Git revision or a PostSync hook that
-cannot run until the StatefulSet is healthy. The followers then join the existing cluster with empty retained RBD PVCs
-and bootstrap worker state from the snapshot repository as needed. A PDB
+The StatefulSet keeps an in-revision first-start follower gate: `restate-0` starts normally, while a new `restate-1`
+or `restate-2` whose retained RBD PVC is still empty cannot start the Restate process until the singleton seed reports
+positive archived snapshot LSNs for every partition. `restate-1` requests snapshots for any missing partition while
+new followers wait. Once a follower has initialized its retained PVC, later Pod recreation bypasses this first-start
+gate so a missing `restate-0` cannot prevent the retained follower from rejoining another surviving peer and restoring
+quorum. This keeps a direct sync to the three-replica revision safe without relying on a previously merged Git revision
+or a PostSync hook that cannot run until the StatefulSet is healthy. New followers join the existing cluster with empty
+retained RBD PVCs and bootstrap worker state from the snapshot repository as needed. A PDB
 with `minAvailable: 3` blocks voluntary disruption during the replication migration; it must not be relaxed until
 replication two and healthy three-node quorum are proven live.
 

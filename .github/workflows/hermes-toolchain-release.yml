@@ -159,13 +159,17 @@ jobs:
           test "${#old_digest}" -eq 64
           test "${#new_digest}" -eq 64
           export OLD_DIGEST="$old_digest" NEW_DIGEST="$new_digest"
-          for path in "$statefulset_path" "$readme_path" "$runbook_path" "$validator_path"; do
-            perl -0pi -e 's/\Q$ENV{OLD_DIGEST}\E/$ENV{NEW_DIGEST}/g' "$path"
-            if grep -F "$old_digest" "$path" >/dev/null; then
-              echo "stale Hermes toolchain digest remains in $path" >&2
-              exit 1
-            fi
-          done
+          if [ "$old_digest" != "$new_digest" ]; then
+            for path in "$statefulset_path" "$readme_path" "$runbook_path" "$validator_path"; do
+              perl -0pi -e 's/\Q$ENV{OLD_DIGEST}\E/$ENV{NEW_DIGEST}/g' "$path"
+              if grep -F "$old_digest" "$path" >/dev/null; then
+                echo "stale Hermes toolchain digest remains in $path" >&2
+                exit 1
+              fi
+            done
+          else
+            echo "Hermes toolchain digest is already current: sha256:${new_digest}"
+          fi
           test "$(grep -cF "reference: ${IMAGE_REF}" argocd/applications/hermes/statefulset.yaml)" -eq 1
           test "$(grep -cF "${IMAGE_REF}" "$readme_path")" -eq 1
           test "$(grep -cF "${IMAGE_REF}" "$runbook_path")" -eq 1
