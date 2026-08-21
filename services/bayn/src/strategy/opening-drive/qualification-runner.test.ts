@@ -72,6 +72,15 @@ const withFinalizedAt = (manifest: SignalManifestRow, finalizedAt: string): Sign
   return { ...changed, manifest_content_hash: canonicalHashV1(changed) }
 }
 
+const withPublicationAsOf = (
+  manifest: SignalManifestRow,
+  publicationAsOf: SignalManifestRow['publication_asof'],
+): SignalManifestRow => {
+  const { manifest_content_hash: _, ...material } = manifest
+  const changed = { ...material, publication_asof: publicationAsOf }
+  return { ...changed, manifest_content_hash: canonicalHashV1(changed) }
+}
+
 const publicationFixture = {
   snapshotId: 'a'.repeat(64),
   manifestContentHash: 'b'.repeat(64),
@@ -253,6 +262,19 @@ describe('opening-drive qualification runner', () => {
         verifyOpeningDriveQualificationCalendarPublication({
           ...input,
           manifests: [exactlyFinalSessionClose],
+          start: '2026-01-05',
+          end: '2026-01-06',
+        }),
+      ),
+    ).toBe(true)
+
+    const publicationBeforeFullCalendar = withPublicationAsOf(manifest, '2026-01-06')
+    expect(
+      Result.isFailure(
+        verifyOpeningDriveQualificationCalendarPublication({
+          ...input,
+          manifests: [publicationBeforeFullCalendar],
+          publicationAsOf: publicationBeforeFullCalendar.publication_asof,
           start: '2026-01-05',
           end: '2026-01-06',
         }),

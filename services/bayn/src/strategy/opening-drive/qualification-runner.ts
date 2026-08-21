@@ -189,6 +189,12 @@ export const verifyOpeningDriveQualificationCalendarPublication = (input: {
         failure('Qualification Signal session calendar content hash does not match its manifest'),
       )
     }
+    if (
+      orderedSessions.some(({ session_date: sessionDate }) => sessionDate > manifest.publication_asof) ||
+      input.end > manifest.publication_asof
+    ) {
+      return yield* Result.fail(failure('Qualification Signal session calendar exceeds its publication as-of boundary'))
+    }
     const lastSession = orderedSessions.at(-1)
     if (lastSession === undefined) {
       return yield* Result.fail(failure('Qualification Signal session calendar has no final session'))

@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, Stdio, Stream } from 'effect'
+import { Effect, Layer, Result, Stdio, Stream } from 'effect'
 
 import { loadConfig } from './config'
 import { OpeningDriveQualificationResourcesLive } from './composition/resources'
@@ -14,14 +14,44 @@ import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemet
 export const OPENING_DRIVE_QUALIFICATION_COMMAND_USAGE =
   'Usage: bayn-opening-drive-qualification --start YYYY-MM-DD --end YYYY-MM-DD'
 
-const parseRequest = (args: readonly string[]): OpeningDriveQualificationRequest | undefined => {
-  const value = (name: string) => {
-    const index = args.indexOf(name)
-    return index >= 0 ? args[index + 1] : undefined
+export type OpeningDriveQualificationCommand =
+  | { readonly action: 'help' }
+  | { readonly action: 'qualify'; readonly request: OpeningDriveQualificationRequest }
+
+const commandError = (message: string): OpeningDriveQualificationProgramError =>
+  new OpeningDriveQualificationProgramError({
+    operation: 'request',
+    message: `${message}; ${OPENING_DRIVE_QUALIFICATION_COMMAND_USAGE}`,
+  })
+
+export const parseOpeningDriveQualificationCommand = (
+  args: readonly string[],
+): Result.Result<OpeningDriveQualificationCommand, OpeningDriveQualificationProgramError> => {
+  if (args.length === 1 && args[0] === '--help') return Result.succeed({ action: 'help' as const })
+  if (args.length !== 4) return Result.fail(commandError('opening-drive qualification arguments are incomplete'))
+
+  const values = new Map<string, string>()
+  for (let index = 0; index < args.length; index += 2) {
+    const name = args[index]
+    const value = args[index + 1]
+    if ((name !== '--start' && name !== '--end') || value === undefined || value.startsWith('--') || values.has(name)) {
+      return Result.fail(commandError('opening-drive qualification arguments are malformed'))
+    }
+    values.set(name, value)
   }
-  const start = value('--start')
-  const end = value('--end')
-  return start === undefined || end === undefined ? undefined : { start, end }
+
+  const start = values.get('--start')
+  const end = values.get('--end')
+  if (
+    start === undefined ||
+    end === undefined ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(start) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(end) ||
+    start > end
+  ) {
+    return Result.fail(commandError('opening-drive qualification requires an ordered ISO session range'))
+  }
+  return Result.succeed({ action: 'qualify' as const, request: { start, end } })
 }
 
 const printUsage = Effect.gen(function* () {
@@ -53,16 +83,18 @@ const run = (request: OpeningDriveQualificationRequest) =>
   ).pipe(withObservedSpan('bayn.opening-drive.qualify'))
 
 const args = process.argv.slice(2)
-const request = parseRequest(args)
-const main = args.includes('--help') || request === undefined ? printUsage : run(request)
 const runtime = Layer.mergeAll(
   makeConfiguredTelemetryRuntimeLayer('bayn-opening-drive-qualification'),
   NodeServices.layer,
 )
-const program = main.pipe(
-  Effect.annotateLogs({ service: 'bayn-opening-drive-qualification' }),
-  // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the runtime layer
-  Effect.provide(runtime),
-)
+const program = Result.match(parseOpeningDriveQualificationCommand(args), {
+  onFailure: (cause) => Effect.fail(cause),
+  onSuccess: (command) =>
+    (command.action === 'help' ? printUsage : run(command.request)).pipe(
+      Effect.annotateLogs({ service: 'bayn-opening-drive-qualification' }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the runtime layer
+      Effect.provide(runtime),
+    ),
+})
 
 if (import.meta.main) NodeRuntime.runMain(program)
