@@ -177,7 +177,13 @@ export interface AdverseQuotePrices {
 
 export type OpeningDriveEntryDisposition = 'AWAIT_SIGNAL' | 'EXECUTE' | 'NO_TRADE'
 
-const mutableEntryRejectionReasons = new Set<OpeningDriveRejectionReason>(['breakout', 'displayed-liquidity', 'spread'])
+const mutableEntryRejectionReasons = new Set<OpeningDriveRejectionReason>([
+  'breakout',
+  'displayed-liquidity',
+  'opening-return',
+  'range-location',
+  'spread',
+])
 
 /**
  * An opening range is immutable after it is finalized, while breakout, spread, and displayed liquidity can still

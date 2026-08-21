@@ -22,6 +22,7 @@ import {
 import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
+  type OpeningDriveRejectionReason,
   type OpeningDriveStrategyDefinition,
   type OpeningDriveTargetPortfolio,
   openingDriveExecutionModel,
@@ -464,7 +465,7 @@ describe('opening-drive runtime decision boundary', () => {
     }
     const decisionWith = (
       observedAt: string,
-      rejectionReasons: readonly ('breakout' | 'opening-return' | 'spread')[],
+      rejectionReasons: readonly OpeningDriveRejectionReason[],
     ): OpeningDriveTargetPortfolio => ({
       ...baseDecision,
       observedAt,
@@ -495,6 +496,20 @@ describe('opening-drive runtime decision boundary', () => {
     expect(
       openingDriveEntryDisposition(
         decisionWith('2026-08-18T13:35:01.000Z', ['opening-return']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('AWAIT_SIGNAL')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:35:01.000Z', ['range-location']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('AWAIT_SIGNAL')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:35:01.000Z', ['dollar-volume']),
         cycle.window.submissionCutoffAt,
         60_000,
       ),
