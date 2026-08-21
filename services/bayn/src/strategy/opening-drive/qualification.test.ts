@@ -3,7 +3,12 @@ import { Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
 import { makeExecutionCalendarObservation } from '../../cycle'
-import { verifyIntradaySnapshot, type IntradayMarketSnapshot, type IntradaySnapshotRequest } from '../../market-data'
+import {
+  reverifyIntradayMarketSnapshot,
+  verifyIntradaySnapshot,
+  type IntradayMarketSnapshot,
+  type IntradaySnapshotRequest,
+} from '../../market-data'
 import type { IsoDate } from '../../types'
 import { decideOpeningDrive, openingDriveBehaviorHash } from './decision'
 import type { OpeningDriveMarketContext } from './model'
@@ -603,6 +608,41 @@ describe('opening-drive after-cost qualification', () => {
     ).toMatchObject({ reason: 'snapshot-binding', symbol: 'AMD' })
   })
 
+  test('rejects an independently valid exit snapshot from a different calendar observation', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const input = replayInput(0, 0.02)
+    const sessionDate = input.opening.session.sessionDate
+    const times = timesFor(sessionDate)
+    const request = requestFor(sessionDate, times.exitStart, times.exitEnd, times.exitObserved)
+    const priorDate = new Date(Date.parse(`${sessionDate}T00:00:00.000Z`) - 86_400_000)
+      .toISOString()
+      .slice(0, 10) as IsoDate
+    const calendarMaterial = {
+      schemaVersion: request.calendar.schemaVersion,
+      source: request.calendar.source,
+      requestedRange: { start: priorDate, end: sessionDate },
+      timeZone: 'UTC' as const,
+      sessions: [
+        { date: priorDate, openAt: `${priorDate}T14:30:00.000Z`, closeAt: `${priorDate}T21:00:00.000Z` },
+        { date: sessionDate, openAt: times.open, closeAt: times.close },
+      ],
+    }
+    const exit = success(
+      verifyIntradaySnapshot(
+        {
+          ...request,
+          calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+        },
+        rowsFor({ sessionDate, phase: 'exit', candidateMove: 0.02, benchmarkMove: 0 }),
+      ),
+    )
+
+    expect(success(reverifyIntradayMarketSnapshot(exit))).toEqual(exit)
+    expect(
+      error(replayOpeningDriveSession({ ...input, exit }, protocol, defaultOpeningDriveQualificationPolicy)),
+    ).toMatchObject({ reason: 'snapshot-binding' })
+  })
+
   test('rejects late opening observations at the immutable snapshot boundary', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const sessionDate = dateAt(0)
@@ -805,6 +845,7 @@ describe('opening-drive after-cost qualification', () => {
     expect(constrained?.candidate.executedSymbols).toHaveLength(3)
     expect(constrained?.candidate.flat).toBe(false)
     expect(BigInt(constrained?.candidate.unclosedQuantityMicros ?? '0')).toBeGreaterThan(0n)
+    expect(BigInt(constrained?.candidate.unclosedQuantityMicros ?? '0') % 1_000_000n).toBe(0n)
     expect(constrained?.candidate.return).toBe(-1)
     expect(result.receipt.verdict).toBe('REJECTED')
     expect(result.receipt.reasonCodes).toContain('candidate-same-session-flat')
