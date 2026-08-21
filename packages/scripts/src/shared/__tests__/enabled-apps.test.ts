@@ -321,7 +321,7 @@ describe('enabled app inventory', () => {
       metadata: {
         name: 'karapace-schemas',
         namespace: 'kafka',
-        annotations: { 'argocd.argoproj.io/sync-options': 'Prune=false' },
+        annotations: { 'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false' },
         labels: { 'strimzi.io/cluster': 'kafka' },
       },
       spec: {
@@ -413,10 +413,8 @@ describe('enabled app inventory', () => {
 
   it('pins Local Path Provisioner and its helper to immutable security releases', () => {
     expect(localPathKustomization.resources).toContain('github.com/rancher/local-path-provisioner/deploy?ref=v0.0.37')
-    expect(
-      localPathKustomization.images?.find((image) => image.name === 'docker.io/rancher/local-path-provisioner'),
-    ).toEqual({
-      name: 'docker.io/rancher/local-path-provisioner',
+    expect(localPathKustomization.images?.find((image) => image.name === 'rancher/local-path-provisioner')).toEqual({
+      name: 'rancher/local-path-provisioner',
       newName: 'docker.io/rancher/local-path-provisioner',
       newTag: 'v0.0.37',
       digest: 'sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f',

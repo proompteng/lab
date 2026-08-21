@@ -68,6 +68,7 @@ export interface CapitalGrantInterpreter {
   readonly activateResearchCapitalGrant: (
     proof: ResearchCapitalGrantProofBinding,
     sourceGenerationHash: string,
+    cutoffAt: string,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
@@ -612,6 +613,7 @@ const makeCapitalGrantInterpreterDataFirst = (
   const activateResearchCapitalGrantGenerationTransaction = (
     proof: ResearchCapitalGrantProofBinding,
     binding: ResearchCapitalGrantRuntimeBinding,
+    cutoffAt: string,
   ) =>
     Effect.gen(function* () {
       const locked = yield* authority.lockCapitalGrant(binding.accountId)
@@ -625,10 +627,21 @@ const makeCapitalGrantInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(derived.generation.generationHash)
       yield* authority.requireUnusedGeneration(derived.generation.generationHash, existing)
       const activatedAt = yield* requireFreshCapitalGrantGeneration(derived)
+      if (activatedAt.toISOString() >= cutoffAt) {
+        return yield* failExecutionStore(
+          'authority',
+          'invariant',
+          'research capital activation crossed its immutable cutoff before commit',
+        )
+      }
       return yield* writeResearchCapitalGrantGenerationActivation(decision, derived, activatedAt)
     })
 
-  const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding, sourceGenerationHash: string) =>
+  const activateResearchCapitalGrant = (
+    candidate: ResearchCapitalGrantProofBinding,
+    sourceGenerationHash: string,
+    cutoffAt: string,
+  ) =>
     runExecutionOperation(
       'authority',
       Effect.gen(function* () {
@@ -643,7 +656,9 @@ const makeCapitalGrantInterpreterDataFirst = (
             build: config.build,
           }),
         )
-        return yield* writerFence.transaction(activateResearchCapitalGrantGenerationTransaction(proof, binding))
+        return yield* writerFence.transaction(
+          activateResearchCapitalGrantGenerationTransaction(proof, binding, cutoffAt),
+        )
       }),
     )
 

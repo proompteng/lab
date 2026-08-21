@@ -29,7 +29,14 @@ If you expose Argo CD via a `LoadBalancer` Service, install MetalLB first.
 Install:
 
 ```bash
-kubectl apply -k argocd/applications/metallb-system
+kubectl -n metallb-system create namespace metallb-system --dry-run=client -o yaml | kubectl -n metallb-system apply -f -
+kubectl -n metallb-system label namespace metallb-system \
+  pod-security.kubernetes.io/enforce=privileged \
+  pod-security.kubernetes.io/audit=privileged \
+  pod-security.kubernetes.io/warn=privileged --overwrite
+kubectl -n metallb-system annotate namespace metallb-system \
+  argocd.argoproj.io/sync-options=Prune=false --overwrite
+kubectl -n metallb-system apply -k argocd/applications/metallb-system
 kubectl -n metallb-system rollout status deploy/controller --timeout=180s
 kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 ```

@@ -930,7 +930,7 @@ export const prepareResearchCapitalActivation = (
 
     const proof = researchCapitalGrantProof(request, buildLineage?.activation)
     const authority = yield* lifecycle
-      .activateResearchCapitalGrant(proof, sourceGenerationHash)
+      .activateResearchCapitalGrant(proof, sourceGenerationHash, request.cutoffAt)
       .pipe(
         Effect.mapError((cause) =>
           capitalActivationOperationalError('research capital generation activation failed', cause),

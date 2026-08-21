@@ -25,6 +25,10 @@ case "$retry_attempts" in
     exit 1
     ;;
 esac
+if [ "$retry_attempts" -le 0 ]; then
+  echo "invalid lab checkout retry attempts: $retry_attempts" >&2
+  exit 1
+fi
 case "$retry_delay_seconds" in
   ''|*[!0-9]*)
     echo "invalid lab checkout retry delay: $retry_delay_seconds" >&2

@@ -135,6 +135,7 @@ const makeResearchCapitalGrantGeneration = (input: Parameters<typeof makeResearc
   successOfResult(makeResearchCapitalGrantGenerationResult(input))
 const observedAt = '2026-07-22T15:30:01.000Z'
 const occurredAt = '2026-07-22T15:30:00.000Z'
+const futureResearchActivationCutoff = '2099-01-01T00:00:00.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
 const qualifiedSourceRevision = '1'.repeat(40)
 const qualifiedImageRepository = 'registry.example.test/lab/bayn'
@@ -1941,7 +1942,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* store.activateResearchCapitalGrant(researchProofBinding(activation), sourceGenerationHash)
+          yield* store.activateResearchCapitalGrant(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            '2099-01-01T00:00:00.000Z',
+          )
           const [firstRestrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2023,7 +2028,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* store.activateResearchCapitalGrant(researchProofBinding(activation), sourceGenerationHash)
+          yield* store.activateResearchCapitalGrant(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            '2099-01-01T00:00:00.000Z',
+          )
           const readAuthorityState = store.readAuthorityState
           assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
@@ -2323,9 +2332,17 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
+          const activated = yield* activateResearch(
+            researchProofBinding(staticRequest),
+            initialGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const beforeReplay = yield* readAuthorityTupleEvidence
-          const replay = yield* activateResearch(researchProofBinding(staticRequest), initialGenerationHash)
+          const replay = yield* activateResearch(
+            researchProofBinding(staticRequest),
+            initialGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const afterReplay = yield* readAuthorityTupleEvidence
           const research = yield* readResearch(expected.generationHash)
           const qualified = yield* readQualified(expected.generationHash)
@@ -2376,6 +2393,42 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('rejects research execution activation after its immutable cutoff without writing', async () => {
+    const initialGenerationHash = hash('expired-research-paper-observe-generation')
+    const reconciliation = exactReconciliation('expired-research-paper')
+    const activation = makeResearchActivation(initialGenerationHash, reconciliation)
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(initialGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const before = yield* readAuthorityTupleEvidence
+          const failure = yield* Effect.flip(
+            activateResearch(researchProofBinding(activation), initialGenerationHash, '2000-01-01T00:00:00.000Z'),
+          )
+          const after = yield* readAuthorityTupleEvidence
+          return { after, before, failure }
+        }),
+      )
+
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'research capital activation crossed its immutable cutoff before commit',
+      })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('persists and decodes an opening-drive research execution generation', async () => {
     const initialGenerationHash = hash('opening-drive-research-observe-generation')
     const reconciliation = exactReconciliation('opening-drive-research')
@@ -2415,7 +2468,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* activateResearch(researchProofBinding(expected), initialGenerationHash)
+          yield* activateResearch(researchProofBinding(expected), initialGenerationHash, futureResearchActivationCutoff)
           return yield* readResearch(expected.generationHash)
         }),
       )
@@ -2446,7 +2499,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
+          const activated = yield* activateResearch(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2562,7 +2619,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
+          const activated = yield* activateResearch(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            futureResearchActivationCutoff,
+          )
           yield* sql`
             WITH timing AS (
               SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
@@ -2816,7 +2877,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: configuredObserveGenerationHash,
             maximum: Authority.Observe,
           })
-          const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+          const paper = yield* activateResearch(
+            researchProofBinding(activation),
+            configuredObserveGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -2898,7 +2963,11 @@ describePostgres('paper accounting persistence', () => {
             FROM authority_state AS state
             WHERE state.singleton
           `
-          const nextPaper = yield* activateResearch(researchProofBinding(activation), first.generationHash)
+          const nextPaper = yield* activateResearch(
+            researchProofBinding(activation),
+            first.generationHash,
+            futureResearchActivationCutoff,
+          )
           const history = yield* sql<{
             generation_hash: string
             maximum: Authority
@@ -3006,7 +3075,11 @@ describePostgres('paper accounting persistence', () => {
               generationHash: configuredObserveGenerationHash,
               maximum: Authority.Observe,
             })
-            const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+            const paper = yield* activateResearch(
+              researchProofBinding(activation),
+              configuredObserveGenerationHash,
+              futureResearchActivationCutoff,
+            )
             yield* sql`
             WITH timing AS (
               SELECT
@@ -3180,7 +3253,11 @@ describePostgres('paper accounting persistence', () => {
               generationHash: configuredObserveGenerationHash,
               maximum: Authority.Observe,
             })
-            const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+            const paper = yield* activateResearch(
+              researchProofBinding(activation),
+              configuredObserveGenerationHash,
+              futureResearchActivationCutoff,
+            )
             const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
@@ -3281,7 +3358,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: sourceGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* activateResearch(researchProofBinding(activation), sourceGenerationHash)
+          yield* activateResearch(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state

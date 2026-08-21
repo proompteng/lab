@@ -398,7 +398,7 @@ export interface ReadPreflight {
   readonly tradingBlocked: false
   readonly tradeSuspendedByUser: false
   readonly accountHash: string
-  readonly fractionalTrading: true
+  readonly fractionalTrading: boolean
   readonly accountConfigurationHash: string
   readonly positionCount: number
   readonly positionsHash: string

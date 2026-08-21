@@ -571,6 +571,7 @@ const deriveNextRuntimeState = (
     executionController === undefined
       ? { ...current, health, cycle, broker }
       : { ...current, health, cycle, broker, executionController }
+  if (current.status === 'FAILED') return projected
   if (!evidenceAvailable) return projected
   if (failures.messages.length === 0) {
     return { ...projected, status: 'READY', error: null }

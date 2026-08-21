@@ -40,6 +40,10 @@ const evaluateRestateDeploymentHealth = (objectLiteral: string): HealthStatus =>
 }
 
 describe('RestateDeployment Argo CD health customization', () => {
+  test('enables the standard Lua string library used by retryable-prefix matching', () => {
+    expect(argoConfigMap.data?.['resource.customizations.useOpenLibs.restate.dev_RestateDeployment']).toBe('true')
+  })
+
   test('waits until the operator observes the current generation', () => {
     expect(
       evaluateRestateDeploymentHealth(`{

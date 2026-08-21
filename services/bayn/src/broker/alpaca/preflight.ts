@@ -55,6 +55,13 @@ export interface VerifiedBrokerAccountPermissions {
   readonly fractionalTrading: true
 }
 
+interface VerifiedBrokerReadPermissions {
+  readonly accountStatus: AccountStatus.Active
+  readonly accountBlocked: false
+  readonly tradingBlocked: false
+  readonly tradeSuspendedByUser: false
+}
+
 export class BrokerAccountPreflightError extends Data.TaggedError('BrokerAccountPreflightError')<{
   readonly provider: BrokerConnection['provider']
   readonly environment: BrokerConnection['environment']
@@ -63,22 +70,32 @@ export class BrokerAccountPreflightError extends Data.TaggedError('BrokerAccount
   readonly failure: BrokerAccountPreflightFailure
 }> {}
 
-const verifyBrokerAccountPermissionsDataFirst = (
+const verifyBrokerReadPermissions = (
   account: Account,
-  configuration: AccountConfigurationObservation,
-): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
+): Result.Result<VerifiedBrokerReadPermissions, BrokerAccountPreflightFailure> => {
   if (account.status !== AccountStatus.Active) {
     return Result.fail({ _tag: 'BrokerAccountNotActive', status: account.status })
   }
   if (account.accountBlocked) return Result.fail({ _tag: 'BrokerAccountBlocked' })
   if (account.tradingBlocked) return Result.fail({ _tag: 'BrokerTradingBlocked' })
   if (account.tradeSuspendedByUser) return Result.fail({ _tag: 'BrokerTradingSuspendedByUser' })
-  if (!configuration.fractionalTrading) return Result.fail({ _tag: 'BrokerFractionalTradingDisabled' })
   return Result.succeed({
     accountStatus: AccountStatus.Active,
     accountBlocked: false,
     tradingBlocked: false,
     tradeSuspendedByUser: false,
+  })
+}
+
+const verifyBrokerAccountPermissionsDataFirst = (
+  account: Account,
+  configuration: AccountConfigurationObservation,
+): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
+  const readPermissions = verifyBrokerReadPermissions(account)
+  if (Result.isFailure(readPermissions)) return Result.fail(readPermissions.failure)
+  if (!configuration.fractionalTrading) return Result.fail({ _tag: 'BrokerFractionalTradingDisabled' })
+  return Result.succeed({
+    ...readPermissions.success,
     fractionalTrading: true,
   })
 }
@@ -156,9 +173,9 @@ const verifyReadAccessDataFirst = (
   Effect.gen(function* () {
     const account = yield* read.account
     const accountConfiguration = yield* read.accountConfiguration
-    const permissions = yield* Effect.fromResult(
-      verifyBrokerAccountPermissions(account.value, accountConfiguration.value),
-    ).pipe(Effect.mapError((failure) => permissionFailure(connection, failure)))
+    const permissions = yield* Effect.fromResult(verifyBrokerReadPermissions(account.value)).pipe(
+      Effect.mapError((failure) => permissionFailure(connection, failure)),
+    )
     const calendarStart = yield* currentUtcDate
     const calendarEnd = addUtcDays(calendarStart, marketCalendarPreflightRangeDays - 1)
     const responses = yield* Effect.all(
@@ -205,6 +222,7 @@ const verifyReadAccessDataFirst = (
           baseUrl: connection.baseUrl,
           accountId: account.value.id,
           ...permissions,
+          fractionalTrading: accountConfiguration.value.fractionalTrading,
           accountHash,
           accountConfigurationHash,
           positionCount: responses.positions.value.length,

@@ -55,7 +55,9 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynEgressProxyReplicaTargetMissed).toContain('deployment="bayn-egress-proxy"')
     expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_replicaset_status_ready_replicas{')
     expect(expressions.BaynExecutionWorkerUnavailable).toContain('replicaset=~"bayn-execution-controller-.*"')
-    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_replicaset_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_restate_deployment_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('restate_deployment="bayn-execution-controller"')
+    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_restate_deployment_spec_replicas{')
     expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('> 1')
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_execution_controller_active{')
     expect(expressions.BaynExecutionControllerOverdue).toContain(
@@ -93,9 +95,8 @@ describe('Bayn cycle operations alert contract', () => {
   test('collects bounded Bayn metrics and trace-correlated logs through the existing cluster collector', () => {
     const rules = baynRules()
     const alloy = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
-    const kubeStateMetrics = YAML.parse(
-      readRepoFile('argocd/applications/observability/kube-state-metrics-values.yaml'),
-    ) as { readonly collectors: readonly string[] }
+    const kubeStateMetricsSource = readRepoFile('argocd/applications/observability/kube-state-metrics-values.yaml')
+    const kubeStateMetrics = YAML.parse(kubeStateMetricsSource) as { readonly collectors: readonly string[] }
     const grafanaConfiguration = YAML.parse(
       readRepoFile('argocd/applications/observability/grafana-values.yaml'),
     ) as Record<string, any>
@@ -111,7 +112,10 @@ describe('Bayn cycle operations alert contract', () => {
     expect(alloy).toContain('regex         = "up|bayn_.*"')
     expect(alloy).toContain('kube_replicaset_spec_replicas')
     expect(alloy).toContain('kube_replicaset_status_ready_replicas')
+    expect(alloy).toContain('kube_restate_deployment_spec_replicas')
     expect(kubeStateMetrics.collectors).toContain('replicasets')
+    expect(kubeStateMetricsSource).toContain('kind: RestateDeployment')
+    expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
     expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
     expect(alloy).toContain('regex         = "bayn|lifecycle|register"')

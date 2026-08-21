@@ -61,8 +61,12 @@ spec:
                 *"Secrets:     no"*) ;;
                 *) echo 'migration apply did not prove that secret migration is disabled' >&2; exit 1 ;;
               esac
+              if printf '%s\n' "$migration_output" | grep -Fqx 'directory not found: /opt/data/migration/source'; then
+                echo 'migration command reported a refusal or failure' >&2
+                exit 1
+              fi
               case "$migration_output" in
-                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"directory not found: /opt/data/migration/source"*)
+                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*)
                   echo 'migration command reported a refusal or failure' >&2
                   exit 1
                   ;;
@@ -166,6 +170,26 @@ spec:
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
               readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/SOUL.md
+              subPath: SOUL.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/IDENTITY.md
+              subPath: IDENTITY.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/TOOLS.md
+              subPath: TOOLS.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/HEARTBEAT.md
+              subPath: HEARTBEAT.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/workspace/tuslagch/AGENTS.md
+              subPath: AGENTS.md
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -175,6 +199,10 @@ spec:
         - name: config
           configMap:
             name: hermes-operation-config
+            defaultMode: 0444
+        - name: bootstrap
+          configMap:
+            name: hermes-bootstrap
             defaultMode: 0444
         - name: tmp
           emptyDir:

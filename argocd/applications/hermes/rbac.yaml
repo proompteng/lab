@@ -108,7 +108,6 @@ rules:
       - snapshot.storage.k8s.io
       - sources.knative.dev
       - storage.k8s.io
-      - subresources.kubevirt.io
       - swarm.proompteng.ai
       - tailscale.com
       - telemetry.istio.io

@@ -40,6 +40,18 @@ argocd app sync buzz --prune=false
 argocd app wait buzz --health --sync --timeout 1800
 ```
 
+Redis reads `buzz-redis-config` at process start. Whenever that ConfigMap changes, restart the generated StatefulSet Pod
+after Argo has reconciled the new ConfigMap, then prove the startup-only setting is active:
+
+```sh
+kubectl -n buzz delete pod buzz-redis-0 --wait=true
+kubectl -n buzz rollout status statefulset/buzz-redis --timeout=300s
+kubectl -n buzz wait pod/buzz-redis-0 --for=condition=Ready --timeout=300s
+kubectl -n buzz exec buzz-redis-0 -- sh -ec '
+  test "$(redis-cli --no-auth-warning -a "$REDIS_PASSWORD" --raw CONFIG GET maxmemory | tail -n 1)" = 402653184
+'
+```
+
 Never apply the rendered manifests directly. The namespace is owned by the ApplicationSet and protected from pruning.
 The two OBCs, CNPG cluster, Redis PVC, and generated runtime Secret have explicit deletion protection.
 
@@ -47,11 +59,12 @@ The two OBCs, CNPG cluster, Redis PVC, and generated runtime Secret have explici
 
 Run every Kubernetes command with the namespace explicitly set.
 
-The CNPG status endpoint is reachable only from the three node-local pod-CIDR ranges listed in
-`allow-kubernetes-api-cnpg-status`. Cross-node kube-apiserver pod-proxy traffic uses the source node's Flannel VTEP
-address (`.0`), while local host traffic uses the CNI gateway (`.1`), so each exception is a tight `/31`. Update these
-ranges whenever a node pod CIDR changes; otherwise cross-node `kubectl cnpg status` requests will fail while same-node
-requests can appear healthy.
+The three node-local pod-CIDR ranges listed in `allow-kubernetes-api-cnpg-status` are the only allowed host-networked
+sources for the CNPG status endpoint. NetworkPolicy allows are additive: Buzz-namespace workloads and the explicitly
+allowed database-operator namespaces have separate policy paths. Cross-node kube-apiserver pod-proxy traffic uses the
+source node's Flannel VTEP address (`.0`), while local host traffic uses the CNI gateway (`.1`), so each host exception is
+a tight `/31`. Update these ranges whenever a node pod CIDR changes; otherwise cross-node `kubectl cnpg status` requests
+will fail while same-node requests can appear healthy.
 
 ```sh
 kubectl -n buzz get externalsecret,secretstore

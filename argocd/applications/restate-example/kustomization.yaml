@@ -4,6 +4,7 @@ namespace: restate-example
 resources:
   - deployment.yaml
   - service.yaml
+  - networkpolicy.yaml
   - register-job.yaml
   - smoke-job.yaml
 

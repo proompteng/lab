@@ -36,6 +36,9 @@ jobs:
   mirror:
     runs-on: arc-arm64
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
       - name: Log in to GHCR
         if: ${{ inputs.source_registry == 'ghcr.io' }}
         uses: docker/login-action@v4
@@ -63,22 +66,7 @@ jobs:
           TARGET_TAG: ${{ inputs.target_tag }}
         run: |
           set -euo pipefail
-          repository_pattern='^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$'
-          digest_pattern='^sha256:[0-9a-f]{64}$'
-          tag_pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$'
-          for repository in nginx library/nginx proompteng/tigresse; do
-            [[ "$repository" =~ $repository_pattern ]]
-          done
-          for repository in /nginx nginx/ library//nginx 'Library/nginx'; do
-            if [[ "$repository" =~ $repository_pattern ]]; then
-              echo "Repository validation accepted invalid value: $repository" >&2
-              exit 1
-            fi
-          done
-          [[ "$SOURCE_REPOSITORY" =~ $repository_pattern ]]
-          [[ "$TARGET_REPOSITORY" =~ $repository_pattern ]]
-          [[ "$SOURCE_DIGEST" =~ $digest_pattern ]]
-          [[ "$TARGET_TAG" =~ $tag_pattern ]]
+          bash .github/scripts/validate-oci-mirror-inputs.sh
           {
             echo "source=${SOURCE_REGISTRY}/${SOURCE_REPOSITORY}@${SOURCE_DIGEST}"
             echo "source_digest=${SOURCE_DIGEST}"

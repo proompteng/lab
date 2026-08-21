@@ -147,9 +147,33 @@ jobs:
         run: |
           set -euo pipefail
           export IMAGE_REF="${IMAGE}@${DIGEST}"
-          perl -0pi -e 's#reference: registry\.ide-newton\.ts\.net/lab/hermes-toolchain\@sha256:[0-9a-f]{64}#reference: $ENV{IMAGE_REF}#g' \
-            argocd/applications/hermes/statefulset.yaml
+          statefulset_path=argocd/applications/hermes/statefulset.yaml
+          readme_path=argocd/applications/hermes/README.md
+          runbook_path=docs/runbooks/hermes-production-rollout.md
+          validator_path=scripts/hermes/validate-production.ts
+          old_ref=$(sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p' "$statefulset_path")
+          test -n "$old_ref"
+          test "$(printf '%s\n' "$old_ref" | wc -l | tr -d '[:space:]')" -eq 1
+          old_digest=${old_ref##*@sha256:}
+          new_digest=${DIGEST#sha256:}
+          test "${#old_digest}" -eq 64
+          test "${#new_digest}" -eq 64
+          export OLD_DIGEST="$old_digest" NEW_DIGEST="$new_digest"
+          if [ "$old_digest" != "$new_digest" ]; then
+            for path in "$statefulset_path" "$readme_path" "$runbook_path" "$validator_path"; do
+              perl -0pi -e 's/\Q$ENV{OLD_DIGEST}\E/$ENV{NEW_DIGEST}/g' "$path"
+              if grep -F "$old_digest" "$path" >/dev/null; then
+                echo "stale Hermes toolchain digest remains in $path" >&2
+                exit 1
+              fi
+            done
+          else
+            echo "Hermes toolchain digest is already current: sha256:${new_digest}"
+          fi
           test "$(grep -cF "reference: ${IMAGE_REF}" argocd/applications/hermes/statefulset.yaml)" -eq 1
+          test "$(grep -cF "${IMAGE_REF}" "$readme_path")" -eq 1
+          test "$(grep -cF "${IMAGE_REF}" "$runbook_path")" -eq 1
+          test "$(grep -cF "${IMAGE_REF}" "$validator_path")" -ge 1
 
       - name: Create Hermes toolchain release pull request
         if: steps.meta.outputs.promote == 'true'
@@ -194,6 +218,9 @@ jobs:
             agents
           add-paths: |
             argocd/applications/hermes/statefulset.yaml
+            argocd/applications/hermes/README.md
+            docs/runbooks/hermes-production-rollout.md
+            scripts/hermes/validate-production.ts
 
       - name: Promotion skipped
         if: steps.meta.outputs.promote != 'true'
