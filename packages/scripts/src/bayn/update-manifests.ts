@@ -270,10 +270,19 @@ const nativeExecutionManifests = (
   return { activation, activationPath, controller, controllerPath, sourceSha, digest }
 }
 
-const activationGeneration = (sourceSha: string, digest: string): string =>
-  createHash('sha256')
-    .update(['bayn.execution-controller-activation.v2', baynExecutionControllerPlanHash, sourceSha, digest].join('\0'))
-    .digest('hex')
+const activationGeneration = (sourceSha: string, digest: string, researchRequestHash?: string): string => {
+  const binding =
+    researchRequestHash === undefined
+      ? ['bayn.execution-controller-activation.v2', baynExecutionControllerPlanHash, sourceSha, digest]
+      : [
+          'bayn.execution-controller-activation.v3',
+          baynExecutionControllerPlanHash,
+          sourceSha,
+          digest,
+          researchRequestHash,
+        ]
+  return createHash('sha256').update(binding.join('\0')).digest('hex')
+}
 
 const replaceEnvironmentValue = (manifest: string, name: string, value: string): string =>
   replaceExactlyOnce(
@@ -741,7 +750,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     updatedExecutionActivation = replaceExactlyOnce(
       updatedExecutionActivation,
       /(            - name: BAYN_EXECUTION_ACTIVATION_GENERATION\n(?:              # [^\n]+\n)*              value: )[^\n]+/,
-      `$1${JSON.stringify(activationGeneration(options.sourceSha, options.digest))}`,
+      `$1${JSON.stringify(
+        activationGeneration(options.sourceSha, options.digest, promotedResearchBuildLineage?.requestHash),
+      )}`,
       'BAYN_EXECUTION_ACTIVATION_GENERATION value',
     )
   }

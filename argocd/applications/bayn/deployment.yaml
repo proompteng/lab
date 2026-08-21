@@ -25,7 +25,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-21T05:12:46Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-21T05:32:09Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"3b252797045a776291d14957a4dcde3255b428e0f96150f60b957b6f86d55755\",\"authoredActivation\":{\"sourceRevision\":\"5dbb887f926325b36eabc32245adb26b2f25d05e\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:c433389487ebb4414ec45cbb761f37f3c19617411f067575d53b560739681fac\"},\"activation\":{\"sourceRevision\":\"ef32d5a96a1313da6984b0f3282f2edbddb9d9d3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:ca22190057358616546f817a7bb4bf9841e272589ef0ce391e0e99a74c652a6f\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"684de030ceb4852620f81c5361a769c9e6bfc8d4a49e65896c95de7bb81dada8\",\"authoredActivation\":{\"sourceRevision\":\"ef32d5a96a1313da6984b0f3282f2edbddb9d9d3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:ca22190057358616546f817a7bb4bf9841e272589ef0ce391e0e99a74c652a6f\"},\"activation\":{\"sourceRevision\":\"ef32d5a96a1313da6984b0f3282f2edbddb9d9d3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:ca22190057358616546f817a7bb4bf9841e272589ef0ce391e0e99a74c652a6f\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
