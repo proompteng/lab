@@ -139,6 +139,7 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
+      matchLabelKeys: ['pod-template-hash'],
       labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } },
     },
   ])
