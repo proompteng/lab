@@ -72,12 +72,19 @@ const withFinalizedAt = (manifest: SignalManifestRow, finalizedAt: string): Sign
   return { ...changed, manifest_content_hash: canonicalHashV1(changed) }
 }
 
+const publicationFixture = {
+  snapshotId: 'a'.repeat(64),
+  manifestContentHash: 'b'.repeat(64),
+  sessionsContentHash: 'c'.repeat(64),
+} as const
+
 describe('opening-drive qualification runner', () => {
   test('freezes Signal calendar sessions into DST-correct entry and flatten snapshot plans', () => {
     const prepared = success(
       prepareOpeningDriveQualificationCalendar({
         sessions: [row('2026-01-05'), row('2026-07-06')],
         finalizedAt: '2026-07-06 22:00:00.000',
+        publication: publicationFixture,
         protocol,
       }),
     )
@@ -117,6 +124,7 @@ describe('opening-drive qualification runner', () => {
       prepareOpeningDriveQualificationCalendar({
         sessions: [row('2026-07-06')],
         finalizedAt: '2026-07-06 22:00:00.000',
+        publication: publicationFixture,
         protocol,
       }),
     )
@@ -174,6 +182,7 @@ describe('opening-drive qualification runner', () => {
     const outOfOrder = prepareOpeningDriveQualificationCalendar({
       sessions: [row('2026-07-07'), row('2026-07-06')],
       finalizedAt: '2026-07-07 22:00:00.000',
+      publication: publicationFixture,
       protocol,
     })
     expect(Result.isFailure(outOfOrder)).toBe(true)
@@ -181,6 +190,7 @@ describe('opening-drive qualification runner', () => {
     const mixed = prepareOpeningDriveQualificationCalendar({
       sessions: [row('2026-07-06'), { ...row('2026-07-07'), calendar_version: 'other-calendar' }],
       finalizedAt: '2026-07-07 22:00:00.000',
+      publication: publicationFixture,
       protocol,
     })
     expect(Result.isFailure(mixed)).toBe(true)
@@ -202,6 +212,11 @@ describe('opening-drive qualification runner', () => {
     const verified = success(verifyOpeningDriveQualificationCalendarPublication(input))
     expect(verified.sessions.map(({ session_date }) => session_date)).toEqual(['2026-01-06', '2026-01-07'])
     expect(verified.finalizedAt).toBe(manifest.finalized_at)
+    expect(verified.publication).toEqual({
+      snapshotId: manifest.snapshot_id,
+      manifestContentHash: manifest.manifest_content_hash,
+      sessionsContentHash: manifest.sessions_content_hash,
+    })
 
     expect(
       Result.isFailure(verifyOpeningDriveQualificationCalendarPublication({ ...input, sessions: sessions.slice(1) })),
@@ -243,5 +258,33 @@ describe('opening-drive qualification runner', () => {
         }),
       ),
     ).toBe(true)
+
+    const changedFullSessions = [{ ...sessions[0], close_time: '15:59' }, sessions[1], sessions[2]] as const
+    const changedManifest = manifestFixture(changedFullSessions)
+    const changedVerified = success(
+      verifyOpeningDriveQualificationCalendarPublication({
+        ...input,
+        manifests: [changedManifest],
+        sessions: changedFullSessions,
+      }),
+    )
+    const originalPrepared = success(
+      prepareOpeningDriveQualificationCalendar({
+        sessions: verified.sessions,
+        finalizedAt: verified.finalizedAt,
+        publication: verified.publication,
+        protocol,
+      }),
+    )
+    const changedPrepared = success(
+      prepareOpeningDriveQualificationCalendar({
+        sessions: changedVerified.sessions,
+        finalizedAt: changedVerified.finalizedAt,
+        publication: changedVerified.publication,
+        protocol,
+      }),
+    )
+    expect(changedPrepared.calendar.sessions).toEqual(originalPrepared.calendar.sessions)
+    expect(changedPrepared.calendar.contentHash).not.toBe(originalPrepared.calendar.contentHash)
   })
 })

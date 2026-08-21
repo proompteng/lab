@@ -49,6 +49,10 @@ export interface OpeningDriveQualificationBinding {
 export interface OpeningDriveQualificationCalendar {
   readonly schemaVersion: 'bayn.opening-drive.qualification-calendar.v1'
   readonly source: 'signal.exchange_sessions_v1'
+  /** Immutable identity of the verified finalized Signal publication supplying this evaluation subset. */
+  readonly publicationSnapshotId: string
+  readonly publicationManifestContentHash: string
+  readonly publicationSessionsContentHash: string
   readonly calendarVersion: string
   readonly firstSession: IsoDate
   readonly lastSession: IsoDate

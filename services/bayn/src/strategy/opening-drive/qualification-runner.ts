@@ -74,6 +74,9 @@ const OpeningDriveQualificationBindingSchema = Schema.Struct({
 const OpeningDriveQualificationCalendarSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.opening-drive.qualification-calendar.v1'),
   source: Schema.Literal('signal.exchange_sessions_v1'),
+  publicationSnapshotId: Sha256Schema,
+  publicationManifestContentHash: Sha256Schema,
+  publicationSessionsContentHash: Sha256Schema,
   calendarVersion: StrictNonEmptyStringSchema,
   firstSession: IsoDateSchema,
   lastSession: IsoDateSchema,
@@ -123,7 +126,15 @@ export const verifyOpeningDriveQualificationCalendarPublication = (input: {
   readonly start: string
   readonly end: string
 }): Result.Result<
-  { readonly sessions: readonly SignalSessionRow[]; readonly finalizedAt: string },
+  {
+    readonly sessions: readonly SignalSessionRow[]
+    readonly finalizedAt: string
+    readonly publication: {
+      readonly snapshotId: string
+      readonly manifestContentHash: string
+      readonly sessionsContentHash: string
+    }
+  },
   OpeningDriveQualificationFailure
 > =>
   Result.gen(function* () {
@@ -202,7 +213,15 @@ export const verifyOpeningDriveQualificationCalendarPublication = (input: {
     if (sessions.length === 0) {
       return yield* Result.fail(failure('Qualification range contains no finalized Signal sessions'))
     }
-    return Object.freeze({ sessions: Object.freeze(sessions), finalizedAt: manifest.finalized_at })
+    return Object.freeze({
+      sessions: Object.freeze(sessions),
+      finalizedAt: manifest.finalized_at,
+      publication: Object.freeze({
+        snapshotId: manifest.snapshot_id,
+        manifestContentHash: manifest.manifest_content_hash,
+        sessionsContentHash: manifest.sessions_content_hash,
+      }),
+    })
   })
 
 export const decodeOpeningDriveQualificationLock = (
@@ -305,6 +324,11 @@ const query = (
 export const prepareOpeningDriveQualificationCalendar = (input: {
   readonly sessions: readonly SignalSessionRow[]
   readonly finalizedAt: string
+  readonly publication: {
+    readonly snapshotId: string
+    readonly manifestContentHash: string
+    readonly sessionsContentHash: string
+  }
   readonly protocol: OpeningDriveProtocol
 }): Result.Result<
   {
@@ -318,6 +342,13 @@ export const prepareOpeningDriveQualificationCalendar = (input: {
     const finalizedAt = canonicalFinalizedAt(input.finalizedAt)
     if (finalizedAt === undefined)
       return yield* Result.fail(failure('Qualification calendar finalization time is invalid'))
+    if (
+      !/^[0-9a-f]{64}$/.test(input.publication.snapshotId) ||
+      !/^[0-9a-f]{64}$/.test(input.publication.manifestContentHash) ||
+      !/^[0-9a-f]{64}$/.test(input.publication.sessionsContentHash)
+    ) {
+      return yield* Result.fail(failure('Qualification Signal publication identity is invalid'))
+    }
     const calendarVersion = input.sessions[0]?.calendar_version
     if (
       calendarVersion === undefined ||
@@ -394,6 +425,9 @@ export const prepareOpeningDriveQualificationCalendar = (input: {
     const calendarMaterial = Object.freeze({
       schemaVersion: 'bayn.opening-drive.qualification-calendar.v1' as const,
       source: 'signal.exchange_sessions_v1' as const,
+      publicationSnapshotId: input.publication.snapshotId,
+      publicationManifestContentHash: input.publication.manifestContentHash,
+      publicationSessionsContentHash: input.publication.sessionsContentHash,
       calendarVersion,
       firstSession: first.sessionDate,
       lastSession: last.sessionDate,

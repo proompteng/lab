@@ -259,6 +259,7 @@ export const runOpeningDriveQualification = (
       prepareOpeningDriveQualificationCalendar({
         sessions: signal.sessions,
         finalizedAt: signal.finalizedAt,
+        publication: signal.publication,
         protocol,
       }),
     ).pipe(Effect.mapError((cause) => error('calendar', 'qualification calendar preparation failed', cause)))

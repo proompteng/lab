@@ -1275,6 +1275,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           prepareOpeningDriveQualificationCalendar({
             sessions: [signalSession],
             finalizedAt: '2026-07-06 22:00:00.000',
+            publication: {
+              snapshotId: signalSession.snapshot_id,
+              manifestContentHash: 'b'.repeat(64),
+              sessionsContentHash: 'c'.repeat(64),
+            },
             protocol,
           }),
         )
@@ -1374,6 +1379,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           prepareOpeningDriveQualificationCalendar({
             sessions: [signalSession],
             finalizedAt: '2026-07-06 22:00:00.000',
+            publication: {
+              snapshotId: signalSession.snapshot_id,
+              manifestContentHash: 'b'.repeat(64),
+              sessionsContentHash: 'c'.repeat(64),
+            },
             protocol,
           }),
         )
