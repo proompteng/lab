@@ -47,6 +47,7 @@ const benchmarkReplayExecutionModel = (protocol: OpeningDriveProtocol): Executio
     precision: Object.freeze({
       ...model.precision,
       quantityIncrementMicros: '1',
+      minimumBuyNotionalMicros: '1',
     }),
     partialFills: Object.freeze({
       ...model.partialFills,
@@ -61,7 +62,7 @@ export const openingDriveReplayCostModelDocument = Object.freeze({
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
   benchmarkExposure: 'equal-weight-universe-matched-to-candidate-executed-entry-notional',
-  benchmarkExecution: 'synthetic-fractional-full-fill-without-top-of-book-size-cap',
+  benchmarkExecution: 'synthetic-fractional-full-fill-without-top-of-book-size-cap-or-per-sleeve-minimum-notional',
   candidateLiquidity:
     'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-terminal-valued-at-verified-flatten-bid',
   containment: 'candidate-residual-rejected-by-qualification-gate; synthetic-benchmark-fully-flattens-at-verified-exit',
