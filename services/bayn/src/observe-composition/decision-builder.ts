@@ -84,6 +84,7 @@ import {
   executionMarketDataBinding,
   loadIntradaySnapshot,
   openingDriveCloseQuery,
+  openingDriveEntryDisposition,
   openingDriveEntryQuery,
 } from './opening-drive-decision'
 import { Pipeable } from '../pipeable'
@@ -199,7 +200,15 @@ export type ObserveDecisionInput<R = never> = {
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly strategy: ObserveStrategy
   readonly intradayMarketData?: import('../market-data').IntradayMarketDataService
+  /** Worst-case delay required to run and durably bind one final decision before the submission cutoff. */
+  readonly decisionFinalizationHeadroomMs?: number
 }
+
+export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDecisionAwaitingSignal')<{
+  readonly message: string
+  readonly observedAt: string
+  readonly submissionCutoffAt: string
+}> {}
 
 type LoadedSnapshotPublication = Effect.Success<ReturnType<MarketDataService['loadSnapshotPublication']>>
 type MarketCalendarRead = Effect.Success<ReturnType<BrokerReadShape['marketCalendar']>>
@@ -223,6 +232,7 @@ type ObserveDecisionCompositionFailure = {
 export type ObserveDecisionFailure =
   | CycleCalendarQueryFailure
   | ExecutionSessionBindingFailure
+  | ObserveDecisionAwaitingSignal
   | ObserveDecisionCompositionFailure
   | OperationalError
   | ShadowDecisionError
@@ -322,7 +332,9 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
   }
 }
 
-const operationalDecisionFailure = (component: OperationalError['component']): CycleDecisionBuildError['failure'] => {
+const operationalDecisionFailure = (
+  component: OperationalError['component'],
+): CycleNotDueReconciliationError['failure'] => {
   switch (component) {
     case 'database':
       return 'database'
@@ -351,6 +363,9 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
         cause,
       })
     case 'ExecutionSessionBindingFailure':
+      return new CycleDecisionBuildError({ failure: 'contract', message: cause.message, cause })
+    case 'ObserveDecisionAwaitingSignal':
+      return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
     case 'ObserveDecisionCompositionFailure':
     case 'ShadowDecisionError':
     case 'TargetPlannerFailure':
@@ -675,7 +690,7 @@ const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CompiledObserveStrategyDecision, OperationalError> => {
+): Effect.Effect<CompiledObserveStrategyDecision, OperationalError | ObserveDecisionAwaitingSignal> => {
   const definition = strategyDefinition(input.strategy)
   if (definition.name === 'opening-drive-momentum') {
     return Effect.gen(function* () {
@@ -713,6 +728,20 @@ const compileObserveStrategyDecision = <R>(
           }),
         ),
       )
+      if (
+        input.decisionFinalizationHeadroomMs !== undefined &&
+        openingDriveEntryDisposition(
+          compiled.decision,
+          input.cycle.window.submissionCutoffAt,
+          input.decisionFinalizationHeadroomMs,
+        ) === 'AWAIT_SIGNAL'
+      ) {
+        return yield* new ObserveDecisionAwaitingSignal({
+          message: 'opening-drive entry remains armed while a qualifying signal can still arrive',
+          observedAt: facts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        })
+      }
       return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
     })
   }
@@ -1462,7 +1491,7 @@ export const buildClosingExecutionCycleDecision = (
         return mutationRunnerError({
           message: 'deterministic execution close plan construction failed',
           cause: converted,
-          failure: converted.failure,
+          failure: converted.failure === 'not-ready' ? 'contract' : converted.failure,
         })
       }),
     )

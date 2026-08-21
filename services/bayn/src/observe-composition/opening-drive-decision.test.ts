@@ -23,6 +23,7 @@ import {
   decodeDefaultOpeningDriveProtocol,
   makeOpeningDriveDefinition,
   type OpeningDriveStrategyDefinition,
+  type OpeningDriveTargetPortfolio,
   openingDriveExecutionModel,
   type OpeningDriveProtocol,
 } from '../strategy/opening-drive'
@@ -32,6 +33,7 @@ import {
   executionMarketDataBinding,
   loadIntradaySnapshot,
   openingDriveCloseQuery,
+  openingDriveEntryDisposition,
   openingDriveEntryQuery,
 } from './opening-drive-decision'
 
@@ -425,6 +427,79 @@ describe('opening-drive runtime decision boundary', () => {
       askPriceMicros: { AMD: '100140000' },
       maximumBuyQuantityMicros: { AMD: '10000000' },
     })
+  })
+
+  test('waits only for mutable entry evidence and finalizes no-trade before the cutoff headroom', () => {
+    const cycle = makeActiveCycle()
+    const baseDecision: OpeningDriveTargetPortfolio = {
+      schemaVersion: 'bayn.opening-drive.target.v1' as const,
+      strategy: 'opening-drive-momentum' as const,
+      sessionDate: cycle.identity.executionSessionDate,
+      snapshotId: hash('entry-snapshot'),
+      observedAt: cycle.window.submissionOpenAt,
+      calendarHash: cycle.window.executionCalendarHash,
+      selectedSymbols: ['AMD'],
+      targetWeights: { AMD: 0.1 },
+      signals: [
+        {
+          symbol: 'AMD',
+          openingPriceMicros: '100000000',
+          rangeHighPriceMicros: '101000000',
+          rangeLowPriceMicros: '99000000',
+          bidPriceMicros: '101040000',
+          askPriceMicros: '101050000',
+          quoteObservedAt: cycle.window.submissionOpenAt,
+          breakoutTradePriceMicros: '101060000',
+          breakoutTradeObservedAt: cycle.window.submissionOpenAt,
+          openingReturnBps: 50,
+          breakoutBps: 6,
+          rangeLocationPpm: 900_000,
+          spreadBps: 1,
+          openingDollarVolumeMicros: '1000000000',
+          eligible: true,
+          rejectionReasons: [],
+          rank: 1,
+        },
+      ],
+    }
+    const decisionWith = (
+      observedAt: string,
+      rejectionReasons: readonly ('breakout' | 'opening-return' | 'spread')[],
+    ): OpeningDriveTargetPortfolio => ({
+      ...baseDecision,
+      observedAt,
+      selectedSymbols: [],
+      targetWeights: { AMD: 0 },
+      signals: baseDecision.signals.map((signal) => ({
+        ...signal,
+        eligible: false,
+        rejectionReasons,
+        rank: null,
+      })),
+    })
+
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:35:01.000Z', ['breakout', 'spread']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('AWAIT_SIGNAL')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:59:00.000Z', ['breakout']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('NO_TRADE')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:35:01.000Z', ['opening-return']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('NO_TRADE')
+    expect(openingDriveEntryDisposition(baseDecision, cycle.window.submissionCutoffAt, 60_000)).toBe('EXECUTE')
   })
 
   test('compiles the real strategy against the exact selected-session calendar binding', () => {

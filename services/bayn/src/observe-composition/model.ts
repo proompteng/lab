@@ -104,6 +104,15 @@ export type ObserveAutonomousCycleInput = {
   readonly lifecycleMaintenance?: LifecycleAdvanceMaintenance
 }
 
+export const executionDecisionFinalizationHeadroomMs = (
+  input: Pick<
+    ObserveAutonomousCycleInput,
+    'pollIntervalMs' | 'reconciliationIntervalMs' | 'reconciliationPassTimeoutMs'
+  >,
+): number =>
+  Math.min(input.pollIntervalMs, input.reconciliationIntervalMs) +
+  Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+
 export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
   readonly executionProgram: ExecutionProgram
 }
