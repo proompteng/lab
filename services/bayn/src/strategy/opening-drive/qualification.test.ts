@@ -22,9 +22,11 @@ import {
 import { openingDriveReplayCostModelDocument, replayOpeningDriveSession } from './qualification-replay'
 import { hashOpeningDriveReplayVersionGraphFromInputs } from './qualification-version'
 import {
+  decodeOpeningDriveProtocol,
   decodeDefaultOpeningDriveProtocol,
   defaultOpeningDriveProtocolDocument,
   defaultOpeningDriveProtocolHash,
+  hashOpeningDriveProtocol,
 } from './protocol'
 
 const symbols = defaultOpeningDriveProtocolDocument.universe
@@ -44,6 +46,19 @@ const qualificationTestPolicy = Object.freeze({
   }),
 })
 const qualificationTestSessionCount = openingDriveRequiredQualificationSessions(qualificationTestPolicy)
+
+const protocolWithoutPartialFills = () => {
+  const protocol = success(decodeDefaultOpeningDriveProtocol())
+  return success(
+    decodeOpeningDriveProtocol({
+      ...protocol,
+      executionModel: {
+        ...protocol.executionModel,
+        partialFills: { ...protocol.executionModel.partialFills, probabilityPpm: 0 },
+      },
+    }),
+  )
+}
 
 const dateAt = (ordinal: number): IsoDate => {
   let remaining = ordinal
@@ -300,10 +315,11 @@ const binding = (
   sessions: readonly ReturnType<typeof replayInput>[],
   priorTrialCount = 0,
   policy = defaultOpeningDriveQualificationPolicy,
+  protocolHash = defaultOpeningDriveProtocolHash,
 ) => ({
   sourceRevision: 'a'.repeat(40),
   strategyBehaviorHash: openingDriveBehaviorHash,
-  protocolHash: defaultOpeningDriveProtocolHash,
+  protocolHash,
   policyHash: canonicalHashV1(policy),
   costModelHash: canonicalHashV1(openingDriveReplayCostModelDocument),
   evaluationCalendarHash: calendar.contentHash,
@@ -340,7 +356,8 @@ describe('opening-drive after-cost qualification', () => {
   })
 
   test('qualifies deterministic positive replay only after conservative quote, slippage, fee, and sample gates', () => {
-    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const protocol = protocolWithoutPartialFills()
+    const protocolHash = success(hashOpeningDriveProtocol(protocol))
     const sessions = Array.from({ length: qualificationTestSessionCount }, (_, ordinal) => replayInput(ordinal, 0.02))
     const calendar = calendarFor(sessions)
     const first = success(
@@ -349,7 +366,7 @@ describe('opening-drive after-cost qualification', () => {
         calendar,
         protocol,
         policy: qualificationTestPolicy,
-        binding: binding(calendar, sessions, 0, qualificationTestPolicy),
+        binding: binding(calendar, sessions, 0, qualificationTestPolicy, protocolHash),
       }),
     )
     const second = success(
@@ -358,7 +375,7 @@ describe('opening-drive after-cost qualification', () => {
         calendar: structuredClone(calendar),
         protocol,
         policy: qualificationTestPolicy,
-        binding: binding(calendar, sessions, 0, qualificationTestPolicy),
+        binding: binding(calendar, sessions, 0, qualificationTestPolicy, protocolHash),
       }),
     )
 
@@ -388,12 +405,20 @@ describe('opening-drive after-cost qualification', () => {
   })
 
   test('reports an otherwise positive replay as insufficient when it is below the precommitted power requirement', () => {
-    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const protocol = protocolWithoutPartialFills()
+    const protocolHash = success(hashOpeningDriveProtocol(protocol))
     const sessions = Array.from({ length: defaultOpeningDriveQualificationPolicy.minimumSessions }, (_, ordinal) =>
       replayInput(ordinal, 0.02),
     )
     const calendar = calendarFor(sessions)
-    const result = success(qualifyOpeningDrive({ sessions, calendar, protocol, binding: binding(calendar, sessions) }))
+    const result = success(
+      qualifyOpeningDrive({
+        sessions,
+        calendar,
+        protocol,
+        binding: binding(calendar, sessions, 0, undefined, protocolHash),
+      }),
+    )
 
     expect(sufficientlyPoweredSessionCount).toBeGreaterThan(defaultOpeningDriveQualificationPolicy.minimumSessions)
     expect(result.receipt).toMatchObject({
@@ -409,7 +434,8 @@ describe('opening-drive after-cost qualification', () => {
   })
 
   test('reports the current 24-session horizon as insufficient without erasing multiplicity', () => {
-    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const protocol = protocolWithoutPartialFills()
+    const protocolHash = success(hashOpeningDriveProtocol(protocol))
     const sessions = Array.from({ length: 24 }, (_, ordinal) => replayInput(ordinal, 0.02))
     const calendar = calendarFor(sessions)
     const result = success(
@@ -417,7 +443,7 @@ describe('opening-drive after-cost qualification', () => {
         sessions,
         calendar,
         protocol,
-        binding: binding(calendar, sessions, 20),
+        binding: binding(calendar, sessions, 20, undefined, protocolHash),
       }),
     )
 
@@ -535,6 +561,7 @@ describe('opening-drive after-cost qualification', () => {
       benchmarkMove: 0,
       quoteMidpointBySymbol: { AMD: 111.09 },
     })
+
     const boundaryDecision = success(
       decideOpeningDrive({ ...boundaryInput.opening, snapshot: boundaryOpening }, protocol),
     )
@@ -550,6 +577,23 @@ describe('opening-drive after-cost qualification', () => {
       ),
     )
     expect(referenceBoundary.candidate.executedSymbols).not.toContain('AMD')
+  })
+
+  test('applies deterministic partial-fill outcomes to entry and exit replay quantities', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const fullFillProtocol = protocolWithoutPartialFills()
+    const input = replayInput(3, 0.02)
+
+    const first = success(replayOpeningDriveSession(input, protocol, defaultOpeningDriveQualificationPolicy))
+    const second = success(replayOpeningDriveSession(input, protocol, defaultOpeningDriveQualificationPolicy))
+    const fullFill = success(replayOpeningDriveSession(input, fullFillProtocol, defaultOpeningDriveQualificationPolicy))
+
+    expect(second).toEqual(first)
+    expect(BigInt(first.candidate.entryNotionalMicros)).toBeLessThan(BigInt(fullFill.candidate.entryNotionalMicros))
+    expect(BigInt(first.candidate.unclosedQuantityMicros)).toBeGreaterThan(0n)
+    expect(first.candidate.flat).toBe(false)
+    expect(fullFill.candidate.unclosedQuantityMicros).toBe('0')
+    expect(fullFill.candidate.flat).toBe(true)
   })
 
   test('rejects ambiguous latest exit quotes across Kafka partitions before replay pricing', () => {
