@@ -24,17 +24,22 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
+  openingDriveQualificationCommand = pkgs.writeShellScriptBin "bayn-opening-drive-qualification" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/opening-drive-qualification-command.js" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from the two authoritative Linux image builders after the Bayn package manifest entry mapping changed.
-    x86_64-linux = "sha256-dclgSPM8KBLnQp/bzJwyX5QjpogTH/xgQXgRctUWxHI=";
-    aarch64-linux = "sha256-xhBnMeKBsdXhZrYGyaiSnOl0FVkkdJuZ7DskAy3RHYM=";
+    # Refreshed from the two authoritative Linux image builders after adding the qualification command entrypoint.
+    x86_64-linux = "sha256-0+bD1yA5nmAT+mEryYOv6JuZf3Rdw7pb9e29xzFYE/U=";
+    aarch64-linux = "sha256-m1ejvamc0U4O3fV6u3UrQ/fQloPcslAQptefZEdckYs=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/opening-drive-qualification-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -53,6 +58,7 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/opening-drive-qualification-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -65,6 +71,7 @@ let
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/opening-drive-qualification-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
@@ -107,6 +114,7 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
+    openingDriveQualificationCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

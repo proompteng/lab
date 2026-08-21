@@ -25,7 +25,7 @@ import {
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
-import type { RuntimeProvenance } from '../contracts'
+import { DataSource, type RuntimeProvenance } from '../contracts'
 import { makeStrategyProtocolHash } from '../contracts.test-support'
 import { IntentStore, IntentStoreLive, planExecutionIntent, type IntentPlan } from '../execution/intents'
 import {
@@ -66,6 +66,18 @@ import {
 import { validatePersistedCapitalGrantForSubmit } from '../execution/mutation-authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
+import type { SignalSessionRow } from '../market-data/rows'
+import {
+  openOpeningDriveQualification,
+  readIncompleteOpeningDriveQualificationLockId,
+  readOpeningDrivePriorTrialReceiptHashes,
+} from './opening-drive-qualification-postgres'
+import {
+  bindOpeningDriveQualificationVersions,
+  prepareOpeningDriveQualificationCalendar,
+  versionOpeningDriveQualificationSession,
+} from '../strategy/opening-drive/qualification-runner'
+import { decodeDefaultOpeningDriveProtocol } from '../strategy/opening-drive/protocol'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
 import {
   Authority,
@@ -1175,6 +1187,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'live_capital_grant_revocations',
       'live_capital_grants',
       'mutation_events',
+      'opening_drive_qualification_locks',
+      'opening_drive_qualification_replay_versions',
+      'opening_drive_qualification_results',
+      'opening_drive_qualification_session_replays',
       'orders',
       'position_snapshots',
       'positions',
@@ -1237,7 +1253,193 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 44, name: 'execution_controller_pass_observation' },
       { migration_id: 45, name: 'intraday_autonomous_cycles' },
       { migration_id: 46, name: 'intraday_native_cycles' },
+      { migration_id: 47, name: 'opening_drive_qualification_evidence' },
     ])
+  })
+
+  test('never retries an opened-incomplete qualification lock and counts every terminal receipt in later trial lineage', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const protocol = successOfResult(decodeDefaultOpeningDriveProtocol())
+        const signalSession: SignalSessionRow = {
+          snapshot_id: 'a'.repeat(64),
+          calendar_version: 'alpaca-us-equity-calendar-v1',
+          session_date: '2026-07-06',
+          open_time: '09:30',
+          close_time: '16:00',
+          timezone: 'America/New_York',
+          provider: DataSource.Alpaca,
+        }
+        const prepared = successOfResult(
+          prepareOpeningDriveQualificationCalendar({
+            sessions: [signalSession],
+            finalizedAt: '2026-07-06 22:00:00.000',
+            publication: {
+              snapshotId: signalSession.snapshot_id,
+              manifestContentHash: 'b'.repeat(64),
+              sessionsContentHash: 'c'.repeat(64),
+            },
+            protocol,
+          }),
+        )
+        const plan = prepared.sessions[0]
+        assert(plan !== undefined)
+        const archiveWatermarks = (offset: string) => [
+          { sourceTopic: 'torghut.bars.1m.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.quotes.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.trades.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+        ]
+        const versioned = successOfResult(
+          versionOpeningDriveQualificationSession(
+            plan,
+            { ...plan.openingQuery, archiveWatermarks: archiveWatermarks('100') },
+            { ...plan.exitQuery, archiveWatermarks: archiveWatermarks('200') },
+          ),
+        )
+        const lock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'a'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: [],
+          }),
+        )
+        const opened = yield* openOpeningDriveQualification(sql, lock, [versioned])
+        const incompleteLockId = yield* readIncompleteOpeningDriveQualificationLockId(sql)
+        const exactRetry = yield* Effect.exit(openOpeningDriveQualification(sql, lock, [versioned]))
+        const changedSequentialLock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'a'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: ['f'.repeat(64)],
+          }),
+        )
+        const conflict = yield* Effect.exit(openOpeningDriveQualification(sql, changedSequentialLock, [versioned]))
+
+        const receiptHash = 'e'.repeat(64)
+        yield* sql`
+          INSERT INTO opening_drive_qualification_results (lock_id, receipt_hash, verdict, document)
+          VALUES (
+            ${lock.lockId},
+            ${receiptHash},
+            'INSUFFICIENT',
+            ${sql.json({
+              schemaVersion: 'bayn.opening-drive.qualification-receipt.v1',
+              receiptHash,
+              verdict: 'INSUFFICIENT',
+              sessionCount: 1,
+            })}
+          )
+        `
+        const terminal = yield* openOpeningDriveQualification(sql, changedSequentialLock, [versioned])
+        const priorTrials = yield* readOpeningDrivePriorTrialReceiptHashes(sql)
+        return { opened, incompleteLockId, exactRetry, conflict, terminal, priorTrials, lock, changedSequentialLock }
+      }),
+    )
+
+    expect(result.opened).toEqual({ state: 'ACQUIRED', lockId: result.lock.lockId })
+    expect(result.incompleteLockId).toEqual(Option.some(result.lock.lockId))
+    expect(Exit.isFailure(result.exactRetry)).toBe(true)
+    if (Exit.isFailure(result.exactRetry)) {
+      expect(result.exactRetry.cause.reasons.find(Cause.isFailReason)?.error).toMatchObject({
+        _tag: 'OpeningDriveQualificationStoreError',
+        failure: 'conflict',
+      })
+    }
+    expect(Exit.isFailure(result.conflict)).toBe(true)
+    expect(result.changedSequentialLock.candidateKey).toBe(result.lock.candidateKey)
+    expect(result.changedSequentialLock.lockId).not.toBe(result.lock.lockId)
+    expect(result.terminal).toEqual({
+      state: 'TERMINAL',
+      lockId: result.lock.lockId,
+      receiptHash: 'e'.repeat(64),
+      verdict: 'INSUFFICIENT',
+      sessionCount: 1,
+    })
+    expect(result.priorTrials).toEqual(['e'.repeat(64)])
+  })
+
+  test('blocks terminal candidate replay while any other qualification lock remains incomplete', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const protocol = successOfResult(decodeDefaultOpeningDriveProtocol())
+        const signalSession: SignalSessionRow = {
+          snapshot_id: 'a'.repeat(64),
+          calendar_version: 'alpaca-us-equity-calendar-v1',
+          session_date: '2026-07-06',
+          open_time: '09:30',
+          close_time: '16:00',
+          timezone: 'America/New_York',
+          provider: DataSource.Alpaca,
+        }
+        const prepared = successOfResult(
+          prepareOpeningDriveQualificationCalendar({
+            sessions: [signalSession],
+            finalizedAt: '2026-07-06 22:00:00.000',
+            publication: {
+              snapshotId: signalSession.snapshot_id,
+              manifestContentHash: 'b'.repeat(64),
+              sessionsContentHash: 'c'.repeat(64),
+            },
+            protocol,
+          }),
+        )
+        const plan = prepared.sessions[0]
+        assert(plan !== undefined)
+        const archiveWatermarks = (offset: string) => [
+          { sourceTopic: 'torghut.bars.1m.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.quotes.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+          { sourceTopic: 'torghut.trades.v1', sourcePartition: 0, inclusiveLastOffset: offset },
+        ]
+        const versioned = successOfResult(
+          versionOpeningDriveQualificationSession(
+            plan,
+            { ...plan.openingQuery, archiveWatermarks: archiveWatermarks('100') },
+            { ...plan.exitQuery, archiveWatermarks: archiveWatermarks('200') },
+          ),
+        )
+        const terminalLock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'a'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: [],
+          }),
+        )
+        const receiptHash = 'e'.repeat(64)
+        yield* openOpeningDriveQualification(sql, terminalLock, [versioned])
+        yield* sql`
+          INSERT INTO opening_drive_qualification_results (lock_id, receipt_hash, verdict, document)
+          VALUES (
+            ${terminalLock.lockId}, ${receiptHash}, 'INSUFFICIENT',
+            ${sql.json({ schemaVersion: 'bayn.opening-drive.qualification-receipt.v1', receiptHash, verdict: 'INSUFFICIENT', sessionCount: 1 })}
+          )
+        `
+
+        const incompleteLock = successOfResult(
+          bindOpeningDriveQualificationVersions([versioned], {
+            sourceRevision: 'b'.repeat(40),
+            protocol,
+            calendar: prepared.calendar,
+            priorTrialReceiptHashes: [receiptHash],
+          }),
+        )
+        yield* openOpeningDriveQualification(sql, incompleteLock, [versioned])
+
+        return yield* Effect.exit(openOpeningDriveQualification(sql, terminalLock, [versioned]))
+      }),
+    )
+
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) {
+      expect(result.cause.reasons.find(Cause.isFailReason)?.error).toMatchObject({
+        _tag: 'OpeningDriveQualificationStoreError',
+        failure: 'conflict',
+      })
+    }
   })
 
   test('preserves legacy grants and persists the neutral grant contract for either broker environment', async () => {

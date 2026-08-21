@@ -295,6 +295,9 @@ const calendarFor = (sessions: readonly ReturnType<typeof replayInput>[]) => {
   const material = {
     schemaVersion: 'bayn.opening-drive.qualification-calendar.v1' as const,
     source: 'signal.exchange_sessions_v1' as const,
+    publicationSnapshotId: sha256('fixture-publication-snapshot'),
+    publicationManifestContentHash: sha256('fixture-publication-manifest'),
+    publicationSessionsContentHash: sha256('fixture-publication-sessions'),
     calendarVersion: 'fixture-calendar-v1',
     firstSession: first.sessionDate,
     lastSession: last.sessionDate,
