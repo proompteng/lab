@@ -47,6 +47,13 @@ const validateQualificationCalendar = (
   if (calendar.sessions.length === 0 || calendar.calendarVersion.trim().length === 0) {
     return fail('opening-drive qualification requires a non-empty finalized exchange calendar')
   }
+  if (
+    !/^[0-9a-f]{64}$/.test(calendar.publicationSnapshotId) ||
+    !/^[0-9a-f]{64}$/.test(calendar.publicationManifestContentHash) ||
+    !/^[0-9a-f]{64}$/.test(calendar.publicationSessionsContentHash)
+  ) {
+    return fail('opening-drive qualification requires a complete finalized Signal publication identity')
+  }
   if (!canonicalInstant(calendar.finalizedAt)) {
     return fail('opening-drive qualification calendar finalization time is invalid')
   }
