@@ -74,7 +74,7 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:e1b44568c12f1563f1f255a988785c79d7c9219b04b7ea70c34bc88ada2909f5
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "a1a76f67f95493533cef505c6905163c85753b3f7903a1d74a016bfbadbe534c"
+              value: "1de2e321a6d895469c8d8d78d1f4e0defd78fa2cdff1f01134f8607302246e10"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "3a6ee606f44434b968579fd2a7e8da4dd2aab26c99a3cc8c9e70433be16c6329"
             # Reviewed activation identity pins used by the release verifier. Runtime derives the same
@@ -82,7 +82,7 @@ spec:
             - name: BAYN_STRATEGY_NAME
               value: opening-drive-momentum
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "d82848fc6f93a77ad584daff0fc4ad5ab4a517f49f3d4079e79484d9d1930354"
+              value: "91c6306c12ab766463f97828bee5d590fea7934e83a98b295dda335e0136486f"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "667ad270624ec0804cf68b47b77e6488b8c8230d587df8534bb4d65eaccfa53f"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
