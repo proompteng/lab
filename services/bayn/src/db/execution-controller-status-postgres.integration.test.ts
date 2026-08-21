@@ -523,7 +523,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 46, name: 'intraday_native_cycles' })
+      expect(migrated.migration).toEqual({ migration_id: 47, name: 'opening_drive_qualification_evidence' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')
