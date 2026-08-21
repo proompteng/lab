@@ -18,7 +18,7 @@ import {
   quantizeDown,
   referencePriceMicros,
 } from '../execution-model/fixed-point'
-import { defaultExecutionModel, MICROS, PPM } from '../execution-model/model'
+import { MICROS, PPM } from '../execution-model/model'
 import { decideOpeningDrive } from './decision'
 import {
   OpeningDriveQualificationFailure,
@@ -27,13 +27,13 @@ import {
   type OpeningDriveReplaySessionInput,
   type OpeningDriveSessionReplay,
 } from './qualification-model'
-import type { OpeningDriveProtocol } from './protocol'
+import { openingDriveExecutionModel, type OpeningDriveProtocol } from './protocol'
 
 const replayExecutionModel: ExecutionModel = Object.freeze({
-  ...defaultExecutionModel,
+  ...openingDriveExecutionModel,
   priceImpact: Object.freeze({
     halfSpreadBps: 0,
-    slippageBps: defaultExecutionModel.priceImpact.slippageBps,
+    slippageBps: openingDriveExecutionModel.priceImpact.slippageBps,
   }),
 })
 
@@ -43,11 +43,11 @@ export const openingDriveReplayCostModelDocument = Object.freeze({
   exitPriceReference: 'verified-flatten-bid',
   quotedSpreadCost: 'observed-top-of-book-midpoint-distance',
   liquidity: 'entry-sized-from-entry-ask; exit-filled-at-exit-bid; residual-zero-marked-and-rejected',
-  adverseSlippageBps: defaultExecutionModel.priceImpact.slippageBps,
-  adverseSlippageMultiplier: defaultExecutionModel.doubleCostMultiplier,
-  regulatoryFeeMultiplier: defaultExecutionModel.doubleCostMultiplier,
-  precision: defaultExecutionModel.precision,
-  fees: defaultExecutionModel.fees,
+  adverseSlippageBps: openingDriveExecutionModel.priceImpact.slippageBps,
+  adverseSlippageMultiplier: openingDriveExecutionModel.doubleCostMultiplier,
+  regulatoryFeeMultiplier: openingDriveExecutionModel.doubleCostMultiplier,
+  precision: openingDriveExecutionModel.precision,
+  fees: openingDriveExecutionModel.fees,
 })
 
 const failure = (
@@ -106,6 +106,7 @@ const validateExitSnapshot = (
       exit.universeSymbolHash !== opening.universeSymbolHash ||
       exit.feed !== opening.feed ||
       exit.delayClass !== opening.delayClass ||
+      exit.calendar.normalizedResponseHash !== opening.calendar.normalizedResponseHash ||
       !sameTopics(exit.sourceTopics, opening.sourceTopics) ||
       exit.symbols.length !== protocol.universe.length ||
       exit.symbols.some((symbol, index) => symbol !== protocol.universe[index])
@@ -224,7 +225,7 @@ const replayPosition = (
           BigInt(replayExecutionModel.precision.quantityIncrementMicros),
           values.entryAsk,
           replayExecutionModel,
-          BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+          BigInt(openingDriveExecutionModel.doubleCostMultiplier) * MICROS,
         ),
         (minimumEntry) =>
           desiredQuantityMicros(allocationMicros, weight, minimumEntry.fillPriceMicros, replayExecutionModel),
@@ -243,7 +244,7 @@ const replayPosition = (
       (cause) => executionFailure(sessionDate, symbol, cause),
     )
     if (quantity === 0n) return null
-    const costMultiplier = BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS
+    const costMultiplier = BigInt(openingDriveExecutionModel.doubleCostMultiplier) * MICROS
     const entryReferenceNotional = yield* Result.mapError(notionalMicros(quantity, values.entryAsk), (cause) =>
       executionFailure(sessionDate, symbol, cause),
     )
@@ -302,7 +303,7 @@ const entryFees = (
           notionalMicros: position.entry.notionalMicros,
         })),
         replayExecutionModel,
-        BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+        BigInt(openingDriveExecutionModel.doubleCostMultiplier) * MICROS,
       ),
       (cause) => executionFailure(sessionDate, 'portfolio-entry', cause),
     ),
@@ -395,7 +396,7 @@ const replayPortfolio = (
               ]
         }),
         replayExecutionModel,
-        BigInt(defaultExecutionModel.doubleCostMultiplier) * MICROS,
+        BigInt(openingDriveExecutionModel.doubleCostMultiplier) * MICROS,
       ),
       (cause) => executionFailure(opening.manifest.sessionDate, 'portfolio', cause),
     )
