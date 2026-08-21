@@ -110,6 +110,7 @@ data:
     hs.status = "Progressing"
     hs.message = "Waiting for the Restate operator to report deployment readiness."
     return hs
+  resource.customizations.useOpenLibs.restate.dev_RestateDeployment: "true"
   resource.customizations.health.batch_CronJob: |
     hs = {}
     local metadata = obj.metadata or {}

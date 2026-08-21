@@ -100,7 +100,7 @@ test('rejects bypassing the live namespace preflight', async () => {
 test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
-    'expected_hermes_policy_hash=c2379b52d6bc1982f8f11650fed320afe30c3bdcbd7afb4a844cca5059812d1c',
+    'expected_hermes_policy_hash=d2b9382f22145c7093992291f8238f15ea13b6aaeaeaa83847fd978f1d8eaea3',
     `expected_hermes_policy_hash=${'0'.repeat(64)}`,
   )
   expect(validateProductionContent(files)).toContainEqual(

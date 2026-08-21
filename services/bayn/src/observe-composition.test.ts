@@ -4256,6 +4256,44 @@ describe('OBSERVE runtime composition', () => {
     expect(strategyCalls).toBe(0)
   })
 
+  test('fails closed when same-pass reconciliation risk context is from another trading date', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const reconciled = reconciliationResult()
+    let strategyCalls = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildObserveCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            reconcile: Effect.succeed({
+              ...reconciled,
+              riskContext: { ...reconciled.riskContext, tradingDate: signalDate as IsoDate },
+            }),
+            strategy: runtimeWithDecision(() => {
+              strategyCalls += 1
+              return Result.succeed(decision)
+            }),
+          })
+        }).pipe(
+          (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+        ),
+      ),
+    )
+
+    expect(failure).toEqual({
+      _tag: 'ObserveDecisionCompositionFailure',
+      operation: 'cycle-binding',
+      message: 'same-pass reconciliation risk context is not from the execution session date',
+      cause: undefined,
+    })
+    expect(strategyCalls).toBe(0)
+  })
+
   test('maps an expected strategy decision failure into the typed operational channel', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
     const strategyFailure = {

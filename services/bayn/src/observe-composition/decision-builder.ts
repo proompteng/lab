@@ -599,6 +599,14 @@ const prepareExecutionSessionBinding = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
 ): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure> => {
+  if (facts.reconciliation.riskContext.tradingDate !== input.cycle.identity.executionSessionDate) {
+    return Result.fail(
+      compositionFailure(
+        'cycle-binding',
+        'same-pass reconciliation risk context is not from the execution session date',
+      ),
+    )
+  }
   const stateHash = reconciledStateHash(facts.reconciliation.brokerState)
   if (Result.isFailure(stateHash)) {
     return Result.fail(

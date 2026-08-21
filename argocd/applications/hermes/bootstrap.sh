@@ -86,4 +86,4 @@ seed_file() {
 seed_file /opt/bootstrap/USER.md /opt/data/memories/USER.md
 
 /opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log
-/bin/sh /opt/bootstrap/bootstrap-github.sh
+exec /bin/sh /opt/bootstrap/bootstrap-github.sh

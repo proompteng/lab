@@ -133,7 +133,7 @@ jobs:
             echo "reason=source commit is not an ancestor of main" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          source_version="$(git describe --tags --always "${source_sha}")"
+          source_version="$(git describe --tags --always --long --match 'v[0-9]*.[0-9]*.[0-9]*' "${source_sha}")"
           if [[ -z "${source_version}" ]]; then
             echo "Failed to derive source version for ${source_sha}" >&2
             exit 2

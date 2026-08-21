@@ -8,13 +8,25 @@ data:
     groups:
       - name: buzz-production.rules
         rules:
+          - record: buzz_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="buzz"
+                }
+              )
           - alert: BuzzRelayUnavailable
             expr: |
               (
-                sum(up{job="buzz-relay",namespace="buzz"}) < 1
+                (
+                  sum(up{job="buzz-relay",namespace="buzz"}) < 1
+                )
+                or
+                absent(up{job="buzz-relay",namespace="buzz"})
               )
-              or
-              absent(up{job="buzz-relay",namespace="buzz"})
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 5m
             labels:
               severity: critical
@@ -27,7 +39,11 @@ data:
               runbook_url: docs/runbooks/buzz-production.md
           - alert: BuzzRelayReplicaDegraded
             expr: |
-              sum(up{job="buzz-relay",namespace="buzz"} == 1) < 2
+              (
+                sum(up{job="buzz-relay",namespace="buzz"} == 1) < 2
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 10m
             labels:
               severity: warning
@@ -39,14 +55,19 @@ data:
               runbook_url: docs/runbooks/buzz-production.md
           - alert: BuzzContainerRestarting
             expr: |
-              sum by (container) (
-                increase(
-                  kube_pod_container_status_restarts_total{
-                    namespace="buzz",
-                    pod=~"buzz-.*"
-                  }[15m]
+              (
+                sum by (container) (
+                  increase(
+                    kube_pod_container_status_restarts_total{
+                      namespace="buzz",
+                      pod=~"buzz-.*"
+                    }[15m]
+                  )
                 )
-              ) > 0
+                > 0
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 5m
             labels:
               severity: warning
@@ -59,10 +80,14 @@ data:
           - alert: BuzzRedisUnavailable
             expr: |
               (
-                max(redis_up{job="buzz-redis",namespace="buzz"}) < 1
+                (
+                  max(redis_up{job="buzz-redis",namespace="buzz"}) < 1
+                )
+                or
+                absent(redis_up{job="buzz-redis",namespace="buzz"})
               )
-              or
-              absent(redis_up{job="buzz-redis",namespace="buzz"})
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 5m
             labels:
               severity: critical
@@ -75,10 +100,14 @@ data:
               runbook_url: docs/runbooks/buzz-production.md
           - alert: BuzzRedisMemoryHigh
             expr: |
-              max(redis_memory_used_bytes{job="buzz-redis",namespace="buzz"})
-              /
-              clamp_min(max(redis_memory_max_bytes{job="buzz-redis",namespace="buzz"}), 1)
-              > 0.85
+              (
+                max(redis_memory_used_bytes{job="buzz-redis",namespace="buzz"})
+                /
+                clamp_min(max(redis_memory_max_bytes{job="buzz-redis",namespace="buzz"}), 1)
+                > 0.85
+              )
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 15m
             labels:
               severity: warning
@@ -91,10 +120,14 @@ data:
           - alert: BuzzPostgresReplicaDegraded
             expr: |
               (
-                sum(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"} == 1) < 3
+                (
+                  sum(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"} == 1) < 3
+                )
+                or
+                absent(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"})
               )
-              or
-              absent(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"})
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 10m
             labels:
               severity: critical
@@ -108,24 +141,28 @@ data:
           - alert: BuzzPostgresBackupStale
             expr: |
               (
-                time()
-                -
-                max(
+                (
+                  time()
+                  -
+                  max(
+                    kube_cnpg_backup_stopped_at{
+                      namespace="buzz",
+                      cluster="buzz-db",
+                      phase="completed"
+                    }
+                  )
+                ) > 129600
+                or
+                absent(
                   kube_cnpg_backup_stopped_at{
                     namespace="buzz",
                     cluster="buzz-db",
                     phase="completed"
                   }
                 )
-              ) > 129600
-              or
-              absent(
-                kube_cnpg_backup_stopped_at{
-                  namespace="buzz",
-                  cluster="buzz-db",
-                  phase="completed"
-                }
               )
+              and on()
+              (buzz_rollout_enabled == 1)
             for: 15m
             labels:
               severity: critical
@@ -2995,13 +3032,11 @@ data:
               )
               and on()
               (
-                (
-                  sum(
-                    kube_replicaset_spec_replicas{
-                      namespace="bayn",
-                      replicaset=~"bayn-execution-controller-.*"
-                    }
-                  ) or vector(0)
+                max(
+                  kube_restate_deployment_spec_replicas{
+                    namespace="bayn",
+                    restate_deployment="bayn-execution-controller"
+                  }
                 ) > 0
               )
             for: 1m
@@ -3017,26 +3052,28 @@ data:
           - alert: BaynExecutionWorkerReplicaTargetMissed
             expr: |
               (
-                sum(
-                  kube_replicaset_status_ready_replicas{
-                    namespace="bayn",
-                    replicaset=~"bayn-execution-controller-.*"
-                  }
+                (
+                  sum(
+                    kube_replicaset_status_ready_replicas{
+                      namespace="bayn",
+                      replicaset=~"bayn-execution-controller-.*"
+                    }
+                  ) or vector(0)
                 )
                 <
-                sum(
-                  kube_replicaset_spec_replicas{
+                max(
+                  kube_restate_deployment_spec_replicas{
                     namespace="bayn",
-                    replicaset=~"bayn-execution-controller-.*"
+                    restate_deployment="bayn-execution-controller"
                   }
                 )
               )
               and on()
               (
-                sum(
-                  kube_replicaset_spec_replicas{
+                max(
+                  kube_restate_deployment_spec_replicas{
                     namespace="bayn",
-                    replicaset=~"bayn-execution-controller-.*"
+                    restate_deployment="bayn-execution-controller"
                   }
                 ) > 1
               )

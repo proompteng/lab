@@ -337,4 +337,12 @@ class ForwarderSubscriptionTest {
       ),
     )
   }
+
+  @Test
+  fun `options session readiness recovers when regular-session starvation no longer applies`() {
+    assertFalse(marketDataSessionReady(authOk = true, subscribedOk = true, eventStarved = true))
+    assertTrue(marketDataSessionReady(authOk = true, subscribedOk = true, eventStarved = false))
+    assertFalse(marketDataSessionReady(authOk = false, subscribedOk = true, eventStarved = false))
+    assertFalse(marketDataSessionReady(authOk = true, subscribedOk = false, eventStarved = false))
+  }
 }

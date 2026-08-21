@@ -3398,7 +3398,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(observed.submitRecovery)).toBe(true)
     if (Exit.isFailure(observed.submitRecovery)) {
       expect(Cause.pretty(observed.submitRecovery.cause)).toContain(
-        'terminal submit recovery cannot overtake a durable cancellation',
+        'submit recovery cannot overtake a durable cancellation',
       )
     }
     expect(observed.afterSubmitRecovery).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })

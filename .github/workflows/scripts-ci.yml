@@ -9,25 +9,33 @@ on:
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'
+      - 'argocd/applications/froussard/**'
       - 'argocd/applicationsets/**'
+      - '.github/workflows/enabled-simple-nix-release.yml'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
       - '.github/workflows/scripts-ci.yml'
+      - '.github/workflows/manual-docker-build-push.yaml'
+      - '.github/scripts/validate-oci-mirror-inputs.sh'
   pull_request:
     paths:
       - 'packages/scripts/**'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'
+      - 'argocd/applications/froussard/**'
       - 'argocd/applicationsets/**'
+      - '.github/workflows/enabled-simple-nix-release.yml'
       - 'docs/torghut/ceph-migration.md'
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - 'devices/galactic/docs/troubleshooting-networking.md'
+      - '.github/workflows/manual-docker-build-push.yaml'
+      - '.github/scripts/validate-oci-mirror-inputs.sh'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

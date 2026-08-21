@@ -389,6 +389,65 @@ class MarketDataChannelFreshnessTrackerTest {
   }
 
   @Test
+  fun `provider bars rejected before serialization still require kafka delivery`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("bars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA", "CRDO")))
+    tracker.recordProviderEvent("bars", "CRDO")
+    tracker.recordDeliveryFailure("bars", "CRDO")
+
+    nowMs += 61_000
+    tracker.recordProviderEvent("bars", "NVDA")
+    tracker.recordSerializedEvent("bars", "NVDA")
+    tracker.recordKafkaSuccess("bars", "NVDA")
+
+    val readiness = tracker.snapshot().single()
+
+    assertFalse(tracker.ready())
+    assertEquals("market_data_channel_observed_symbol_missing_kafka_success", readiness.reason)
+    assertEquals(listOf("CRDO"), readiness.missingSymbols)
+  }
+
+  @Test
+  fun `subscription updates discard removed symbol delivery failures`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("bars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA", "CRDO")))
+    tracker.recordProviderEvent("bars", "CRDO")
+    tracker.recordDeliveryFailure("bars", "CRDO")
+    nowMs += 61_000
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA")))
+    tracker.recordProviderEvent("bars", "NVDA")
+    tracker.recordSerializedEvent("bars", "NVDA")
+    tracker.recordKafkaSuccess("bars", "NVDA")
+    assertTrue(tracker.ready())
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA", "CRDO")))
+    val readiness = tracker.snapshot().single()
+
+    assertTrue(tracker.ready())
+    assertEquals(listOf("CRDO"), readiness.missingSymbols)
+    assertEquals("market_data_channel_fresh", readiness.reason)
+  }
+
+  @Test
   fun `post-session readiness exposes inactive gate and stale channel diagnostics`() {
     val nowMs = Instant.parse("2026-07-07T22:00:00Z").toEpochMilli()
     val tracker =

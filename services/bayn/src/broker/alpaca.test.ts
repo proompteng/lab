@@ -816,12 +816,6 @@ describe('Alpaca paper reads', () => {
         configuration: accountConfigurationResponse,
         failure: { _tag: 'BrokerTradingSuspendedByUser' },
       },
-      {
-        name: 'fractional trading disabled',
-        account: accountResponse,
-        configuration: { ...accountConfigurationResponse, fractional_trading: false },
-        failure: { _tag: 'BrokerFractionalTradingDisabled' },
-      },
     ] as const
 
     for (const invalid of cases) {
@@ -849,6 +843,35 @@ describe('Alpaca paper reads', () => {
       })
       expect(paths, invalid.name).toEqual(['/v2/account', '/v2/account/configurations'])
     }
+  })
+
+  test('keeps fractional-trading configuration as read evidence instead of rejecting the shared read session', async () => {
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/configurations') {
+        return Effect.succeed(jsonResponse(request, { ...accountConfigurationResponse, fractional_trading: false }))
+      }
+      if (
+        url.pathname === '/v2/positions' ||
+        url.pathname === '/v2/orders' ||
+        url.pathname === '/v2/account/activities/FILL' ||
+        url.pathname === '/v2/calendar'
+      ) {
+        return Effect.succeed(jsonResponse(request, []))
+      }
+      return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
+    })
+
+    const proof = await Effect.runPromise(
+      withClient(client, verifyConnectionReadAccess).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(proof).toMatchObject({
+      accountStatus: AccountStatus.Active,
+      fractionalTrading: false,
+      orderById: 'NOT_FOUND',
+      orderByClientId: 'NOT_FOUND',
+    })
   })
 
   test('bounds the complete startup preflight below the Kubernetes startup-probe budget', async () => {

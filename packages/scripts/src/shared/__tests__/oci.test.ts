@@ -1449,7 +1449,9 @@ describe('native OCI build workflows', () => {
     expect(enabledSimpleReleaseWorkflow).toContain('BUILD_ID="${build_id}" perl')
     expect(enabledSimpleReleaseWorkflow).toContain('value: ${build_id}')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/froussard/knative-service.yaml')
-    expect(enabledSimpleReleaseWorkflow).toContain('source_version="$(git describe --tags --always "${source_sha}")"')
+    expect(enabledSimpleReleaseWorkflow).toContain(
+      'source_version="$(git describe --tags --always --long --match \'v[0-9]*.[0-9]*.[0-9]*\' "${source_sha}")"',
+    )
     expect(enabledSimpleReleaseWorkflow).toContain('echo "source_version=${source_version}"')
     expect(enabledSimpleReleaseWorkflow).toContain('SOURCE_VERSION: ${{ steps.meta.outputs.source_version }}')
     expect(enabledSimpleReleaseWorkflow).toContain('name:\\s+FROUSSARD_VERSION')

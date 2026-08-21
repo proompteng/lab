@@ -65,6 +65,28 @@ function count(content: string, term: string): number {
   return content.split(term).length - 1
 }
 
+function sectionBetween(content: string, start: string, end: string): string {
+  const startIndex = content.indexOf(start)
+  if (startIndex < 0) return ''
+  const endIndex = content.indexOf(end, startIndex + start.length)
+  return endIndex < 0 ? content.slice(startIndex) : content.slice(startIndex, endIndex)
+}
+
+function namedListItemSection(content: string, indent: number, name: string): string {
+  const lines = content.split(/\r?\n/)
+  const itemPrefix = `${' '.repeat(indent)}- name: `
+  const startLine = lines.findIndex((line) => line === `${itemPrefix}${name}`)
+  if (startLine < 0) return ''
+  let endLine = lines.length
+  for (let index = startLine + 1; index < lines.length; index += 1) {
+    if (lines[index]?.startsWith(itemPrefix)) {
+      endLine = index
+      break
+    }
+  }
+  return `${lines.slice(startLine, endLine).join('\n')}\n`
+}
+
 function requireTerms(failures: string[], path: string, content: string, terms: string[]): void {
   for (const term of terms) {
     if (!content.includes(term)) {
@@ -90,6 +112,10 @@ export async function loadProductionFiles(): Promise<ProductionFiles> {
 
 export function validateProductionContent(files: ProductionFiles): string[] {
   const failures: string[] = []
+  const initContainersSection = sectionBetween(files.statefulSet, '      initContainers:\n', '      containers:\n')
+  const containersSection = sectionBetween(files.statefulSet, '      containers:\n', '      volumes:\n')
+  const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
+  const gatewayContainer = namedListItemSection(containersSection, 8, 'hermes')
 
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
@@ -155,11 +181,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: GIT_CONFIG_GLOBAL',
     'value: /opt/data/home/.gitconfig',
     'name: GIT_TERMINAL_PROMPT',
-    'workingDir: /opt/data/workspace/tuslagch/lab',
     'value: https://github.com/proompteng/lab.git',
     'value: main',
     'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
   ])
+  if (!gatewayContainer.includes('          workingDir: /opt/data/workspace/tuslagch/lab\n')) {
+    failures.push(
+      `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
+    )
+  }
   if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
   }
@@ -242,9 +272,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '                  key: GH_TOKEN',
   ].join('\n')
   if (
-    count(files.statefulSet, '            - name: GH_TOKEN\n') !== 1 ||
-    count(files.statefulSet, githubTokenReference) !== 1 ||
-    count(files.statefulSet, '                  key: GH_TOKEN\n') !== 1
+    count(bootstrapContainer, '            - name: GH_TOKEN\n') !== 1 ||
+    count(bootstrapContainer, githubTokenReference) !== 1 ||
+    containersSection.includes('            - name: GH_TOKEN\n')
   ) {
     failures.push(
       `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
@@ -328,6 +358,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'timeout: 120',
     'tools:\n      include:\n        - web_search_exa\n        - web_fetch_exa',
     'hooks_auto_accept: false',
+    'user_char_limit: 2200',
     'memory_char_limit: 4400',
     'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
     'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
@@ -514,7 +545,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- 127.0.0.0/8',
     '- 169.254.0.0/16',
     '- 172.16.0.0/12',
+    '- 192.0.0.0/29',
+    '- 192.0.0.8/32',
+    '- 192.0.0.170/31',
+    '- 192.0.2.0/24',
+    '- 192.88.99.0/24',
     '- 192.168.0.0/16',
+    '- 198.18.0.0/15',
+    '- 198.51.100.0/24',
+    '- 203.0.113.0/24',
     '- 224.0.0.0/4',
     '- 240.0.0.0/4',
     'cidr: 10.96.0.1/32',
@@ -540,7 +579,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.squidConfig, files.squidConfig, [
     'acl SSL_ports port 443',
     'acl CONNECT method CONNECT',
-    'acl blocked_private_v4 dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4',
+    'acl blocked_private_v4 dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/29 192.0.0.8/32 192.0.0.170/31 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4',
     'acl blocked_private_v6 dst ::1/128 fc00::/7 fe80::/10 ff00::/8',
     'http_access deny all',
   ])
@@ -600,6 +639,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '      - pods/attach',
     '      - pods/portforward',
     '      - services/proxy',
+    '      - subresources.kubevirt.io',
     'name: cluster-admin',
   ])
   const rbacVerbLists = [...files.rbac.matchAll(/^\s+verbs:\s+\[([^\]]+)]$/gm)]
@@ -637,8 +677,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const configCheckPosition = files.bootstrap.indexOf(
     '/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log',
   )
-  const githubBootstrapPosition = files.bootstrap.indexOf('/bin/sh /opt/bootstrap/bootstrap-github.sh')
-  if (configCheckPosition < 0 || githubBootstrapPosition <= configCheckPosition) {
+  const finalGithubBootstrap = 'exec /bin/sh /opt/bootstrap/bootstrap-github.sh'
+  const githubBootstrapPosition = files.bootstrap.indexOf(finalGithubBootstrap)
+  if (
+    configCheckPosition < 0 ||
+    githubBootstrapPosition <= configCheckPosition ||
+    !files.bootstrap.trimEnd().endsWith(finalGithubBootstrap)
+  ) {
     failures.push(`${productionPaths.bootstrap}: GitHub auth must be the final bootstrap step`)
   }
   requireTerms(failures, productionPaths.labCheckout, files.labCheckout, [
@@ -651,6 +696,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'LAB_CHECKOUT_RETRY_DELAY_SECONDS:-2',
     'if [ -L "$checkout_dir" ]',
     'retry_checkout_command()',
+    'if [ "$retry_attempts" -le 0 ]; then',
     'retry_checkout_command clone clone_checkout',
     'retry_checkout_command fetch fetch_checkout',
     '--filter=blob:none',
@@ -771,6 +817,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: hermes-toolchain-release-contract',
     'nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64',
     'argocd/applications/hermes/statefulset.yaml',
+    'if [ "$old_digest" != "$new_digest" ]; then',
+    'Hermes toolchain digest is already current: sha256:${new_digest}',
     'automated-pr',
     'nix-oci',
     'agents',
@@ -812,7 +860,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '--source /opt/data/migration/source',
     '--preset user-data',
     '--dry-run',
-    'directory not found: /opt/data/migration/source',
+    "grep -Fqx 'directory not found: /opt/data/migration/source'",
+    '*"Secrets:     no"*) ;;',
     'migration preview contains a conflict or refusal',
     'migration_preview_verified=true conflicts=0 secrets=false',
     'name: hermes-operation-config',
@@ -823,7 +872,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '--source /opt/data/migration/source',
     '--preset user-data',
     '--yes',
-    'directory not found: /opt/data/migration/source',
+    "grep -Fqx 'directory not found: /opt/data/migration/source'",
+    '*"Secrets:     no"*) ;;',
     'migration apply did not prove that secret migration is disabled',
     'operator_digests_before=$(sha256sum $operator_files)',
     "report.get('source_root') != '/opt/data/migration/source'",
@@ -841,6 +891,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: hermes-operation-config',
     'mountPath: /opt/data/config.yaml',
     'subPath: config.yaml',
+    'mountPath: /opt/data/SOUL.md',
+    'mountPath: /opt/data/IDENTITY.md',
+    'mountPath: /opt/data/TOOLS.md',
+    'mountPath: /opt/data/HEARTBEAT.md',
+    'mountPath: /opt/data/workspace/tuslagch/AGENTS.md',
+    'name: hermes-bootstrap',
   ])
   forbidTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--overwrite'])
   forbidTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--overwrite'])
@@ -1014,9 +1070,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'A standalone Job does not update the CronJob',
     '## API key rotation',
     'Every API key rotation must restart `hermes-0`',
+    'Every Exa API key rotation must restart `hermes-0`',
+    '## Exa API key rotation',
     'previous_secret_version=',
     'Authorization: Bearer $old_api_key',
     'Authorization: Bearer $new_api_key',
+    'previous_exa_secret_version=',
+    'kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync=',
+    'exa_rotation_native_web_canary=ok',
+    'exa_rotation_mcp_canary=ok tools=2',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
     'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
@@ -1143,7 +1205,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   if (count(phaseZeroSection, 'test "$exa_key_bytes" -ge 32') !== 2) {
     failures.push(`${productionPaths.runbook}: 1Password and bridged Exa keys must both enforce the minimum length`)
   }
-  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
+  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Exa API key rotation/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, rotationSection, [
     'set -euo pipefail',
     'trap cleanup_rotation EXIT',
@@ -1158,6 +1220,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(curl -sS -o /dev/null -w \'%{http_code}\' -H "Authorization: Bearer $old_api_key"',
     'curl -fsS -H "Authorization: Bearer $new_api_key"',
     'cleanup_rotation',
+  ])
+  const exaRotationSection =
+    files.runbook.match(/## Exa API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, exaRotationSection, [
+    'set -euo pipefail',
+    'trap cleanup_exa_rotation EXIT',
+    'previous_exa_secret_version=',
+    'kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync=',
+    'kubectl -n hermes delete pod hermes-0',
+    'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
+    'exa_rotation_native_web_canary=ok',
+    'exa_rotation_mcp_canary=ok tools=2',
+    'cleanup_exa_rotation',
   ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
     '--ignore-failed-read',
@@ -1303,9 +1378,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'do not run Phase 2 step 5 because merged `main` now enables',
     'Keep the same Phase 2 shell and Lease open through',
     'cutover step 4.',
-    'if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then',
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)',
+    'if [ -n "$openclaw_cluster_admin_binding" ]; then',
     'argocd app sync openclaw --prune \\\n       --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
-    'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
+    'test -z "$openclaw_cluster_admin_binding"',
     'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
     'if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"',
     'elif .spec.runStrategy == "Always" and (.spec | has("running") | not) then "runstrategy-running"',
@@ -1338,9 +1414,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const openClawGatewayStopIndex = cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service')
   const finalReconciliationIndex = cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
   const clusterAdminPruneIndex = cutoverSection.indexOf('argocd app sync openclaw --prune \\')
-  const clusterAdminAbsentIndex = cutoverSection.indexOf(
-    'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
-  )
+  const failClosedClusterAdminLookup =
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)'
+  if (count(cutoverSection, failClosedClusterAdminLookup) !== 2) {
+    failures.push(`${productionPaths.runbook}: cutover cluster-admin lookups must distinguish NotFound from API errors`)
+  }
+  const clusterAdminAbsentIndex = cutoverSection.indexOf('test -z "$openclaw_cluster_admin_binding"')
   const openClawRunStrategyTransitionIndex = cutoverSection.indexOf(
     'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
   )

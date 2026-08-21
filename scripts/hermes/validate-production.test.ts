@@ -60,6 +60,18 @@ test('rejects a mutable Hermes toolchain image volume', async () => {
   )
 })
 
+test('rejects a Hermes toolchain release that treats an already-current digest as stale', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainReleaseWorkflow = files.toolchainReleaseWorkflow.replace(
+    'if [ "$old_digest" != "$new_digest" ]; then',
+    'if true; then',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.toolchainReleaseWorkflow}: missing production invariant "if [ \\"$old_digest\\" != \\"$new_digest\\" ]; then"`,
+  )
+})
+
 test('rejects omitting the Hermes toolchain bin mount from one container', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(
@@ -195,8 +207,8 @@ test('rejects persisting a service-account token in the kubeconfig', async () =>
 test('rejects touching GitHub auth after the final bootstrap step', async () => {
   const files = await loadProductionFiles()
   files.bootstrap = files.bootstrap.replace(
-    '/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log\n/bin/sh /opt/bootstrap/bootstrap-github.sh',
-    '/bin/sh /opt/bootstrap/bootstrap-github.sh\n/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log',
+    'exec /bin/sh /opt/bootstrap/bootstrap-github.sh',
+    "exec /bin/sh /opt/bootstrap/bootstrap-github.sh\nprintf 'post-bootstrap command\\n'",
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -512,13 +524,24 @@ test('rejects whole-application pruning during OpenClaw cutover', async () => {
 
 test('rejects non-idempotent cluster-admin pruning during OpenClaw cutover', async () => {
   const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('if [ -n "$openclaw_cluster_admin_binding" ]; then', 'if true; then')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant ${JSON.stringify('if [ -n "$openclaw_cluster_admin_binding" ]; then')}`,
+  )
+})
+
+test('rejects a cluster-admin lookup that masks API errors during OpenClaw cutover', async () => {
+  const files = await loadProductionFiles()
+  const failClosedLookup =
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)'
   files.runbook = files.runbook.replace(
-    'if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then',
-    'if true; then',
+    failClosedLookup,
+    'openclaw_cluster_admin_binding=$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin -o name 2>/dev/null || true)',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then"`,
+    `${productionPaths.runbook}: cutover cluster-admin lookups must distinguish NotFound from API errors`,
   )
 })
 
@@ -853,7 +876,7 @@ test('rejects absent-series alerts that fire before rollout enablement', async (
 
 test('rejects rollout enablement derived from ephemeral Hermes namespace state', async () => {
   const files = await loadProductionFiles()
-  files.mimirRules = files.mimirRules.replace(
+  files.mimirRules = files.mimirRules.replaceAll(
     'kube_argocd_application_deployment_history_info{',
     'kube_namespace_labels{',
   )
@@ -1204,7 +1227,7 @@ test('rejects a source guard that treats normal skipped directories as fatal', a
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.migrationDryRun}: missing production invariant "directory not found: /opt/data/migration/source"`,
+    `${productionPaths.migrationDryRun}: missing production invariant "grep -Fqx 'directory not found: /opt/data/migration/source'"`,
   )
 })
 
@@ -1258,6 +1281,15 @@ test('rejects API key rotation that reuses the terminated port-forward', async (
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "kubectl -n hermes port-forward service/hermes 18642:8642"`,
+  )
+})
+
+test('rejects Exa key rotation without the dedicated restart and canary procedure', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('## Exa API key rotation', '## Exa credential maintenance')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "## Exa API key rotation"`,
   )
 })
 

@@ -109,6 +109,7 @@ describe('Buzz production GitOps contract', () => {
     expect(redisConfig).toContain('redis-additional.conf')
     expect(redisConfig).toContain('appendonly yes')
     expect(redisConfig).toContain('appendfsync everysec')
+    expect(redisConfig).toContain('argocd.argoproj.io/sync-options: Prune=false,Delete=false')
     expect(redis).toContain('whenDeleted: Retain')
     expect(redis).toContain('whenScaled: Retain')
     expect(redis).toContain('keepAfterDelete: true')
@@ -199,5 +200,18 @@ describe('Buzz production GitOps contract', () => {
     expect(kubeStateMetrics).toContain('name: backup_stopped_at')
     expect(clusterAlloy).toContain('kube_cnpg_backup_stopped_at')
     expect(clusterAlloy).toContain('kube_cnpg_scheduled_backup_last_schedule_time')
+    expect(rules).toContain('record: buzz_rollout_enabled')
+    expect(rules).toContain('application="buzz"')
+    expect(rules.match(/buzz_rollout_enabled == 1/g)).toHaveLength(7)
+  })
+
+  test('documents the startup-only Redis restart and the additive CNPG network-policy boundary', () => {
+    const runbook = readRepoFile('docs/runbooks/buzz-production.md')
+
+    expect(runbook).toContain('kubectl -n buzz delete pod buzz-redis-0 --wait=true')
+    expect(runbook).toContain('kubectl -n buzz rollout status statefulset/buzz-redis --timeout=300s')
+    expect(runbook).toContain('CONFIG GET maxmemory')
+    expect(runbook).toContain('the only allowed host-networked')
+    expect(runbook).toContain('NetworkPolicy allows are additive')
   })
 })

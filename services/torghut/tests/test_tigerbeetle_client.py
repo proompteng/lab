@@ -254,6 +254,63 @@ class TestTigerBeetleClient(TestCase):
             self.assertEqual(sync.lookup_calls, 1)
             self.assertEqual(sync.close_calls, 1)
 
+    def test_real_client_timeout_preserves_exit_only_client_cleanup(self) -> None:
+        worker_finished = threading.Event()
+
+        class _ExitOnlyBlockingSync:
+            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
+                del cluster_id, replica_addresses
+                self.release = threading.Event()
+                self.exited = 0
+                instances.append(self)
+
+            def lookup_accounts(self, ids: list[int]) -> list[object]:
+                del ids
+                self.release.wait(timeout=1.0)
+                worker_finished.set()
+                return []
+
+            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+                del exc_type, exc, tb
+                self.exited += 1
+                self.release.set()
+                return False
+
+        instances: list[_ExitOnlyBlockingSync] = []
+        fake_module = SimpleNamespace(
+            ClientSync=_ExitOnlyBlockingSync,
+            Account=_TigerBeetleEvent,
+            Transfer=_TigerBeetleEvent,
+        )
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.99.251.1", 3000))
+                ],
+            ),
+        ):
+            client = RealTigerBeetleClient(
+                cluster_id=2001,
+                replica_addresses=[
+                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                ],
+                rpc_timeout_seconds=0.01,
+            )
+
+            with self.assertRaisesRegex(
+                TigerBeetleClientTimeoutError,
+                "tigerbeetle_lookup_accounts_timeout",
+            ):
+                client.nop()
+
+            sync = instances[0]
+            self.assertTrue(worker_finished.is_set())
+            self.assertEqual(sync.exited, 1)
+            client.close()
+            self.assertEqual(sync.exited, 1)
+
     def test_real_client_converts_domain_specs_to_official_events(self) -> None:
         instances: list[object] = []
 

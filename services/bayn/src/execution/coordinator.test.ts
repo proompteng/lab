@@ -498,7 +498,9 @@ describe('MutationStore decision algebra', () => {
       [MutationEventType.SubmitAccepted, IntentState.Acknowledged],
       [MutationEventType.RecoveryFound, IntentState.Acknowledged],
       [MutationEventType.SubmitUnknown, IntentState.Unknown],
+      [MutationEventType.RecoveryNotFound, IntentState.Acknowledged],
       [MutationEventType.RecoveryNotFound, IntentState.Unknown],
+      [MutationEventType.RecoveryUnknown, IntentState.Acknowledged],
       [MutationEventType.RecoveryUnknown, IntentState.Unknown],
     ]
     for (const [eventType, state] of retainedStates) {
@@ -1026,8 +1028,24 @@ describe('MutationStore decision algebra', () => {
     )
     expect(openSubmit).toMatchObject({
       _tag: 'AppendMutation',
-      cancelFirst: { _tag: 'SkipCancelFirstRead' },
+      cancelFirst: { _tag: 'RequireNoDurableCancellation' },
     })
+    for (const [definition, input] of [
+      [
+        { _tag: 'RecoveryNotFound', operation: MutationOperation.Submit } as const,
+        decisionOutcomeInput({ brokerOrderId: orderId, evidence: evidence(404, decisionOutcomeAt) }),
+      ],
+      [{ _tag: 'RecoveryUnknown', operation: MutationOperation.Submit } as const, recoveryInput],
+    ] as const) {
+      expect(
+        resultSuccess(
+          decideMutationOutcome(input, definition, unknownSubmit, decisionReplayIntent(IntentState.Unknown)),
+        ),
+      ).toMatchObject({
+        _tag: 'AppendMutation',
+        cancelFirst: { _tag: 'RequireNoDurableCancellation' },
+      })
+    }
 
     const acceptedEvidence = evidence(200, decisionOutcomeAt)
     const accepted = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
