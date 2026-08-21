@@ -31,6 +31,7 @@ import type {
   RecoveryFirstCycleDriver,
   RecoveryFirstRuntime,
 } from './model'
+import { executionDecisionFinalizationHeadroomMs } from './model'
 import {
   boundedReconciliationPass,
   buildMutationShadowCycleDecision,
@@ -371,6 +372,7 @@ export const observeDecisionBuilder =
       policy,
       reconcile,
       strategy: input.strategy,
+      decisionFinalizationHeadroomMs: executionDecisionFinalizationHeadroomMs(input),
       ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
     }).pipe(Effect.mapError(decisionBuildError))
 
