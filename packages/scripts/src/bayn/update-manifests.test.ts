@@ -849,6 +849,47 @@ describe('Bayn manifest promotion', () => {
     })
   })
 
+  test('holds a proved raw research descendant when strategy identity changed after the authored activation', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalActivationRequest',
+    })
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const deployed = readFileSync(paths.deploymentPath, 'utf8')
+    const changedBehaviorHash = '6'.repeat(64)
+    writeFileSync(deployedDeploymentPath, deployed)
+    writeFileSync(
+      paths.deploymentPath,
+      deployed.replace(
+        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash),
+        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', changedBehaviorHash),
+      ),
+    )
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(
+      updateBaynManifests({
+        sourceSha: 'a'.repeat(40),
+        tag: `sha-${'a'.repeat(40)}`,
+        digest: `sha256:${'b'.repeat(64)}`,
+        strategyBehaviorHash: changedBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        candidateRuntime: currentBindings,
+        researchLineageSourceSha: '0'.repeat(40),
+        deployedDeploymentPath,
+        ...paths,
+      }),
+    ).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'research-capital-activation-refresh-required',
+      qualificationMode: 'research',
+    })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
   test('holds a raw research build change without explicit ancestry evidence', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
