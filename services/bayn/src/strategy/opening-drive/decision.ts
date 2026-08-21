@@ -27,7 +27,7 @@ import type { OpeningDriveProtocol } from './protocol'
 const micros = 1_000_000
 const weightScale = 1_000_000
 
-export const openingDriveBehaviorVersion = 'bayn.opening-drive-momentum.behavior.v1' as const
+export const openingDriveBehaviorVersion = 'bayn.opening-drive-momentum.behavior.v2' as const
 export const openingDriveBehaviorHash = sha256(openingDriveBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -188,7 +188,6 @@ const validateSnapshot = (
   const observed = Date.parse(manifest.observedAt)
   const rangeEndNanos = intradayInstantNanos(manifest.rangeEndAt)
   const observedNanos = intradayInstantNanos(manifest.observedAt)
-  const maximumQuoteAgeNanos = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
   const sessionOpen = Date.parse(session.openAt)
   const sessionClose = Date.parse(session.closeAt)
   const canonicalSessionInstants = Result.all([
@@ -258,10 +257,9 @@ const validateSnapshot = (
       quote === undefined ||
       quote.symbol !== symbol ||
       intradayInstantNanos(quote.eventAt) < rangeEndNanos ||
-      intradayInstantNanos(quote.eventAt) > observedNanos ||
-      intradayAgeNanos(manifest.observedAt, quote.eventAt) > maximumQuoteAgeNanos
+      intradayInstantNanos(quote.eventAt) > observedNanos
     ) {
-      return fail('snapshot-coverage', 'opening-drive decision lacks a fresh post-range quote', { symbol })
+      return fail('snapshot-coverage', 'opening-drive decision lacks a post-range quote', { symbol })
     }
     const symbolTrades = snapshot.trades.filter((trade) => trade.symbol === symbol).toSorted(compareLatestTrade)
     const latestTrade = symbolTrades[0]
@@ -279,10 +277,9 @@ const validateSnapshot = (
     if (
       latestTrade === undefined ||
       intradayInstantNanos(latestTrade.eventAt) < rangeEndNanos ||
-      intradayInstantNanos(latestTrade.eventAt) > observedNanos ||
-      intradayAgeNanos(manifest.observedAt, latestTrade.eventAt) > maximumQuoteAgeNanos
+      intradayInstantNanos(latestTrade.eventAt) > observedNanos
     ) {
-      return fail('snapshot-coverage', 'opening-drive decision lacks a fresh post-range trade', { symbol })
+      return fail('snapshot-coverage', 'opening-drive decision lacks a post-range trade', { symbol })
     }
   }
   return Result.succeed(undefined)
@@ -323,6 +320,7 @@ const signalFor = (
   quote: IntradayQuote,
   trade: IntradayTrade,
   protocol: OpeningDriveProtocol,
+  observedAt: string,
 ): Result.Result<OpeningDriveSignal, OpeningDriveFailure> => {
   const orderedBars = bars.toSorted((left, right) => left.eventAt.localeCompare(right.eventAt))
   const first = orderedBars[0]
@@ -362,6 +360,13 @@ const signalFor = (
     if (spreadBps > protocol.maximumSpreadBps) rejectionReasons.push('spread')
     if (dollarVolume < minimumDollarVolume) rejectionReasons.push('dollar-volume')
     if (bidSize === 0 || askSize === 0) rejectionReasons.push('displayed-liquidity')
+    const maximumMarketDataAge = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
+    if (
+      intradayAgeNanos(observedAt, quote.eventAt) > maximumMarketDataAge ||
+      intradayAgeNanos(observedAt, trade.eventAt) > maximumMarketDataAge
+    ) {
+      rejectionReasons.push('market-data-freshness')
+    }
     return Object.freeze({
       symbol,
       openingPriceMicros: String(prices.opening),
@@ -426,6 +431,7 @@ export const decideOpeningDrive = (
               quote,
               trade,
               protocol,
+              snapshot.manifest.observedAt,
             )
       }),
     )

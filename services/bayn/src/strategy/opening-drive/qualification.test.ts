@@ -120,7 +120,9 @@ interface SnapshotRowsOptions {
   readonly quoteBidSize?: number
   readonly quoteAskSize?: number
   readonly quoteEventAt?: string
+  readonly quoteEventAtBySymbol?: Readonly<Record<string, string>>
   readonly quoteIngestedAt?: string
+  readonly quoteIngestedAtBySymbol?: Readonly<Record<string, string>>
   readonly observedAt?: string
   readonly quoteMidpointBySymbol?: Readonly<Record<string, number>>
 }
@@ -180,8 +182,14 @@ const rowsFor = (options: SnapshotRowsOptions) => {
       market_session: 'regular',
       delay_class: defaultOpeningDriveProtocolDocument.delayClass,
       symbol,
-      event_at: options.quoteEventAt ?? new Date(Date.parse(rangeEnd) + 1_500).toISOString(),
-      ingested_at: options.quoteIngestedAt ?? new Date(Date.parse(rangeEnd) + 1_600).toISOString(),
+      event_at:
+        options.quoteEventAtBySymbol?.[symbol] ??
+        options.quoteEventAt ??
+        new Date(Date.parse(rangeEnd) + 1_500).toISOString(),
+      ingested_at:
+        options.quoteIngestedAtBySymbol?.[symbol] ??
+        options.quoteIngestedAt ??
+        new Date(Date.parse(rangeEnd) + 1_600).toISOString(),
       source_topic: quotesTopic,
       source_partition: '0',
       source_offset: String(offset++),
@@ -675,6 +683,40 @@ describe('opening-drive after-cost qualification', () => {
     expect(
       error(replayOpeningDriveSession({ ...input, exit }, protocol, defaultOpeningDriveQualificationPolicy)),
     ).toMatchObject({ reason: 'snapshot-binding', symbol: 'AMD' })
+  })
+
+  test('rejects a stale opening quote before constructing the qualification benchmark', () => {
+    const protocol = success(decodeDefaultOpeningDriveProtocol())
+    const input = replayInput(0, 0.02)
+    const sessionDate = input.opening.session.sessionDate
+    const times = timesFor(sessionDate)
+    const opening = snapshotFor({
+      sessionDate,
+      phase: 'opening',
+      candidateMove: 0.02,
+      benchmarkMove: 0,
+      quoteEventAtBySymbol: {
+        AMD: new Date(Date.parse(times.openingEnd) + 500).toISOString(),
+      },
+      quoteIngestedAtBySymbol: {
+        AMD: new Date(Date.parse(times.openingEnd) + 600).toISOString(),
+      },
+    })
+
+    expect(success(reverifyIntradayMarketSnapshot(opening))).toEqual(opening)
+    expect(
+      error(
+        replayOpeningDriveSession(
+          { ...input, opening: { ...input.opening, snapshot: opening } },
+          protocol,
+          defaultOpeningDriveQualificationPolicy,
+        ),
+      ),
+    ).toMatchObject({
+      reason: 'snapshot-binding',
+      symbol: 'AMD',
+      message: 'opening benchmark lacks a fresh executable quote',
+    })
   })
 
   test('rejects an independently valid exit snapshot from a different calendar observation', () => {

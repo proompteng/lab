@@ -79,13 +79,14 @@ import { defaultExecutionModel } from '../strategy/execution-model/model'
 import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
-  adverseQuotePrices,
+  adverseClosingQuotePrices,
   compileOpeningDriveDecision,
   executionMarketDataBinding,
   loadIntradaySnapshot,
   openingDriveCloseQuery,
   openingDriveEntryDisposition,
   openingDriveEntryQuery,
+  requireFreshOpeningDrivePositionQuotes,
 } from './opening-drive-decision'
 import { Pipeable } from '../pipeable'
 import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
@@ -717,7 +718,10 @@ const compileObserveStrategyDecision = <R>(
       )
       const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)
       const compiled = yield* Effect.fromResult(
-        compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
+        Result.flatMap(
+          requireFreshOpeningDrivePositionQuotes(snapshot, facts.reconciliation.brokerState.positions),
+          () => compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
+        ),
       ).pipe(
         Effect.mapError((cause) =>
           operationalError({
@@ -1354,7 +1358,7 @@ export const buildClosingExecutionCycleDecision = (
                 mutationRunnerError({ message: 'execution close market-data read failed', cause }),
               ),
             )
-            const quotePrices = yield* Effect.fromResult(adverseQuotePrices(snapshot, symbols)).pipe(
+            const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
             const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(

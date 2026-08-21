@@ -36,6 +36,7 @@ import {
   openingDriveCloseQuery,
   openingDriveEntryDisposition,
   openingDriveEntryQuery,
+  requireFreshOpeningDrivePositionQuotes,
 } from './opening-drive-decision'
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
@@ -381,6 +382,35 @@ describe('opening-drive runtime decision boundary', () => {
     })
     expect(success(closeBidPrices(snapshot, ['AMD', 'AMD']))).toEqual({ AMD: '100120000' })
     expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-prices' })
+
+    const amdQuote = snapshot.latestQuotes['AMD']
+    if (amdQuote === undefined) return expect.unreachable('opening-drive fixture requires an AMD quote')
+    const staleHeldSymbolSnapshot = {
+      ...snapshot,
+      latestQuotes: {
+        ...snapshot.latestQuotes,
+        AMD: { ...amdQuote, eventAt: '2026-08-18T19:29:59.999Z' },
+      },
+    }
+    expect(failure(closeBidPrices(staleHeldSymbolSnapshot, ['AMD']))).toMatchObject({
+      operation: 'close-prices',
+      message: 'closing quote for AMD is outside the freshness window',
+    })
+    expect(success(closeBidPrices(staleHeldSymbolSnapshot, ['AVGO']))).toEqual({ AVGO: '102120000' })
+  })
+
+  test('rejects an entry-cycle liquidation when the held symbol quote is stale', () => {
+    const delayedSnapshot = success(
+      verifyIntradaySnapshot({ ...snapshotRequest, observedAt: '2026-08-18T19:30:02.000Z' }, makeSnapshotRows()),
+    )
+
+    expect(
+      failure(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, [{ symbol: 'AMD', quantityMicros: '1000000' }])),
+    ).toMatchObject({
+      operation: 'entry-decision',
+      message: 'existing position AMD has no fresh entry-cycle liquidation quote',
+    })
+    expect(success(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, []))).toBeUndefined()
   })
 
   test('carries the verified whole-share ask quantity into runtime planning', () => {
@@ -507,6 +537,20 @@ describe('opening-drive runtime decision boundary', () => {
         60_000,
       ),
     ).toBe('AWAIT_SIGNAL')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:35:01.000Z', ['market-data-freshness']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('AWAIT_SIGNAL')
+    expect(
+      openingDriveEntryDisposition(
+        decisionWith('2026-08-18T13:59:00.000Z', ['market-data-freshness']),
+        cycle.window.submissionCutoffAt,
+        60_000,
+      ),
+    ).toBe('NO_TRADE')
     expect(
       openingDriveEntryDisposition(
         decisionWith('2026-08-18T13:35:01.000Z', ['dollar-volume']),

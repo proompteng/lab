@@ -4,6 +4,8 @@ import type { ExecutionModel } from '../../execution-model-contract'
 import { canonicalHashV1Result } from '../../hash'
 import {
   compareIntradayInstants,
+  intradayAgeNanos,
+  millisecondsAsNanos,
   reverifyIntradayMarketSnapshot,
   type IntradayMarketSnapshot,
   type IntradayQuote,
@@ -79,6 +81,26 @@ const validateSnapshotIntegrity = (
     ),
     () => undefined,
   )
+
+const validateOpeningBenchmarkQuotes = (
+  snapshot: IntradayMarketSnapshot,
+  protocol: OpeningDriveProtocol,
+): Result.Result<void, OpeningDriveQualificationFailure> => {
+  const maximumQuoteAge = millisecondsAsNanos(protocol.maximumQuoteAgeMs)
+  for (const symbol of protocol.universe) {
+    const quote = snapshot.latestQuotes[symbol]
+    const quoteAge = quote === undefined ? -1n : intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
+    if (quote === undefined || quoteAge < 0n || quoteAge > maximumQuoteAge) {
+      return Result.fail(
+        failure('snapshot-binding', 'opening benchmark lacks a fresh executable quote', {
+          sessionDate: snapshot.manifest.sessionDate,
+          symbol,
+        }),
+      )
+    }
+  }
+  return Result.succeed(undefined)
+}
 
 const sameTopics = (
   left: IntradayMarketSnapshot['manifest']['sourceTopics'],
@@ -489,6 +511,7 @@ export const replayOpeningDriveSession = (
 ): Result.Result<OpeningDriveSessionReplay, OpeningDriveQualificationFailure> =>
   Result.gen(function* () {
     yield* validateExitSnapshot(input, protocol)
+    yield* validateOpeningBenchmarkQuotes(input.opening.snapshot, protocol)
     const model = replayExecutionModel(protocol)
     const decision = yield* Result.mapError(decideOpeningDrive(input.opening, protocol), (cause) =>
       failure('strategy-decision', 'opening-drive decision failed during replay', {
