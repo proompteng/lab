@@ -13,6 +13,7 @@ import type { OperationalError } from '../../errors'
 import type { IntradayMarketDataService } from '../../market-data'
 import { IntradayMarketData } from '../../market-data'
 import { decodeManifests, decodeSessions } from '../../market-data/rows'
+import { IsoDateSchema } from '../../schemas'
 import { openingDriveBehaviorHash } from './decision'
 import { qualifyOpeningDrive } from './qualification'
 import type {
@@ -68,8 +69,7 @@ const error = (
   cause?: unknown,
 ): OpeningDriveQualificationProgramError => new OpeningDriveQualificationProgramError({ operation, message, cause })
 
-const IsoDate = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/))
-const decodeRequest = Schema.decodeUnknownResult(Schema.Struct({ start: IsoDate, end: IsoDate }))
+const decodeRequest = Schema.decodeUnknownResult(Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }))
 
 const loadSignalCalendar = (
   sql: ClickhouseClient.ClickhouseClient,
