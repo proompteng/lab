@@ -178,6 +178,21 @@ export const verifyOpeningDriveQualificationCalendarPublication = (input: {
         failure('Qualification Signal session calendar content hash does not match its manifest'),
       )
     }
+    const lastSession = orderedSessions.at(-1)
+    if (lastSession === undefined) {
+      return yield* Result.fail(failure('Qualification Signal session calendar has no final session'))
+    }
+    const finalizedAt = canonicalFinalizedAt(manifest.finalized_at)
+    if (finalizedAt === undefined) {
+      return yield* Result.fail(failure('Qualification Signal manifest finalization time is invalid'))
+    }
+    const fullCalendar = yield* normalizedCalendar(lastSession)
+    const finalCalendarSession = fullCalendar.sessions[0]
+    if (finalCalendarSession === undefined || Date.parse(finalizedAt) < Date.parse(finalCalendarSession.closeAt)) {
+      return yield* Result.fail(
+        failure('Qualification Signal manifest was finalized before its complete session calendar closed'),
+      )
+    }
     if (input.start < manifest.first_session || input.end > manifest.last_session) {
       return yield* Result.fail(failure('Qualification range exceeds the finalized Signal calendar bounds'))
     }

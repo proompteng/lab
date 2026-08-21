@@ -66,6 +66,12 @@ const manifestFixture = (sessions: readonly SignalSessionRow[]): SignalManifestR
   return { ...manifestMaterial, manifest_content_hash: canonicalHashV1(manifestMaterial) }
 }
 
+const withFinalizedAt = (manifest: SignalManifestRow, finalizedAt: string): SignalManifestRow => {
+  const { manifest_content_hash: _, ...material } = manifest
+  const changed = { ...material, finalized_at: finalizedAt }
+  return { ...changed, manifest_content_hash: canonicalHashV1(changed) }
+}
+
 describe('opening-drive qualification runner', () => {
   test('freezes Signal calendar sessions into DST-correct entry and flatten snapshot plans', () => {
     const prepared = success(
@@ -210,6 +216,30 @@ describe('opening-drive qualification runner', () => {
         verifyOpeningDriveQualificationCalendarPublication({
           ...input,
           manifests: [{ ...manifest, session_count: manifest.session_count - 1 }],
+        }),
+      ),
+    ).toBe(true)
+
+    const beforeFinalSessionClose = withFinalizedAt(manifest, '2026-01-07 20:59:59.999')
+    expect(
+      Result.isFailure(
+        verifyOpeningDriveQualificationCalendarPublication({
+          ...input,
+          manifests: [beforeFinalSessionClose],
+          start: '2026-01-05',
+          end: '2026-01-06',
+        }),
+      ),
+    ).toBe(true)
+
+    const exactlyFinalSessionClose = withFinalizedAt(manifest, '2026-01-07 21:00:00.000')
+    expect(
+      Result.isSuccess(
+        verifyOpeningDriveQualificationCalendarPublication({
+          ...input,
+          manifests: [exactlyFinalSessionClose],
+          start: '2026-01-05',
+          end: '2026-01-06',
         }),
       ),
     ).toBe(true)
