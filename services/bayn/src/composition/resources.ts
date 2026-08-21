@@ -183,6 +183,15 @@ export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<
   )
 }
 
+/** Read-only market data plus migration-governed PostgreSQL evidence for the offline opening-drive qualifier. */
+export const OpeningDriveQualificationResourcesLive = (config: LoadedRuntimeConfig) => {
+  const postgresClient = sqlResource(PostgresClientResourceLive(config))
+  const postgres = EvidenceStoreResourceLive(config).pipe(Layer.provideMerge(postgresClient))
+  const clickhouse = sqlResource(ClickHouseClientResourceLive(config))
+  const intraday = IntradayMarketDataLive.pipe(Layer.provideMerge(clickhouse))
+  return Layer.mergeAll(postgres, intraday).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
 export const QualifiedCapitalActivationStoreLive = (
   config: LoadedRuntimeConfig,
   sql: PgClient.PgClient,
