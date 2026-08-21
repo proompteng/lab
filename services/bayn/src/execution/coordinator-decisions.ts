@@ -549,7 +549,7 @@ const decideRecoverySuccessDataFirst = (
   operation: MutationOperation,
   interrupted: MutationEvent,
   result: ReadResult<Order>,
-  submitted?: MutationEvent,
+  submitted: MutationEvent | undefined,
 ): RecoveryPersistenceDecision => {
   const evidence = mutationEvidence(result.evidence)
   const outcome = terminalOutcome(result.value.status)
@@ -576,7 +576,7 @@ const decideRecoverySuccessDataFirst = (
       }
 }
 
-export const decideRecoverySuccess = Pipeable.dual(4, decideRecoverySuccessDataFirst)
+export const decideRecoverySuccess = Pipeable.dual(5, decideRecoverySuccessDataFirst)
 
 export const recoveryObservationRequiresPersistence = (
   current: MutationEvent,

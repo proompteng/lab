@@ -253,10 +253,28 @@ describe('execution coordinator decisions', () => {
 
     expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
     expect(
-      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
-        value: legacyOrder,
-        evidence,
-      }),
+      decideRecoverySuccess(
+        unknownIntent,
+        MutationOperation.Submit,
+        legacyEvent,
+        {
+          value: legacyOrder,
+          evidence,
+        },
+        undefined,
+      ),
+    ).toEqual({
+      _tag: 'RecoveryFound',
+      brokerOrderId,
+      evidence,
+    })
+    expect(
+      decideRecoverySuccess(
+        MutationOperation.Submit,
+        legacyEvent,
+        { value: legacyOrder, evidence },
+        undefined,
+      )(unknownIntent),
     ).toEqual({
       _tag: 'RecoveryFound',
       brokerOrderId,
@@ -286,10 +304,16 @@ describe('execution coordinator decisions', () => {
 
     expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
     expect(
-      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
-        value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
-        evidence,
-      }),
+      decideRecoverySuccess(
+        unknownIntent,
+        MutationOperation.Submit,
+        legacyEvent,
+        {
+          value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
+          evidence,
+        },
+        undefined,
+      ),
     ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
@@ -317,10 +341,16 @@ describe('execution coordinator decisions', () => {
     expect(Result.isFailure(orderRequestBody(unknownIntent))).toBe(true)
     expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
     expect(
-      decideRecoverySuccess(unknownIntent, MutationOperation.Submit, legacyEvent, {
-        value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
-        evidence,
-      }),
+      decideRecoverySuccess(
+        unknownIntent,
+        MutationOperation.Submit,
+        legacyEvent,
+        {
+          value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
+          evidence,
+        },
+        undefined,
+      ),
     ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
@@ -469,10 +499,16 @@ describe('execution coordinator decisions', () => {
     })
 
     expect(
-      decideRecoverySuccess(acknowledged, MutationOperation.Cancel, cancel, {
-        value: canceled,
-        evidence,
-      }),
+      decideRecoverySuccess(
+        acknowledged,
+        MutationOperation.Cancel,
+        cancel,
+        {
+          value: canceled,
+          evidence,
+        },
+        undefined,
+      ),
     ).toEqual({
       _tag: 'RecoveryFound',
       brokerOrderId,
@@ -480,10 +516,16 @@ describe('execution coordinator decisions', () => {
       terminalOutcome: TerminalOutcome.Canceled,
     })
     expect(
-      decideRecoverySuccess(acknowledged, MutationOperation.Cancel, cancel, {
-        value: { ...canceled, brokerOrderId: '9bcf0f36-19d5-488c-97ac-ad16ce9ca97a' },
-        evidence,
-      }),
+      decideRecoverySuccess(
+        acknowledged,
+        MutationOperation.Cancel,
+        cancel,
+        {
+          value: { ...canceled, brokerOrderId: '9bcf0f36-19d5-488c-97ac-ad16ce9ca97a' },
+          evidence,
+        },
+        undefined,
+      ),
     ).toEqual({
       _tag: 'RecoveryUnknown',
       evidence,
