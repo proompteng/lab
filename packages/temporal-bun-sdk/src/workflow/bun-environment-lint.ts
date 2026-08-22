@@ -4,7 +4,16 @@ import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workfl
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentGlobalObjects = ['globalThis', 'global', 'self'] as const
-const bunEnvironmentGlobalObjectProperties = ['Bun', 'eval', 'Function'] as const
+const bunEnvironmentGlobalObjectProperties = [
+  'Bun',
+  'eval',
+  'Function',
+  'globalThis',
+  'global',
+  'self',
+  'window',
+  'valueOf',
+] as const
 const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function'])
 const bunEnvironmentDenyMemberExpressions = new Set([
   'Bun.env',

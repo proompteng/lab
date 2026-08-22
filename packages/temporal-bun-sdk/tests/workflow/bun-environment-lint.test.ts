@@ -98,6 +98,36 @@ test('rejects captures of global objects without flagging safe property captures
   )
 })
 
+test('rejects global-object recovery through method calls, reflection, and argument escapes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "export const valueOf = () => globalThis.valueOf().Bun.env.FLAG",
+      "export const bracketValueOf = () => self['valueOf']().Bun.env.FLAG",
+      "export const nestedAlias = () => globalThis.globalThis.Bun.env.FLAG",
+      "export const descriptor = () => Object.getOwnPropertyDescriptor(globalThis, 'Bun')?.value.env.FLAG",
+      "export const dynamicDescriptor = (key: string) => Object.getOwnPropertyDescriptor(global, key)?.value",
+      'export const customEscape = (recover: (root: object) => unknown) => recover(self)',
+      'export const spreadEscape = () => ({ ...globalThis })',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'globalThis.valueOf')).toHaveLength(1)
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'self.valueOf')).toHaveLength(1)
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.globalThis')).toBeTrue()
+  expect(
+    violations.filter((violation) => violation.details?.memberExpression === 'Object.getOwnPropertyDescriptor'),
+  ).toHaveLength(2)
+  expect(violations.filter((violation) => violation.rule === 'capture-global')).toHaveLength(4)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts locally shadowed global-object alias names', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

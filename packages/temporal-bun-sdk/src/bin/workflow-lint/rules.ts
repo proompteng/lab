@@ -190,6 +190,8 @@ const reflectivelyAccessedGlobalProperty = (
   return undefined
 }
 
+const reflectiveGlobalPropertyAccessors = new Set(['Reflect.get', 'Object.getOwnPropertyDescriptor'])
+
 type StaticPropertyKey =
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'symbol' }
@@ -699,6 +701,7 @@ export const lintWorkflowSourceAst = (options: {
   const symbolIsUnshadowed = isSymbolUnshadowed(tokens)
   const staticPropertyBindings = collectStaticPropertyBindings(tokens, symbolIsUnshadowed)
   const reportedInvokedMemberProperties = new Set<number>()
+  const safeReflectiveGlobalTargets = new Set<number>()
 
   const report = (position: number, violation: Omit<WorkflowLintViolation, 'filePath' | 'line' | 'column'>) => {
     const { line, column } = positionOf(position)
@@ -708,6 +711,27 @@ export const lintWorkflowSourceAst = (options: {
       column,
       ...violation,
     })
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!isIdentifierLikeToken(tokens[index])) continue
+    const member = memberExpressionName(tokens, index)
+    if (!member || !reflectiveGlobalPropertyAccessors.has(member.name)) continue
+    const reflectiveAccess = reflectivelyAccessedGlobalProperty(tokens, member.endIndex)
+    const deniedReflectiveProperties = reflectiveAccess
+      ? options.denyReflectiveGlobalProperties?.get(reflectiveAccess.target.text)
+      : undefined
+    if (!reflectiveAccess || !deniedReflectiveProperties) continue
+    const property = resolveStaticPropertyKey(
+      tokens,
+      reflectiveAccess.propertyStartIndex,
+      reflectiveAccess.propertyEndIndex,
+      staticPropertyBindings,
+      symbolIsUnshadowed,
+    )
+    if (property && (property.kind !== 'string' || !deniedReflectiveProperties.has(property.value))) {
+      safeReflectiveGlobalTargets.add(reflectiveAccess.target.start)
+    }
   }
 
   for (const moduleSpecifier of collectWorkflowModuleSpecifiers(tokens)) {
@@ -830,12 +854,27 @@ export const lintWorkflowSourceAst = (options: {
       })
     }
 
-    if (options.denyGlobalCaptures?.has(name) && isDirectRuntimeVariableInitializerCapture(tokens, index, previous)) {
-      report(token.start, {
-        rule: 'capture-global',
-        message: `Capturing disallowed global in workflow module: const x = ${name}`,
-        details: { global: name },
-      })
+    if (options.denyGlobalCaptures?.has(name)) {
+      const directMemberAccess =
+        next?.kind === SyntaxKind.DotToken ||
+        next?.kind === SyntaxKind.QuestionDotToken ||
+        next?.kind === SyntaxKind.OpenBracketToken
+      const memberProperty = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
+      const safeInspection = previous?.kind === SyntaxKind.InKeyword || previous?.kind === SyntaxKind.TypeOfKeyword
+      const safeReflectiveTarget = safeReflectiveGlobalTargets.has(token.start)
+      const declarationName =
+        next?.kind === SyntaxKind.ColonToken ||
+        (next?.kind === SyntaxKind.SemicolonToken && isStatementBoundary(previous))
+      if (!directMemberAccess && !memberProperty && !safeInspection && !safeReflectiveTarget && !declarationName) {
+        const directCapture = isDirectRuntimeVariableInitializerCapture(tokens, index, previous)
+        report(token.start, {
+          rule: 'capture-global',
+          message: directCapture
+            ? `Capturing disallowed global in workflow module: const x = ${name}`
+            : `Disallowed global object escape in workflow module: ${name}`,
+          details: { global: name },
+        })
+      }
     }
 
     if (
@@ -940,7 +979,7 @@ export const lintWorkflowSourceAst = (options: {
 
     if (!member) continue
 
-    if (member.name === 'Reflect.get') {
+    if (reflectiveGlobalPropertyAccessors.has(member.name)) {
       const reflectiveAccess = reflectivelyAccessedGlobalProperty(tokens, member.endIndex)
       const deniedReflectiveProperties = reflectiveAccess
         ? options.denyReflectiveGlobalProperties?.get(reflectiveAccess.target.text)
@@ -957,8 +996,8 @@ export const lintWorkflowSourceAst = (options: {
           report(member.token.start, {
             rule: 'deny-member-expression',
             message: property
-              ? `Disallowed reflective global access in workflow module: Reflect.get(${reflectiveAccess.target.text}, '${property.value}')`
-              : `Unable to prove reflective global property safe in workflow module: Reflect.get(${reflectiveAccess.target.text}, ...)`,
+              ? `Disallowed reflective global access in workflow module: ${member.name}(${reflectiveAccess.target.text}, '${property.value}')`
+              : `Unable to prove reflective global property safe in workflow module: ${member.name}(${reflectiveAccess.target.text}, ...)`,
             details: {
               memberExpression: member.name,
               ...(property?.kind === 'string' ? { global: property.value } : {}),
