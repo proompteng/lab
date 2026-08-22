@@ -207,6 +207,12 @@ const guardedEnvironment = <T extends object>(target: T, api: string): T =>
     },
   })
 
+export const canGuardBunEnvironmentAtRuntime = (): boolean => {
+  const maybeBun = (globalThis as unknown as { Bun?: { env?: unknown } }).Bun
+  if (!maybeBun?.env || typeof maybeBun.env !== 'object') return true
+  return Object.getOwnPropertyDescriptor(maybeBun, 'env')?.writable === true
+}
+
 export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode }) => {
   setMode(options.mode)
 
