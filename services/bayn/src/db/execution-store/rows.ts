@@ -92,6 +92,7 @@ export type ValuationRow = typeof ValuationRow.Type
 export const EnsureAuthorityGenerationInputSchema = Schema.Struct({
   generationHash: Sha256,
   maximum: Schema.Enum(Authority),
+  preserveCyclePlanHash: Schema.optionalKey(Sha256),
 })
 export const AuthorityStateRow = Schema.Struct({
   schema_version: Schema.Literal('bayn.paper-authority.v1'),

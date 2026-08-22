@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import type { Context, ObjectContext } from '@restatedev/restate-sdk'
+import { TerminalError, type Context, type ObjectContext } from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
 import type { ExecutionControllerState } from '../execution/controller'
@@ -16,6 +16,8 @@ import {
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
+  executionControllerRecoveryTickDelayMs,
+  executionControllerRecoveryTickIdempotencyKey,
   executionControllerSuccessorPassCompleted,
   executionControllerSourceCatchUpTickIdempotencyKey,
   executionControllerTickIdempotencyKey,
@@ -74,6 +76,7 @@ type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
+    expect(executionControllerRecoveryTickDelayMs).toBe(30_000)
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
     expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
@@ -498,6 +501,8 @@ describe('native Restate execution controller', () => {
     }
 
     expect(failure).toBeInstanceOf(Error)
+    expect(failure).toBeInstanceOf(TerminalError)
+    expect((failure as TerminalError).code).toBe(400)
     expect((failure as Error).message).toBe('execution controller sequence is exhausted before advance')
     expect(advances).toBe(0)
     expect(deliveries).toHaveLength(0)
@@ -1081,7 +1086,7 @@ describe('native Restate execution controller', () => {
     expect(controllerCalls).toBe(0)
   })
 
-  test('retries the same command identity durably and pauses after the bounded budget', async () => {
+  test('retries the same command identity durably and starts a fresh recovery window after exhaustion', async () => {
     const state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -1155,20 +1160,26 @@ describe('native Restate execution controller', () => {
       tick = retry.parameter
     }
 
-    let exhaustionFailure: unknown
-    try {
-      await object.tick(context, tick)
-    } catch (cause) {
-      exhaustionFailure = cause
-    }
-    expect(exhaustionFailure).toBeInstanceOf(Error)
-    expect((exhaustionFailure as Error).message).toBe(
-      'Bayn execution controller advance exhausted its durable retry budget',
+    await object.tick(context, tick)
+    const recovery = deliveries.shift()
+    if (recovery === undefined) throw new Error('retry exhaustion did not schedule a recovery window')
+    expect(recovery.delay).toBe(executionControllerRecoveryTickDelayMs)
+    const recoveryTick = recovery.parameter as { readonly retryWindowHash: string }
+    expect(recovery.parameter).toMatchObject({
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      attempt: 0,
+      issuedAt: '2026-08-13T18:00:00.000Z',
+    })
+    expect(recoveryTick.retryWindowHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(recovery.idempotencyKey).toBe(
+      executionControllerRecoveryTickIdempotencyKey(7, 12, 0, recoveryTick.retryWindowHash),
     )
     expect(commands).toHaveLength(maximumAttempts)
     expect(new Set(commands.map(({ issuedAt }) => issuedAt))).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     expect(deliveries).toHaveLength(0)
-    expect(loggedLevels).toEqual(['warning', 'warning', 'error'])
+    expect(loggedLevels).toEqual(['warning', 'warning', 'error', 'warning'])
   })
 
   test('releases the exclusive queue after a failed source catch-up so the established tick can advance', async () => {

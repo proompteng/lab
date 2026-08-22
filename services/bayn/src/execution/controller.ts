@@ -69,6 +69,7 @@ export const ExecutionControllerTickSchema = Schema.Struct({
   sequence: CounterSchema,
   attempt: Schema.optionalKey(DeliveryAttemptSchema),
   issuedAt: Schema.optionalKey(UtcInstantSchema),
+  retryWindowHash: Schema.optionalKey(Sha256Schema),
   sourceCatchUpRevision: Schema.optionalKey(GitSourceRevisionSchema),
 })
 export type ExecutionControllerTick = typeof ExecutionControllerTickSchema.Type

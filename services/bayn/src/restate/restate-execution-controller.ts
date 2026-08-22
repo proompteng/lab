@@ -36,6 +36,7 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
     sequence: { type: 'integer', minimum: 0 },
     attempt: { type: 'integer', minimum: 0, maximum: executionControllerMaximumDeliveryAttempt },
     issuedAt: { type: 'string', format: 'date-time' },
+    retryWindowHash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
     sourceCatchUpRevision: { type: 'string', pattern: '^[0-9a-f]{40}$' },
   },
   required: ['schemaVersion', 'epoch', 'sequence'],
@@ -63,6 +64,7 @@ export const executionControllerCommandRetryPolicy = {
   exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
 export const executionControllerInitialTickDelayMs = 0
+export const executionControllerRecoveryTickDelayMs = 30_000
 export const executionControllerBootstrapCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
@@ -237,6 +239,13 @@ const readState = async (
 export const executionControllerTickIdempotencyKey = (epoch: number, sequence: number, attempt: number): string =>
   `bayn-execution-controller-${epoch}-${sequence}-${attempt}`
 
+export const executionControllerRecoveryTickIdempotencyKey = (
+  epoch: number,
+  sequence: number,
+  attempt: number,
+  retryWindowHash: string,
+): string => `bayn-execution-controller-${epoch}-${sequence}-recovery-${retryWindowHash}-${attempt}`
+
 export const executionControllerSourceCatchUpTickIdempotencyKey = (
   epoch: number,
   sequence: number,
@@ -251,7 +260,26 @@ const scheduleTick = (
   attempt = 0,
   issuedAt?: string,
   sourceCatchUpRevision?: string,
+  retryWindowHash?: string,
 ): void => {
+  let idempotencyKey: string
+  if (sourceCatchUpRevision !== undefined) {
+    idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      sourceCatchUpRevision,
+    )
+  } else if (retryWindowHash !== undefined) {
+    idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      retryWindowHash,
+    )
+  } else {
+    idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
+  }
   ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
@@ -262,19 +290,12 @@ const scheduleTick = (
       sequence: state.nextSequence,
       attempt,
       ...(issuedAt === undefined ? {} : { issuedAt }),
+      ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
       ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
     },
     inputSerde: executionTickSerde,
     delay,
-    idempotencyKey:
-      sourceCatchUpRevision === undefined
-        ? executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
-        : executionControllerSourceCatchUpTickIdempotencyKey(
-            state.epoch,
-            state.nextSequence,
-            attempt,
-            sourceCatchUpRevision,
-          ),
+    idempotencyKey,
   })
 }
 
@@ -423,7 +444,7 @@ export const makeBaynExecutionController = (
               () => runtime.advance(decision.command, ctx.request().attemptCompletedSignal),
               executionControllerAdvanceRunOptions,
             )
-          } catch (cause) {
+          } catch {
             const attempt = tick.attempt ?? 0
             const replacementFirstPass =
               config.previousBinding !== undefined &&
@@ -434,7 +455,15 @@ export const makeBaynExecutionController = (
             if (attempt + 1 < maximumAttempts && state !== null) {
               const nextAttempt = attempt + 1
               const retryDelayMs = Math.min(1_000 * 2 ** attempt, 30_000)
-              scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt, tick.sourceCatchUpRevision)
+              scheduleTick(
+                ctx,
+                state,
+                retryDelayMs,
+                nextAttempt,
+                issuedAt,
+                tick.sourceCatchUpRevision,
+                tick.retryWindowHash,
+              )
               await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
                 epoch: state.epoch,
@@ -452,12 +481,21 @@ export const makeBaynExecutionController = (
               sequence: tick.sequence,
               sourceRevision: config.sourceRevision,
             })
-            // A source catch-up is a rollout probe queued alongside the established revision's normal tick. Pausing
-            // this exclusive invocation would head-of-line block that known-good tick and stop the account controller.
-            // Complete the failed probe without changing state; bootstrap still fails because it cannot observe a
-            // completion from this source, while Restate remains free to deliver the established tick.
+            // A source catch-up is a rollout probe queued alongside the established revision's normal tick. Complete
+            // the failed probe without changing state so the established revision remains free to advance.
             if (tick.sourceCatchUpRevision !== undefined) return
-            throw new Error('Bayn execution controller advance exhausted its durable retry budget', { cause })
+            if (state === null) throw terminal('execution controller state disappeared during retry recovery')
+            const retryWindowHash = sha256(ctx.request().id)
+            scheduleTick(ctx, state, executionControllerRecoveryTickDelayMs, 0, issuedAt, undefined, retryWindowHash)
+            await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
+              controllerKey: ctx.key,
+              epoch: state.epoch,
+              invocationId: ctx.request().id,
+              retryWindowHash,
+              sequence: state.nextSequence,
+              sourceRevision: state.sourceRevision,
+            })
+            return
           }
           const result = decodeOrTerminal(
             decodeExecutionAdvanceStepResult(stepResult),
@@ -564,12 +602,12 @@ export const makeBaynExecutionBootstrap = (
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
             if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
             if (attempt === maximumAttempts) {
-              throw new Error('execution controller bootstrap did not observe a completed durable successor pass')
+              throw terminal('execution controller bootstrap did not observe a completed durable successor pass')
             }
             await ctx.sleep({ milliseconds: executionControllerBootstrapCompletionPollIntervalMs })
             activated = await client.status(undefined)
           }
-          throw new Error('execution controller bootstrap completion bound is invalid')
+          throw terminal('execution controller bootstrap completion bound is invalid')
         },
       ),
     },
