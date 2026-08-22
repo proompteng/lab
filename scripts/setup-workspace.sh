@@ -35,13 +35,38 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 BUN_VERSION="1.4.0"
 
-if ! command -v bun >/dev/null 2>&1; then
-    echo "Installing Bun ${BUN_VERSION}..."
-    curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}"
-    echo "✓ Bun installation complete"
-else
-    echo "✓ Bun already installed"
+# BEGIN Bun runtime bootstrap
+CURRENT_BUN_VERSION=""
+if command -v bun >/dev/null 2>&1; then
+    CURRENT_BUN_VERSION=$(bun --version 2>/dev/null || true)
 fi
+
+if [ "$CURRENT_BUN_VERSION" != "$BUN_VERSION" ]; then
+    if [ -n "$CURRENT_BUN_VERSION" ]; then
+        echo "Upgrading Bun from ${CURRENT_BUN_VERSION} to ${BUN_VERSION}..."
+    else
+        echo "Installing Bun ${BUN_VERSION}..."
+    fi
+    if ! (set -o pipefail; curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}"); then
+        echo "Bun ${BUN_VERSION} installation failed" >&2
+        exit 1
+    fi
+    hash -r
+    echo "✓ Bun installation complete"
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+    echo "Bun was not found after installing ${BUN_VERSION}" >&2
+    exit 1
+fi
+
+INSTALLED_BUN_VERSION=$(bun --version 2>/dev/null || echo "unknown")
+if [ "$INSTALLED_BUN_VERSION" != "$BUN_VERSION" ]; then
+    echo "Bun version mismatch after install: expected ${BUN_VERSION}, got ${INSTALLED_BUN_VERSION}" >&2
+    exit 1
+fi
+echo "✓ Bun ${INSTALLED_BUN_VERSION} ready"
+# END Bun runtime bootstrap
 
 echo "📦 Installing workspace dependencies with Bun..."
 bun install
