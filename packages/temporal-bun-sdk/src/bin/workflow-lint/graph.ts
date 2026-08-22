@@ -22,13 +22,29 @@ export type WorkflowLintGraph = {
 
 export type WorkflowLintGraphViolation = {
   readonly filePath: string
-  readonly rule: 'deny-import' | 'dynamic-import'
+  readonly rule: 'deny-import' | 'dynamic-import' | 'unresolved-import'
   readonly message: string
   readonly specifier?: string
 }
 
 const isRelative = (specifier: string): boolean =>
   specifier.startsWith('./') || specifier.startsWith('../') || specifier === '.'
+
+const inspectableModuleExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
+
+const tryResolveBareModule = (baseDir: string, specifier: string): string | undefined => {
+  let resolvedPath: string
+  try {
+    resolvedPath = Bun.resolveSync(specifier, baseDir)
+  } catch {
+    return undefined
+  }
+
+  if (!existsSync(resolvedPath) || !inspectableModuleExtensions.has(extname(resolvedPath))) {
+    return undefined
+  }
+  return resolvedPath
+}
 
 const tryResolveFile = (baseDir: string, specifier: string): string | undefined => {
   const base = resolve(baseDir, specifier)
@@ -70,6 +86,8 @@ export const buildWorkflowLintGraph = async (options: {
   readonly entry: string
   readonly cwd: string
   readonly denyImports: ReadonlySet<string>
+  readonly inspectBareImports?: boolean
+  readonly rejectUninspectableImports?: boolean
 }): Promise<{ graph: WorkflowLintGraph; violations: WorkflowLintGraphViolation[] }> => {
   const entryPath = resolve(options.cwd, options.entry)
   const seen = new Set<string>()
@@ -118,6 +136,25 @@ export const buildWorkflowLintGraph = async (options: {
             specifier,
             message: `Disallowed import in workflow module: ${specifier}`,
           })
+          continue
+        }
+        if (!options.inspectBareImports) continue
+
+        const resolvedPath = tryResolveBareModule(baseDir, specifier)
+        if (!resolvedPath) {
+          if (options.rejectUninspectableImports) {
+            violations.push({
+              filePath,
+              rule: 'unresolved-import',
+              specifier,
+              message: `Unable to inspect runtime import in workflow module: ${specifier}`,
+            })
+          }
+          continue
+        }
+        edges[edges.length - 1] = { from: filePath, specifier, resolved: resolvedPath }
+        if (!seen.has(resolvedPath)) {
+          queue.push(resolvedPath)
         }
         continue
       }
