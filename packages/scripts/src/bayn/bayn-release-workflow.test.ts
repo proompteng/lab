@@ -57,6 +57,17 @@ test('promotes verified main ancestry to an immutable GitOps branch', () => {
     releaseWorkflow.indexOf('git merge --no-edit -X theirs "$SOURCE_SHA"'),
   )
   expect(releaseWorkflow).toContain('Main is the reviewed configuration authority')
+  expect(releaseWorkflow).toContain('git restore --source "$SOURCE_SHA" --staged --worktree --')
+  expect(releaseWorkflow).toContain('argocd/applications/bayn \\\n              argocd/applicationsets/product.yaml')
+  expect(releaseWorkflow.indexOf('git merge --no-edit -X theirs "$SOURCE_SHA"')).toBeLessThan(
+    releaseWorkflow.indexOf('git restore --source "$SOURCE_SHA" --staged --worktree --'),
+  )
+  expect(releaseWorkflow.indexOf('git restore --source "$SOURCE_SHA" --staged --worktree --')).toBeLessThan(
+    releaseWorkflow.indexOf('deployment_manifest=argocd/applications/bayn/deployment.yaml'),
+  )
+  expect(releaseWorkflow.indexOf('git restore --source "$SOURCE_SHA" --staged --worktree --')).toBeLessThan(
+    releaseWorkflow.indexOf('- name: Record held candidate'),
+  )
   expect(releaseWorkflow).toContain('git push origin "HEAD:refs/heads/${DEPLOYMENT_BRANCH}"')
   expect(releaseWorkflow).not.toContain('create-pull-request')
   expect(releaseWorkflow).not.toContain('pull-requests: write')
