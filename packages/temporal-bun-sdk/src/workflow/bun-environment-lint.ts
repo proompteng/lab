@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
 import {
@@ -92,6 +93,15 @@ const bunEnvironmentDenyImports = new Set([
   'worker_threads',
 ])
 const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
+// Bundle every application module so activity imports cannot seed workflow state. Keep only the
+// workflow SDK and Effect external to preserve their process-wide runtime/AsyncLocalStorage identity.
+const isolatedWorkflowRuntimeImports = /^(?:@proompteng\/temporal-bun-sdk(?:\/.*)?|effect(?:\/.*)?)$/
+const isolatedWorkflowRuntimeExternals = [
+  '@proompteng/temporal-bun-sdk',
+  '@proompteng/temporal-bun-sdk/*',
+  'effect',
+  'effect/*',
+] as const
 const couldContainMacroImport = (sourceText: string): boolean =>
   /\b(?:with|assert)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\{/.test(sourceText)
 const workflowSourceLoader = (filePath: string): 'ts' | 'tsx' | 'js' | 'jsx' => {
@@ -226,6 +236,32 @@ const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): Workflow
   }
 }
 
+export type WorkflowBunEnvironmentBundle = {
+  readonly entry: string
+  readonly sourceText: string
+}
+
+type WorkflowBunEnvironmentInspection = {
+  readonly violations: readonly WorkflowLintViolation[]
+  readonly bundle?: WorkflowBunEnvironmentBundle
+}
+
+const rewriteIsolatedWorkflowRuntimeImports = (sourceText: string, entry: string): string => {
+  const replacements = collectWorkflowModuleSpecifiers(scanWorkflowSyntaxTokens(sourceText))
+    .filter((moduleSpecifier) => isolatedWorkflowRuntimeImports.test(moduleSpecifier.specifier))
+    .map((moduleSpecifier) => ({
+      ...moduleSpecifier,
+      resolvedSpecifier: pathToFileURL(Bun.resolveSync(moduleSpecifier.specifier, dirname(entry))).href,
+    }))
+    .sort((left, right) => right.start - left.start)
+
+  let rewritten = sourceText
+  for (const replacement of replacements) {
+    rewritten = `${rewritten.slice(0, replacement.start)}${JSON.stringify(replacement.resolvedSpecifier)}${rewritten.slice(replacement.end)}`
+  }
+  return rewritten
+}
+
 export class WorkflowBunEnvironmentSafetyError extends Error {
   readonly violations: readonly WorkflowLintViolation[]
 
@@ -236,14 +272,14 @@ export class WorkflowBunEnvironmentSafetyError extends Error {
   }
 }
 
-export const lintWorkflowBunEnvironmentSafety = async (options: {
+const inspectWorkflowBunEnvironmentSafety = async (options: {
   readonly workflowsPath: string
   readonly cwd?: string
-}): Promise<readonly WorkflowLintViolation[]> => {
+}): Promise<WorkflowBunEnvironmentInspection> => {
   const cwd = options.cwd ?? process.cwd()
   const entry = resolve(cwd, options.workflowsPath)
   const macroViolations = await lintWorkflowMacroImports(entry)
-  if (macroViolations.length > 0) return macroViolations
+  if (macroViolations.length > 0) return { violations: macroViolations }
 
   let build: Awaited<ReturnType<typeof Bun.build>>
   try {
@@ -253,6 +289,8 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
       target: 'bun',
       format: 'esm',
       packages: 'bundle',
+      external: [...isolatedWorkflowRuntimeExternals],
+      splitting: false,
       env: 'disable',
       treeShaking: true,
       ignoreDCEAnnotations: true,
@@ -264,53 +302,97 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
     })
   } catch (error) {
     const diagnostics = (error as { readonly errors?: unknown })?.errors
-    return Array.isArray(diagnostics) && diagnostics.length > 0
-      ? diagnostics.map((diagnostic) => bundleDiagnosticViolation(entry, diagnostic))
-      : [bundleDiagnosticViolation(entry, error)]
+    return {
+      violations:
+        Array.isArray(diagnostics) && diagnostics.length > 0
+          ? diagnostics.map((diagnostic) => bundleDiagnosticViolation(entry, diagnostic))
+          : [bundleDiagnosticViolation(entry, error)],
+    }
   }
 
   if (!build.success) {
     const logs = build.logs.length > 0 ? build.logs : ['Unknown workflow bundle failure']
-    return logs.map((log) => bundleDiagnosticViolation(entry, log))
+    return { violations: logs.map((log) => bundleDiagnosticViolation(entry, log)) }
   }
 
-  const scriptOutputs = build.outputs.filter((output) => output.kind === 'entry-point' || output.kind === 'chunk')
-  const opaqueOutputs = build.outputs.filter((output) => output.kind !== 'entry-point' && output.kind !== 'chunk')
-  if (scriptOutputs.length === 0 || opaqueOutputs.length > 0) {
-    return [
-      {
-        filePath: entry,
-        rule: 'unresolved-import',
-        message:
-          opaqueOutputs.length > 0
-            ? `Workflow bundle contains uninspectable outputs: ${opaqueOutputs.map((output) => output.path).join(', ')}`
-            : 'Workflow bundle did not produce inspectable JavaScript',
-        line: 1,
-        column: 1,
-      },
-    ]
+  const entryOutputs = build.outputs.filter((output) => output.kind === 'entry-point')
+  const unsupportedOutputs = build.outputs.filter((output) => output.kind !== 'entry-point')
+  if (entryOutputs.length !== 1 || unsupportedOutputs.length > 0) {
+    const detail = unsupportedOutputs.map((output) => output.path).join(', ')
+    return {
+      violations: [
+        {
+          filePath: entry,
+          rule: 'unresolved-import',
+          message:
+            unsupportedOutputs.length > 0
+              ? `Workflow bundle contains uninspectable outputs: ${detail}`
+              : `Workflow bundle produced ${entryOutputs.length} entry outputs; expected exactly one`,
+          line: 1,
+          column: 1,
+        },
+      ],
+    }
   }
 
-  const violations: WorkflowLintViolation[] = []
-  for (const output of scriptOutputs) {
-    violations.push(
-      ...lintWorkflowSourceAst({
-        filePath: entry,
-        sourceText: await output.text(),
-        denyGlobals: bunEnvironmentDenyGlobals,
-        denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
-        denyImports: bunEnvironmentDenyImports,
-        denyReflectiveGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
-        denyComputedGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
-        denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
-        denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
-        allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,
-        denyInvokedMemberProperties: bunEnvironmentDenyInvokedMemberProperties,
-        denyCapturedMemberProperties: bunEnvironmentDenyCapturedMemberProperties,
-      }),
+  let sourceText: string
+  try {
+    sourceText = rewriteIsolatedWorkflowRuntimeImports(await entryOutputs[0]!.text(), entry)
+  } catch (error) {
+    return { violations: [bundleDiagnosticViolation(entry, error)] }
+  }
+
+  return {
+    violations: lintWorkflowSourceAst({
+      filePath: entry,
+      sourceText,
+      denyGlobals: bunEnvironmentDenyGlobals,
+      denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
+      denyImports: bunEnvironmentDenyImports,
+      denyReflectiveGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
+      denyComputedGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
+      denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
+      denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
+      allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,
+      denyInvokedMemberProperties: bunEnvironmentDenyInvokedMemberProperties,
+      denyCapturedMemberProperties: bunEnvironmentDenyCapturedMemberProperties,
+    }),
+    bundle: { entry, sourceText },
+  }
+}
+
+export const lintWorkflowBunEnvironmentSafety = async (options: {
+  readonly workflowsPath: string
+  readonly cwd?: string
+}): Promise<readonly WorkflowLintViolation[]> => (await inspectWorkflowBunEnvironmentSafety(options)).violations
+
+const throwWorkflowBunEnvironmentSafetyError = (violations: readonly WorkflowLintViolation[], cwd: string): never => {
+  const details = violations
+    .slice(0, 10)
+    .map(
+      (violation) => `${relative(cwd, violation.filePath)}:${violation.line}:${violation.column} ${violation.message}`,
     )
+    .join('\n')
+  const remainder = violations.length > 10 ? `\n...and ${violations.length - 10} more violation(s)` : ''
+  throw new WorkflowBunEnvironmentSafetyError(
+    `Strict workflow guards could not prove workflow environment safety before loading workflows:\n${details}${remainder}`,
+    violations,
+  )
+}
+
+export const prepareWorkflowBunEnvironmentBundle = async (options: {
+  readonly workflowsPath: string
+  readonly cwd?: string
+}): Promise<WorkflowBunEnvironmentBundle> => {
+  const cwd = options.cwd ?? process.cwd()
+  const inspection = await inspectWorkflowBunEnvironmentSafety({ ...options, cwd })
+  if (inspection.violations.length > 0) {
+    throwWorkflowBunEnvironmentSafetyError(inspection.violations, cwd)
   }
-  return violations
+  if (!inspection.bundle) {
+    throw new WorkflowBunEnvironmentSafetyError('Strict workflow inspection did not produce an executable bundle')
+  }
+  return inspection.bundle
 }
 
 export const assertWorkflowBunEnvironmentSafety = async (options: {
@@ -329,19 +411,5 @@ export const assertWorkflowBunEnvironmentSafety = async (options: {
     )
   }
 
-  const cwd = options.cwd ?? process.cwd()
-  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath: options.workflowsPath, cwd })
-  if (violations.length === 0) return
-
-  const details = violations
-    .slice(0, 10)
-    .map(
-      (violation) => `${relative(cwd, violation.filePath)}:${violation.line}:${violation.column} ${violation.message}`,
-    )
-    .join('\n')
-  const remainder = violations.length > 10 ? `\n...and ${violations.length - 10} more violation(s)` : ''
-  throw new WorkflowBunEnvironmentSafetyError(
-    `Strict workflow guards could not prove workflow environment safety before loading workflows:\n${details}${remainder}`,
-    violations,
-  )
+  await prepareWorkflowBunEnvironmentBundle({ workflowsPath: options.workflowsPath, cwd: options.cwd })
 }

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1056,6 +1056,46 @@ test('worker startup enforces source safety before loading workflows under Bun 1
       workflowGuards: 'strict',
     }),
   ).rejects.toBeInstanceOf(WorkflowBunEnvironmentSafetyError)
+})
+
+test('worker startup isolates strict workflows from activity-populated module state under Bun 1.4', async () => {
+  if (canGuardBunEnvironmentAtRuntime()) return
+
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const sharedPath = join(dir, 'shared.ts')
+  const activitiesPath = join(dir, 'activities.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await mkdir(join(dir, 'node_modules', '@proompteng'), { recursive: true })
+  await symlink(join(import.meta.dir, '../../node_modules/effect'), join(dir, 'node_modules', 'effect'))
+  await symlink(join(import.meta.dir, '../..'), join(dir, 'node_modules', '@proompteng', 'temporal-bun-sdk'))
+  await writeFile(sharedPath, 'export const shared: { env?: unknown } = {}\n')
+  await writeFile(
+    activitiesPath,
+    ["import { shared } from './shared'", 'shared.env = Bun.env', 'export const activities = {}'].join('\n'),
+  )
+  await writeFile(
+    workflowsPath,
+    [
+      "import { Effect } from 'effect'",
+      "import { defineWorkflow } from '@proompteng/temporal-bun-sdk/workflow'",
+      "import { shared } from './shared'",
+      "if (shared.env !== undefined) throw new Error('activity-populated module state leaked into workflows')",
+      "export const workflows = [defineWorkflow('isolated-workflow', () => Effect.succeed(undefined))]",
+    ].join('\n'),
+  )
+
+  await import(pathToFileURL(activitiesPath).href)
+
+  const runtime = await WorkerRuntime.create({
+    config: createTestTemporalConfig({
+      workflowGuards: 'strict',
+      workerBuildId: 'isolated-workflow-build',
+      workerDeploymentName: 'isolated-workflow-deployment',
+    }),
+    workflowsPath,
+    workflowGuards: 'strict',
+  })
+  await runtime.shutdown()
 })
 
 test('worker startup reports Bun environment source violations in warn mode under Bun 1.4', async () => {
