@@ -37,6 +37,7 @@ const bunEnvironmentDenyMemberExpressions = new Set([
   'process.getBuiltinModule',
   'process.loadEnvFile',
   'process.mainModule',
+  'process.report',
   'process.valueOf',
   'module.require',
   'module.valueOf',
@@ -50,7 +51,16 @@ const bunEnvironmentDenyGlobalObjectProperties = new Map([
   ),
   [
     'process',
-    new Set(['binding', '_linkedBinding', 'dlopen', 'getBuiltinModule', 'loadEnvFile', 'mainModule', 'valueOf']),
+    new Set([
+      'binding',
+      '_linkedBinding',
+      'dlopen',
+      'getBuiltinModule',
+      'loadEnvFile',
+      'mainModule',
+      'report',
+      'valueOf',
+    ]),
   ] as const,
   ['module', new Set(['require', 'valueOf'])] as const,
 ])

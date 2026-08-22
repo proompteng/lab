@@ -363,6 +363,29 @@ test('rejects process native bindings that bypass guarded environment APIs', asy
   )
 })
 
+test('rejects process reports that expose launch-specific environment state', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const reportKey = 'report'",
+      "export const direct = () => process.report.getReport().environmentVariables.WORKFLOW_FLAG",
+      "export const computed = () => process[reportKey].getReport().environmentVariables.WORKFLOW_FLAG",
+      "export const reflected = () => Reflect.get(process, 'report').getReport().environmentVariables.WORKFLOW_FLAG",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process.report')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process[...]')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'Reflect.get')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects runtime module loaders that can recover VM evaluation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
@@ -593,8 +616,17 @@ test('rejects dynamic code through invoked constructor properties', async () => 
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.filter((violation) => violation.details?.memberProperty === 'constructor')).toHaveLength(6)
-  expect(violations.filter((violation) => violation.details?.memberProperty === '[...]')).toHaveLength(1)
+  expect(
+    violations.filter(
+      (violation) =>
+        violation.rule === 'deny-member-expression' && violation.details?.memberProperty === 'constructor',
+    ),
+  ).toHaveLength(6)
+  expect(
+    violations.filter(
+      (violation) => violation.rule === 'deny-member-expression' && violation.details?.memberProperty === '[...]',
+    ),
+  ).toHaveLength(1)
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
@@ -642,17 +674,21 @@ test('rejects destructured constructor captures that are invoked after module in
       'const ignored = 0, { constructor: MultiCode } = (() => {})',
       'let AssignedCode = () => {}',
       ';({ constructor: AssignedCode } = (() => {}))',
+      'const [ArrayCode] = [(() => {}).constructor]',
+      'const { value: ValueCode } = { value: (() => {}).constructor }',
       "export const direct = () => Code('return Bun.env.FLAG')()",
       "export const computed = () => ComputedCode('return Bun.env.FLAG')()",
       "export const shorthand = () => constructor('return Bun.env.FLAG')()",
       "export const nested = () => NestedCode('return Bun.env.FLAG')()",
       "export const multiple = () => MultiCode('return Bun.env.FLAG')()",
       "export const assigned = () => AssignedCode('return Bun.env.FLAG')()",
+      "export const array = () => ArrayCode('return Bun.env.FLAG')()",
+      "export const value = () => ValueCode('return Bun.env.FLAG')()",
     ].join('\n'),
   )
   await writeFile(
     workflowsPath,
-    "export { direct, computed, shorthand, nested, multiple, assigned } from './shared-helper'\n",
+    "export { direct, computed, shorthand, nested, multiple, assigned, array, value } from './shared-helper'\n",
   )
 
   // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
@@ -660,11 +696,56 @@ test('rejects destructured constructor captures that are invoked after module in
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(6)
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(8)
   expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
+})
+
+test('rejects constructor captures nested in containers before guard installation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    helperPath,
+    [
+      'const holder = { Code: (() => {}).constructor }',
+      "const nestedHolder = { nested: [(() => {})['constructor']] }",
+      'const iifeHolder = { Code: (() => (() => {}).constructor)() }',
+      "export const object = () => holder.Code('return Bun.env.FLAG')()",
+      "export const nested = () => nestedHolder.nested[0]('return Bun.env.FLAG')()",
+      "export const iife = () => iifeHolder.Code('return Bun.env.FLAG')()",
+    ].join('\n'),
+  )
+  await writeFile(workflowsPath, "export { object, nested, iife } from './shared-helper'\n")
+
+  // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(3)
+  expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('accepts constructor metadata nested in a container when it cannot invoke or escape', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      'const metadata = { GeneratorFunction: function* () {}.constructor }',
+      'const isGenerator = (value: unknown) =>',
+      '  typeof value === "function" && value.constructor === metadata.GeneratorFunction',
+      'export const workflow = (value: unknown) => isGenerator(value)',
+    ].join('\n'),
+  )
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
 })
 
 test('accepts captured constructor metadata that cannot invoke or escape the constructor', async () => {

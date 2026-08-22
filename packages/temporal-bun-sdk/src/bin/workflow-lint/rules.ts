@@ -778,48 +778,225 @@ export const lintWorkflowSourceAst = (options: {
     endIndex: number,
   ): { readonly property: string; readonly position: number } | undefined => {
     const range = stripParentheses(tokens, startIndex, endIndex)
-    const propertyToken = tokens[range.endIndex]
-    const propertySeparator = tokens[range.endIndex - 1]
-    if (
-      isIdentifierLikeToken(propertyToken) &&
-      (propertySeparator?.kind === SyntaxKind.DotToken || propertySeparator?.kind === SyntaxKind.QuestionDotToken) &&
-      options.denyCapturedMemberProperties?.has(propertyToken.text)
-    ) {
-      return { property: propertyToken.text, position: propertyToken.start }
+    const safeCapturedMemberAccess = (expressionStartIndex: number, expressionEndIndex: number): boolean => {
+      const previous = tokens[expressionStartIndex - 1]
+      const next = tokens[expressionEndIndex + 1]
+      const previousIsStrictComparison =
+        previous?.kind === SyntaxKind.EqualsEqualsEqualsToken ||
+        previous?.kind === SyntaxKind.ExclamationEqualsEqualsToken
+      const nextIsStrictComparison =
+        next?.kind === SyntaxKind.EqualsEqualsEqualsToken || next?.kind === SyntaxKind.ExclamationEqualsEqualsToken
+      if (previousIsStrictComparison || nextIsStrictComparison) return true
+      if (previous?.kind === SyntaxKind.TypeOfKeyword || previous?.kind === SyntaxKind.ExclamationToken) return true
+      if (next?.kind === SyntaxKind.AmpersandAmpersandToken || next?.kind === SyntaxKind.QuestionToken) return true
+      if (
+        (next?.kind === SyntaxKind.DotToken || next?.kind === SyntaxKind.QuestionDotToken) &&
+        tokens[expressionEndIndex + 2]?.text === 'name' &&
+        !isAssignmentOperator(tokens[expressionEndIndex + 3]) &&
+        !isInvokedMemberExpression(tokens, expressionEndIndex + 2)
+      ) {
+        return true
+      }
+      return false
     }
-    if (propertyToken?.kind !== SyntaxKind.CloseBracketToken) return undefined
 
-    let bracketDepth = 0
-    for (let cursor = range.endIndex; cursor >= range.startIndex; cursor -= 1) {
+    const deferredRanges: Array<{ readonly startIndex: number; readonly endIndex: number }> = []
+
+    const findMatchingDelimiterIndex = (
+      openIndex: number,
+      openKind: SyntaxKind,
+      closeKind: SyntaxKind,
+    ): number | undefined => {
+      let depth = 0
+      for (let cursor = openIndex; cursor <= range.endIndex; cursor += 1) {
+        const kind = tokens[cursor]?.kind
+        if (kind === openKind) depth += 1
+        if (kind !== closeKind) continue
+        depth -= 1
+        if (depth === 0) return cursor
+      }
+      return undefined
+    }
+
+    const findMatchingOpenParenIndex = (closeIndex: number): number | undefined => {
+      let depth = 0
+      for (let cursor = closeIndex; cursor >= range.startIndex; cursor -= 1) {
+        const kind = tokens[cursor]?.kind
+        if (kind === SyntaxKind.CloseParenToken) depth += 1
+        if (kind !== SyntaxKind.OpenParenToken) continue
+        depth -= 1
+        if (depth === 0) return cursor
+      }
+      return undefined
+    }
+
+    const tokenEndsExpression = (token: WorkflowSyntaxToken | undefined): boolean =>
+      token?.kind === SyntaxKind.Identifier ||
+      token?.kind === SyntaxKind.ThisKeyword ||
+      token?.kind === SyntaxKind.SuperKeyword ||
+      token?.kind === SyntaxKind.CloseParenToken ||
+      token?.kind === SyntaxKind.CloseBracketToken ||
+      token?.kind === SyntaxKind.CloseBraceToken ||
+      token?.kind === SyntaxKind.StringLiteral ||
+      token?.kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+      token?.kind === SyntaxKind.NumericLiteral
+
+    const functionExpressionIsInvoked = (expressionStartIndex: number, expressionEndIndex: number): boolean => {
+      let start = expressionStartIndex
+      let end = expressionEndIndex
+      while (
+        tokens[start - 1]?.kind === SyntaxKind.OpenParenToken &&
+        tokens[end + 1]?.kind === SyntaxKind.CloseParenToken &&
+        findMatchingCloseParenIndex(tokens, start - 1) === end + 1 &&
+        !tokenEndsExpression(tokens[start - 2])
+      ) {
+        start -= 1
+        end += 1
+      }
+      return isInvokedMemberExpression(tokens, end)
+    }
+
+    for (let cursor = range.startIndex; cursor <= range.endIndex; cursor += 1) {
       const kind = tokens[cursor]?.kind
-      if (kind === SyntaxKind.CloseBracketToken) bracketDepth += 1
-      if (kind !== SyntaxKind.OpenBracketToken) continue
-      bracketDepth -= 1
-      if (bracketDepth !== 0) continue
+      if (kind === SyntaxKind.FunctionKeyword) {
+        for (let bodyStart = cursor + 1; bodyStart <= range.endIndex; bodyStart += 1) {
+          if (tokens[bodyStart]?.kind !== SyntaxKind.OpenBraceToken) continue
+          const bodyEnd = findMatchingDelimiterIndex(bodyStart, SyntaxKind.OpenBraceToken, SyntaxKind.CloseBraceToken)
+          if (bodyEnd != null && !functionExpressionIsInvoked(cursor, bodyEnd)) {
+            deferredRanges.push({ startIndex: bodyStart + 1, endIndex: bodyEnd - 1 })
+          }
+          break
+        }
+        continue
+      }
+      if (kind !== SyntaxKind.EqualsGreaterThanToken) continue
 
+      const parameterEnd = cursor - 1
+      const expressionStart =
+        tokens[parameterEnd]?.kind === SyntaxKind.CloseParenToken
+          ? (findMatchingOpenParenIndex(parameterEnd) ?? parameterEnd)
+          : parameterEnd
+      const bodyStart = cursor + 1
+      let bodyEnd = range.endIndex
+      if (tokens[bodyStart]?.kind === SyntaxKind.OpenBraceToken) {
+        bodyEnd =
+          findMatchingDelimiterIndex(bodyStart, SyntaxKind.OpenBraceToken, SyntaxKind.CloseBraceToken) ?? range.endIndex
+      } else {
+        let parenthesisDepth = 0
+        let bracketDepth = 0
+        let braceDepth = 0
+        for (let bodyCursor = bodyStart; bodyCursor <= range.endIndex; bodyCursor += 1) {
+          const bodyKind = tokens[bodyCursor]?.kind
+          if (
+            (bodyKind === SyntaxKind.CloseParenToken && parenthesisDepth === 0) ||
+            (bodyKind === SyntaxKind.CloseBracketToken && bracketDepth === 0) ||
+            (bodyKind === SyntaxKind.CloseBraceToken && braceDepth === 0) ||
+            ((bodyKind === SyntaxKind.CommaToken || bodyKind === SyntaxKind.SemicolonToken) &&
+              parenthesisDepth === 0 &&
+              bracketDepth === 0 &&
+              braceDepth === 0)
+          ) {
+            bodyEnd = bodyCursor - 1
+            break
+          }
+          if (bodyKind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
+          if (bodyKind === SyntaxKind.CloseParenToken) parenthesisDepth -= 1
+          if (bodyKind === SyntaxKind.OpenBracketToken) bracketDepth += 1
+          if (bodyKind === SyntaxKind.CloseBracketToken) bracketDepth -= 1
+          if (bodyKind === SyntaxKind.OpenBraceToken) braceDepth += 1
+          if (bodyKind === SyntaxKind.CloseBraceToken) braceDepth -= 1
+        }
+      }
+
+      if (!functionExpressionIsInvoked(expressionStart, bodyEnd)) {
+        deferredRanges.push({ startIndex: bodyStart, endIndex: bodyEnd })
+      }
+    }
+
+    const isDeferred = (index: number): boolean =>
+      deferredRanges.some((deferredRange) => index >= deferredRange.startIndex && index <= deferredRange.endIndex)
+
+    for (let cursor = range.startIndex; cursor <= range.endIndex; cursor += 1) {
+      if (isDeferred(cursor)) continue
+      const token = tokens[cursor]
+      const previous = tokens[cursor - 1]
+      if (
+        isIdentifierLikeToken(token) &&
+        (previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken) &&
+        options.denyCapturedMemberProperties?.has(token.text)
+      ) {
+        const objectToken = tokens[cursor - 2]
+        const expressionStartIndex = isIdentifierLikeToken(objectToken) ? cursor - 2 : cursor
+        if (safeCapturedMemberAccess(expressionStartIndex, cursor)) continue
+        return { property: token.text, position: token.start }
+      }
+
+      if (token?.kind !== SyntaxKind.OpenBracketToken) continue
+      const optionalMember = previous?.kind === SyntaxKind.QuestionDotToken
+      const objectEnd = tokens[optionalMember ? cursor - 2 : cursor - 1]
+      const followsExpression =
+        objectEnd?.kind === SyntaxKind.CloseParenToken ||
+        objectEnd?.kind === SyntaxKind.CloseBracketToken ||
+        objectEnd?.kind === SyntaxKind.CloseBraceToken ||
+        objectEnd?.kind === SyntaxKind.StringLiteral ||
+        objectEnd?.kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+        isIdentifierLikeToken(objectEnd)
+      if (!followsExpression) continue
+
+      const computedProperty = computedMemberPropertyAtBracket(tokens, cursor)
+      if (!computedProperty || computedProperty.endIndex > range.endIndex) continue
       const property = resolveStaticPropertyKey(
         tokens,
-        cursor + 1,
-        range.endIndex - 1,
+        computedProperty.propertyStartIndex,
+        computedProperty.propertyEndIndex,
         staticPropertyBindings,
         symbolIsUnshadowed,
       )
-      const computedPropertyToken = tokens[cursor + 1]
+      const computedPropertyToken = tokens[computedProperty.propertyStartIndex]
       if (
         property?.kind === 'string' &&
         options.denyCapturedMemberProperties?.has(property.value) &&
         computedPropertyToken
       ) {
+        const expressionStartIndex = isIdentifierLikeToken(objectEnd)
+          ? optionalMember
+            ? cursor - 2
+            : cursor - 1
+          : cursor
+        if (safeCapturedMemberAccess(expressionStartIndex, computedProperty.endIndex)) continue
         return { property: property.value, position: computedPropertyToken.start }
       }
-      return undefined
     }
     return undefined
   }
 
   const safeCapturedMemberReference = (index: number): boolean => {
     const previous = tokens[index - 1]
-    const next = tokens[index + 1]
+    let expressionEndIndex = index
+    while (expressionEndIndex < tokens.length - 1) {
+      const separator = tokens[expressionEndIndex + 1]
+      if (
+        (separator?.kind === SyntaxKind.DotToken || separator?.kind === SyntaxKind.QuestionDotToken) &&
+        isIdentifierLikeToken(tokens[expressionEndIndex + 2])
+      ) {
+        expressionEndIndex += 2
+        continue
+      }
+
+      const bracketIndex =
+        separator?.kind === SyntaxKind.QuestionDotToken &&
+        tokens[expressionEndIndex + 2]?.kind === SyntaxKind.OpenBracketToken
+          ? expressionEndIndex + 2
+          : separator?.kind === SyntaxKind.OpenBracketToken
+            ? expressionEndIndex + 1
+            : undefined
+      if (bracketIndex == null) break
+      const computedProperty = computedMemberPropertyAtBracket(tokens, bracketIndex)
+      if (!computedProperty) break
+      expressionEndIndex = computedProperty.endIndex
+    }
+
+    const next = tokens[expressionEndIndex + 1]
     const previousIsStrictComparison =
       previous?.kind === SyntaxKind.EqualsEqualsEqualsToken ||
       previous?.kind === SyntaxKind.ExclamationEqualsEqualsToken
@@ -829,10 +1006,9 @@ export const lintWorkflowSourceAst = (options: {
     if (previous?.kind === SyntaxKind.TypeOfKeyword || previous?.kind === SyntaxKind.ExclamationToken) return true
     if (next?.kind === SyntaxKind.AmpersandAmpersandToken || next?.kind === SyntaxKind.QuestionToken) return true
     if (
-      (next?.kind === SyntaxKind.DotToken || next?.kind === SyntaxKind.QuestionDotToken) &&
-      tokens[index + 2]?.text === 'name' &&
-      !isAssignmentOperator(tokens[index + 3]) &&
-      !isInvokedMemberExpression(tokens, index + 2)
+      tokens[expressionEndIndex]?.text === 'name' &&
+      !isAssignmentOperator(tokens[expressionEndIndex + 1]) &&
+      !isInvokedMemberExpression(tokens, expressionEndIndex)
     ) {
       return true
     }
@@ -885,10 +1061,16 @@ export const lintWorkflowSourceAst = (options: {
     readonly position: number
   }
 
+  type DestructuredBindingScan = {
+    readonly bindings: WorkflowSyntaxToken[]
+    readonly captures: DestructuredMemberCapture[]
+  }
+
   const collectDestructuredMemberCaptures = (
     patternStartIndex: number,
     patternEndIndex: number,
-  ): DestructuredMemberCapture[] => {
+  ): DestructuredBindingScan => {
+    const bindings: WorkflowSyntaxToken[] = []
     const captures: DestructuredMemberCapture[] = []
     const patternKind = tokens[patternStartIndex]?.kind
 
@@ -900,14 +1082,20 @@ export const lintWorkflowSourceAst = (options: {
 
       const elementEndIndex = findBindingElementEndIndex(cursor, patternEndIndex)
       if (tokens[cursor]?.kind === SyntaxKind.DotDotDotToken) {
+        const restBinding = tokens[cursor + 1]
+        if (isIdentifierLikeToken(restBinding)) bindings.push(restBinding)
         cursor = elementEndIndex + 2
         continue
       }
 
       if (patternKind === SyntaxKind.OpenBracketToken) {
+        const binding = tokens[cursor]
+        if (isIdentifierLikeToken(binding)) bindings.push(binding)
         const nestedPatternEndIndex = findBindingPatternEndIndex(cursor)
         if (nestedPatternEndIndex != null && nestedPatternEndIndex <= elementEndIndex) {
-          captures.push(...collectDestructuredMemberCaptures(cursor, nestedPatternEndIndex))
+          const nested = collectDestructuredMemberCaptures(cursor, nestedPatternEndIndex)
+          bindings.push(...nested.bindings)
+          captures.push(...nested.captures)
         }
         cursor = elementEndIndex + 2
         continue
@@ -947,6 +1135,7 @@ export const lintWorkflowSourceAst = (options: {
       const bindingStartIndex = hasAlias ? colonIndex + 1 : cursor
       const binding = tokens[bindingStartIndex]
 
+      if (isIdentifierLikeToken(binding)) bindings.push(binding)
       if (hasDeniedProperty && isIdentifierLikeToken(binding) && propertyPosition != null) {
         captures.push({ binding, property: property ?? '[...]', position: propertyPosition })
       }
@@ -954,14 +1143,16 @@ export const lintWorkflowSourceAst = (options: {
       if (hasAlias && (binding?.kind === SyntaxKind.OpenBraceToken || binding?.kind === SyntaxKind.OpenBracketToken)) {
         const nestedPatternEndIndex = findBindingPatternEndIndex(bindingStartIndex)
         if (nestedPatternEndIndex != null && nestedPatternEndIndex <= elementEndIndex) {
-          captures.push(...collectDestructuredMemberCaptures(bindingStartIndex, nestedPatternEndIndex))
+          const nested = collectDestructuredMemberCaptures(bindingStartIndex, nestedPatternEndIndex)
+          bindings.push(...nested.bindings)
+          captures.push(...nested.captures)
         }
       }
 
       cursor = elementEndIndex + 2
     }
 
-    return captures
+    return { bindings, captures }
   }
 
   if (options.denyCapturedMemberProperties) {
@@ -998,7 +1189,15 @@ export const lintWorkflowSourceAst = (options: {
           capturedBindings.push({ binding, ...capturedProperty })
         }
       } else if (patternEndIndex != null) {
-        capturedBindings.push(...collectDestructuredMemberCaptures(bindingIndex, patternEndIndex))
+        const bindingScan = collectDestructuredMemberCaptures(bindingIndex, patternEndIndex)
+        capturedBindings.push(...bindingScan.captures)
+        const capturedInitializerProperty = capturedMemberPropertyAt(initializerStartIndex, initializerEndIndex)
+        if (capturedInitializerProperty) {
+          for (const destructuredBinding of bindingScan.bindings) {
+            if (bindingScan.captures.some((capture) => capture.binding.start === destructuredBinding.start)) continue
+            capturedBindings.push({ binding: destructuredBinding, ...capturedInitializerProperty })
+          }
+        }
       }
       if (capturedBindings.length === 0) continue
 
