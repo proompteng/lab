@@ -249,6 +249,28 @@ test('rejects VM modules that can evaluate against the Bun global', async () => 
   )
 })
 
+test('rejects child process modules that can recover inherited environment state', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { execFileSync } from 'node:child_process'",
+      "import childProcess from 'child_process'",
+      "export const nodePrefixed = () => execFileSync('printenv', ['WORKFLOW_FLAG'])",
+      "export const bare = () => childProcess.execFileSync('printenv', ['WORKFLOW_FLAG'])",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-import')).toHaveLength(2)
+  expect(violations.every((violation) => violation.details?.specifier === 'child_process')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects runtime module loaders that can recover VM evaluation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

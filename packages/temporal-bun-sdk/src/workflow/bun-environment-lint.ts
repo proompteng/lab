@@ -50,7 +50,16 @@ const bunEnvironmentDenyGlobalCaptures = new Set([...bunEnvironmentGlobalObjects
 const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function', 'require'])
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
-const bunEnvironmentDenyImports = new Set(['node:vm', 'vm', 'node:module', 'module', 'node:process', 'process'])
+const bunEnvironmentDenyImports = new Set([
+  'node:vm',
+  'vm',
+  'node:module',
+  'module',
+  'node:process',
+  'process',
+  'node:child_process',
+  'child_process',
+])
 const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 const couldContainMacroImport = (sourceText: string): boolean =>
   /\b(?:with|assert)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\{/.test(sourceText)
