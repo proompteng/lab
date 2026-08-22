@@ -3036,6 +3036,157 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('waits for a durably blocked unbound research cycle before clearing a failure-restricted generation', async () => {
+    const configuredObserveGenerationHash = hash('unbound-blocked-rollover-configured-observe')
+    const activationReconciliation = exactReconciliation('unbound-blocked-rollover-activation')
+    const activation = makeResearchActivation(configuredObserveGenerationHash, activationReconciliation)
+    const cycleId = hash('unbound-blocked-rollover-cycle')
+    const historicalCycleId = hash('unbound-blocked-rollover-historical-cycle')
+    const runtime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      researchRuntimeConfig(configuredObserveGenerationHash),
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const blockedIntents = yield* BlockedCycleIntentStore
+          const sql = yield* PgClient.PgClient
+          const writerFence = yield* WriterFence
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+          const readAuthorityState = store.readAuthorityState
+          assert(readAuthorityState !== undefined, 'durable authority state reads must be implemented')
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: configuredObserveGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const paper = yield* activateResearch(
+            researchProofBinding(activation),
+            configuredObserveGenerationHash,
+            futureResearchActivationCutoff,
+          )
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(
+            `${executionMandateFailureRestrictionPrefix} build-decision: incompatible strategy cadence`,
+            restrictionTime.updated_at.toISOString(),
+          )
+
+          const insertUnboundBlockedCycle = (candidateCycleId: string, terminalAt: string) => sql`
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              ${candidateCycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
+              'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
+              execution_date - 1, 'test-calendar-v1',
+              'bayn.autonomous-cycle-execution-policy.v1', ${hash('unbound-blocked-rollover-policy')},
+              ${hash('unbound-blocked-rollover-execution-model')}, 1800000, 1800000,
+              'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash('unbound-blocked-rollover-calendar')}, execution_date,
+              terminal_at - interval '25 hours', terminal_at - interval '8 hours 30 minutes',
+              terminal_at - interval '8 hours 30 minutes', terminal_at - interval '7 hours 30 minutes',
+              terminal_at - interval '1 hour', terminal_at - interval '8 hours',
+              'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_PUBLICATION_DEADLINE', 1,
+              terminal_at, terminal_at, terminal_at
+            FROM (
+              SELECT
+                ${terminalAt}::timestamptz AS terminal_at,
+                (${terminalAt}::timestamptz AT TIME ZONE 'UTC')::date AS execution_date
+            ) AS timing
+          `
+
+          yield* insertUnboundBlockedCycle(
+            historicalCycleId,
+            new Date(restrictionTime.updated_at.getTime() - 24 * 60 * 60 * 1_000).toISOString(),
+          )
+
+          let reconciliations = 0
+          const reconcileAfterSettlement = Effect.gen(function* () {
+            reconciliations += 1
+            const reconciliation = exactReconciliation(`unbound-blocked-rollover-${reconciliations}`)
+            const stateHash = hash(`unbound-blocked-rollover-state-${reconciliations}`)
+            yield* sql`
+              INSERT INTO reconciliations (
+                reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+                content_hash, status, discrepancies, reconciled_at
+              )
+              SELECT
+                ${reconciliation.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+                ${stateHash}, ${stateHash}, ${reconciliation.contentHash}, 'EXACT',
+                ${sql.json(encodeSqlJson([]))}, greatest(clock_timestamp(), state.updated_at + interval '1 millisecond')
+              FROM authority_state AS state
+              WHERE state.singleton
+            `
+          }).pipe(
+            Effect.mapError((cause) =>
+              operationalError({
+                component: 'database',
+                operation: 'test-unbound-blocked-rollover',
+                message: 'test reconciliation write failed',
+                cause,
+              }),
+            ),
+          )
+
+          const beforeTerminal = yield* recoverTerminalGenerationToObserve({
+            accountId,
+            blockedIntents,
+            authorityStore: store,
+            writerFence,
+            reconcileAfterSettlement,
+          })
+
+          yield* insertUnboundBlockedCycle(cycleId, new Date(restrictionTime.updated_at.getTime() + 1).toISOString())
+
+          const afterTerminal = yield* recoverTerminalGenerationToObserve({
+            accountId,
+            blockedIntents,
+            authorityStore: store,
+            writerFence,
+            reconcileAfterSettlement,
+          })
+          const authority = yield* readAuthorityState
+          return { afterTerminal, authority, beforeTerminal, paper, reconciliations }
+        }),
+      )
+
+      expect(result.beforeTerminal).toEqual({ _tag: 'NotRequired' })
+      expect(result.reconciliations).toBe(1)
+      expect(result.afterTerminal).toMatchObject({
+        _tag: 'RolledOver',
+        previousGenerationHash: result.paper.generationHash,
+        blockedCycleCount: 1,
+        blockedIntentCount: 0,
+        terminalIntentCount: 0,
+      })
+      expect(result.authority).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test.each([
     ['completed', executionMandateCompletedRestrictionReason],
     ['legacy v1 completed', legacyV1CompletedRestrictionReason],

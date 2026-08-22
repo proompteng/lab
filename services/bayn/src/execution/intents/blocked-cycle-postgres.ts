@@ -175,6 +175,12 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           SELECT
             state.generation_hash,
             generation.account_id,
+            generation.research_plan_hash,
+            state.updated_at AS restricted_at,
+            (
+              state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
+              OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
+            ) AS requires_blocked_cycle,
             state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
           JOIN authority_generations AS generation
@@ -213,15 +219,33 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           FROM current_generation AS generation
           JOIN autonomous_cycles AS cycle
             ON cycle.account_id = generation.account_id
-          JOIN autonomous_cycle_shadow_decisions AS decision
+          LEFT JOIN autonomous_cycle_shadow_decisions AS decision
             ON decision.cycle_id = cycle.cycle_id
            AND decision.decision_hash = cycle.decision_hash
           WHERE cycle.state = 'BLOCKED'
             AND cycle.terminal_at <= ${input.observedAt}::timestamptz
-            AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
-            AND decision.document ->> 'mode' = 'PAPER'
-            AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+            AND (
+              NOT generation.requires_blocked_cycle
+              OR cycle.terminal_at >= generation.restricted_at
+            )
+            AND (
+              (
+                decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+                AND decision.document ->> 'mode' = 'PAPER'
+                AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+              )
+              OR (
+                cycle.decision_hash IS NULL
+                AND generation.research_plan_hash IS NOT NULL
+                AND cycle.qualification_run_id = generation.research_plan_hash
+              )
+            )
           FOR UPDATE OF cycle
+        ), recoverable_generation AS MATERIALIZED (
+          SELECT generation.*
+          FROM current_generation AS generation
+          WHERE NOT generation.requires_blocked_cycle
+             OR EXISTS (SELECT 1 FROM blocked_cycles)
         ), terminalized AS (
           UPDATE intents AS intent
           SET
@@ -237,7 +261,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               ${input.observedAt}::timestamptz,
               intent.updated_at + interval '1 millisecond'
             )
-          FROM current_generation AS generation
+          FROM recoverable_generation AS generation
           JOIN blocked_cycles AS cycle ON true
           JOIN risk_decisions AS decision ON true
           WHERE intent.authority_generation_hash = generation.generation_hash
@@ -269,7 +293,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             count(intent.intent_id) FILTER (
               WHERE intent.state <> 'TERMINAL' AND terminalized.intent_id IS NULL
             )::integer AS nonterminal_intent_count
-          FROM current_generation AS generation
+          FROM recoverable_generation AS generation
           LEFT JOIN intents AS intent
             ON intent.authority_generation_hash = generation.generation_hash
           LEFT JOIN terminalized ON terminalized.intent_id = intent.intent_id
@@ -282,14 +306,14 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               ${input.observedAt}::timestamptz,
               state.updated_at + interval '1 millisecond'
             )
-          FROM current_generation AS generation
+          FROM recoverable_generation AS generation
           WHERE state.singleton
             AND state.generation_hash = generation.generation_hash
             AND generation.legacy_failure_restriction
           RETURNING state.generation_hash
         )
         SELECT
-          (SELECT generation_hash FROM current_generation) AS authority_generation_hash,
+          (SELECT generation_hash FROM recoverable_generation) AS authority_generation_hash,
           (SELECT count(*)::integer FROM blocked_cycles) AS blocked_cycle_count,
           terminalized_counts.blocked_intent_count,
           terminalized_counts.expired_intent_count,
