@@ -37,6 +37,40 @@ The default Kubernetes context is `galactic-tailscale`. Override it with
 `KEEP_RESOURCES=true` only while interactively diagnosing a failed run, then
 delete the `microvm-spike` namespace yourself.
 
+## Keep one microVM running
+
+Create a long-lived launcher Pod whose readiness and liveness are tied to the
+jailed Firecracker process:
+
+```bash
+devices/turin/spikes/firecracker/create-microvm.sh
+```
+
+The command leaves `microvm-demo/firecracker-turin-microvm` running on Turin.
+The Pod becomes Ready only after the guest agent has bootstrapped through MMDS
+v2 and the callback, outbound-networking, SSH, and vsock proofs have passed.
+Inspect the launcher and enter the guest with:
+
+```bash
+kubectl --context galactic-tailscale --namespace microvm-demo \
+  logs --follow pod/firecracker-turin-microvm
+
+kubectl --context galactic-tailscale --namespace microvm-demo \
+  exec --stdin --tty pod/firecracker-turin-microvm -- \
+  ssh -i /work/id_ed25519 -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null root@172.16.0.2
+```
+
+Delete the Pod and its disposable root filesystem with:
+
+```bash
+devices/turin/spikes/firecracker/delete-microvm.sh
+```
+
+This is a privileged launcher Pod that owns one direct Firecracker microVM. It
+does not turn Firecracker into a Kubernetes CRI runtime; that requires the
+future controller and hardened launcher-image work described below.
+
 ## Boundary
 
 This proves that direct Firecracker is viable on the existing Turin Talos node.

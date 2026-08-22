@@ -8,7 +8,7 @@ readonly kernel_name='vmlinux-6.18.41'
 readonly kernel_sha256='645688b5933cb257f7d4fa71eb246669233e8c2db8378217c99cf891541fe3d5'
 readonly rootfs_name='ubuntu-24.04.squashfs'
 readonly rootfs_sha256='2ee9cfdea73468b2fa9cd772cc3a70e89beeb78195ab3f0bad225a2368ef6b08'
-readonly vm_id='turin-fc-spike'
+readonly vm_id="${MICROVM_ID:-turin-fc-spike}"
 readonly jail_uid='30000'
 readonly jail_gid='30000'
 readonly bootstrap_nonce='turin-firecracker-spike-v1'
@@ -18,6 +18,7 @@ readonly api_socket="${jail_root}/run/firecracker.socket"
 readonly vsock_socket="${jail_root}/run/vsock"
 
 jailer_pid=''
+firecracker_pid=''
 tail_pid=''
 callback_pid=''
 tap_created='false'
@@ -30,8 +31,31 @@ log() {
   printf 'SPIKE %s\n' "$*"
 }
 
+process_is_running() {
+  local pid="$1"
+  local _pid _name state _rest
+  if [[ ! -r "/proc/${pid}/stat" ]]; then
+    return 1
+  fi
+  read -r _pid _name state _rest <"/proc/${pid}/stat"
+  [[ "${state}" != 'Z' ]]
+}
+
 cleanup() {
   set +e
+  rm -f /work/microvm-ready
+  if [[ -n "${firecracker_pid}" ]] && process_is_running "${firecracker_pid}"; then
+    kill "${firecracker_pid}" 2>/dev/null
+    for _ in $(seq 1 20); do
+      if ! process_is_running "${firecracker_pid}"; then
+        break
+      fi
+      sleep 0.1
+    done
+    if process_is_running "${firecracker_pid}"; then
+      kill -KILL "${firecracker_pid}" 2>/dev/null
+    fi
+  fi
   if [[ -n "${jailer_pid}" ]] && kill -0 "${jailer_pid}" 2>/dev/null; then
     kill "${jailer_pid}" 2>/dev/null
     wait "${jailer_pid}" 2>/dev/null
@@ -291,6 +315,16 @@ log "proof=jailer pid=${firecracker_pid} root=${firecracker_root} status=${firec
 log "proof=resource-accounting pod-cgroup=$(tr '\n' ',' </proc/self/cgroup) firecracker-cgroup=${firecracker_cgroup} config=1vcpu-256MiB pod-limit=2cpu-4GiB"
 log "proof=instance-info ${instance_info}"
 log 'result=PASS'
+
+printf '%s\n' "${firecracker_pid}" >/work/microvm-ready
+if [[ "${KEEP_VM_RUNNING:-false}" == 'true' ]]; then
+  log "state=RUNNING microvm_id=${vm_id} firecracker_pid=${firecracker_pid}"
+  while process_is_running "${firecracker_pid}"; do
+    sleep 5
+  done
+  log "state=STOPPED microvm_id=${vm_id} reason=firecracker-process-exited"
+  exit 1
+fi
 
 fc_put '/actions' '{"action_type":"SendCtrlAltDel"}' || true
 sleep 2
