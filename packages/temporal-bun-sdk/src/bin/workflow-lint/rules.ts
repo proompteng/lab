@@ -431,7 +431,9 @@ const computedMemberProperty = (
 
 const isInvokedMemberExpression = (tokens: readonly WorkflowSyntaxToken[], endIndex: number): boolean => {
   const next = tokens[endIndex + 1]
-  if (next?.kind === SyntaxKind.OpenParenToken) return true
+  const isTaggedTemplate = (token: WorkflowSyntaxToken | undefined): boolean =>
+    token?.kind === SyntaxKind.NoSubstitutionTemplateLiteral || token?.kind === SyntaxKind.TemplateHead
+  if (next?.kind === SyntaxKind.OpenParenToken || isTaggedTemplate(next)) return true
   if (next?.kind === SyntaxKind.QuestionDotToken && tokens[endIndex + 2]?.kind === SyntaxKind.OpenParenToken)
     return true
   if (
@@ -439,7 +441,7 @@ const isInvokedMemberExpression = (tokens: readonly WorkflowSyntaxToken[], endIn
     (tokens[endIndex + 2]?.text === 'call' ||
       tokens[endIndex + 2]?.text === 'apply' ||
       tokens[endIndex + 2]?.text === 'bind') &&
-    tokens[endIndex + 3]?.kind === SyntaxKind.OpenParenToken
+    (tokens[endIndex + 3]?.kind === SyntaxKind.OpenParenToken || isTaggedTemplate(tokens[endIndex + 3]))
   )
     return true
   return false

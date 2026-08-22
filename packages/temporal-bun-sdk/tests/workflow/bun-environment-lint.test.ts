@@ -632,6 +632,31 @@ test('rejects dynamic code through invoked constructor properties', async () => 
   )
 })
 
+test('rejects tagged constructor invocation before shared helpers can be cached', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(helperPath, 'export const workflow = (() => {}).constructor`return Bun.env.FLAG`\n')
+  await writeFile(workflowsPath, "export { workflow } from './shared-helper'\n")
+
+  // Activities can execute the constructor tag while populating Bun's module cache before guards are installed.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        rule: 'deny-member-expression',
+        details: { memberProperty: 'constructor' },
+      }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects cached constructor captures that are invoked after module initialization', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const helperPath = join(dir, 'shared-helper.ts')
