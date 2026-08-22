@@ -440,7 +440,6 @@ describe('Bayn manifest promotion', () => {
 
     const sourceSha = 'a'.repeat(40)
     const digest = `sha256:${'b'.repeat(64)}`
-    const nextStrategyName = 'opening-drive-momentum-v2'
     const nextResearchRequestHash = '8'.repeat(64)
     for (const path of [
       paths.deploymentPath,
@@ -452,11 +451,7 @@ describe('Bayn manifest promotion', () => {
         readFileSync(path, 'utf8')
           .replaceAll(`sha256:${'0'.repeat(64)}`, digest)
           .replaceAll('0'.repeat(40), sourceSha)
-          .replaceAll(researchRequestHash, nextResearchRequestHash)
-          .replace(
-            environmentBlock('BAYN_STRATEGY_NAME', strategyName),
-            environmentBlock('BAYN_STRATEGY_NAME', nextStrategyName),
-          ),
+          .replaceAll(researchRequestHash, nextResearchRequestHash),
       )
     }
 
@@ -477,6 +472,71 @@ describe('Bayn manifest promotion', () => {
       promotionReason: 'eligible',
       qualificationMode: 'research',
     })
+  })
+
+  test('holds an identity-changing raw request over a deployed build continuation without prior request-hash evidence', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const nativePaths = installNativeExecutionManifests(true)
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    writeFileSync(
+      deployedDeploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8')
+        .replace(
+          environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalActivationRequest'),
+          environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalBuildContinuation'),
+        )
+        .replace(environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(researchBuildLineage)), ''),
+    )
+
+    const sourceSha = 'a'.repeat(40)
+    const digest = `sha256:${'b'.repeat(64)}`
+    const nextStrategyName = 'opening-drive-momentum-v2'
+    for (const path of [
+      paths.deploymentPath,
+      nativePaths.executionControllerPath,
+      nativePaths.executionActivationPath,
+    ]) {
+      writeFileSync(
+        path,
+        readFileSync(path, 'utf8')
+          .replaceAll(`sha256:${'0'.repeat(64)}`, digest)
+          .replaceAll('0'.repeat(40), sourceSha)
+          .replaceAll(researchRequestHash, '8'.repeat(64))
+          .replace(
+            environmentBlock('BAYN_STRATEGY_NAME', strategyName),
+            environmentBlock('BAYN_STRATEGY_NAME', nextStrategyName),
+          ),
+      )
+    }
+    const before = [
+      ...Object.values(paths),
+      nativePaths.executionControllerPath,
+      nativePaths.executionActivationPath,
+    ].map((path) => readFileSync(path, 'utf8'))
+
+    expect(
+      updateBaynManifests({
+        sourceSha,
+        tag: `sha-${sourceSha}`,
+        digest,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        deployedDeploymentPath,
+        ...paths,
+        ...nativePaths,
+      }),
+    ).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'research-capital-activation-refresh-required',
+      qualificationMode: 'research',
+    })
+    expect(
+      [...Object.values(paths), nativePaths.executionControllerPath, nativePaths.executionActivationPath].map((path) =>
+        readFileSync(path, 'utf8'),
+      ),
+    ).toEqual(before)
   })
 
   test('atomically advances proved research build lineage across every runtime manifest', () => {

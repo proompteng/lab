@@ -511,7 +511,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
     researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
     researchRequestHashChanged =
-      deployedCapitalActivationKind !== 'ResearchCapitalActivationRequest' ||
+      deployedCapitalActivationKind === 'ResearchCapitalActivationRequest' &&
       researchCapitalBuildLineageFromManifest(deployedDeployment, 'deployed deployment').requestHash !==
         researchBuildLineage.requestHash
     const candidateBinding = {
