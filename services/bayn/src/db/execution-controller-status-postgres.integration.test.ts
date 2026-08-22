@@ -455,7 +455,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
             opening_drive_qualification_results,
             opening_drive_qualification_locks
         `
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47, 48)`
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47, 48, 49)`
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,
@@ -525,7 +525,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 48, name: 'research_reconciliation_rearm' })
+      expect(migrated.migration).toEqual({ migration_id: 49, name: 'preserve_reconciliation_cycle' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')

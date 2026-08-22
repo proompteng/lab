@@ -14,6 +14,10 @@ export const executionControllerMaximumDeliveryAttempt = 6
 const DeliveryAttemptSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: executionControllerMaximumDeliveryAttempt }),
 )
+export const executionControllerMaximumRecoveryWindow = 7
+const RecoveryWindowSchema = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: executionControllerMaximumRecoveryWindow }),
+)
 const decodeUtcInstant = Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)
 
 export const ExecutionControllerActivationSchema = Schema.Struct({
@@ -69,6 +73,8 @@ export const ExecutionControllerTickSchema = Schema.Struct({
   sequence: CounterSchema,
   attempt: Schema.optionalKey(DeliveryAttemptSchema),
   issuedAt: Schema.optionalKey(UtcInstantSchema),
+  recoveryWindow: Schema.optionalKey(RecoveryWindowSchema),
+  retryWindowHash: Schema.optionalKey(Sha256Schema),
   sourceCatchUpRevision: Schema.optionalKey(GitSourceRevisionSchema),
 })
 export type ExecutionControllerTick = typeof ExecutionControllerTickSchema.Type

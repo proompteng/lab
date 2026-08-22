@@ -1882,7 +1882,7 @@ describe('Bayn capital startup recovery boundary', () => {
     const operations: string[] = []
     let rearmBlocked = false
     const authorityStore: AuthorityGenerationStoreShape = {
-      ensureAuthorityGeneration: ({ generationHash, maximum }) =>
+      ensureAuthorityGeneration: ({ generationHash, maximum, preserveCyclePlanHash }) =>
         Effect.sync(() => operations.push(`rearm:${generationHash}`)).pipe(
           Effect.andThen(
             rearmBlocked
@@ -1894,9 +1894,10 @@ describe('Bayn capital startup recovery boundary', () => {
                   }),
                 )
               : Effect.sync(() => {
-                  expect({ generationHash, maximum }).toEqual({
+                  expect({ generationHash, maximum, preserveCyclePlanHash }).toEqual({
                     generationHash: successorGenerationHash,
                     maximum: Authority.Observe,
+                    preserveCyclePlanHash: restrictedGeneration.proofPlanHash,
                   })
                   authority = {
                     schemaVersion: 'bayn.paper-authority.v1',

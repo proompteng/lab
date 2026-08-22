@@ -31,6 +31,7 @@ export interface PositionSnapshotReceipt {
 export interface EnsureAuthorityGenerationInput {
   readonly generationHash: string
   readonly maximum: Authority
+  readonly preserveCyclePlanHash?: string
 }
 
 export interface PreparedCapitalGrantActivation {

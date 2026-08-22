@@ -17,6 +17,7 @@ import {
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   executionControllerMaximumDeliveryAttempt,
+  executionControllerMaximumRecoveryWindow,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
   type ExecutionControllerBinding,
@@ -36,6 +37,8 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
     sequence: { type: 'integer', minimum: 0 },
     attempt: { type: 'integer', minimum: 0, maximum: executionControllerMaximumDeliveryAttempt },
     issuedAt: { type: 'string', format: 'date-time' },
+    recoveryWindow: { type: 'integer', minimum: 1, maximum: executionControllerMaximumRecoveryWindow },
+    retryWindowHash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
     sourceCatchUpRevision: { type: 'string', pattern: '^[0-9a-f]{40}$' },
   },
   required: ['schemaVersion', 'epoch', 'sequence'],
@@ -63,6 +66,13 @@ export const executionControllerCommandRetryPolicy = {
   exponentiationFactor: 2,
 } as const satisfies restate.RetryPolicy
 export const executionControllerInitialTickDelayMs = 0
+export const executionControllerRecoveryTickDelayMs = 30_000
+export const executionControllerRecoveryMaximumDelayMs = 24 * 60 * 60_000
+export const executionControllerRecoveryDelayMs = (recoveryWindow: number): number =>
+  Math.min(
+    executionControllerRecoveryTickDelayMs * 4 ** Math.max(0, recoveryWindow - 1),
+    executionControllerRecoveryMaximumDelayMs,
+  )
 export const executionControllerBootstrapCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
@@ -95,6 +105,68 @@ const writeRuntimeLog = (
   Promise.resolve()
     .then(() => runtime.log(level, message, annotations))
     .catch(() => undefined)
+
+interface ExecutionAdvanceFailureDiagnostic {
+  readonly failureCauseCategory?: string
+  readonly failureCauseOperation?: string
+  readonly failureCauseTag?: string
+  readonly failureFingerprint: string
+  readonly failureMessage: string
+  readonly failureOperation: string
+  readonly failureTag: string
+}
+
+const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFailureDiagnostic => {
+  const candidate =
+    typeof cause === 'object' && cause !== null
+      ? (cause as {
+          readonly _tag?: unknown
+          readonly cause?: unknown
+          readonly failure?: unknown
+          readonly message?: unknown
+          readonly name?: unknown
+          readonly operation?: unknown
+        })
+      : undefined
+  const nestedCause =
+    typeof candidate?.cause === 'object' && candidate.cause !== null
+      ? (candidate.cause as {
+          readonly _tag?: unknown
+          readonly failure?: unknown
+          readonly operation?: unknown
+        })
+      : undefined
+  const knownTag =
+    candidate?._tag === 'TransientExecutionFailure' || candidate?._tag === 'NativeExecutionRuntimeError'
+      ? candidate._tag
+      : undefined
+  const failureTag =
+    knownTag ??
+    (typeof candidate?.name === 'string' && candidate.name.length > 0 ? candidate.name.slice(0, 80) : 'UnknownFailure')
+  const failureOperation =
+    knownTag !== undefined && typeof candidate?.operation === 'string'
+      ? candidate.operation.slice(0, 80)
+      : 'unclassified'
+  const failureMessage =
+    knownTag !== undefined && typeof candidate?.message === 'string'
+      ? candidate.message.slice(0, 240)
+      : 'execution advance rejected with an unclassified failure'
+  const fingerprintMaterial =
+    cause instanceof Error
+      ? `${cause.name}:${cause.message}:${cause.stack ?? ''}`
+      : `${typeof cause}:${Object.prototype.toString.call(cause)}:${String(cause)}`
+  return {
+    ...(typeof nestedCause?._tag === 'string' ? { failureCauseTag: nestedCause._tag.slice(0, 80) } : {}),
+    ...(typeof nestedCause?.operation === 'string'
+      ? { failureCauseOperation: nestedCause.operation.slice(0, 80) }
+      : {}),
+    ...(typeof nestedCause?.failure === 'string' ? { failureCauseCategory: nestedCause.failure.slice(0, 80) } : {}),
+    failureFingerprint: sha256(fingerprintMaterial),
+    failureMessage,
+    failureOperation,
+    failureTag,
+  }
+}
 
 type ControllerObjectState = { readonly controller: ExecutionControllerState }
 
@@ -237,6 +309,13 @@ const readState = async (
 export const executionControllerTickIdempotencyKey = (epoch: number, sequence: number, attempt: number): string =>
   `bayn-execution-controller-${epoch}-${sequence}-${attempt}`
 
+export const executionControllerRecoveryTickIdempotencyKey = (
+  epoch: number,
+  sequence: number,
+  attempt: number,
+  retryWindowHash: string,
+): string => `bayn-execution-controller-${epoch}-${sequence}-recovery-${retryWindowHash}-${attempt}`
+
 export const executionControllerSourceCatchUpTickIdempotencyKey = (
   epoch: number,
   sequence: number,
@@ -251,7 +330,27 @@ const scheduleTick = (
   attempt = 0,
   issuedAt?: string,
   sourceCatchUpRevision?: string,
+  retryWindowHash?: string,
+  recoveryWindow?: number,
 ): void => {
+  let idempotencyKey: string
+  if (sourceCatchUpRevision !== undefined) {
+    idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      sourceCatchUpRevision,
+    )
+  } else if (retryWindowHash !== undefined) {
+    idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      retryWindowHash,
+    )
+  } else {
+    idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
+  }
   ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
@@ -262,19 +361,13 @@ const scheduleTick = (
       sequence: state.nextSequence,
       attempt,
       ...(issuedAt === undefined ? {} : { issuedAt }),
+      ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
+      ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
       ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
     },
     inputSerde: executionTickSerde,
     delay,
-    idempotencyKey:
-      sourceCatchUpRevision === undefined
-        ? executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
-        : executionControllerSourceCatchUpTickIdempotencyKey(
-            state.epoch,
-            state.nextSequence,
-            attempt,
-            sourceCatchUpRevision,
-          ),
+    idempotencyKey,
   })
 }
 
@@ -423,8 +516,9 @@ export const makeBaynExecutionController = (
               () => runtime.advance(decision.command, ctx.request().attemptCompletedSignal),
               executionControllerAdvanceRunOptions,
             )
-          } catch (cause) {
+          } catch (cause: unknown) {
             const attempt = tick.attempt ?? 0
+            const failure = executionAdvanceFailureDiagnostic(cause)
             const replacementFirstPass =
               config.previousBinding !== undefined &&
               state !== null &&
@@ -434,12 +528,23 @@ export const makeBaynExecutionController = (
             if (attempt + 1 < maximumAttempts && state !== null) {
               const nextAttempt = attempt + 1
               const retryDelayMs = Math.min(1_000 * 2 ** attempt, 30_000)
-              scheduleTick(ctx, state, retryDelayMs, nextAttempt, issuedAt, tick.sourceCatchUpRevision)
+              scheduleTick(
+                ctx,
+                state,
+                retryDelayMs,
+                nextAttempt,
+                issuedAt,
+                tick.sourceCatchUpRevision,
+                tick.retryWindowHash,
+                tick.recoveryWindow,
+              )
               await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
                 epoch: state.epoch,
+                ...failure,
                 invocationId: ctx.request().id,
                 nextAttempt,
+                ...(tick.recoveryWindow === undefined ? {} : { recoveryWindow: tick.recoveryWindow }),
                 sequence: state.nextSequence,
                 sourceRevision: state.sourceRevision,
               })
@@ -448,16 +553,60 @@ export const makeBaynExecutionController = (
             await writeRuntimeLog(runtime, 'error', 'Bayn execution controller advance exhausted retries', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
+              ...failure,
               invocationId: ctx.request().id,
+              ...(tick.recoveryWindow === undefined ? {} : { recoveryWindow: tick.recoveryWindow }),
               sequence: tick.sequence,
               sourceRevision: config.sourceRevision,
             })
-            // A source catch-up is a rollout probe queued alongside the established revision's normal tick. Pausing
-            // this exclusive invocation would head-of-line block that known-good tick and stop the account controller.
-            // Complete the failed probe without changing state; bootstrap still fails because it cannot observe a
-            // completion from this source, while Restate remains free to deliver the established tick.
+            // A source catch-up is a rollout probe queued alongside the established revision's normal tick. Complete
+            // the failed probe without changing state so the established revision remains free to advance.
             if (tick.sourceCatchUpRevision !== undefined) return
-            throw new Error('Bayn execution controller advance exhausted its durable retry budget', { cause })
+            if (state === null) throw terminal('execution controller state disappeared during retry recovery')
+            const currentRecoveryWindow = tick.retryWindowHash === undefined ? 0 : (tick.recoveryWindow ?? 1)
+            if (currentRecoveryWindow >= executionControllerMaximumRecoveryWindow) {
+              await writeRuntimeLog(runtime, 'error', 'Bayn execution controller recovery budget exhausted', {
+                controllerKey: ctx.key,
+                epoch: state.epoch,
+                ...failure,
+                invocationId: ctx.request().id,
+                recoveryWindow: currentRecoveryWindow,
+                sequence: state.nextSequence,
+                sourceRevision: state.sourceRevision,
+              })
+              throw new restate.TerminalError('execution controller recovery budget exhausted', {
+                errorCode: 503,
+                metadata: {
+                  ...(failure.failureCauseCategory === undefined
+                    ? {}
+                    : { failureCauseCategory: failure.failureCauseCategory }),
+                  ...(failure.failureCauseOperation === undefined
+                    ? {}
+                    : { failureCauseOperation: failure.failureCauseOperation }),
+                  ...(failure.failureCauseTag === undefined ? {} : { failureCauseTag: failure.failureCauseTag }),
+                  failureFingerprint: failure.failureFingerprint,
+                  failureMessage: failure.failureMessage,
+                  failureOperation: failure.failureOperation,
+                  failureTag: failure.failureTag,
+                  recoveryWindow: String(currentRecoveryWindow),
+                },
+              })
+            }
+            const nextRecoveryWindow = currentRecoveryWindow + 1
+            const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
+            const recoveryDelayMs = executionControllerRecoveryDelayMs(nextRecoveryWindow)
+            scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
+            await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
+              controllerKey: ctx.key,
+              epoch: state.epoch,
+              invocationId: ctx.request().id,
+              recoveryDelayMs,
+              recoveryWindow: nextRecoveryWindow,
+              retryWindowHash,
+              sequence: state.nextSequence,
+              sourceRevision: state.sourceRevision,
+            })
+            return
           }
           const result = decodeOrTerminal(
             decodeExecutionAdvanceStepResult(stepResult),
@@ -564,12 +713,12 @@ export const makeBaynExecutionBootstrap = (
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
             if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
             if (attempt === maximumAttempts) {
-              throw new Error('execution controller bootstrap did not observe a completed durable successor pass')
+              throw terminal('execution controller bootstrap did not observe a completed durable successor pass')
             }
             await ctx.sleep({ milliseconds: executionControllerBootstrapCompletionPollIntervalMs })
             activated = await client.status(undefined)
           }
-          throw new Error('execution controller bootstrap completion bound is invalid')
+          throw terminal('execution controller bootstrap completion bound is invalid')
         },
       ),
     },
