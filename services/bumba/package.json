@@ -13,7 +13,7 @@
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
-    "test": "bun test",
+    "test": "bun test --parallel=1",
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {

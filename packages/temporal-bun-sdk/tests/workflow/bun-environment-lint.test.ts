@@ -42,20 +42,51 @@ test('rejects import.meta.env and Bun access through globalThis', async () => {
     [
       'const runtime = globalThis.Bun',
       "const bracketRuntime = globalThis['Bun']",
+      'const meta = import.meta',
       'export const direct = () => import.meta.env.FLAG',
-      'export const indirect = () => runtime.env.FLAG ?? bracketRuntime.env.FLAG',
+      'export const parenthesized = () => ((import.meta)).env.FLAG',
+      'export const indirect = () => runtime.env.FLAG ?? bracketRuntime.env.FLAG ?? meta.env.FLAG',
     ].join('\n'),
   )
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.some((violation) => violation.details?.memberExpression === 'import.meta.env')).toBeTrue()
+  expect(
+    violations.filter((violation) => violation.details?.memberExpression === 'import.meta.env'),
+  ).toHaveLength(2)
+  expect(violations.some((violation) => violation.details?.memberExpression === 'import.meta')).toBeTrue()
   expect(
     violations.filter((violation) => violation.details?.memberExpression === 'globalThis.Bun').length,
   ).toBeGreaterThanOrEqual(2)
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
+})
+
+test('ignores erased type-only imports when proving workflow source safety', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import type { Activity } from './activity'",
+      "import { type Helper } from './helper'",
+      "export type { Exported } from './exported'",
+      'export const workflow = (_input: Activity | Helper) => undefined',
+    ].join('\n'),
+  )
+  for (const [name, exportedType] of [
+    ['activity', 'Activity'],
+    ['helper', 'Helper'],
+    ['exported', 'Exported'],
+  ]) {
+    await writeFile(
+      join(dir, `${name}.ts`),
+      `import { randomBytes } from 'node:crypto'\nexport type ${exportedType} = ReturnType<typeof randomBytes>\n`,
+    )
+  }
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
 })
 
 test('follows bare package imports before declaring workflow source safe', async () => {
@@ -75,9 +106,7 @@ test('follows bare package imports before declaring workflow source safe', async
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(
-    violations.some((violation) => violation.filePath.endsWith('/node_modules/@fixture/workflow-helper/index.ts')),
-  ).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.Bun')).toBeTrue()
   await expect(
     WorkerRuntime.create({
       config: createTestTemporalConfig({ workflowGuards: 'strict' }),
@@ -85,6 +114,28 @@ test('follows bare package imports before declaring workflow source safe', async
       workflowGuards: 'strict',
     }),
   ).rejects.toBeInstanceOf(WorkflowBunEnvironmentSafetyError)
+})
+
+test('inspects bare side-effect imports even when package metadata marks them pure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperDir = join(dir, 'node_modules', '@fixture', 'workflow-side-effect')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await mkdir(helperDir, { recursive: true })
+  await writeFile(
+    join(helperDir, 'package.json'),
+    JSON.stringify({
+      name: '@fixture/workflow-side-effect',
+      type: 'module',
+      exports: './index.ts',
+      sideEffects: false,
+    }),
+  )
+  await writeFile(join(helperDir, 'index.ts'), 'globalThis.Bun.env.FLAG\n')
+  await writeFile(workflowsPath, "import '@fixture/workflow-side-effect'\nexport const workflow = () => undefined\n")
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.Bun')).toBeTrue()
 })
 
 test('follows tsconfig workspace aliases before declaring workflow source safe', async () => {
@@ -104,7 +155,7 @@ test('follows tsconfig workspace aliases before declaring workflow source safe',
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.some((violation) => violation.filePath.endsWith('/src/helper.ts'))).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'import.meta.env')).toBeTrue()
 })
 
 test('fails closed when a bare workflow import cannot be inspected', async () => {

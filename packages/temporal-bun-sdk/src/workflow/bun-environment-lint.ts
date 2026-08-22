@@ -1,11 +1,30 @@
 import { relative, resolve } from 'node:path'
 
-import { buildWorkflowLintGraph } from '../bin/workflow-lint/graph'
-import { lintWorkflowModuleAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
+import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentDenyGlobals = new Set(['Bun'])
-const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env', 'globalThis.Bun', 'import.meta.env'])
+const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env', 'globalThis.Bun', 'import.meta', 'import.meta.env'])
+
+const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
+  const details = diagnostic as {
+    readonly message?: unknown
+    readonly specifier?: unknown
+    readonly position?: { readonly file?: unknown; readonly line?: unknown; readonly column?: unknown }
+  }
+  const specifier = typeof details.specifier === 'string' ? details.specifier : undefined
+  const position = details.position
+  return {
+    filePath: typeof position?.file === 'string' ? position.file : entry,
+    rule: 'unresolved-import',
+    message: `Unable to bundle workflow source for safety inspection: ${
+      typeof details.message === 'string' ? details.message : String(diagnostic)
+    }`,
+    line: typeof position?.line === 'number' ? position.line : 1,
+    column: typeof position?.column === 'number' ? position.column : 1,
+    ...(specifier ? { details: { specifier } } : {}),
+  }
+}
 
 export class WorkflowBunEnvironmentSafetyError extends Error {
   readonly violations: readonly WorkflowLintViolation[]
@@ -23,33 +42,62 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
 }): Promise<readonly WorkflowLintViolation[]> => {
   const cwd = options.cwd ?? process.cwd()
   const entry = resolve(cwd, options.workflowsPath)
-  const { graph, violations: graphViolations } = await buildWorkflowLintGraph({
-    entry,
-    cwd,
-    denyImports: new Set<string>(),
-    inspectBareImports: true,
-    rejectUninspectableImports: true,
-  })
-  const violations: WorkflowLintViolation[] = graphViolations.map((violation) => ({
-    filePath: violation.filePath,
-    rule: violation.rule,
-    message: violation.message,
-    line: 1,
-    column: 1,
-    ...(violation.specifier ? { details: { specifier: violation.specifier } } : {}),
-  }))
+  let build: Awaited<ReturnType<typeof Bun.build>>
+  try {
+    build = await Bun.build({
+      entrypoints: [entry],
+      root: cwd,
+      target: 'bun',
+      format: 'esm',
+      packages: 'bundle',
+      env: 'disable',
+      treeShaking: true,
+      ignoreDCEAnnotations: true,
+      minify: false,
+      sourcemap: 'none',
+      allowUnresolved: [],
+    })
+  } catch (error) {
+    const diagnostics = (error as { readonly errors?: unknown })?.errors
+    return Array.isArray(diagnostics) && diagnostics.length > 0
+      ? diagnostics.map((diagnostic) => bundleDiagnosticViolation(entry, diagnostic))
+      : [bundleDiagnosticViolation(entry, error)]
+  }
 
-  for (const filePath of [...graph.modules].sort()) {
+  if (!build.success) {
+    const logs = build.logs.length > 0 ? build.logs : ['Unknown workflow bundle failure']
+    return logs.map((log) => bundleDiagnosticViolation(entry, log))
+  }
+
+  const scriptOutputs = build.outputs.filter((output) => output.kind === 'entry-point' || output.kind === 'chunk')
+  const opaqueOutputs = build.outputs.filter((output) => output.kind !== 'entry-point' && output.kind !== 'chunk')
+  if (scriptOutputs.length === 0 || opaqueOutputs.length > 0) {
+    return [
+      {
+        filePath: entry,
+        rule: 'unresolved-import',
+        message:
+          opaqueOutputs.length > 0
+            ? `Workflow bundle contains uninspectable outputs: ${opaqueOutputs.map((output) => output.path).join(', ')}`
+            : 'Workflow bundle did not produce inspectable JavaScript',
+        line: 1,
+        column: 1,
+      },
+    ]
+  }
+
+  const violations: WorkflowLintViolation[] = []
+  for (const output of scriptOutputs) {
     violations.push(
-      ...(await lintWorkflowModuleAst({
-        filePath,
+      ...lintWorkflowSourceAst({
+        filePath: entry,
+        sourceText: await output.text(),
         denyGlobals: bunEnvironmentDenyGlobals,
         denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
         denyImports: new Set<string>(),
-      })),
+      }),
     )
   }
-
   return violations
 }
 
