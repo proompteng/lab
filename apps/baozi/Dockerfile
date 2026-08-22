@@ -1,7 +1,7 @@
 # baozi: Bun S2I Builder
 FROM ubuntu:24.04
 
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.0
 
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 

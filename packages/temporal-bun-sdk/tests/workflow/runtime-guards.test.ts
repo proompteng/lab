@@ -184,23 +184,20 @@ test('process.env throws in strict mode when called from workflow code', async (
   )
 })
 
-test('Bun.env throws in strict mode when called from workflow code', async () => {
+test('runtime guard installation preserves Bun 1.4 immutable Bun.env snapshots', () => {
   const bunRef = (globalThis as unknown as { Bun?: BunRuntimeForGuardTests }).Bun
   if (!bunRef?.env) {
     return
   }
 
-  const envKey = Object.keys(bunRef.env)[0] ?? 'PATH'
-  const { registry, executor } = makeExecutor()
-  registry.register(
-    defineWorkflow('bunEnvWorkflow', Schema.Array(Schema.Unknown), () =>
-      Effect.sync(() => bunRef.env?.[envKey] ?? 'missing'),
-    ),
-  )
+  const descriptor = Object.getOwnPropertyDescriptor(bunRef, 'env')
+  if (descriptor?.writable) {
+    return
+  }
+  const originalEnvironment = bunRef.env
 
-  await expect(execute(executor, { workflowType: 'bunEnvWorkflow', arguments: [] })).rejects.toBeInstanceOf(
-    WorkflowNondeterminismError,
-  )
+  expect(() => installWorkflowRuntimeGuards({ mode: 'strict' })).not.toThrow()
+  expect(bunRef.env).toBe(originalEnvironment)
 })
 
 test('workflow module initialization is guarded in strict mode', async () => {

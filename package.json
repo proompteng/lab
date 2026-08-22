@@ -113,7 +113,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",
-    "@types/bun": "^1.3.14",
+    "@types/bun": "^1.4.0",
     "nitro": "^3.0.260429-beta",
     "xstate": "^5.31.0"
   },
@@ -121,7 +121,7 @@
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
     "@playwright/test": "^1.59.1",
-    "bun-types": "1.3.14",
+    "bun-types": "1.4.0",
     "lefthook": "2.1.9",
     "lint-staged": "16.4.0",
     "node-gyp": "12.3.0",
@@ -142,7 +142,7 @@
   "engines": {
     "node": "24.11.1"
   },
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.0",
   "patchedDependencies": {
     "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
     "@effect/sql-clickhouse@4.0.0-beta.102": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.102.patch"

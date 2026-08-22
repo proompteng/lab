@@ -41,7 +41,29 @@ const memberExpressionName = (
     (dotToken?.kind === SyntaxKind.DotToken || dotToken?.kind === SyntaxKind.QuestionDotToken) &&
     isIdentifierLikeToken(propertyToken)
   ) {
-    return { name: `${objectToken.text}.${propertyToken.text}`, token: objectToken }
+    const name = `${objectToken.text}.${propertyToken.text}`
+    if (name === 'import.meta') {
+      const nestedDotToken = tokens[index + 3]
+      const nestedPropertyToken = tokens[index + 4]
+      if (
+        (nestedDotToken?.kind === SyntaxKind.DotToken || nestedDotToken?.kind === SyntaxKind.QuestionDotToken) &&
+        isIdentifierLikeToken(nestedPropertyToken)
+      ) {
+        return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken }
+      }
+
+      const nestedOpenBracketToken = tokens[index + 3]
+      const nestedElementToken = tokens[index + 4]
+      const nestedCloseBracketToken = tokens[index + 5]
+      if (
+        nestedOpenBracketToken?.kind === SyntaxKind.OpenBracketToken &&
+        nestedElementToken?.kind === SyntaxKind.StringLiteral &&
+        nestedCloseBracketToken?.kind === SyntaxKind.CloseBracketToken
+      ) {
+        return { name: `${name}.${nestedElementToken.value}`, token: objectToken }
+      }
+    }
+    return { name, token: objectToken }
   }
 
   const bracketIndex =

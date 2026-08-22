@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.0
 
 FROM node:lts-alpine AS deps
 ARG BUN_VERSION
