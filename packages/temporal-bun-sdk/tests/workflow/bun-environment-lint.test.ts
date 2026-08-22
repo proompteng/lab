@@ -707,6 +707,67 @@ test('rejects cached constructor captures that are invoked after module initiali
   )
 })
 
+test('rejects constructors captured through reflection before guard installation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    helperPath,
+    [
+      "const constructorKey = 'constructor'",
+      "const DirectCode = Reflect.get(Object.getPrototypeOf(() => {}), 'constructor')",
+      'const ComputedCode = Reflect.get(Object.getPrototypeOf(() => {}), constructorKey)',
+      "const DescriptorCode = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), 'constructor')?.value",
+      "export const direct = () => DirectCode('return Bun.env.FLAG')()",
+      "export const computed = () => ComputedCode('return Bun.env.FLAG')()",
+      "export const descriptor = () => DescriptorCode('return Bun.env.FLAG')()",
+    ].join('\n'),
+  )
+  await writeFile(workflowsPath, "export { direct, computed, descriptor } from './shared-helper'\n")
+
+  // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(3)
+  expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects constructor captures assigned after declaration or into class fields', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    helperPath,
+    [
+      'let AssignedCode = () => undefined',
+      'AssignedCode = (() => {}).constructor',
+      'class ConstructorHolder {',
+      '  Code = (() => {}).constructor',
+      "  run = () => this.Code('return Bun.env.FLAG')()",
+      '}',
+      "export const assigned = () => AssignedCode('return Bun.env.FLAG')()",
+      'export const field = () => new ConstructorHolder().run()',
+    ].join('\n'),
+  )
+  await writeFile(workflowsPath, "export { assigned, field } from './shared-helper'\n")
+
+  // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(2)
+  expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects destructured constructor captures that are invoked after module initialization', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const helperPath = join(dir, 'shared-helper.ts')

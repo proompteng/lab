@@ -156,20 +156,26 @@ const parenthesizedIdentifier = (
   return { token, endIndex: cursor - 1 }
 }
 
-const reflectivelyAccessedGlobalProperty = (
+type ReflectivePropertyAccess = {
+  readonly targetStartIndex: number
+  readonly targetEndIndex: number
+  readonly propertyStartIndex: number
+  readonly propertyEndIndex: number
+  readonly endIndex: number
+}
+
+const reflectivelyAccessedProperty = (
   tokens: readonly WorkflowSyntaxToken[],
   memberEndIndex: number,
-): { target: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
+): ReflectivePropertyAccess | undefined => {
   if (tokens[memberEndIndex + 1]?.kind !== SyntaxKind.OpenParenToken) return undefined
-  const target = parenthesizedIdentifier(tokens, memberEndIndex + 2)
-  if (!target) return undefined
-  if (tokens[target.endIndex + 1]?.kind !== SyntaxKind.CommaToken) return undefined
-
-  const propertyStartIndex = target.endIndex + 2
+  const targetStartIndex = memberEndIndex + 2
   let parenthesisDepth = 0
   let bracketDepth = 0
   let braceDepth = 0
-  for (let index = propertyStartIndex; index < tokens.length; index += 1) {
+  let targetEndIndex: number | undefined
+  let propertyStartIndex: number | undefined
+  for (let index = targetStartIndex; index < tokens.length; index += 1) {
     const kind = tokens[index]?.kind
     if (kind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
     if (kind === SyntaxKind.OpenBracketToken) bracketDepth += 1
@@ -178,16 +184,38 @@ const reflectivelyAccessedGlobalProperty = (
     if (kind === SyntaxKind.CloseBraceToken) braceDepth -= 1
     if (kind === SyntaxKind.CloseParenToken) {
       if (parenthesisDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-        return { target: target.token, propertyStartIndex, propertyEndIndex: index - 1 }
+        if (targetEndIndex == null || propertyStartIndex == null || index <= propertyStartIndex) return undefined
+        return { targetStartIndex, targetEndIndex, propertyStartIndex, propertyEndIndex: index - 1, endIndex: index }
       }
       parenthesisDepth -= 1
     }
     if (kind === SyntaxKind.CommaToken && parenthesisDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      return { target: target.token, propertyStartIndex, propertyEndIndex: index - 1 }
+      if (targetEndIndex == null) {
+        targetEndIndex = index - 1
+        propertyStartIndex = index + 1
+        continue
+      }
+      if (propertyStartIndex == null || index <= propertyStartIndex) return undefined
+      return { targetStartIndex, targetEndIndex, propertyStartIndex, propertyEndIndex: index - 1, endIndex: index }
     }
   }
 
   return undefined
+}
+
+const reflectivelyAccessedGlobalProperty = (
+  tokens: readonly WorkflowSyntaxToken[],
+  memberEndIndex: number,
+): { target: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
+  const access = reflectivelyAccessedProperty(tokens, memberEndIndex)
+  if (!access) return undefined
+  const target = parenthesizedIdentifier(tokens, access.targetStartIndex)
+  if (!target || target.endIndex !== access.targetEndIndex) return undefined
+  return {
+    target: target.token,
+    propertyStartIndex: access.propertyStartIndex,
+    propertyEndIndex: access.propertyEndIndex,
+  }
 }
 
 const reflectiveGlobalPropertyAccessors = new Set(['Reflect.get', 'Object.getOwnPropertyDescriptor'])
@@ -922,6 +950,31 @@ export const lintWorkflowSourceAst = (options: {
       if (isDeferred(cursor)) continue
       const token = tokens[cursor]
       const previous = tokens[cursor - 1]
+      if (isIdentifierLikeToken(token)) {
+        const member = memberExpressionName(tokens, cursor)
+        if (member && reflectiveGlobalPropertyAccessors.has(member.name)) {
+          const reflectiveAccess = reflectivelyAccessedProperty(tokens, member.endIndex)
+          if (reflectiveAccess && reflectiveAccess.endIndex <= range.endIndex) {
+            const property = resolveStaticPropertyKey(
+              tokens,
+              reflectiveAccess.propertyStartIndex,
+              reflectiveAccess.propertyEndIndex,
+              staticPropertyBindings,
+              symbolIsUnshadowed,
+            )
+            const propertyToken = tokens[reflectiveAccess.propertyStartIndex]
+            if (
+              propertyToken &&
+              (!property || (property.kind === 'string' && options.denyCapturedMemberProperties?.has(property.value)))
+            ) {
+              return {
+                property: property?.kind === 'string' ? property.value : '[...]',
+                position: propertyToken.start,
+              }
+            }
+          }
+        }
+      }
       if (
         isIdentifierLikeToken(token) &&
         (previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken) &&
@@ -1157,6 +1210,49 @@ export const lintWorkflowSourceAst = (options: {
     return { bindings, captures }
   }
 
+  const findEnclosingBlockStartIndex = (index: number): number | undefined => {
+    let depth = 0
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === SyntaxKind.CloseBraceToken) {
+        depth += 1
+        continue
+      }
+      if (kind !== SyntaxKind.OpenBraceToken) continue
+      if (depth === 0) return cursor
+      depth -= 1
+    }
+    return undefined
+  }
+
+  const isClassFieldAssignment = (bindingIndex: number): boolean => {
+    const classBodyStartIndex = findEnclosingBlockStartIndex(bindingIndex)
+    if (classBodyStartIndex == null) return false
+
+    let parenthesisDepth = 0
+    let bracketDepth = 0
+    let braceDepth = 0
+    for (let cursor = classBodyStartIndex - 1; cursor >= 0; cursor -= 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === SyntaxKind.CloseParenToken) parenthesisDepth += 1
+      if (kind === SyntaxKind.CloseBracketToken) bracketDepth += 1
+      if (kind === SyntaxKind.CloseBraceToken) braceDepth += 1
+      if (kind === SyntaxKind.OpenParenToken && parenthesisDepth > 0) parenthesisDepth -= 1
+      if (kind === SyntaxKind.OpenBracketToken && bracketDepth > 0) bracketDepth -= 1
+      if (kind === SyntaxKind.OpenBraceToken && braceDepth > 0) braceDepth -= 1
+      if (parenthesisDepth > 0 || bracketDepth > 0 || braceDepth > 0) continue
+      if (kind === SyntaxKind.ClassKeyword) return true
+      if (
+        kind === SyntaxKind.SemicolonToken ||
+        kind === SyntaxKind.OpenBraceToken ||
+        kind === SyntaxKind.CloseBraceToken
+      ) {
+        return false
+      }
+    }
+    return false
+  }
+
   if (options.denyCapturedMemberProperties) {
     const processedBindingPatterns = new Set<number>()
     const reportedCaptures = new Set<string>()
@@ -1164,11 +1260,15 @@ export const lintWorkflowSourceAst = (options: {
       const declaration = tokens[index]
       const standaloneBindingPattern =
         declaration?.kind === SyntaxKind.OpenBraceToken || declaration?.kind === SyntaxKind.OpenBracketToken
+      const assignedIdentifier =
+        isIdentifierLikeToken(declaration) && tokens[index + 1]?.kind === SyntaxKind.EqualsToken
       const bindingIndex = isVariableDeclarationKeyword(declaration)
         ? index + 1
         : standaloneBindingPattern
           ? index
-          : undefined
+          : assignedIdentifier
+            ? index
+            : undefined
       if (bindingIndex == null) continue
 
       const binding = tokens[bindingIndex]
@@ -1205,7 +1305,7 @@ export const lintWorkflowSourceAst = (options: {
 
       const scopeEndIndex = findEnclosingScopeEndIndex(index)
       for (const capturedBinding of capturedBindings) {
-        let unsafeReference = false
+        let unsafeReference = isClassFieldAssignment(bindingIndex)
         for (let cursor = initializerEndIndex + 1; cursor < scopeEndIndex; cursor += 1) {
           const reference = tokens[cursor]
           if (!isIdentifierLikeToken(reference) || reference.text !== capturedBinding.binding.text) continue
@@ -1232,7 +1332,7 @@ export const lintWorkflowSourceAst = (options: {
 
         report(capturedBinding.position, {
           rule: 'capture-member-expression',
-          message: `Capturing disallowed member property in workflow module: const ${capturedBinding.binding.text} = object.${capturedBinding.property}`,
+          message: `Capturing disallowed member property in workflow module: ${capturedBinding.binding.text} = object.${capturedBinding.property}`,
           details: { memberProperty: capturedBinding.property, binding: capturedBinding.binding.text },
         })
       }
