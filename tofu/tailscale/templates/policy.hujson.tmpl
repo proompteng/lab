@@ -10,7 +10,8 @@
     "tag:k8s-operator": ["autogroup:admin"],
     "tag:k8s": ["tag:k8s-operator"],
     "tag:k8s-subnet-router": ["tag:k8s-operator"],
-    "tag:kube-node": ["tag:k8s-operator"]
+    "tag:kube-node": ["tag:k8s-operator"],
+    "tag:omni-idp": ["autogroup:admin"]
   },
 
   // Define access control lists for users, groups, autogroups, tags,
@@ -26,7 +27,8 @@
         "tag:k8s-operator:*",
         "tag:k8s:*",
         "tag:k8s-subnet-router:*",
-        "tag:kube-node:*"
+        "tag:kube-node:*",
+        "tag:omni-idp:*"
       ]
     },
     // Direct access to cluster Pod and Service networks is reserved for the
@@ -45,6 +47,29 @@
         "10.244.0.0/16:*",
         "10.96.0.0/12:*"
       ]
+    }
+  ],
+
+  // Allow tailnet members to authenticate through the dedicated tsidp node.
+  // The capability is limited to tag:omni-idp rather than every tailnet node.
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:omni-idp"],
+      "app": {
+        "tailscale.com/cap/tsidp": [
+          {
+            "users": ["*"],
+            "resources": ["*"],
+            "allow_admin_ui": true,
+            "allow_dcr": true,
+            "extraClaims": {
+              "email_verified": true
+            },
+            "includeInUserInfo": true
+          }
+        ]
+      }
     }
   ],
 
