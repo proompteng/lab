@@ -85,6 +85,50 @@ test('rejects reflective access to the Bun global', async () => {
   )
 })
 
+test('rejects computed Bun global access and fails closed for dynamic keys', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const bunKey = 'Bun'",
+      "let reassignedKey = 'crypto'",
+      "reassignedKey = 'Bun'",
+      "const Symbol = { for: () => 'Bun' }",
+      "const shadowedSymbolKey = Symbol.for('@fixture/not-a-symbol')",
+      'export const staticKey = () => globalThis[bunKey].env.FLAG',
+      'export const reassigned = () => globalThis[reassignedKey].env.FLAG',
+      'export const shadowedSymbol = () => globalThis[shadowedSymbolKey].env.FLAG',
+      'export const dynamic = (key: string) => globalThis[key]',
+      'export const reflective = (key: string) => Reflect.get(globalThis, key)',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'globalThis[...]')).toHaveLength(4)
+  expect(violations.some((violation) => violation.details?.memberExpression === 'Reflect.get')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('accepts computed global keys proven not to resolve to Bun', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const storeKey = 'effect/FiberCurrent'",
+      "const symbolKey = Symbol.for('@fixture/workflow-state')",
+      'export const workflow = () => [globalThis[storeKey], globalThis[symbolKey]]',
+      'export const reflective = () => Reflect.get(globalThis, storeKey)',
+    ].join('\n'),
+  )
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
+})
+
 test('ignores erased type-only imports when proving workflow source safety', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

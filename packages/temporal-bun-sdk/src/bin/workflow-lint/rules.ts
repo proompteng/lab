@@ -132,17 +132,251 @@ const parenthesizedIdentifier = (
 const reflectivelyAccessedGlobalProperty = (
   tokens: readonly WorkflowSyntaxToken[],
   memberEndIndex: number,
-): { target: WorkflowSyntaxToken; property: WorkflowSyntaxToken } | undefined => {
+): { target: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
   if (tokens[memberEndIndex + 1]?.kind !== SyntaxKind.OpenParenToken) return undefined
   const target = parenthesizedIdentifier(tokens, memberEndIndex + 2)
   if (!target || target.token.text !== 'globalThis') return undefined
   if (tokens[target.endIndex + 1]?.kind !== SyntaxKind.CommaToken) return undefined
 
-  const property = tokens[target.endIndex + 2]
-  if (property?.kind !== SyntaxKind.StringLiteral && property?.kind !== SyntaxKind.NoSubstitutionTemplateLiteral)
-    return undefined
+  const propertyStartIndex = target.endIndex + 2
+  let parenthesisDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  for (let index = propertyStartIndex; index < tokens.length; index += 1) {
+    const kind = tokens[index]?.kind
+    if (kind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
+    if (kind === SyntaxKind.OpenBracketToken) bracketDepth += 1
+    if (kind === SyntaxKind.OpenBraceToken) braceDepth += 1
+    if (kind === SyntaxKind.CloseBracketToken) bracketDepth -= 1
+    if (kind === SyntaxKind.CloseBraceToken) braceDepth -= 1
+    if (kind === SyntaxKind.CloseParenToken) {
+      if (parenthesisDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+        return { target: target.token, propertyStartIndex, propertyEndIndex: index - 1 }
+      }
+      parenthesisDepth -= 1
+    }
+    if (kind === SyntaxKind.CommaToken && parenthesisDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      return { target: target.token, propertyStartIndex, propertyEndIndex: index - 1 }
+    }
+  }
 
-  return { target: target.token, property }
+  return undefined
+}
+
+type StaticPropertyKey =
+  | { readonly kind: 'string'; readonly value: string }
+  | { readonly kind: 'symbol' }
+  | { readonly kind: 'primitive' }
+
+type StaticPropertyBinding = {
+  declarations: number
+  mutations: number
+  initializer?: StaticPropertyKey
+}
+
+const assignmentOperators = new Set([
+  '=',
+  '+=',
+  '-=',
+  '*=',
+  '**=',
+  '/=',
+  '%=',
+  '<<=',
+  '>>=',
+  '>>>=',
+  '&=',
+  '|=',
+  '^=',
+  '&&=',
+  '||=',
+  '??=',
+])
+
+const isVariableDeclarationKeyword = (token: WorkflowSyntaxToken | undefined): boolean =>
+  token?.kind === SyntaxKind.ConstKeyword ||
+  token?.kind === SyntaxKind.LetKeyword ||
+  token?.kind === SyntaxKind.VarKeyword
+
+const isAssignmentOperator = (token: WorkflowSyntaxToken | undefined): boolean =>
+  token != null && assignmentOperators.has(token.text)
+
+const stripParentheses = (
+  tokens: readonly WorkflowSyntaxToken[],
+  startIndex: number,
+  endIndex: number,
+): { startIndex: number; endIndex: number } => {
+  let start = startIndex
+  let end = endIndex
+  while (tokens[start]?.kind === SyntaxKind.OpenParenToken && tokens[end]?.kind === SyntaxKind.CloseParenToken) {
+    const matchingClose = findMatchingCloseParenIndex(tokens, start)
+    if (matchingClose !== end) break
+    start += 1
+    end -= 1
+  }
+  return { startIndex: start, endIndex: end }
+}
+
+const staticPropertyKeyAt = (
+  tokens: readonly WorkflowSyntaxToken[],
+  startIndex: number,
+  endIndex: number,
+  options: { readonly symbolIsUnshadowed: boolean },
+): StaticPropertyKey | undefined => {
+  const range = stripParentheses(tokens, startIndex, endIndex)
+  const token = tokens[range.startIndex]
+  if (!token || range.endIndex < range.startIndex) return undefined
+
+  if (
+    range.startIndex === range.endIndex &&
+    (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral)
+  ) {
+    return { kind: 'string', value: token.value }
+  }
+  if (
+    range.startIndex === range.endIndex &&
+    (token.kind === SyntaxKind.NumericLiteral ||
+      token.kind === SyntaxKind.BigIntLiteral ||
+      token.kind === SyntaxKind.TrueKeyword ||
+      token.kind === SyntaxKind.FalseKeyword ||
+      token.kind === SyntaxKind.NullKeyword)
+  ) {
+    return { kind: 'primitive' }
+  }
+  if (!options.symbolIsUnshadowed || token.text !== 'Symbol') return undefined
+
+  const next = tokens[range.startIndex + 1]
+  if (
+    next?.kind === SyntaxKind.OpenParenToken &&
+    findMatchingCloseParenIndex(tokens, range.startIndex + 1) === range.endIndex
+  ) {
+    return { kind: 'symbol' }
+  }
+  if (
+    next?.kind === SyntaxKind.DotToken &&
+    tokens[range.startIndex + 2]?.text === 'for' &&
+    tokens[range.startIndex + 3]?.kind === SyntaxKind.OpenParenToken &&
+    findMatchingCloseParenIndex(tokens, range.startIndex + 3) === range.endIndex
+  ) {
+    return { kind: 'symbol' }
+  }
+
+  return undefined
+}
+
+const collectStaticPropertyBindings = (
+  tokens: readonly WorkflowSyntaxToken[],
+): ReadonlyMap<string, StaticPropertyKey> => {
+  const bindings = new Map<string, StaticPropertyBinding>()
+  const symbolIsUnshadowed = !tokens.some((token, index) => {
+    if (token.text !== 'Symbol') return false
+    const previous = tokens[index - 1]
+    const next = tokens[index + 1]
+    return (
+      isVariableDeclarationKeyword(previous) ||
+      previous?.kind === SyntaxKind.FunctionKeyword ||
+      previous?.kind === SyntaxKind.ClassKeyword ||
+      (isAssignmentOperator(next) &&
+        previous?.kind !== SyntaxKind.DotToken &&
+        previous?.kind !== SyntaxKind.QuestionDotToken)
+    )
+  })
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const declarationKeyword = tokens[index]
+    const identifier = tokens[index + 1]
+    if (!isVariableDeclarationKeyword(declarationKeyword) || !isIdentifierLikeToken(identifier)) continue
+
+    const existing = bindings.get(identifier.text) ?? { declarations: 0, mutations: 0 }
+    existing.declarations += 1
+    if (tokens[index + 2]?.kind === SyntaxKind.EqualsToken) {
+      const initializerStartIndex = index + 3
+      let initializerEndIndex = tokens.length - 1
+      let parenthesisDepth = 0
+      for (let cursor = initializerStartIndex; cursor < tokens.length; cursor += 1) {
+        const kind = tokens[cursor]?.kind
+        if (kind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
+        if (kind === SyntaxKind.CloseParenToken) parenthesisDepth -= 1
+        if (parenthesisDepth === 0 && (kind === SyntaxKind.SemicolonToken || kind === SyntaxKind.CommaToken)) {
+          initializerEndIndex = cursor - 1
+          break
+        }
+        if (parenthesisDepth === 0 && tokens[cursor + 1]?.hasPrecedingLineBreak) {
+          initializerEndIndex = cursor
+          break
+        }
+      }
+      existing.initializer = staticPropertyKeyAt(tokens, initializerStartIndex, initializerEndIndex, {
+        symbolIsUnshadowed,
+      })
+    }
+    bindings.set(identifier.text, existing)
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (!isIdentifierLikeToken(token)) continue
+    const binding = bindings.get(token.text)
+    if (!binding) continue
+
+    const previous = tokens[index - 1]
+    const next = tokens[index + 1]
+    const declaration = isVariableDeclarationKeyword(previous)
+    const memberProperty = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
+    if (!declaration && !memberProperty && isAssignmentOperator(next)) binding.mutations += 1
+    if (previous?.kind === SyntaxKind.PlusPlusToken || previous?.kind === SyntaxKind.MinusMinusToken)
+      binding.mutations += 1
+    if (next?.kind === SyntaxKind.PlusPlusToken || next?.kind === SyntaxKind.MinusMinusToken) binding.mutations += 1
+  }
+
+  return new Map(
+    [...bindings.entries()].flatMap(([name, binding]) =>
+      binding.declarations === 1 && binding.mutations === 0 && binding.initializer
+        ? [[name, binding.initializer] as const]
+        : [],
+    ),
+  )
+}
+
+const resolveStaticPropertyKey = (
+  tokens: readonly WorkflowSyntaxToken[],
+  startIndex: number,
+  endIndex: number,
+  bindings: ReadonlyMap<string, StaticPropertyKey>,
+): StaticPropertyKey | undefined => {
+  const range = stripParentheses(tokens, startIndex, endIndex)
+  const token = tokens[range.startIndex]
+  if (range.startIndex === range.endIndex && isIdentifierLikeToken(token)) return bindings.get(token.text)
+  return staticPropertyKeyAt(tokens, range.startIndex, range.endIndex, { symbolIsUnshadowed: false })
+}
+
+const computedMemberProperty = (
+  tokens: readonly WorkflowSyntaxToken[],
+  objectIndex: number,
+): { object: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
+  const object = tokens[objectIndex]
+  if (!isIdentifierLikeToken(object)) return undefined
+
+  const bracketIndex =
+    tokens[objectIndex + 1]?.kind === SyntaxKind.QuestionDotToken &&
+    tokens[objectIndex + 2]?.kind === SyntaxKind.OpenBracketToken
+      ? objectIndex + 2
+      : objectIndex + 1
+  if (tokens[bracketIndex]?.kind !== SyntaxKind.OpenBracketToken) return undefined
+
+  let depth = 0
+  for (let index = bracketIndex; index < tokens.length; index += 1) {
+    const kind = tokens[index]?.kind
+    if (kind === SyntaxKind.OpenBracketToken) depth += 1
+    if (kind === SyntaxKind.CloseBracketToken) {
+      depth -= 1
+      if (depth === 0) {
+        return { object, propertyStartIndex: bracketIndex + 1, propertyEndIndex: index - 1 }
+      }
+    }
+  }
+
+  return undefined
 }
 
 const previousToken = (tokens: readonly WorkflowSyntaxToken[], index: number): WorkflowSyntaxToken | undefined =>
@@ -363,11 +597,13 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
   readonly denyReflectiveGlobalProperties?: ReadonlySet<string>
+  readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
   const tokens = scanWorkflowSyntaxTokens(sourceText)
   const positionOf = createWorkflowPositionResolver(sourceText)
+  const staticPropertyBindings = collectStaticPropertyBindings(tokens)
 
   const report = (position: number, violation: Omit<WorkflowLintViolation, 'filePath' | 'line' | 'column'>) => {
     const { line, column } = positionOf(position)
@@ -454,16 +690,54 @@ export const lintWorkflowSourceAst = (options: {
     }
 
     const member = memberExpressionName(tokens, index)
+    const computedProperty = computedMemberProperty(tokens, index)
+    const deniedComputedProperties = computedProperty
+      ? options.denyComputedGlobalProperties?.get(computedProperty.object.text)
+      : undefined
+    if (computedProperty && deniedComputedProperties) {
+      const property = resolveStaticPropertyKey(
+        tokens,
+        computedProperty.propertyStartIndex,
+        computedProperty.propertyEndIndex,
+        staticPropertyBindings,
+      )
+      if (!property || (property.kind === 'string' && deniedComputedProperties.has(property.value))) {
+        report(computedProperty.object.start, {
+          rule: 'deny-member-expression',
+          message: property
+            ? `Disallowed computed global access in workflow module: ${computedProperty.object.text}['${property.value}']`
+            : `Unable to prove computed global property safe in workflow module: ${computedProperty.object.text}[...]`,
+          details: {
+            memberExpression: `${computedProperty.object.text}[...]`,
+            ...(property?.kind === 'string' ? { global: property.value } : {}),
+          },
+        })
+      }
+    }
+
     if (!member) continue
 
     if (member.name === 'Reflect.get') {
       const reflectiveAccess = reflectivelyAccessedGlobalProperty(tokens, member.endIndex)
-      if (reflectiveAccess && options.denyReflectiveGlobalProperties?.has(reflectiveAccess.property.value)) {
-        report(member.token.start, {
-          rule: 'deny-member-expression',
-          message: `Disallowed reflective global access in workflow module: Reflect.get(globalThis, '${reflectiveAccess.property.value}')`,
-          details: { memberExpression: member.name, global: reflectiveAccess.property.value },
-        })
+      if (reflectiveAccess && options.denyReflectiveGlobalProperties) {
+        const property = resolveStaticPropertyKey(
+          tokens,
+          reflectiveAccess.propertyStartIndex,
+          reflectiveAccess.propertyEndIndex,
+          staticPropertyBindings,
+        )
+        if (!property || (property.kind === 'string' && options.denyReflectiveGlobalProperties.has(property.value))) {
+          report(member.token.start, {
+            rule: 'deny-member-expression',
+            message: property
+              ? `Disallowed reflective global access in workflow module: Reflect.get(globalThis, '${property.value}')`
+              : 'Unable to prove reflective global property safe in workflow module: Reflect.get(globalThis, ...)',
+            details: {
+              memberExpression: member.name,
+              ...(property?.kind === 'string' ? { global: property.value } : {}),
+            },
+          })
+        }
       }
     }
 
