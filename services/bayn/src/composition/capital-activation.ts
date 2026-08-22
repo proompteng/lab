@@ -1109,6 +1109,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
         .ensureAuthorityGeneration({
           generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
+          ...(currentReconciliationRecovery && currentGeneration !== undefined
+            ? { preserveCyclePlanHash: currentGeneration.proofPlanHash }
+            : {}),
         })
         .pipe(
           Effect.map((rearmed) => ({ _tag: 'Rearmed' as const, rearmed })),

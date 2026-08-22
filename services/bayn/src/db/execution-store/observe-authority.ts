@@ -217,6 +217,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
 
   const terminalizeUnusedPreSubmissionResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
+    request: ObserveGenerationRequest,
     activatedAt: Date,
   ) =>
     sql`
@@ -279,6 +280,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           WHEN 'bayn.paper-authority-generation.v3' THEN previous_generation.proof_plan_hash
         END
         AND cycle.account_id = previous_generation.account_id
+        AND cycle.qualification_run_id IS DISTINCT FROM ${request.preserveCyclePlanHash ?? null}
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
         AND cycle.updated_at <= ${activatedAt}
@@ -292,6 +294,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
 
   const rotateObserveGeneration = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
+    request: ObserveGenerationRequest,
   ) =>
     Effect.gen(function* () {
       const [currentHistory] = yield* authority.readGeneration(decision.current.generationHash)
@@ -313,7 +316,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ${activatedAt}
         )
       `
-      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, activatedAt)
+      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, request, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT
@@ -469,7 +472,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         case 'ReplayObserveGeneration':
           return yield* replayObserveGeneration(decision.current)
         case 'RotateObserveGeneration':
-          return yield* rotateObserveGeneration(decision)
+          return yield* rotateObserveGeneration(decision, request)
       }
     })
 

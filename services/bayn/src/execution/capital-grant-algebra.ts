@@ -146,6 +146,7 @@ type QualificationEvidenceVerificationCause = ContractConstructionFailure | Cano
 export interface ObserveGenerationRequest {
   readonly generationHash: string
   readonly maximum: Authority.Observe
+  readonly preserveCyclePlanHash?: string
 }
 
 export type ObserveGenerationDecision =
@@ -322,9 +323,14 @@ const fail = <A>(failure: CapitalGrantAlgebraFailure): Result.Result<A, CapitalG
 export const validateObserveGenerationRequest = (input: {
   readonly generationHash: string
   readonly maximum: Authority
+  readonly preserveCyclePlanHash?: string
 }): Result.Result<ObserveGenerationRequest, CapitalGrantAlgebraFailure> =>
   input.maximum === Authority.Observe
-    ? Result.succeed({ generationHash: input.generationHash, maximum: Authority.Observe })
+    ? Result.succeed({
+        generationHash: input.generationHash,
+        maximum: Authority.Observe,
+        ...(input.preserveCyclePlanHash === undefined ? {} : { preserveCyclePlanHash: input.preserveCyclePlanHash }),
+      })
     : fail({ _tag: 'ObserveMaximumRequired', maximum: input.maximum })
 
 export const nextAuthorityVersion = (current: {
