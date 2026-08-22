@@ -61,11 +61,26 @@ const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
 
 export type RestrictedGenerationRecoveryAdvance<A> =
   | { readonly _tag: 'Waiting'; readonly advance: A }
+  | { readonly _tag: 'Rebind'; readonly advance: A }
   | {
       readonly _tag: 'RolledOver'
       readonly advance: A
       readonly receipt: Extract<TerminalGenerationRolloverReceipt, { readonly _tag: 'RolledOver' }>
     }
+
+/**
+ * A concurrent recovery owner may advance durable authority after this owner observes no terminal generation. Any
+ * generation change makes the cached restricted driver stale; the normal preparation path owns validation of the new
+ * generation before it is published.
+ */
+export const recognizeRestrictedGenerationRebind = <A>(
+  recovery: RestrictedGenerationRecoveryAdvance<A>,
+  expectedGenerationHash: string,
+  currentGenerationHash: string,
+): RestrictedGenerationRecoveryAdvance<A> =>
+  recovery._tag === 'Waiting' && currentGenerationHash !== expectedGenerationHash
+    ? { _tag: 'Rebind', advance: recovery.advance }
+    : recovery
 
 /** Performs exactly one recovery attempt so an external durable owner can schedule every retry. */
 export const advanceRestrictedGenerationRecovery = <A, E, R>(

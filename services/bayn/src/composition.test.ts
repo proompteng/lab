@@ -31,6 +31,7 @@ import {
 import {
   advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
+  recognizeRestrictedGenerationRebind,
   recoverTerminalGenerationToObserve,
 } from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
@@ -2235,6 +2236,21 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(waiting).toEqual({ _tag: 'Waiting', advance: 'advanced-before-terminal' })
+  })
+
+  test('rebinds a stale restricted driver after another recovery owner advances authority', async () => {
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.succeed('advanced-before-concurrent-rollover' as const),
+        Effect.succeed({ _tag: 'NotRequired' as const }),
+      ),
+    )
+
+    expect(recognizeRestrictedGenerationRebind(waiting, hash('2'), hash('2'))).toBe(waiting)
+    expect(recognizeRestrictedGenerationRebind(waiting, hash('2'), hash('3'))).toEqual({
+      _tag: 'Rebind',
+      advance: 'advanced-before-concurrent-rollover',
+    })
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {
