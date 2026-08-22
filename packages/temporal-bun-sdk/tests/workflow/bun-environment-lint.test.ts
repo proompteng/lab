@@ -63,6 +63,29 @@ test('rejects import.meta.env and Bun access through globalThis', async () => {
   )
 })
 
+test('rejects aliases of globalThis without flagging safe property captures', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      'const root = globalThis',
+      'const parenthesizedRoot = ((globalThis))',
+      "const safeProperty = globalThis['crypto']",
+      'export const direct = () => root.Bun.env.FLAG',
+      'export const parenthesized = () => parenthesizedRoot.Bun.env.FLAG',
+      'export const safe = () => safeProperty',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.global === 'globalThis')).toHaveLength(2)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects reflective access to the Bun global', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

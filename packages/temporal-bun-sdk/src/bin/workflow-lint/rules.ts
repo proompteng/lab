@@ -427,6 +427,31 @@ const isRuntimeVariableInitializerCapture = (
   return false
 }
 
+const isDirectRuntimeVariableInitializerCapture = (
+  tokens: readonly WorkflowSyntaxToken[],
+  index: number,
+  previous: WorkflowSyntaxToken | undefined,
+): boolean => {
+  if (!isRuntimeVariableInitializerCapture(tokens, index, previous)) return false
+
+  let expressionStartIndex = index
+  let expressionEndIndex = index
+  while (
+    tokens[expressionStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+    tokens[expressionEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+  ) {
+    expressionStartIndex -= 1
+    expressionEndIndex += 1
+  }
+
+  const next = tokens[expressionEndIndex + 1]
+  return (
+    next?.kind !== SyntaxKind.DotToken &&
+    next?.kind !== SyntaxKind.QuestionDotToken &&
+    next?.kind !== SyntaxKind.OpenBracketToken
+  )
+}
+
 const findMatchingCloseParenIndex = (
   tokens: readonly WorkflowSyntaxToken[],
   openParenIndex: number,
@@ -598,6 +623,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyImports: ReadonlySet<string>
   readonly denyReflectiveGlobalProperties?: ReadonlySet<string>
   readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
+  readonly denyGlobalCaptures?: ReadonlySet<string>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
@@ -640,6 +666,14 @@ export const lintWorkflowSourceAst = (options: {
     const next = nextToken(tokens, index)
     const name = token.text
     const runtimeVariableCapture = isRuntimeVariableInitializerCapture(tokens, index, previous)
+
+    if (options.denyGlobalCaptures?.has(name) && isDirectRuntimeVariableInitializerCapture(tokens, index, previous)) {
+      report(token.start, {
+        rule: 'capture-global',
+        message: `Capturing disallowed global in workflow module: const x = ${name}`,
+        details: { global: name },
+      })
+    }
 
     if (
       name === 'Bun' &&
