@@ -3063,7 +3063,11 @@ describePostgres('paper accounting persistence', () => {
             generationHash: configuredObserveGenerationHash,
             maximum: Authority.Observe,
           })
-          const paper = yield* activateResearch(researchProofBinding(activation), configuredObserveGenerationHash)
+          const paper = yield* activateResearch(
+            researchProofBinding(activation),
+            configuredObserveGenerationHash,
+            futureResearchActivationCutoff,
+          )
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
