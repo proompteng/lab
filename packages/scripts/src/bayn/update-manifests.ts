@@ -47,7 +47,7 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly candidateRuntime?: BaynCandidateRuntime
   readonly acceptedQualificationRunId?: string
-  /** Authored source whose ancestry was proved by the release workflow. Strategy identity is checked separately. */
+  /** Authored source whose ancestry and immutable image provenance were proved by the release workflow. */
   readonly researchLineageSourceSha?: string
   readonly deployedDeploymentPath?: string
   readonly kustomizationPath?: string
@@ -627,7 +627,11 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
       ? !researchRequestIdentityMatches || !candidateStrategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : (!researchRequestIdentityMatches && !(researchRequestAuthoredForCandidate && researchRequestHashChanged)) ||
+      : (!researchRequestIdentityMatches &&
+          !(
+            researchRequestHashChanged &&
+            (researchRequestAuthoredForCandidate || options.researchLineageSourceSha !== undefined)
+          )) ||
         !candidateStrategyIdentityMatches ||
         !candidateRuntimeMatchesManifest ||
         ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&
