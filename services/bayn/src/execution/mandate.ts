@@ -253,13 +253,15 @@ export const decideExecutionMandateAuthority = (
   ) {
     return Result.succeed({ _tag: 'Rearm' })
   }
-  if (
+  const isRestrictedPaperAuthority =
     facts.maximum === 'PAPER' &&
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
-    facts.generationHash !== facts.sourceGenerationHash &&
-    (isExecutionMandateFailureRestriction(facts.reason) || facts.reason === reconciliationIncompleteRestrictionReason)
-  ) {
+    facts.generationHash !== facts.sourceGenerationHash
+  if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
+  if (isRestrictedPaperAuthority && isExecutionMandateFailureRestriction(facts.reason)) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })

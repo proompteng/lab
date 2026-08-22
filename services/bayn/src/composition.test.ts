@@ -1764,10 +1764,6 @@ describe('Bayn capital startup recovery boundary', () => {
   })
 
   test('reconciles a restricted capital generation before rearming and activates from its OBSERVE successor', async () => {
-    const previousExecutionGenerationHash = continuationGeneration.generationHash
-    const successorGenerationHash = Result.getOrThrow(
-      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
-    )
     const riskPolicy = await Effect.runPromise(
       loadObserveRiskPolicy(continuationAccountId, continuationApplicationPlan.strategy.definition.parameters.universe),
     )
@@ -1780,6 +1776,32 @@ describe('Bayn capital startup recovery boundary', () => {
         grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(plan)) },
         ...planFields,
       }),
+    )
+    const restrictedGeneration = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash: continuationGeneration.generationHash,
+        grant: request.grant,
+        activationSourceRevision: continuationBuild.sourceRevision,
+        activationImageRepository: continuationBuild.imageRepository,
+        activationImageDigest: continuationBuild.imageDigest,
+        strategyName: request.strategy.name,
+        strategyBehaviorHash: request.strategy.behaviorHash,
+        strategyParameterHash: request.strategy.parameterHash,
+        strategyParameterSchemaVersion: request.strategy.parameterSchemaVersion,
+        strategyProtocolHash: request.strategy.protocolHash,
+        accountId: request.broker.accountId,
+        brokerIdentityHash: request.broker.identityHash,
+        riskPolicyHash: request.riskPolicyHash,
+        proofPlanHash: request.grant.planHash,
+        reconciliationId: hash('13'),
+        reconciliationContentHash: hash('24'),
+      }),
+    )
+    const previousExecutionGenerationHash = restrictedGeneration.generationHash
+    const successorGenerationHash = Result.getOrThrow(
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
     )
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
@@ -1842,8 +1864,8 @@ describe('Bayn capital startup recovery boundary', () => {
       readAuthorityState: Effect.sync(() => authority),
       readResearchAuthorityGeneration: (generationHash) =>
         Effect.succeed(
-          generationHash === continuationGeneration.generationHash
-            ? continuationGeneration
+          generationHash === restrictedGeneration.generationHash
+            ? restrictedGeneration
             : generationHash === generation.generationHash
               ? generation
               : undefined,

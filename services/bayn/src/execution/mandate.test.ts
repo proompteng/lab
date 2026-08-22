@@ -262,6 +262,17 @@ describe('execution mandate decisions', () => {
         effective: 'OBSERVE',
         kill: 'ACTIVE',
         currentGenerationMatchesRequest: true,
+        reason: reconciliationIncompleteRestrictionReason,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
         reason: `bound PAPER cycle ${'c'.repeat(64)} restricted effective authority: intent ${'d'.repeat(64)} submit settled denied`,
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
