@@ -1,6 +1,13 @@
-import { relative, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, extname, isAbsolute, relative, resolve } from 'node:path'
 
 import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
+import {
+  collectWorkflowMacroImports,
+  collectWorkflowModuleSpecifiers,
+  createWorkflowPositionResolver,
+  scanWorkflowSyntaxTokens,
+} from '../bin/workflow-lint/syntax-scan'
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentGlobalObjects = ['globalThis', 'global', 'self'] as const
@@ -44,6 +51,110 @@ const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function', 
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyImports = new Set(['node:vm', 'vm', 'node:module', 'module', 'node:process', 'process'])
+const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
+const couldContainMacroImport = (sourceText: string): boolean =>
+  /\b(?:with|assert)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\{/.test(sourceText)
+const workflowSourceLoader = (filePath: string): 'ts' | 'tsx' | 'js' | 'jsx' => {
+  const extension = extname(filePath)
+  if (extension === '.tsx') return 'tsx'
+  if (extension === '.jsx') return 'jsx'
+  if (extension === '.ts' || extension === '.mts' || extension === '.cts') return 'ts'
+  return 'js'
+}
+
+const lintWorkflowMacroImports = async (entry: string): Promise<readonly WorkflowLintViolation[]> => {
+  const queue = [entry]
+  const scheduled = new Set(queue)
+  const violations: WorkflowLintViolation[] = []
+
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+    const filePath = queue[queueIndex]
+    if (!filePath) continue
+
+    let sourceText: string
+    try {
+      sourceText = await readFile(filePath, 'utf8')
+    } catch (error) {
+      violations.push({
+        filePath,
+        rule: 'unresolved-import',
+        message: `Unable to inspect workflow source before bundling: ${error instanceof Error ? error.message : String(error)}`,
+        line: 1,
+        column: 1,
+      })
+      continue
+    }
+
+    let moduleSpecifiers: readonly string[]
+    if (couldContainMacroImport(sourceText)) {
+      let tokens: ReturnType<typeof scanWorkflowSyntaxTokens>
+      try {
+        tokens = scanWorkflowSyntaxTokens(sourceText)
+      } catch (error) {
+        violations.push({
+          filePath,
+          rule: 'unresolved-import',
+          message: `Unable to scan workflow source for Bun macro imports: ${error instanceof Error ? error.message : String(error)}`,
+          line: 1,
+          column: 1,
+        })
+        continue
+      }
+      const positionOf = createWorkflowPositionResolver(sourceText)
+      for (const macroImport of collectWorkflowMacroImports(tokens)) {
+        const { line, column } = positionOf(macroImport.start)
+        violations.push({
+          filePath,
+          rule: 'deny-import',
+          message: `Bun macro imports are not allowed in workflow modules: ${macroImport.specifier}`,
+          line,
+          column,
+          details: { specifier: macroImport.specifier, importAttribute: 'macro' },
+        })
+      }
+      moduleSpecifiers = collectWorkflowModuleSpecifiers(tokens)
+        .filter((moduleSpecifier) => !moduleSpecifier.typeOnly)
+        .map((moduleSpecifier) => moduleSpecifier.specifier)
+    } else {
+      try {
+        moduleSpecifiers = new Bun.Transpiler({ loader: workflowSourceLoader(filePath) })
+          .scanImports(sourceText)
+          .filter((moduleImport) => moduleImport.kind === 'import-statement')
+          .map((moduleImport) => moduleImport.path)
+      } catch (error) {
+        violations.push({
+          filePath,
+          rule: 'unresolved-import',
+          message: `Unable to scan workflow source imports: ${error instanceof Error ? error.message : String(error)}`,
+          line: 1,
+          column: 1,
+        })
+        continue
+      }
+    }
+
+    for (const moduleSpecifier of moduleSpecifiers) {
+      let resolvedPath: string
+      try {
+        resolvedPath = Bun.resolveSync(moduleSpecifier, dirname(filePath))
+      } catch {
+        // Bun.build below owns unresolved-import diagnostics. This pass only prevents macro execution.
+        continue
+      }
+      if (
+        !isAbsolute(resolvedPath) ||
+        !inspectableWorkflowSourceExtensions.has(extname(resolvedPath)) ||
+        scheduled.has(resolvedPath)
+      ) {
+        continue
+      }
+      scheduled.add(resolvedPath)
+      queue.push(resolvedPath)
+    }
+  }
+
+  return violations
+}
 
 const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
   const details = diagnostic as {
@@ -81,6 +192,9 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
 }): Promise<readonly WorkflowLintViolation[]> => {
   const cwd = options.cwd ?? process.cwd()
   const entry = resolve(cwd, options.workflowsPath)
+  const macroViolations = await lintWorkflowMacroImports(entry)
+  if (macroViolations.length > 0) return macroViolations
+
   let build: Awaited<ReturnType<typeof Bun.build>>
   try {
     build = await Bun.build({

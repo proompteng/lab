@@ -288,6 +288,50 @@ test('rejects runtime module loaders that can recover VM evaluation', async () =
   )
 })
 
+test('rejects Bun macro imports across the source graph before bundling', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const packageDir = join(dir, 'node_modules', '@fixture', 'macro-helper')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await mkdir(packageDir, { recursive: true })
+  await writeFile(join(dir, 'local-macro.ts'), 'export const readLocalFlag = () => Bun.env.LOCAL_MACRO_FLAG\n')
+  await writeFile(
+    join(dir, 'local-helper.ts'),
+    [
+      "import { readLocalFlag } from './local-macro' with { type: 'macro' }",
+      'export const localFlag = readLocalFlag()',
+    ].join('\n'),
+  )
+  await writeFile(
+    join(packageDir, 'package.json'),
+    JSON.stringify({ name: '@fixture/macro-helper', type: 'module', exports: './index.ts' }),
+  )
+  await writeFile(join(packageDir, 'macro.ts'), 'export const readPackageFlag = () => Bun.env.PACKAGE_MACRO_FLAG\n')
+  await writeFile(
+    join(packageDir, 'index.ts'),
+    [
+      "import { readPackageFlag } from './macro' with { type: 'macro' }",
+      'export const packageFlag = readPackageFlag()',
+    ].join('\n'),
+  )
+  await writeFile(
+    workflowsPath,
+    [
+      "import { localFlag } from './local-helper'",
+      "import { packageFlag } from '@fixture/macro-helper'",
+      'export const workflow = () => [localFlag, packageFlag]',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.importAttribute === 'macro')).toHaveLength(2)
+  expect(violations.some((violation) => violation.filePath.endsWith('/local-helper.ts'))).toBeTrue()
+  expect(violations.some((violation) => violation.filePath.endsWith('/@fixture/macro-helper/index.ts'))).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts a capture of the built-in Function apply implementation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

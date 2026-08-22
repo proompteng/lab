@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 
 import {
   collectWorkflowDynamicImportPositions,
+  collectWorkflowMacroImports,
   collectWorkflowModuleSpecifiers,
   scanWorkflowSyntaxTokens,
 } from '../../src/bin/workflow-lint/syntax-scan'
@@ -70,6 +71,22 @@ describe('workflow lint syntax scanner', () => {
       { specifier: './result', typeOnly: true },
       { specifier: './options', typeOnly: true },
       { specifier: './mixed', typeOnly: false },
+    ])
+  })
+
+  test('identifies Bun macro import attributes without flagging other attributes or strings', () => {
+    const source = [
+      "import { first } from './first' with { type: 'macro' }",
+      'import { second } from "./second" assert { "type": "macro" }',
+      'import { third } from "./third" with { type: "mac\\u0072o" }',
+      "import data from './data.json' with { type: 'json' }",
+      "const example = \"import { hidden } from './hidden' with { type: 'macro' }\"",
+    ].join('\n')
+
+    expect(collectWorkflowMacroImports(scanWorkflowSyntaxTokens(source))).toEqual([
+      expect.objectContaining({ specifier: './first' }),
+      expect.objectContaining({ specifier: './second' }),
+      expect.objectContaining({ specifier: './third' }),
     ])
   })
 

@@ -17,6 +17,11 @@ export type WorkflowModuleSpecifier = {
   readonly typeOnly: boolean
 }
 
+export type WorkflowMacroImport = {
+  readonly specifier: string
+  readonly start: number
+}
+
 export type WorkflowPosition = {
   readonly line: number
   readonly column: number
@@ -556,6 +561,47 @@ export const collectWorkflowModuleSpecifiers = (tokens: readonly WorkflowSyntaxT
   }
 
   return specifiers
+}
+
+export const collectWorkflowMacroImports = (tokens: readonly WorkflowSyntaxToken[]): WorkflowMacroImport[] => {
+  const tokenIndexByStart = new Map(tokens.map((token, index) => [token.start, index] as const))
+  const imports: WorkflowMacroImport[] = []
+
+  for (const moduleSpecifier of collectWorkflowModuleSpecifiers(tokens)) {
+    if (moduleSpecifier.typeOnly) continue
+    const specifierIndex = tokenIndexByStart.get(moduleSpecifier.start)
+    if (specifierIndex == null) continue
+
+    const attribute = tokens[specifierIndex + 1]
+    if (attribute?.text !== 'with' && attribute?.text !== 'assert') continue
+    if (tokens[specifierIndex + 2]?.kind !== SyntaxKind.OpenBraceToken) continue
+
+    let depth = 0
+    for (let index = specifierIndex + 2; index < tokens.length; index += 1) {
+      const token = tokens[index]
+      if (token?.kind === SyntaxKind.OpenBraceToken) {
+        depth += 1
+        continue
+      }
+      if (token?.kind === SyntaxKind.CloseBraceToken) {
+        depth -= 1
+        if (depth === 0) break
+        continue
+      }
+      if (
+        depth === 1 &&
+        token?.value === 'type' &&
+        tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
+        tokens[index + 2]?.kind === SyntaxKind.StringLiteral &&
+        tokens[index + 2]?.value === 'macro'
+      ) {
+        imports.push({ specifier: moduleSpecifier.specifier, start: attribute.start })
+        break
+      }
+    }
+  }
+
+  return imports
 }
 
 export const collectWorkflowDynamicImportPositions = (tokens: readonly WorkflowSyntaxToken[]): number[] => {
