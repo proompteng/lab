@@ -63,6 +63,28 @@ test('rejects import.meta.env and Bun access through globalThis', async () => {
   )
 })
 
+test('rejects reflective access to the Bun global', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const object = { value: 'ok' }",
+      "export const direct = () => Reflect.get(globalThis, 'Bun').env.FLAG",
+      "export const bracket = () => Reflect['get'](globalThis, 'Bun').env.FLAG",
+      "export const safeObjectLookup = () => Reflect.get(object, 'value')",
+      "export const safeGlobalLookup = () => Reflect.get(globalThis, 'crypto')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(2)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('ignores erased type-only imports when proving workflow source safety', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

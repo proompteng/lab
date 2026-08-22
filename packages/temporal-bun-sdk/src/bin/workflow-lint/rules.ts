@@ -30,7 +30,7 @@ export type WorkflowLintViolation = {
 const memberExpressionName = (
   tokens: readonly WorkflowSyntaxToken[],
   index: number,
-): { name: string; token: WorkflowSyntaxToken } | undefined => {
+): { name: string; token: WorkflowSyntaxToken; endIndex: number } | undefined => {
   const objectToken = tokens[index]
   let objectStartIndex = index
   let objectEndIndex = index
@@ -70,7 +70,7 @@ const memberExpressionName = (
         (nestedDotToken?.kind === SyntaxKind.DotToken || nestedDotToken?.kind === SyntaxKind.QuestionDotToken) &&
         isIdentifierLikeToken(nestedPropertyToken)
       ) {
-        return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken }
+        return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken, endIndex: expressionEndIndex + 2 }
       }
 
       const nestedOpenBracketToken = tokens[expressionEndIndex + 1]
@@ -81,10 +81,10 @@ const memberExpressionName = (
         nestedElementToken?.kind === SyntaxKind.StringLiteral &&
         nestedCloseBracketToken?.kind === SyntaxKind.CloseBracketToken
       ) {
-        return { name: `${name}.${nestedElementToken.value}`, token: objectToken }
+        return { name: `${name}.${nestedElementToken.value}`, token: objectToken, endIndex: expressionEndIndex + 3 }
       }
     }
-    return { name, token: objectToken }
+    return { name, token: objectToken, endIndex: objectEndIndex + 2 }
   }
 
   const bracketIndex =
@@ -101,10 +101,48 @@ const memberExpressionName = (
     elementToken?.kind === SyntaxKind.StringLiteral &&
     closeBracketToken?.kind === SyntaxKind.CloseBracketToken
   ) {
-    return { name: `${objectToken.text}.${elementToken.value}`, token: objectToken }
+    return { name: `${objectToken.text}.${elementToken.value}`, token: objectToken, endIndex: bracketIndex + 2 }
   }
 
   return undefined
+}
+
+const parenthesizedIdentifier = (
+  tokens: readonly WorkflowSyntaxToken[],
+  index: number,
+): { token: WorkflowSyntaxToken; endIndex: number } | undefined => {
+  let cursor = index
+  let parenthesisDepth = 0
+  while (tokens[cursor]?.kind === SyntaxKind.OpenParenToken) {
+    parenthesisDepth += 1
+    cursor += 1
+  }
+
+  const token = tokens[cursor]
+  if (!isIdentifierLikeToken(token)) return undefined
+  cursor += 1
+  for (let depth = 0; depth < parenthesisDepth; depth += 1) {
+    if (tokens[cursor]?.kind !== SyntaxKind.CloseParenToken) return undefined
+    cursor += 1
+  }
+
+  return { token, endIndex: cursor - 1 }
+}
+
+const reflectivelyAccessedGlobalProperty = (
+  tokens: readonly WorkflowSyntaxToken[],
+  memberEndIndex: number,
+): { target: WorkflowSyntaxToken; property: WorkflowSyntaxToken } | undefined => {
+  if (tokens[memberEndIndex + 1]?.kind !== SyntaxKind.OpenParenToken) return undefined
+  const target = parenthesizedIdentifier(tokens, memberEndIndex + 2)
+  if (!target || target.token.text !== 'globalThis') return undefined
+  if (tokens[target.endIndex + 1]?.kind !== SyntaxKind.CommaToken) return undefined
+
+  const property = tokens[target.endIndex + 2]
+  if (property?.kind !== SyntaxKind.StringLiteral && property?.kind !== SyntaxKind.NoSubstitutionTemplateLiteral)
+    return undefined
+
+  return { target: target.token, property }
 }
 
 const previousToken = (tokens: readonly WorkflowSyntaxToken[], index: number): WorkflowSyntaxToken | undefined =>
@@ -324,6 +362,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyGlobals: ReadonlySet<string>
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
+  readonly denyReflectiveGlobalProperties?: ReadonlySet<string>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
@@ -416,6 +455,17 @@ export const lintWorkflowSourceAst = (options: {
 
     const member = memberExpressionName(tokens, index)
     if (!member) continue
+
+    if (member.name === 'Reflect.get') {
+      const reflectiveAccess = reflectivelyAccessedGlobalProperty(tokens, member.endIndex)
+      if (reflectiveAccess && options.denyReflectiveGlobalProperties?.has(reflectiveAccess.property.value)) {
+        report(member.token.start, {
+          rule: 'deny-member-expression',
+          message: `Disallowed reflective global access in workflow module: Reflect.get(globalThis, '${reflectiveAccess.property.value}')`,
+          details: { memberExpression: member.name, global: reflectiveAccess.property.value },
+        })
+      }
+    }
 
     if (options.denyMemberExpressions.has(member.name) && !isTypeOnlyTypeofMemberExpression(tokens, index, previous)) {
       report(member.token.start, {

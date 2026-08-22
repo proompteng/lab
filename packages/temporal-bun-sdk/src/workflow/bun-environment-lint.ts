@@ -5,6 +5,7 @@ import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentDenyGlobals = new Set(['Bun'])
 const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env', 'globalThis.Bun', 'import.meta', 'import.meta.env'])
+const bunEnvironmentDenyReflectiveGlobalProperties = new Set(['Bun'])
 
 const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
   const details = diagnostic as {
@@ -95,6 +96,7 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
         denyGlobals: bunEnvironmentDenyGlobals,
         denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
         denyImports: new Set<string>(),
+        denyReflectiveGlobalProperties: bunEnvironmentDenyReflectiveGlobalProperties,
       }),
     )
   }
