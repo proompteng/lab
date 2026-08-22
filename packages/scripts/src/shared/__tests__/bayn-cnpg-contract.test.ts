@@ -331,8 +331,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = 'ef32d5a96a1313da6984b0f3282f2edbddb9d9d3'
-  const imageDigest = 'sha256:ca22190057358616546f817a7bb4bf9841e272589ef0ce391e0e99a74c652a6f'
+  const sourceRevision = '92e7754a6c68b10f0ae3b062eb32c3771dda26fa'
+  const imageDigest = 'sha256:f13e0ae90b3136161759d8021fe63053aa1fe835a5df840d93fac138ebd27ddb'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -405,7 +405,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
     schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: '684de030ceb4852620f81c5361a769c9e6bfc8d4a49e65896c95de7bb81dada8',
+    requestHash: '66f422ac507c8330c6edd601db0b236609f357d2d2b6a64eb728629e8f862c14',
     authoredActivation: {
       sourceRevision,
       imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -442,7 +442,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
     'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
     'bayn.proompteng.ai/capital-activation-content-hash':
-      '684de030ceb4852620f81c5361a769c9e6bfc8d4a49e65896c95de7bb81dada8',
+      '66f422ac507c8330c6edd601db0b236609f357d2d2b6a64eb728629e8f862c14',
   })
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
@@ -467,7 +467,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    '7a33d8979cb40864075cd9d900585b8b1e0cccf4b54b7e3e2f3e15efa9a19ba3',
+    'af85807cb070ebf005365c4665c8eb0463a66e90e3cb52f8608eec9c219e989b',
   )
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
