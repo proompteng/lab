@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
+import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,
   decideExecutionMandateCycleTerminalization,
@@ -243,6 +244,16 @@ describe('execution mandate decisions', () => {
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: reconciliationIncompleteRestrictionReason,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     expect(
       decideExecutionMandateAuthority({
         ...common,

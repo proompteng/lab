@@ -18,6 +18,7 @@ import {
   type PositionSnapshotInput,
 } from '../broker/observations'
 import type { ExecutionStoreError } from '../db/execution-store/contract'
+import { reconciliationIncompleteRestrictionReason } from '../execution/authority'
 import type { BrokerSnapshot, ReconciliationReport } from '../db/reconciliation'
 import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'
@@ -27,7 +28,7 @@ import { Pipeable } from '../pipeable'
 export const maximumRows = 10_000
 export const ordersPageSize = 500
 export const fillsPageSize = 100
-export const incompletePassReason = 'reconciliation pass incomplete'
+export const incompletePassReason = reconciliationIncompleteRestrictionReason
 
 export interface Observed<A> {
   readonly value: A

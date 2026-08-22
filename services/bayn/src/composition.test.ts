@@ -64,7 +64,7 @@ import {
   type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,
 } from './db/execution-store'
-import { BrokerAccess, noCapitalAuthority } from './execution/authority'
+import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from './execution/authority'
 import {
   capitalActivationRequiresQualificationEvidence,
   makeResearchCapitalActivationRequest,
@@ -1763,7 +1763,7 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(operations).toEqual([])
   })
 
-  test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {
+  test('reconciles a restricted capital generation before rearming and activates from its OBSERVE successor', async () => {
     const previousExecutionGenerationHash = continuationGeneration.generationHash
     const successorGenerationHash = Result.getOrThrow(
       executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
@@ -1813,8 +1813,9 @@ describe('Bayn capital startup recovery boundary', () => {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: previousExecutionGenerationHash,
       maximum: Authority.Execution,
-      effective: Authority.Execution,
-      kill: KillState.Clear,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
       version: 2,
       updatedAt: '2026-08-31T19:59:59.000Z',
     }

@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
 import { Sha256Schema } from '../schemas'
+import { reconciliationIncompleteRestrictionReason } from './authority'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -257,7 +258,7 @@ export const decideExecutionMandateAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash &&
-    isExecutionMandateFailureRestriction(facts.reason)
+    (isExecutionMandateFailureRestriction(facts.reason) || facts.reason === reconciliationIncompleteRestrictionReason)
   ) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
