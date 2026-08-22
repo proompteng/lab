@@ -20,6 +20,7 @@ export type WorkflowLintViolation = {
     | 'capture-global'
     | 'capture-member-expression'
     | 'dynamic-import'
+    | 'unresolved-import'
   readonly message: string
   readonly line: number
   readonly column: number

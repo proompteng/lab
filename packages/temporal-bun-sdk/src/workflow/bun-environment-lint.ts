@@ -5,7 +5,7 @@ import { lintWorkflowModuleAst, type WorkflowLintViolation } from '../bin/workfl
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentDenyGlobals = new Set(['Bun'])
-const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env'])
+const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env', 'globalThis.Bun', 'import.meta.env'])
 
 export class WorkflowBunEnvironmentSafetyError extends Error {
   readonly violations: readonly WorkflowLintViolation[]
@@ -27,6 +27,8 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
     entry,
     cwd,
     denyImports: new Set<string>(),
+    inspectBareImports: true,
+    rejectUninspectableImports: true,
   })
   const violations: WorkflowLintViolation[] = graphViolations.map((violation) => ({
     filePath: violation.filePath,
@@ -79,7 +81,7 @@ export const assertWorkflowBunEnvironmentSafety = async (options: {
     .join('\n')
   const remainder = violations.length > 10 ? `\n...and ${violations.length - 10} more violation(s)` : ''
   throw new WorkflowBunEnvironmentSafetyError(
-    `Strict workflow guards rejected Bun environment access before loading workflows:\n${details}${remainder}`,
+    `Strict workflow guards could not prove workflow environment safety before loading workflows:\n${details}${remainder}`,
     violations,
   )
 }
