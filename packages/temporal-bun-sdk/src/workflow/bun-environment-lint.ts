@@ -3,11 +3,20 @@ import { relative, resolve } from 'node:path'
 import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
 import type { WorkflowDefinitions } from './definition'
 
-const bunEnvironmentDenyGlobals = new Set(['Bun'])
-const bunEnvironmentDenyMemberExpressions = new Set(['Bun.env', 'globalThis.Bun', 'import.meta', 'import.meta.env'])
-const bunEnvironmentDenyReflectiveGlobalProperties = new Set(['Bun'])
-const bunEnvironmentDenyComputedGlobalProperties = new Map([['globalThis', new Set(['Bun'])]])
+const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function'])
+const bunEnvironmentDenyMemberExpressions = new Set([
+  'Bun.env',
+  'globalThis.Bun',
+  'globalThis.eval',
+  'globalThis.Function',
+  'import.meta',
+  'import.meta.env',
+])
+const bunEnvironmentDenyReflectiveGlobalProperties = new Set(['Bun', 'eval', 'Function'])
+const bunEnvironmentDenyComputedGlobalProperties = new Map([['globalThis', new Set(['Bun', 'eval', 'Function'])]])
 const bunEnvironmentDenyGlobalCaptures = new Set(['globalThis'])
+const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function'])
+const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 
 const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
   const details = diagnostic as {
@@ -101,6 +110,8 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
         denyReflectiveGlobalProperties: bunEnvironmentDenyReflectiveGlobalProperties,
         denyComputedGlobalProperties: bunEnvironmentDenyComputedGlobalProperties,
         denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
+        denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
+        allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,
       }),
     )
   }

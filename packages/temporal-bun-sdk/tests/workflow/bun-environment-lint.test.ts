@@ -108,6 +108,73 @@ test('rejects reflective access to the Bun global', async () => {
   )
 })
 
+test('rejects direct, indirect, and globalThis dynamic code access', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "export const directEval = () => eval('Bun').env.FLAG",
+      "export const indirectEval = () => (0, eval)('Bun').env.FLAG",
+      "export const directFunction = () => Function('return Bun.env.FLAG')()",
+      "export const indirectFunction = () => (0, Function)('return Bun.env.FLAG')()",
+      "export const globalEval = () => globalThis.eval('Bun').env.FLAG",
+      "export const globalFunction = () => globalThis['Function']('return Bun.env.FLAG')()",
+      "export const reflectiveEval = () => Reflect.get(globalThis, 'eval')('Bun').env.FLAG",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        rule: 'deny-global',
+        message: 'Disallowed global in workflow module: eval()',
+        details: { global: 'eval' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-global',
+        message: 'Disallowed indirect global reference in workflow module: eval',
+        details: { global: 'eval' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-global',
+        message: 'Disallowed global in workflow module: Function()',
+        details: { global: 'Function' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-global',
+        message: 'Disallowed indirect global reference in workflow module: Function',
+        details: { global: 'Function' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-member-expression',
+        details: { memberExpression: 'globalThis.eval' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-member-expression',
+        details: { memberExpression: 'globalThis[...]', global: 'Function' },
+      }),
+      expect.objectContaining({
+        rule: 'deny-member-expression',
+        details: { memberExpression: 'Reflect.get', global: 'eval' },
+      }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('accepts a capture of the built-in Function apply implementation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(workflowsPath, 'export const safeApply = Function.prototype.apply\n')
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
+})
+
 test('rejects computed Bun global access and fails closed for dynamic keys', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

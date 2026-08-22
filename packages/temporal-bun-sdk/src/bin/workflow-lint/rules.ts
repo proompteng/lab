@@ -107,6 +107,33 @@ const memberExpressionName = (
   return undefined
 }
 
+const memberExpressionChainName = (tokens: readonly WorkflowSyntaxToken[], index: number): string | undefined => {
+  const objectToken = tokens[index]
+  if (!isIdentifierLikeToken(objectToken)) return undefined
+
+  let expressionStartIndex = index
+  let expressionEndIndex = index
+  while (
+    tokens[expressionStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+    tokens[expressionEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+  ) {
+    expressionStartIndex -= 1
+    expressionEndIndex += 1
+  }
+
+  const parts = [objectToken.text]
+  let cursor = expressionEndIndex + 1
+  while (
+    (tokens[cursor]?.kind === SyntaxKind.DotToken || tokens[cursor]?.kind === SyntaxKind.QuestionDotToken) &&
+    isIdentifierLikeToken(tokens[cursor + 1])
+  ) {
+    parts.push(tokens[cursor + 1].text)
+    cursor += 2
+  }
+
+  return parts.length > 1 ? parts.join('.') : undefined
+}
+
 const parenthesizedIdentifier = (
   tokens: readonly WorkflowSyntaxToken[],
   index: number,
@@ -624,6 +651,8 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyReflectiveGlobalProperties?: ReadonlySet<string>
   readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyGlobalCaptures?: ReadonlySet<string>
+  readonly denyIndirectGlobalReferences?: ReadonlySet<string>
+  readonly allowIndirectGlobalMemberExpressions?: ReadonlySet<string>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
@@ -666,6 +695,30 @@ export const lintWorkflowSourceAst = (options: {
     const next = nextToken(tokens, index)
     const name = token.text
     const runtimeVariableCapture = isRuntimeVariableInitializerCapture(tokens, index, previous)
+    const isDirectGlobalCall = next?.kind === SyntaxKind.OpenParenToken
+    const isOptionalGlobalCall =
+      next?.kind === SyntaxKind.QuestionDotToken && tokens[index + 2]?.kind === SyntaxKind.OpenParenToken
+    const isMemberCall = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
+    const directRuntimeVariableCapture = isDirectRuntimeVariableInitializerCapture(tokens, index, previous)
+    const allowedIndirectGlobalMemberExpression = options.allowIndirectGlobalMemberExpressions?.has(
+      memberExpressionChainName(tokens, index) ?? '',
+    )
+
+    if (
+      options.denyIndirectGlobalReferences?.has(name) &&
+      !directRuntimeVariableCapture &&
+      !isDirectGlobalCall &&
+      !isOptionalGlobalCall &&
+      !isMemberCall &&
+      previous?.kind !== SyntaxKind.NewKeyword &&
+      !allowedIndirectGlobalMemberExpression
+    ) {
+      report(token.start, {
+        rule: 'deny-global',
+        message: `Disallowed indirect global reference in workflow module: ${name}`,
+        details: { global: name },
+      })
+    }
 
     if (options.denyGlobalCaptures?.has(name) && isDirectRuntimeVariableInitializerCapture(tokens, index, previous)) {
       report(token.start, {
@@ -691,11 +744,6 @@ export const lintWorkflowSourceAst = (options: {
     }
 
     if (options.denyGlobals.has(name)) {
-      const isDirectGlobalCall = next?.kind === SyntaxKind.OpenParenToken
-      const isOptionalGlobalCall =
-        next?.kind === SyntaxKind.QuestionDotToken && tokens[index + 2]?.kind === SyntaxKind.OpenParenToken
-      const isMemberCall = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
-
       const isDeclarationLikeGlobalCall = isDirectGlobalCall && isDeclarationLikeGlobalCallShape(tokens, index)
 
       if ((isDirectGlobalCall || isOptionalGlobalCall) && !isMemberCall && !isDeclarationLikeGlobalCall) {
@@ -714,7 +762,10 @@ export const lintWorkflowSourceAst = (options: {
         })
       }
 
-      if (runtimeVariableCapture) {
+      if (
+        runtimeVariableCapture &&
+        (!options.denyIndirectGlobalReferences?.has(name) || directRuntimeVariableCapture)
+      ) {
         report(token.start, {
           rule: 'capture-global',
           message: `Capturing disallowed global in workflow module: const x = ${name}`,
