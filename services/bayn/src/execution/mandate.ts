@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
 import { Sha256Schema } from '../schemas'
+import { reconciliationIncompleteRestrictionReason } from './authority'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -210,6 +211,10 @@ export const isExecutionMandateFailureRestriction = (reason: string | undefined)
   reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
   (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
 
+/** Restrictions whose current bound cycle must be allowed to reach the existing terminal recovery owner. */
+export const isExecutionMandateRecoveryRestriction = (reason: string | undefined): boolean =>
+  reason === reconciliationIncompleteRestrictionReason || isExecutionMandateFailureRestriction(reason)
+
 /** Durable persisted reason retained byte-for-byte so existing database rearm predicates keep accepting new mandates. */
 export const executionMandateCompletedRestrictionReason = `${executionMandateCompletionPersistenceSubject} restricted effective authority: flat exact receipt finalized`
 export const legacyV1CompletedRestrictionReason =
@@ -252,13 +257,15 @@ export const decideExecutionMandateAuthority = (
   ) {
     return Result.succeed({ _tag: 'Rearm' })
   }
-  if (
+  const isRestrictedPaperAuthority =
     facts.maximum === 'PAPER' &&
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
-    facts.generationHash !== facts.sourceGenerationHash &&
-    isExecutionMandateFailureRestriction(facts.reason)
-  ) {
+    facts.generationHash !== facts.sourceGenerationHash
+  if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
+  if (isRestrictedPaperAuthority && isExecutionMandateFailureRestriction(facts.reason)) {
     return Result.succeed({ _tag: facts.currentGenerationMatchesRequest ? 'ResumeRestricted' : 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })

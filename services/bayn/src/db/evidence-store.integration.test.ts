@@ -1254,6 +1254,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 45, name: 'intraday_autonomous_cycles' },
       { migration_id: 46, name: 'intraday_native_cycles' },
       { migration_id: 47, name: 'opening_drive_qualification_evidence' },
+      { migration_id: 48, name: 'research_reconciliation_rearm' },
     ])
   })
 

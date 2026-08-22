@@ -4,6 +4,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
+import accountNeutralRuntimeCompatibility from '../../migrations/0037_account_neutral_runtime_compatibility'
 import executionControllerPlanStatus from '../../migrations/0042_execution_controller_plan_status'
 import executionControllerActivationProjection from '../../migrations/0043_execution_controller_activation_projection'
 import executionControllerPassObservation from '../../migrations/0044_execution_controller_pass_observation'
@@ -445,6 +446,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
           ALTER COLUMN completed_at SET NOT NULL
         `
         yield* sql`ALTER TABLE execution_controller_status DROP COLUMN plan_hash`
+        yield* accountNeutralRuntimeCompatibility
         yield* executionControllerPlanStatus
         yield* sql`
           DROP TABLE
@@ -453,7 +455,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
             opening_drive_qualification_results,
             opening_drive_qualification_locks
         `
-        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47)`
+        yield* sql`DELETE FROM schema_migrations WHERE migration_id IN (43, 44, 45, 46, 47, 48)`
         yield* sql`
           INSERT INTO execution_controller_status (
             controller_key,
@@ -523,7 +525,7 @@ describePostgres('PostgreSQL execution controller status projection', () => {
         }),
       )
 
-      expect(migrated.migration).toEqual({ migration_id: 47, name: 'opening_drive_qualification_evidence' })
+      expect(migrated.migration).toEqual({ migration_id: 48, name: 'research_reconciliation_rearm' })
       expect(migrated.column).toEqual({ is_nullable: 'NO' })
       expect(migrated.row).toEqual({ next_sequence: '9' })
       expect(migrated.triggerDefinition).toContain('NEW.last_pass')

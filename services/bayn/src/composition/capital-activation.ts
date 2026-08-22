@@ -13,10 +13,11 @@ import {
   type CapitalGrantLifecycleStoreShape,
   type PreparedCapitalGrantActivation,
 } from '../db/execution-store'
-import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from '../execution/authority'
 import {
   Authority,
   KillState,
+  ReconciliationStatus,
   type AuthorityState,
   type CapitalGrantGeneration,
   type CapitalGrantProofBinding,
@@ -948,8 +949,16 @@ export const prepareResearchCapitalActivation = (
     )
   })
 
+interface CapitalActivationReconciliationObservation {
+  readonly report: {
+    readonly reconciliation: {
+      readonly status: ReconciliationStatus
+    }
+  }
+}
+
 export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
-  reconcile: Effect.Effect<unknown, E, R>,
+  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
   operationTimeoutMs: number,
 ): Effect.Effect<void, OperationalError, R> =>
   reconcile.pipe(
@@ -961,13 +970,21 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('research capital pre-activation reconciliation failed', cause),
     ),
-    Effect.asVoid,
+    Effect.flatMap((result) =>
+      result.report.reconciliation.status === ReconciliationStatus.Exact
+        ? Effect.void
+        : Effect.fail(
+            capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
+          ),
+    ),
   )
 
 export const refreshResearchCapitalActivationReconciliation = Pipeable.generic<
   <E, R>(
     operationTimeoutMs: number,
-  ) => (reconcile: Effect.Effect<unknown, E, R>) => Effect.Effect<void, OperationalError, R>,
+  ) => (
+    reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
+  ) => Effect.Effect<void, OperationalError, R>,
   typeof refreshResearchCapitalActivationReconciliationDataFirst
 >(2, refreshResearchCapitalActivationReconciliationDataFirst)
 
@@ -979,7 +996,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  reconcile: Effect.Effect<unknown, ReconciliationPassError | OperationalError>,
+  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, ReconciliationPassError | OperationalError>,
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
@@ -987,10 +1004,11 @@ export const prepareOrRecoverResearchCapitalActivation = (
     yield* Effect.fromResult(researchCapitalRecoveryRequestIsCompatible(request, plan, observedAt)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
-    if (authorityStore.readAuthorityState === undefined) {
+    const readAuthorityState = authorityStore.readAuthorityState
+    if (readAuthorityState === undefined) {
       return yield* capitalActivationOperationalError('research capital startup requires durable authority state reads')
     }
-    const authority = yield* authorityStore.readAuthorityState.pipe(
+    const authority = yield* readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('research capital authority read failed', cause)),
     )
     const currentGeneration = yield* readCurrentResearchCapitalGeneration(authority, authorityStore)
@@ -1042,10 +1060,26 @@ export const prepareOrRecoverResearchCapitalActivation = (
         capitalActivationOperationalError('research capital authority does not match this mandate', cause),
       ),
     )
-    if (buildContinuation !== null && decision._tag !== 'Resume' && decision._tag !== 'ResumeRestricted') {
+    const currentReconciliationRecovery =
+      decision._tag === 'Rearm' &&
+      authority.reason === reconciliationIncompleteRestrictionReason &&
+      currentGenerationMatchesRequest &&
+      currentGeneration !== undefined
+    if (
+      buildContinuation !== null &&
+      decision._tag !== 'Resume' &&
+      decision._tag !== 'ResumeRestricted' &&
+      !currentReconciliationRecovery
+    ) {
       return yield* capitalActivationOperationalError(
         'research capital build continuation requires the exact active generation',
       )
+    }
+    if (buildContinuation !== null && currentReconciliationRecovery) {
+      if (currentGeneration === undefined) {
+        return yield* capitalActivationOperationalError('research capital reconciliation recovery lost durable history')
+      }
+      return currentGeneration
     }
     const activationRequired = decision._tag === 'Activate' || decision._tag === 'Rearm'
     if (activationRequired) {
@@ -1071,16 +1105,54 @@ export const prepareOrRecoverResearchCapitalActivation = (
       yield* refreshResearchCapitalActivationReconciliation(reconcile, operationTimeoutMs)
     }
     if (decision._tag === 'Rearm') {
-      const rearmed = yield* authorityStore
+      const rearmResolution = yield* authorityStore
         .ensureAuthorityGeneration({
           generationHash: activationSourceGenerationHash,
           maximum: Authority.Observe,
         })
         .pipe(
-          Effect.mapError((cause) =>
-            capitalActivationOperationalError('research capital source authority rearm failed', cause),
-          ),
+          Effect.map((rearmed) => ({ _tag: 'Rearmed' as const, rearmed })),
+          Effect.catch((cause) => {
+            if (!currentReconciliationRecovery || currentGeneration === undefined) {
+              return Effect.fail(
+                capitalActivationOperationalError('research capital source authority rearm failed', cause),
+              )
+            }
+            return readAuthorityState.pipe(
+              Effect.mapError((readCause) =>
+                capitalActivationOperationalError(
+                  'research capital deferred recovery authority read failed',
+                  readCause,
+                ),
+              ),
+              Effect.flatMap((current) =>
+                current.generationHash === authority.generationHash &&
+                current.maximum === authority.maximum &&
+                current.effective === authority.effective &&
+                current.kill === authority.kill &&
+                current.reason === authority.reason &&
+                current.version === authority.version &&
+                current.updatedAt === authority.updatedAt
+                  ? Effect.logWarning('Bayn deferred reconciliation rearm to the current cycle recovery owner').pipe(
+                      Effect.annotateLogs({
+                        service: 'bayn',
+                        generationHash: authority.generationHash,
+                        authorityReason: authority.reason,
+                      }),
+                      Effect.as({ _tag: 'RecoverCurrent' as const, generation: currentGeneration }),
+                    )
+                  : Effect.fail(
+                      capitalActivationOperationalError(
+                        'research capital authority changed while reconciliation rearm was deferred',
+                        cause,
+                      ),
+                    ),
+              ),
+            )
+          }),
         )
+      if (rearmResolution._tag === 'RecoverCurrent') return rearmResolution.generation
+      const rearmed = rearmResolution.rearmed
       if (
         rearmed.generationHash !== activationSourceGenerationHash ||
         rearmed.maximum !== Authority.Observe ||
