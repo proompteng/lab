@@ -31,11 +31,21 @@ const memberExpressionName = (
   index: number,
 ): { name: string; token: WorkflowSyntaxToken } | undefined => {
   const objectToken = tokens[index]
-  const previous = index > 0 ? tokens[index - 1] : undefined
+  let objectStartIndex = index
+  let objectEndIndex = index
+  while (
+    tokens[objectStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+    tokens[objectEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+  ) {
+    objectStartIndex -= 1
+    objectEndIndex += 1
+  }
+
+  const previous = objectStartIndex > 0 ? tokens[objectStartIndex - 1] : undefined
   if (previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken) return undefined
 
-  const dotToken = tokens[index + 1]
-  const propertyToken = tokens[index + 2]
+  const dotToken = tokens[objectEndIndex + 1]
+  const propertyToken = tokens[objectEndIndex + 2]
   if (
     isIdentifierLikeToken(objectToken) &&
     (dotToken?.kind === SyntaxKind.DotToken || dotToken?.kind === SyntaxKind.QuestionDotToken) &&
@@ -43,8 +53,8 @@ const memberExpressionName = (
   ) {
     const name = `${objectToken.text}.${propertyToken.text}`
     if (name === 'import.meta') {
-      const nestedDotToken = tokens[index + 3]
-      const nestedPropertyToken = tokens[index + 4]
+      const nestedDotToken = tokens[objectEndIndex + 3]
+      const nestedPropertyToken = tokens[objectEndIndex + 4]
       if (
         (nestedDotToken?.kind === SyntaxKind.DotToken || nestedDotToken?.kind === SyntaxKind.QuestionDotToken) &&
         isIdentifierLikeToken(nestedPropertyToken)
@@ -52,9 +62,9 @@ const memberExpressionName = (
         return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken }
       }
 
-      const nestedOpenBracketToken = tokens[index + 3]
-      const nestedElementToken = tokens[index + 4]
-      const nestedCloseBracketToken = tokens[index + 5]
+      const nestedOpenBracketToken = tokens[objectEndIndex + 3]
+      const nestedElementToken = tokens[objectEndIndex + 4]
+      const nestedCloseBracketToken = tokens[objectEndIndex + 5]
       if (
         nestedOpenBracketToken?.kind === SyntaxKind.OpenBracketToken &&
         nestedElementToken?.kind === SyntaxKind.StringLiteral &&
@@ -67,9 +77,10 @@ const memberExpressionName = (
   }
 
   const bracketIndex =
-    tokens[index + 1]?.kind === SyntaxKind.QuestionDotToken && tokens[index + 2]?.kind === SyntaxKind.OpenBracketToken
-      ? index + 2
-      : index + 1
+    tokens[objectEndIndex + 1]?.kind === SyntaxKind.QuestionDotToken &&
+    tokens[objectEndIndex + 2]?.kind === SyntaxKind.OpenBracketToken
+      ? objectEndIndex + 2
+      : objectEndIndex + 1
   const openBracketToken = tokens[bracketIndex]
   const elementToken = tokens[bracketIndex + 1]
   const closeBracketToken = tokens[bracketIndex + 2]
@@ -118,7 +129,10 @@ const isRuntimeVariableInitializerCapture = (
   index: number,
   previous: WorkflowSyntaxToken | undefined,
 ): boolean => {
-  if (previous?.kind !== SyntaxKind.EqualsToken) return false
+  let assignmentIndex = index - 1
+  while (tokens[assignmentIndex]?.kind === SyntaxKind.OpenParenToken) assignmentIndex -= 1
+  if (tokens[assignmentIndex]?.kind !== SyntaxKind.EqualsToken && previous?.kind !== SyntaxKind.EqualsToken)
+    return false
 
   const statementStart = findStatementStartIndex(tokens, index, { lineBreaksAreBoundaries: false })
   for (let cursor = statementStart; cursor < index; cursor += 1) {
@@ -338,6 +352,22 @@ export const lintWorkflowModuleAst = async (options: {
     const previous = previousToken(tokens, index)
     const next = nextToken(tokens, index)
     const name = token.text
+    const runtimeVariableCapture = isRuntimeVariableInitializerCapture(tokens, index, previous)
+
+    if (
+      name === 'Bun' &&
+      options.denyGlobals.has(name) &&
+      !runtimeVariableCapture &&
+      previous?.kind !== SyntaxKind.DotToken &&
+      previous?.kind !== SyntaxKind.QuestionDotToken &&
+      !isTypeOnlyTypeofMemberExpression(tokens, index, previous)
+    ) {
+      report(token.start, {
+        rule: 'deny-global',
+        message: 'Disallowed Bun runtime reference in workflow module',
+        details: { global: name },
+      })
+    }
 
     if (options.denyGlobals.has(name)) {
       const isDirectGlobalCall = next?.kind === SyntaxKind.OpenParenToken
@@ -363,7 +393,7 @@ export const lintWorkflowModuleAst = async (options: {
         })
       }
 
-      if (isRuntimeVariableInitializerCapture(tokens, index, previous)) {
+      if (runtimeVariableCapture) {
         report(token.start, {
           rule: 'capture-global',
           message: `Capturing disallowed global in workflow module: const x = ${name}`,
