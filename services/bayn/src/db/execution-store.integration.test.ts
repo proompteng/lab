@@ -2773,6 +2773,127 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('rearms a reconciliation-restricted research generation before submission only after fresh exact proof', async () => {
+    const sourceGenerationHash = hash('reconciliation-rearm-source')
+    const nextSourceGenerationHash = hash('reconciliation-rearm-next-source')
+    const activationReconciliation = exactReconciliation('reconciliation-rearm-activation')
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
+    const cycleId = hash('reconciliation-rearm-cycle')
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const activated = yield* activateResearch(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            futureResearchActivationCutoff,
+          )
+          yield* sql`
+            WITH timing AS (
+              SELECT
+                clock_timestamp() AS created_at,
+                (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
+            )
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
+              'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
+              execution_date - 1, 'test-calendar-v1',
+              'bayn.autonomous-cycle-execution-policy.v1', ${hash('reconciliation-rearm-policy')},
+              ${hash('reconciliation-rearm-execution-model')}, 1800000, 1800000,
+              'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash('reconciliation-rearm-calendar')}, execution_date,
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '14:30') AT TIME ZONE 'UTC',
+              (execution_date + time '21:00') AT TIME ZONE 'UTC',
+              (execution_date + time '14:00') AT TIME ZONE 'UTC',
+              'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
+            FROM timing
+          `
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(incompletePassReason, restrictionTime.updated_at.toISOString())
+
+          const beforeFreshReconciliation = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: nextSourceGenerationHash,
+              maximum: Authority.Observe,
+            }),
+          )
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* seedExactReconciliation(exactReconciliation('reconciliation-rearm-fresh-exact'))
+          yield* sql`SELECT pg_sleep(0.01)`
+          const rearmed = yield* store.ensureAuthorityGeneration({
+            generationHash: nextSourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const [cycle] = yield* sql<{
+            decision_hash: string | null
+            state: string
+            terminal_reason: string | null
+          }>`
+            SELECT state, decision_hash, terminal_reason
+            FROM autonomous_cycles
+            WHERE cycle_id = ${cycleId}
+          `
+          return { activated, beforeFreshReconciliation, cycle, rearmed }
+        }),
+      )
+
+      expect(result.activated).toMatchObject({
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        kill: KillState.Clear,
+      })
+      expect(result.beforeFreshReconciliation).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+      })
+      expect(result.rearmed).toMatchObject({
+        generationHash: nextSourceGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+      expect(result.rearmed.reason).toBeUndefined()
+      expect(result.cycle).toEqual({
+        decision_hash: null,
+        state: 'BLOCKED',
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('clears a failure-restricted qualified v2 execution generation only after fresh exact reconciliation', async () => {
     const sourceGenerationHash = hash('qualified-v2-recovery-source')
     const nextSourceGenerationHash = hash('qualified-v2-recovery-next-source')
@@ -3101,15 +3222,19 @@ describePostgres('paper accounting persistence', () => {
               ${hash('unbound-blocked-rollover-execution-model')}, 1800000, 1800000,
               'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
               'alpaca-v2-calendar', ${hash('unbound-blocked-rollover-calendar')}, execution_date,
-              terminal_at - interval '25 hours', terminal_at - interval '8 hours 30 minutes',
-              terminal_at - interval '8 hours 30 minutes', terminal_at - interval '7 hours 30 minutes',
-              terminal_at - interval '1 hour', terminal_at - interval '8 hours',
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '14:30') AT TIME ZONE 'UTC',
+              (execution_date + time '21:00') AT TIME ZONE 'UTC',
+              (execution_date + time '14:00') AT TIME ZONE 'UTC',
               'BLOCKED', NULL, NULL, 'BLOCKED_MISSED_PUBLICATION_DEADLINE', 1,
               terminal_at, terminal_at, terminal_at
             FROM (
               SELECT
                 ${terminalAt}::timestamptz AS terminal_at,
-                (${terminalAt}::timestamptz AT TIME ZONE 'UTC')::date AS execution_date
+                ((${terminalAt}::timestamptz - interval '13 hours 30 minutes') AT TIME ZONE 'UTC')::date
+                  AS execution_date
             ) AS timing
           `
 

@@ -250,6 +250,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
+              OR state.reason = ${incompletePassReason}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -374,6 +375,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                 AND (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
+                  OR state.reason = ${incompletePassReason}
                   OR (
                     state.reason IN (
                       ${executionMandateCompletedRestrictionReason},

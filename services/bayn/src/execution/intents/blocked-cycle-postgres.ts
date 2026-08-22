@@ -175,6 +175,8 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           SELECT
             state.generation_hash,
             generation.account_id,
+            generation.activation_schema_version,
+            generation.qualification_run_id,
             generation.research_plan_hash,
             state.updated_at AS restricted_at,
             (
@@ -236,8 +238,11 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               )
               OR (
                 cycle.decision_hash IS NULL
-                AND generation.research_plan_hash IS NOT NULL
-                AND cycle.qualification_run_id = generation.research_plan_hash
+                AND cycle.qualification_run_id = CASE generation.activation_schema_version
+                  WHEN 'bayn.paper-authority-generation.v2' THEN generation.qualification_run_id
+                  WHEN 'bayn.paper-authority-generation.v3' THEN generation.research_plan_hash
+                  ELSE NULL
+                END
               )
             )
           FOR UPDATE OF cycle
