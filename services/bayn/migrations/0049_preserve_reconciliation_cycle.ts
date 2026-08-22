@@ -56,6 +56,7 @@ export default Effect.gen(function* () {
   yield* sql`
     DO $migration$
     DECLARE
+      incident_cycle_id constant text := '3d53e1c6f02adc1b930e3549e48cd4158ecb3be384a32ef2ecd228aeece16c49';
       repaired_count integer;
     BEGIN
       IF NOT EXISTS (
@@ -88,7 +89,7 @@ export default Effect.gen(function* () {
           ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
           LIMIT 1
         ) AS reconciliation ON true
-        WHERE cycle.cycle_id = ${reconciliationRearmIncidentCycleId}
+        WHERE cycle.cycle_id = incident_cycle_id
           AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
           AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
           AND cycle.strategy_name = 'opening-drive-momentum'
