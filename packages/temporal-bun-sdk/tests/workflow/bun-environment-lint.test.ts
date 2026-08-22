@@ -227,6 +227,28 @@ test('rejects direct, indirect, and globalThis dynamic code access', async () =>
   )
 })
 
+test('rejects VM modules that can evaluate against the Bun global', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { runInThisContext } from 'node:vm'",
+      "import vm from 'vm'",
+      "export const nodePrefixed = () => runInThisContext('Bun.env.FLAG')",
+      "export const bare = () => vm.runInThisContext('Bun.env.FLAG')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-import')).toHaveLength(2)
+  expect(violations.every((violation) => violation.details?.specifier === 'vm')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts a capture of the built-in Function apply implementation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
