@@ -357,6 +357,126 @@ test('rejects Bun macro imports across the source graph before bundling', async 
   )
 })
 
+test('rejects Bun macro imports reached through local and package require calls before bundling', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const packageDir = join(dir, 'node_modules', '@fixture', 'required-macro-helper')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await mkdir(packageDir, { recursive: true })
+  await writeFile(join(dir, 'local-macro.ts'), 'export const readLocalFlag = () => Bun.env.LOCAL_MACRO_FLAG\n')
+  await writeFile(
+    join(dir, 'local-helper.ts'),
+    [
+      "import { readLocalFlag } from './local-macro' with { type: 'macro' }",
+      'export const localFlag = readLocalFlag()',
+    ].join('\n'),
+  )
+  await writeFile(
+    join(packageDir, 'package.json'),
+    JSON.stringify({ name: '@fixture/required-macro-helper', type: 'module', exports: './index.ts' }),
+  )
+  await writeFile(join(packageDir, 'macro.ts'), 'export const readPackageFlag = () => Bun.env.PACKAGE_MACRO_FLAG\n')
+  await writeFile(
+    join(packageDir, 'index.ts'),
+    [
+      "import { readPackageFlag } from './macro' with { type: 'macro' }",
+      'export const packageFlag = readPackageFlag()',
+    ].join('\n'),
+  )
+  await writeFile(
+    workflowsPath,
+    [
+      "const local = require('./local-helper')",
+      "const requiredPackage = require('@fixture/required-macro-helper')",
+      'export const workflow = () => [local.localFlag, requiredPackage.packageFlag]',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.importAttribute === 'macro')).toHaveLength(2)
+  expect(violations.some((violation) => violation.filePath.endsWith('/local-helper.ts'))).toBeTrue()
+  expect(violations.some((violation) => violation.filePath.endsWith('/@fixture/required-macro-helper/index.ts'))).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects Bun macro imports reached through dynamic imports before bundling', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(join(dir, 'macro.ts'), 'export const readFlag = () => Bun.env.DYNAMIC_MACRO_FLAG\n')
+  await writeFile(
+    join(dir, 'dynamic-helper.ts'),
+    [
+      "import { readFlag } from './macro' with { type: 'macro' }",
+      'export const flag = readFlag()',
+    ].join('\n'),
+  )
+  await writeFile(workflowsPath, "export const workflow = () => import('./dynamic-helper')\n")
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        filePath: join(dir, 'dynamic-helper.ts'),
+        rule: 'deny-import',
+        details: { specifier: './macro', importAttribute: 'macro' },
+      }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects worker-thread isolates that can read launch-specific state outside runtime guards', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { Worker } from 'node:worker_threads'",
+      "export const workflow = () => new Worker('postMessage(Bun.env.FLAG)', { eval: true })",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        rule: 'deny-import',
+        details: { specifier: 'worker_threads' },
+      }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects global workers that can read launch-specific state outside runtime guards', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(join(dir, 'worker.ts'), 'postMessage(Bun.env.FLAG)\n')
+  await writeFile(
+    workflowsPath,
+    [
+      "export const direct = () => new Worker('./worker.ts')",
+      "export const member = () => new globalThis.Worker('./worker.ts')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.some((violation) => violation.details?.global === 'Worker')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.Worker')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts a capture of the built-in Function apply implementation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

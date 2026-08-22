@@ -23,8 +23,9 @@ const bunEnvironmentGlobalObjectProperties = [
   'process',
   'require',
   'module',
+  'Worker',
 ] as const
-const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function', 'require'])
+const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function', 'require', 'Worker'])
 const bunEnvironmentDenyMemberExpressions = new Set([
   'Bun.env',
   'import.meta',
@@ -60,6 +61,8 @@ const bunEnvironmentDenyImports = new Set([
   'process',
   'node:child_process',
   'child_process',
+  'node:worker_threads',
+  'worker_threads',
 ])
 const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 const couldContainMacroImport = (sourceText: string): boolean =>
@@ -95,8 +98,9 @@ const lintWorkflowMacroImports = async (entry: string): Promise<readonly Workflo
       continue
     }
 
-    let moduleSpecifiers: readonly string[]
-    if (couldContainMacroImport(sourceText)) {
+    const inspectImportAttributes = couldContainMacroImport(sourceText)
+    const moduleSpecifiers: string[] = []
+    if (inspectImportAttributes) {
       let tokens: ReturnType<typeof scanWorkflowSyntaxTokens>
       try {
         tokens = scanWorkflowSyntaxTokens(sourceText)
@@ -122,25 +126,34 @@ const lintWorkflowMacroImports = async (entry: string): Promise<readonly Workflo
           details: { specifier: macroImport.specifier, importAttribute: 'macro' },
         })
       }
-      moduleSpecifiers = collectWorkflowModuleSpecifiers(tokens)
-        .filter((moduleSpecifier) => !moduleSpecifier.typeOnly)
-        .map((moduleSpecifier) => moduleSpecifier.specifier)
-    } else {
-      try {
-        moduleSpecifiers = new Bun.Transpiler({ loader: workflowSourceLoader(filePath) })
+      moduleSpecifiers.push(
+        ...collectWorkflowModuleSpecifiers(tokens)
+          .filter((moduleSpecifier) => !moduleSpecifier.typeOnly)
+          .map((moduleSpecifier) => moduleSpecifier.specifier),
+      )
+    }
+
+    try {
+      moduleSpecifiers.push(
+        ...new Bun.Transpiler({ loader: workflowSourceLoader(filePath) })
           .scanImports(sourceText)
-          .filter((moduleImport) => moduleImport.kind === 'import-statement')
-          .map((moduleImport) => moduleImport.path)
-      } catch (error) {
-        violations.push({
-          filePath,
-          rule: 'unresolved-import',
-          message: `Unable to scan workflow source imports: ${error instanceof Error ? error.message : String(error)}`,
-          line: 1,
-          column: 1,
-        })
-        continue
-      }
+          .filter(
+            (moduleImport) =>
+              moduleImport.kind === 'require-call' ||
+              moduleImport.kind === 'dynamic-import' ||
+              (!inspectImportAttributes && moduleImport.kind === 'import-statement'),
+          )
+          .map((moduleImport) => moduleImport.path),
+      )
+    } catch (error) {
+      violations.push({
+        filePath,
+        rule: 'unresolved-import',
+        message: `Unable to scan workflow source imports: ${error instanceof Error ? error.message : String(error)}`,
+        line: 1,
+        column: 1,
+      })
+      continue
     }
 
     for (const moduleSpecifier of moduleSpecifiers) {

@@ -91,6 +91,7 @@ const defaultDenyGlobals = new Set<string>([
   'fetch',
   'Promise',
   'WebSocket',
+  'Worker',
   'setTimeout',
   'setInterval',
   'Bun.spawn',

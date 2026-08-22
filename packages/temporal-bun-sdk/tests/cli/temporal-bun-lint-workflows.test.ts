@@ -171,6 +171,26 @@ test('lint-workflows fails on raw Promise constructors in workflow modules', asy
   })
 })
 
+test('lint-workflows fails on global Worker isolate creation', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, "export const run = () => new Worker('./worker.ts')\n")
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Worker'))).toBeTrue()
+  })
+})
+
 test('lint-workflows fails on Effect promise escape hatches in workflow modules', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')

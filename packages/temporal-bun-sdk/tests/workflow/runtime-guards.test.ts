@@ -331,6 +331,37 @@ test('WebSocket guard preserves constructor prototype and static members when av
   expect(patched.OPEN).toBe(original.OPEN)
 })
 
+test('Worker constructor throws in strict mode when called from workflow code when available', async () => {
+  const WorkerRef = (globalThis as unknown as { Worker?: new (...args: unknown[]) => unknown }).Worker
+  if (typeof WorkerRef !== 'function') {
+    return
+  }
+
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('workerWorkflow', Schema.Array(Schema.Unknown), () =>
+      Effect.sync(() => new WorkerRef('data:text/javascript,postMessage(1)')),
+    ),
+  )
+
+  await expect(execute(executor, { workflowType: 'workerWorkflow', arguments: [] })).rejects.toBeInstanceOf(
+    WorkflowNondeterminismError,
+  )
+})
+
+test('Worker guard preserves constructor prototype and static members when available', () => {
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+  const globalRef = globalThis as unknown as Record<symbol, unknown>
+  const original = globalRef[Symbol.for('@proompteng/temporal-bun-sdk.original.Worker')] as
+    | (Function & { prototype?: unknown })
+    | undefined
+  const patched = (globalThis as unknown as { Worker?: Function & { prototype?: unknown } }).Worker
+  if (!original || !patched) return
+
+  expect(patched.prototype).toBe(original.prototype)
+  expect(Object.getPrototypeOf(patched)).toBe(original)
+})
+
 test('Bun.spawn() throws in strict mode when called from workflow code', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(

@@ -30,6 +30,7 @@ const ORIGINAL_SET_TIMEOUT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.ori
 const ORIGINAL_SET_INTERVAL_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.setInterval')
 const ORIGINAL_PERFORMANCE_NOW_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.performance.now')
 const ORIGINAL_WEBSOCKET_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.WebSocket')
+const ORIGINAL_WORKER_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Worker')
 const ORIGINAL_PROCESS_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.process.env')
 const ORIGINAL_BUN_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.env')
 const ORIGINAL_BUN_SPAWN_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.spawn')
@@ -592,6 +593,25 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     ).prototype
     Object.setPrototypeOf(PatchedWebSocket, originalWebSocket)
     ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = PatchedWebSocket
+  }
+
+  const originalWorker = (globalThis as unknown as { Worker?: unknown }).Worker
+  if (typeof originalWorker === 'function') {
+    globalRef[ORIGINAL_WORKER_SYMBOL] = originalWorker
+    // biome-ignore lint/complexity/useArrowFunction: must remain constructable (usable with `new`)
+    const PatchedWorker = function (...args: unknown[]) {
+      handleViolation({
+        api: 'Worker',
+        message: 'Worker is not allowed in workflow code',
+        remediation: 'Move concurrent or isolated work into an activity and call it through the workflow context.',
+      })
+      return new (originalWorker as unknown as new (...args: unknown[]) => unknown)(...args)
+    }
+    ;(PatchedWorker as unknown as { prototype: unknown }).prototype = (
+      originalWorker as unknown as { prototype: unknown }
+    ).prototype
+    Object.setPrototypeOf(PatchedWorker, originalWorker)
+    ;(globalThis as unknown as { Worker: unknown }).Worker = PatchedWorker
   }
 
   const processRef = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process
