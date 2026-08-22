@@ -391,7 +391,14 @@ export const makeBaynExecutionController = (
           const state = await readState(ctx)
           verifyTickBinding(config, ctx.key, state)
           if (tick.sourceCatchUpRevision !== undefined && tick.sourceCatchUpRevision !== config.sourceRevision) {
-            throw terminal('execution controller source catch-up does not match this immutable deployment')
+            await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller quiesced a foreign source catch-up', {
+              controllerKey: ctx.key,
+              epoch: tick.epoch,
+              invocationId: ctx.request().id,
+              sequence: tick.sequence,
+              sourceRevision: config.sourceRevision,
+            })
+            return
           }
           if (isPreviousBinding(config, state)) {
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
@@ -445,6 +452,11 @@ export const makeBaynExecutionController = (
               sequence: tick.sequence,
               sourceRevision: config.sourceRevision,
             })
+            // A source catch-up is a rollout probe queued alongside the established revision's normal tick. Pausing
+            // this exclusive invocation would head-of-line block that known-good tick and stop the account controller.
+            // Complete the failed probe without changing state; bootstrap still fails because it cannot observe a
+            // completion from this source, while Restate remains free to deliver the established tick.
+            if (tick.sourceCatchUpRevision !== undefined) return
             throw new Error('Bayn execution controller advance exhausted its durable retry budget', { cause })
           }
           const result = decodeOrTerminal(
