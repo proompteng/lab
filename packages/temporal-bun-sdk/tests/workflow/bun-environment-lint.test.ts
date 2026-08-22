@@ -249,6 +249,45 @@ test('rejects VM modules that can evaluate against the Bun global', async () => 
   )
 })
 
+test('rejects runtime module loaders that can recover VM evaluation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { createRequire } from 'node:module'",
+      "import importedProcess from 'node:process'",
+      "const loaderKey = 'getBuiltinModule'",
+      'const loadBuiltin = process.getBuiltinModule',
+      "const reflectedLoader = Reflect.get(process, 'getBuiltinModule')",
+      'const runtimeRequire = require',
+      'const moduleRequire = createRequire(import.meta.url)',
+      "export const directBuiltin = () => process.getBuiltinModule('node:vm').runInThisContext('Bun.env.FLAG')",
+      "export const computedBuiltin = () => process[loaderKey]('vm').runInThisContext('Bun.env.FLAG')",
+      "export const recoveredBuiltin = () => process.valueOf().getBuiltinModule('vm').runInThisContext('Bun.env.FLAG')",
+      "export const importedBuiltin = () => importedProcess.getBuiltinModule('vm').runInThisContext('Bun.env.FLAG')",
+      "export const aliasedBuiltin = () => loadBuiltin('vm').runInThisContext('Bun.env.FLAG')",
+      "export const reflectedBuiltin = () => reflectedLoader('vm').runInThisContext('Bun.env.FLAG')",
+      "export const directRequire = () => require('node:vm').runInThisContext('Bun.env.FLAG')",
+      "export const aliasedRequire = () => runtimeRequire('vm').runInThisContext('Bun.env.FLAG')",
+      "export const createdRequire = () => moduleRequire('vm').runInThisContext('Bun.env.FLAG')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process.getBuiltinModule')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process[...]')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process.valueOf')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'Reflect.get')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'import.meta.require')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.specifier === 'module')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.specifier === 'process')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts a capture of the built-in Function apply implementation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

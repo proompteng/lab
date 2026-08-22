@@ -13,24 +13,37 @@ const bunEnvironmentGlobalObjectProperties = [
   'self',
   'window',
   'valueOf',
+  'process',
+  'require',
+  'module',
 ] as const
-const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function'])
+const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function', 'require'])
 const bunEnvironmentDenyMemberExpressions = new Set([
   'Bun.env',
   'import.meta',
   'import.meta.env',
+  'import.meta.require',
+  'process.getBuiltinModule',
+  'process.mainModule',
+  'process.valueOf',
+  'module.require',
+  'module.valueOf',
   ...bunEnvironmentGlobalObjects.flatMap((object) =>
     bunEnvironmentGlobalObjectProperties.map((property) => `${object}.${property}`),
   ),
 ])
-const bunEnvironmentDenyGlobalObjectProperties = new Map(
-  bunEnvironmentGlobalObjects.map((object) => [object, new Set(bunEnvironmentGlobalObjectProperties)]),
-)
-const bunEnvironmentDenyGlobalCaptures = new Set(bunEnvironmentGlobalObjects)
-const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function'])
+const bunEnvironmentDenyGlobalObjectProperties = new Map([
+  ...bunEnvironmentGlobalObjects.map(
+    (object) => [object, new Set<string>(bunEnvironmentGlobalObjectProperties)] as const,
+  ),
+  ['process', new Set(['getBuiltinModule', 'mainModule', 'valueOf'])] as const,
+  ['module', new Set(['require', 'valueOf'])] as const,
+])
+const bunEnvironmentDenyGlobalCaptures = new Set([...bunEnvironmentGlobalObjects, 'process', 'module'])
+const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function', 'require'])
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
-const bunEnvironmentDenyImports = new Set(['node:vm', 'vm'])
+const bunEnvironmentDenyImports = new Set(['node:vm', 'vm', 'node:module', 'module', 'node:process', 'process'])
 
 const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
   const details = diagnostic as {
