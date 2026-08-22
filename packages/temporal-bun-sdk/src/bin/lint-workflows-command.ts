@@ -78,6 +78,7 @@ const defaultDenyImports = new Set<string>([
   'node:child_process',
   'node:worker_threads',
   'fs',
+  'fs/promises',
   'net',
   'http',
   'https',

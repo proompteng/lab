@@ -151,6 +151,29 @@ test('lint-workflows fails when a workflow imports @proompteng/temporal-bun-sdk/
   })
 })
 
+test('lint-workflows fails on filesystem promise imports', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import { readFile } from 'fs/promises'\nexport const run = () => readFile('/proc/self/environ')\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-import' && v.message.includes('fs/promises'))).toBeTrue()
+  })
+})
+
 test('lint-workflows fails on raw Promise constructors in workflow modules', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')

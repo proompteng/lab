@@ -274,6 +274,32 @@ test('rejects child process modules that can recover inherited environment state
   )
 })
 
+test('rejects filesystem modules that can read the process environment outside runtime guards', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { readFileSync } from 'node:fs'",
+      "import { readFile } from 'node:fs/promises'",
+      "export const sync = () => readFileSync('/proc/self/environ')",
+      "export const async = () => readFile('/proc/self/environ')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ rule: 'deny-import', details: { specifier: 'fs' } }),
+      expect.objectContaining({ rule: 'deny-import', details: { specifier: 'fs/promises' } }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects runtime module loaders that can recover VM evaluation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
