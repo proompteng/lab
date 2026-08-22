@@ -1097,6 +1097,64 @@ describe('Bayn manifest promotion', () => {
     })
   })
 
+  test('promotes a refreshed research request through its proved authored-image descendant', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      capitalActivationRequest: true,
+      capitalActivationKind: 'ResearchCapitalActivationRequest',
+    })
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    const candidate = readFileSync(paths.deploymentPath, 'utf8')
+    const deployedLineage = {
+      ...researchBuildLineage,
+      requestHash: '8'.repeat(64),
+      authoredActivation: {
+        ...researchBuildLineage.authoredActivation,
+        sourceRevision: 'f'.repeat(40),
+        imageDigest: `sha256:${'f'.repeat(64)}`,
+      },
+      activation: {
+        ...researchBuildLineage.activation,
+        sourceRevision: 'f'.repeat(40),
+        imageDigest: `sha256:${'f'.repeat(64)}`,
+      },
+    }
+    const deployed = candidate
+      .replace(
+        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash),
+        environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', '6'.repeat(64)),
+      )
+      .replace(
+        environmentBlock('BAYN_STRATEGY_PROTOCOL_HASH', strategyProtocolHash),
+        environmentBlock('BAYN_STRATEGY_PROTOCOL_HASH', '7'.repeat(64)),
+      )
+      .replace(
+        environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(researchBuildLineage)),
+        environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(deployedLineage)),
+      )
+    writeFileSync(deployedDeploymentPath, deployed)
+
+    expect(
+      updateBaynManifests({
+        sourceSha: 'a'.repeat(40),
+        tag: `sha-${'a'.repeat(40)}`,
+        digest: `sha256:${'b'.repeat(64)}`,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        candidateRuntime: currentBindings,
+        deployedDeploymentPath,
+        researchLineageSourceSha: '0'.repeat(40),
+        ...paths,
+      }),
+    ).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+    })
+  })
+
   test.each([
     ['BAYN_STRATEGY_BEHAVIOR_HASH', strategyBehaviorHash, '6'.repeat(64)],
     ['BAYN_STRATEGY_PARAMETER_HASH', strategyParameterHash, '6'.repeat(64)],
