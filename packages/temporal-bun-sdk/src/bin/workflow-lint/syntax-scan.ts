@@ -14,6 +14,7 @@ export type WorkflowModuleSpecifier = {
   readonly specifier: string
   readonly start: number
   readonly end: number
+  readonly typeOnly: boolean
 }
 
 export type WorkflowPosition = {
@@ -24,16 +25,39 @@ export type WorkflowPosition = {
 export const scanWorkflowSyntaxTokens = (sourceText: string): WorkflowSyntaxToken[] => {
   const scanner = createScanner(true, undefined, sourceText)
   const tokens: WorkflowSyntaxToken[] = []
+  const templateExpressionBraceDepths: number[] = []
+  let previousEnd = -1
 
   for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    if (kind === SyntaxKind.CloseBraceToken && templateExpressionBraceDepths.length > 0) {
+      const templateIndex = templateExpressionBraceDepths.length - 1
+      const braceDepth = templateExpressionBraceDepths[templateIndex] ?? 0
+      if (braceDepth === 0) {
+        kind = scanner.reScanTemplateToken(false)
+        if (kind === SyntaxKind.TemplateTail) templateExpressionBraceDepths.pop()
+      } else {
+        templateExpressionBraceDepths[templateIndex] = braceDepth - 1
+      }
+    } else if (kind === SyntaxKind.OpenBraceToken && templateExpressionBraceDepths.length > 0) {
+      const templateIndex = templateExpressionBraceDepths.length - 1
+      templateExpressionBraceDepths[templateIndex] = (templateExpressionBraceDepths[templateIndex] ?? 0) + 1
+    }
+
+    const start = scanner.getTokenStart()
+    const end = scanner.getTokenEnd()
+    if (end <= start || end <= previousEnd) {
+      throw new Error(`Workflow syntax scanner did not advance at offset ${start}`)
+    }
     tokens.push({
       kind,
       text: scanner.getTokenText(),
       value: scanner.getTokenValue(),
-      start: scanner.getTokenStart(),
-      end: scanner.getTokenEnd(),
+      start,
+      end,
       hasPrecedingLineBreak: scanner.hasPrecedingLineBreak(),
     })
+    previousEnd = end
+    if (kind === SyntaxKind.TemplateHead) templateExpressionBraceDepths.push(0)
   }
 
   return tokens
@@ -444,18 +468,62 @@ const isTypeOnlyImportCall = (tokens: readonly WorkflowSyntaxToken[], importInde
 const findFromModuleSpecifier = (
   tokens: readonly WorkflowSyntaxToken[],
   startIndex: number,
-): WorkflowModuleSpecifier | undefined => {
+): (WorkflowModuleSpecifier & { readonly fromIndex: number }) | undefined => {
   for (let index = startIndex + 1; index < tokens.length; index += 1) {
     const token = tokens[index]
     if (isModuleSpecifierSearchBoundary(token)) return undefined
 
     if (token.kind === SyntaxKind.FromKeyword && isStringLiteral(tokens[index + 1])) {
       const specifier = tokens[index + 1]
-      return { specifier: specifier.value, start: specifier.start, end: specifier.end }
+      return {
+        specifier: specifier.value,
+        start: specifier.start,
+        end: specifier.end,
+        typeOnly: false,
+        fromIndex: index,
+      }
     }
   }
 
   return undefined
+}
+
+const hasOnlyTypeNamedBindings = (
+  tokens: readonly WorkflowSyntaxToken[],
+  openBraceIndex: number,
+  fromIndex: number,
+): boolean => {
+  let bindingStart = openBraceIndex + 1
+  let sawBinding = false
+
+  for (let index = bindingStart; index < fromIndex; index += 1) {
+    const kind = tokens[index]?.kind
+    if (kind !== SyntaxKind.CommaToken && kind !== SyntaxKind.CloseBraceToken) continue
+    if (bindingStart < index) {
+      sawBinding = true
+      const first = tokens[bindingStart]
+      const second = tokens[bindingStart + 1]
+      if (first?.kind !== SyntaxKind.TypeKeyword || second?.kind == null || second.kind === SyntaxKind.AsKeyword) {
+        return false
+      }
+    }
+    bindingStart = index + 1
+    if (kind === SyntaxKind.CloseBraceToken) break
+  }
+
+  return sawBinding
+}
+
+const isTypeOnlyStaticDeclaration = (
+  tokens: readonly WorkflowSyntaxToken[],
+  declarationIndex: number,
+  fromIndex: number,
+): boolean => {
+  const first = tokens[declarationIndex + 1]
+  const second = tokens[declarationIndex + 2]
+  if (first?.kind === SyntaxKind.TypeKeyword && second?.kind !== SyntaxKind.FromKeyword) return true
+  if (first?.kind !== SyntaxKind.OpenBraceToken) return false
+  return hasOnlyTypeNamedBindings(tokens, declarationIndex + 1, fromIndex)
 }
 
 export const collectWorkflowModuleSpecifiers = (tokens: readonly WorkflowSyntaxToken[]): WorkflowModuleSpecifier[] => {
@@ -467,17 +535,23 @@ export const collectWorkflowModuleSpecifiers = (tokens: readonly WorkflowSyntaxT
       const next = tokens[index + 1]
       if (next?.kind === SyntaxKind.OpenParenToken) continue
       if (isStringLiteral(next)) {
-        specifiers.push({ specifier: next.value, start: next.start, end: next.end })
+        specifiers.push({ specifier: next.value, start: next.start, end: next.end, typeOnly: false })
         continue
       }
       const fromSpecifier = findFromModuleSpecifier(tokens, index)
-      if (fromSpecifier) specifiers.push(fromSpecifier)
+      if (fromSpecifier) {
+        const { fromIndex, ...specifier } = fromSpecifier
+        specifiers.push({ ...specifier, typeOnly: isTypeOnlyStaticDeclaration(tokens, index, fromIndex) })
+      }
       continue
     }
 
     if (token.kind === SyntaxKind.ExportKeyword) {
       const fromSpecifier = findFromModuleSpecifier(tokens, index)
-      if (fromSpecifier) specifiers.push(fromSpecifier)
+      if (fromSpecifier) {
+        const { fromIndex, ...specifier } = fromSpecifier
+        specifiers.push({ ...specifier, typeOnly: isTypeOnlyStaticDeclaration(tokens, index, fromIndex) })
+      }
     }
   }
 

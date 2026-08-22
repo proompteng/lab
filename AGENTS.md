@@ -39,7 +39,7 @@ Prefer the Sol-specific guidance when the sources differ.
 ## Toolchain
 
 - Prefer `nix develop` from the repository root. Run `toolchain-doctor` inside the shell when versions look wrong.
-- Pinned versions: Node 24.11.1, Bun 1.3.14, Go 1.25.5, Ruby 3.4.7 with Bundler 2.7+, and Helm 3. Go services support Go 1.24+.
+- Pinned versions: Node 24.11.1, Bun 1.4.0, Go 1.25.5, Ruby 3.4.7 with Bundler 2.7+, and Helm 3. Go services support Go 1.24+.
 - Python support: 3.9–3.12 for `apps/alchimie`; see nested guidance for Python services.
 - Helm 4 is not supported for `kustomize --enable-helm` in this repository.
 - Optional local direnv setup: copy `.envrc.example` to `.envrc`, then run `direnv allow`.

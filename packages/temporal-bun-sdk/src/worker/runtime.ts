@@ -91,6 +91,7 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
+import { assertWorkflowBunEnvironmentSafety } from '../workflow/bun-environment-lint'
 import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
@@ -106,7 +107,7 @@ import { intentsEqual, stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
-import { installWorkflowRuntimeGuards } from '../workflow/guards'
+import { canGuardBunEnvironmentAtRuntime, installWorkflowRuntimeGuards } from '../workflow/guards'
 import {
   CHILD_WORKFLOW_COMPLETED_SIGNAL,
   type WorkflowQueryRequest,
@@ -316,8 +317,20 @@ export class WorkerRuntime {
       throw new Error('workflowGuards must be strict in production')
     }
 
+    if (
+      workflowGuards === 'strict' &&
+      !canGuardBunEnvironmentAtRuntime() &&
+      (options.workflowsPath || (options.workflows && options.workflows.length > 0))
+    ) {
+      await assertWorkflowBunEnvironmentSafety({
+        workflowsPath: options.workflowsPath,
+        workflows: options.workflows,
+      })
+    }
+
     // Install workflow runtime guards before importing any workflow code so top-level module
-    // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope).
+    // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope). Bun 1.4's
+    // immutable Bun.env binding is proven safe by the focused source lint above.
     installWorkflowRuntimeGuards({ mode: workflowGuards })
 
     const workflows = await runWithWorkflowModuleLoadContext({ mode: workflowGuards }, async () => {

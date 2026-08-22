@@ -1,12 +1,12 @@
 # Temporal Bun SDK Support Policy
 
-_Last updated: May 6, 2026_
+_Last updated: August 21, 2026_
 
 ## Supported Runtime Matrix
 
 | Surface         | Supported                                                                       | Notes                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Bun             | `>=1.3.14`                                                                      | CI pins Bun `1.3.14`; newer Bun releases must pass the SDK test, replay, and load gates before being documented as preferred.           |
+| Bun             | `>=1.4.0`                                                                       | CI pins Bun `1.4.0`; newer Bun releases must pass the SDK test, replay, and load gates before being documented as preferred.            |
 | Node            | Build tooling only                                                              | The worker runtime is Bun TypeScript. Node is used by repository tooling and GitHub Actions setup, not by the published worker runtime. |
 | Temporal Server | Current CI cluster plus pinned dev server histories                             | Additional server minor/version coverage requires replay-corpus and integration evidence before being documented as preferred.          |
 | Temporal Cloud  | Client/worker TLS and mTLS paths are supported when credentials are configured. | Cloud Ops tests remain optional unless credentials are present.                                                                         |
@@ -57,6 +57,9 @@ must not select it by default until `verify:default-choice` passes.
 - Official SDK internal sandbox behavior is not a compatibility promise. The
   compatibility promise is Temporal protocol behavior plus deterministic replay
   evidence.
+- Bun 1.4 exposes `Bun.env` and `import.meta.env` as immutable launch-time
+  snapshots. Strict workflow lint rejects both surfaces; runtime guards proxy
+  `process.env` and do not mutate Bun's process-wide snapshot object.
 - Default-choice status is scoped to Bun-first deployments that accept the
   published gates and support model. It is not a blanket replacement for every
   official SDK use case, and teams with unusual throughput, history size, or

@@ -207,66 +207,10 @@ const guardedEnvironment = <T extends object>(target: T, api: string): T =>
     },
   })
 
-const guardEnvironmentObjectProperties = (target: Record<string, string | undefined>, api: string) => {
-  const values = new Map<string, string | undefined>()
-  for (const key of Object.keys(target)) {
-    const descriptor = Object.getOwnPropertyDescriptor(target, key)
-    if (!descriptor?.configurable) {
-      continue
-    }
-    values.set(key, descriptor.get ? (descriptor.get.call(target) as string | undefined) : descriptor.value)
-    Object.defineProperty(target, key, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get() {
-        guardEnvironmentViolation(api, 'read')
-        return values.get(key)
-      },
-      set(value: string | undefined) {
-        guardEnvironmentViolation(api, 'mutation')
-        values.set(key, value)
-      },
-    })
-  }
-
-  const originalPrototype = Object.getPrototypeOf(target)
-  if (!originalPrototype || Object.prototype.hasOwnProperty.call(originalPrototype, '__temporalBunSdkEnvGuard')) {
-    return
-  }
-
-  Object.setPrototypeOf(
-    target,
-    new Proxy(Object.create(originalPrototype) as Record<PropertyKey, unknown>, {
-      get(current, property, receiver) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'read')
-        }
-        return Reflect.get(current, property, receiver)
-      },
-      set(current, property, value, receiver) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'mutation')
-        }
-        return Reflect.set(current, property, value, receiver)
-      },
-      has(current, property) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'inspection')
-        }
-        return Reflect.has(current, property)
-      },
-      getOwnPropertyDescriptor(current, property) {
-        if (property === '__temporalBunSdkEnvGuard') {
-          return {
-            configurable: true,
-            enumerable: false,
-            value: true,
-          }
-        }
-        return Reflect.getOwnPropertyDescriptor(current, property)
-      },
-    }),
-  )
+export const canGuardBunEnvironmentAtRuntime = (): boolean => {
+  const maybeBun = (globalThis as unknown as { Bun?: { env?: unknown } }).Bun
+  if (!maybeBun?.env || typeof maybeBun.env !== 'object') return true
+  return Object.getOwnPropertyDescriptor(maybeBun, 'env')?.writable === true
 }
 
 export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode }) => {
@@ -627,10 +571,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   if (originalBunEnv && typeof originalBunEnv === 'object') {
     globalRef[ORIGINAL_BUN_ENV_SYMBOL] = originalBunEnv
     const bunEnvDescriptor = maybeBun ? Object.getOwnPropertyDescriptor(maybeBun, 'env') : undefined
+    // Bun 1.4 exposes Bun.env as a non-configurable launch-time snapshot. Replacing it is impossible, and
+    // redefining its string-valued entries with accessors now throws. Strict workflow lint rejects Bun.env;
+    // retain the runtime proxy only for runtimes that explicitly expose a writable environment binding.
     if (bunEnvDescriptor?.writable) {
       maybeBun.env = guardedEnvironment(originalBunEnv, 'Bun.env') as typeof maybeBun.env
-    } else {
-      guardEnvironmentObjectProperties(originalBunEnv, 'Bun.env')
     }
   }
 

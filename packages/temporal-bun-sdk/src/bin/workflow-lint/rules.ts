@@ -20,6 +20,7 @@ export type WorkflowLintViolation = {
     | 'capture-global'
     | 'capture-member-expression'
     | 'dynamic-import'
+    | 'unresolved-import'
   readonly message: string
   readonly line: number
   readonly column: number
@@ -31,23 +32,66 @@ const memberExpressionName = (
   index: number,
 ): { name: string; token: WorkflowSyntaxToken } | undefined => {
   const objectToken = tokens[index]
-  const previous = index > 0 ? tokens[index - 1] : undefined
+  let objectStartIndex = index
+  let objectEndIndex = index
+  while (
+    tokens[objectStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+    tokens[objectEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+  ) {
+    objectStartIndex -= 1
+    objectEndIndex += 1
+  }
+
+  const previous = objectStartIndex > 0 ? tokens[objectStartIndex - 1] : undefined
   if (previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken) return undefined
 
-  const dotToken = tokens[index + 1]
-  const propertyToken = tokens[index + 2]
+  const dotToken = tokens[objectEndIndex + 1]
+  const propertyToken = tokens[objectEndIndex + 2]
   if (
     isIdentifierLikeToken(objectToken) &&
     (dotToken?.kind === SyntaxKind.DotToken || dotToken?.kind === SyntaxKind.QuestionDotToken) &&
     isIdentifierLikeToken(propertyToken)
   ) {
-    return { name: `${objectToken.text}.${propertyToken.text}`, token: objectToken }
+    const name = `${objectToken.text}.${propertyToken.text}`
+    if (name === 'import.meta') {
+      let expressionStartIndex = objectStartIndex
+      let expressionEndIndex = objectEndIndex + 2
+      while (
+        tokens[expressionStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+        tokens[expressionEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+      ) {
+        expressionStartIndex -= 1
+        expressionEndIndex += 1
+      }
+
+      const nestedDotToken = tokens[expressionEndIndex + 1]
+      const nestedPropertyToken = tokens[expressionEndIndex + 2]
+      if (
+        (nestedDotToken?.kind === SyntaxKind.DotToken || nestedDotToken?.kind === SyntaxKind.QuestionDotToken) &&
+        isIdentifierLikeToken(nestedPropertyToken)
+      ) {
+        return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken }
+      }
+
+      const nestedOpenBracketToken = tokens[expressionEndIndex + 1]
+      const nestedElementToken = tokens[expressionEndIndex + 2]
+      const nestedCloseBracketToken = tokens[expressionEndIndex + 3]
+      if (
+        nestedOpenBracketToken?.kind === SyntaxKind.OpenBracketToken &&
+        nestedElementToken?.kind === SyntaxKind.StringLiteral &&
+        nestedCloseBracketToken?.kind === SyntaxKind.CloseBracketToken
+      ) {
+        return { name: `${name}.${nestedElementToken.value}`, token: objectToken }
+      }
+    }
+    return { name, token: objectToken }
   }
 
   const bracketIndex =
-    tokens[index + 1]?.kind === SyntaxKind.QuestionDotToken && tokens[index + 2]?.kind === SyntaxKind.OpenBracketToken
-      ? index + 2
-      : index + 1
+    tokens[objectEndIndex + 1]?.kind === SyntaxKind.QuestionDotToken &&
+    tokens[objectEndIndex + 2]?.kind === SyntaxKind.OpenBracketToken
+      ? objectEndIndex + 2
+      : objectEndIndex + 1
   const openBracketToken = tokens[bracketIndex]
   const elementToken = tokens[bracketIndex + 1]
   const closeBracketToken = tokens[bracketIndex + 2]
@@ -96,7 +140,10 @@ const isRuntimeVariableInitializerCapture = (
   index: number,
   previous: WorkflowSyntaxToken | undefined,
 ): boolean => {
-  if (previous?.kind !== SyntaxKind.EqualsToken) return false
+  let assignmentIndex = index - 1
+  while (tokens[assignmentIndex]?.kind === SyntaxKind.OpenParenToken) assignmentIndex -= 1
+  if (tokens[assignmentIndex]?.kind !== SyntaxKind.EqualsToken && previous?.kind !== SyntaxKind.EqualsToken)
+    return false
 
   const statementStart = findStatementStartIndex(tokens, index, { lineBreaksAreBoundaries: false })
   for (let cursor = statementStart; cursor < index; cursor += 1) {
@@ -271,14 +318,15 @@ const isTypeOnlyTypeofMemberExpression = (
   )
 }
 
-export const lintWorkflowModuleAst = async (options: {
+export const lintWorkflowSourceAst = (options: {
   readonly filePath: string
+  readonly sourceText: string
   readonly denyGlobals: ReadonlySet<string>
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
-}): Promise<WorkflowLintViolation[]> => {
+}): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
-  const sourceText = await readFile(options.filePath, 'utf8')
+  const sourceText = options.sourceText
   const tokens = scanWorkflowSyntaxTokens(sourceText)
   const positionOf = createWorkflowPositionResolver(sourceText)
 
@@ -316,6 +364,22 @@ export const lintWorkflowModuleAst = async (options: {
     const previous = previousToken(tokens, index)
     const next = nextToken(tokens, index)
     const name = token.text
+    const runtimeVariableCapture = isRuntimeVariableInitializerCapture(tokens, index, previous)
+
+    if (
+      name === 'Bun' &&
+      options.denyGlobals.has(name) &&
+      !runtimeVariableCapture &&
+      previous?.kind !== SyntaxKind.DotToken &&
+      previous?.kind !== SyntaxKind.QuestionDotToken &&
+      !isTypeOnlyTypeofMemberExpression(tokens, index, previous)
+    ) {
+      report(token.start, {
+        rule: 'deny-global',
+        message: 'Disallowed Bun runtime reference in workflow module',
+        details: { global: name },
+      })
+    }
 
     if (options.denyGlobals.has(name)) {
       const isDirectGlobalCall = next?.kind === SyntaxKind.OpenParenToken
@@ -341,7 +405,7 @@ export const lintWorkflowModuleAst = async (options: {
         })
       }
 
-      if (isRuntimeVariableInitializerCapture(tokens, index, previous)) {
+      if (runtimeVariableCapture) {
         report(token.start, {
           rule: 'capture-global',
           message: `Capturing disallowed global in workflow module: const x = ${name}`,
@@ -373,10 +437,7 @@ export const lintWorkflowModuleAst = async (options: {
       })
     }
 
-    if (
-      previous?.kind === SyntaxKind.EqualsToken &&
-      (options.denyMemberExpressions.has(member.name) || member.name === 'Date.now')
-    ) {
+    if (previous?.kind === SyntaxKind.EqualsToken && options.denyMemberExpressions.has(member.name)) {
       report(member.token.start, {
         rule: 'capture-member-expression',
         message: `Capturing disallowed member expression in workflow module: const x = ${member.name}`,
@@ -387,3 +448,14 @@ export const lintWorkflowModuleAst = async (options: {
 
   return violations
 }
+
+export const lintWorkflowModuleAst = async (options: {
+  readonly filePath: string
+  readonly denyGlobals: ReadonlySet<string>
+  readonly denyMemberExpressions: ReadonlySet<string>
+  readonly denyImports: ReadonlySet<string>
+}): Promise<WorkflowLintViolation[]> =>
+  lintWorkflowSourceAst({
+    ...options,
+    sourceText: await readFile(options.filePath, 'utf8'),
+  })

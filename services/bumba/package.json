@@ -13,7 +13,7 @@
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
-    "test": "bun test",
+    "test": "bun test --parallel=1",
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {
@@ -43,8 +43,8 @@
     "yaml": "^2.8.4"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.0",
     "typescript": "^7.0.2"
   },
-  "packageManager": "bun@1.3.14"
+  "packageManager": "bun@1.4.0"
 }

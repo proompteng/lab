@@ -103,6 +103,7 @@ const defaultDenyMemberExpressions = new Set<string>([
   'Math.random',
   'process.env',
   'Bun.env',
+  'import.meta.env',
   'Bun.nanoseconds',
   'Bun.sleep',
   'Bun.file',
