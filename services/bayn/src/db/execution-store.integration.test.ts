@@ -2894,11 +2894,12 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('clears a failure-restricted qualified v2 execution generation only after fresh exact reconciliation', async () => {
+  test('clears a reconciliation-restricted qualified v2 cycle only after fresh exact reconciliation', async () => {
     const sourceGenerationHash = hash('qualified-v2-recovery-source')
     const nextSourceGenerationHash = hash('qualified-v2-recovery-next-source')
     const activationReconciliation = exactReconciliation('qualified-v2-recovery-activation')
     const activation = makeActivation(sourceGenerationHash, qualifiedEvidence, activationReconciliation)
+    const cycleId = hash('qualified-v2-recovery-cycle')
     const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
     try {
       const result = await runtime.runPromise(
@@ -2913,16 +2914,49 @@ describePostgres('paper accounting persistence', () => {
             maximum: Authority.Observe,
           })
           const activated = yield* store.activateCapitalGrant(proofBinding(activation))
+          yield* sql`
+            WITH timing AS (
+              SELECT
+                clock_timestamp() AS created_at,
+                (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
+            )
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
+              'risk-balanced-trend', ${activation.qualificationRunId}, ${activation.protocolHash}, ${accountId},
+              execution_date - 1, 'test-calendar-v1',
+              'bayn.autonomous-cycle-execution-policy.v1', ${hash('qualified-v2-recovery-policy')},
+              ${hash('qualified-v2-recovery-execution-model')}, 1800000, 1800000,
+              'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash('qualified-v2-recovery-calendar')}, execution_date,
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '14:30') AT TIME ZONE 'UTC',
+              (execution_date + time '21:00') AT TIME ZONE 'UTC',
+              (execution_date + time '14:00') AT TIME ZONE 'UTC',
+              'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
+            FROM timing
+          `
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
             WHERE singleton
           `
           if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
-          yield* store.restrictAuthority(
-            `${executionMandateFailureRestrictionPrefix} qualified v2 recovery`,
-            restrictionTime.updated_at.toISOString(),
-          )
+          yield* store.restrictAuthority(incompletePassReason, restrictionTime.updated_at.toISOString())
 
           const beforeFreshReconciliation = yield* Effect.flip(
             store.ensureAuthorityGeneration({
@@ -2950,7 +2984,16 @@ describePostgres('paper accounting persistence', () => {
             generationHash: nextSourceGenerationHash,
             maximum: Authority.Observe,
           })
-          return { activated, beforeFreshReconciliation, rearmed }
+          const [cycle] = yield* sql<{
+            decision_hash: string | null
+            state: string
+            terminal_reason: string | null
+          }>`
+            SELECT state, decision_hash, terminal_reason
+            FROM autonomous_cycles
+            WHERE cycle_id = ${cycleId}
+          `
+          return { activated, beforeFreshReconciliation, cycle, rearmed }
         }),
       )
 
@@ -2971,6 +3014,11 @@ describePostgres('paper accounting persistence', () => {
         kill: KillState.Clear,
       })
       expect(result.rearmed.reason).toBeUndefined()
+      expect(result.cycle).toEqual({
+        decision_hash: null,
+        state: 'BLOCKED',
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
+      })
     } finally {
       await runtime.dispose()
     }

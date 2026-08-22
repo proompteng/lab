@@ -236,8 +236,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND state.generation_hash = ${decision.current.generationHash}
         AND state.maximum = 'PAPER'
         AND previous_generation.maximum = 'PAPER'
-        AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
-        AND previous_generation.proof_plan_hash IS NOT NULL
+        AND previous_generation.activation_schema_version IN (
+          'bayn.paper-authority-generation.v2',
+          'bayn.paper-authority-generation.v3'
+        )
         AND candidate_generation.previous_generation_hash = previous_generation.generation_hash
         AND candidate_generation.maximum = 'OBSERVE'
         AND candidate_generation.activation_schema_version IS NULL
@@ -272,7 +274,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND state.reason IS NULL
           )
         )
-        AND cycle.qualification_run_id = previous_generation.proof_plan_hash
+        AND cycle.qualification_run_id = CASE previous_generation.activation_schema_version
+          WHEN 'bayn.paper-authority-generation.v2' THEN previous_generation.qualification_run_id
+          WHEN 'bayn.paper-authority-generation.v3' THEN previous_generation.proof_plan_hash
+        END
         AND cycle.account_id = previous_generation.account_id
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
