@@ -77,6 +77,7 @@ import {
 import {
   Authority,
   KillState,
+  ReconciliationStatus,
   makeCapitalGrantGenerationResult,
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
@@ -319,6 +320,10 @@ const continuationAuthority: AuthorityState = {
   version: 2,
   updatedAt: '2026-08-10T18:00:00.000Z',
 }
+
+const capitalActivationReconciliation = (status: ReconciliationStatus = ReconciliationStatus.Exact) => ({
+  report: { reconciliation: { status } },
+})
 
 const continuationAuthorityStore = (
   generation: typeof continuationGeneration | null = continuationGeneration,
@@ -1755,7 +1760,10 @@ describe('Bayn capital startup recovery boundary', () => {
           unusedBrokerSession,
           authorityStore,
           unusedCapitalGrantLifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         ).pipe(Effect.flip)
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -1780,7 +1788,10 @@ describe('Bayn capital startup recovery boundary', () => {
           unusedBrokerSession,
           authorityStore,
           unusedCapitalGrantLifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         ).pipe(Effect.flip)
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -2013,7 +2024,10 @@ describe('Bayn capital startup recovery boundary', () => {
           session,
           authorityStore,
           lifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         )
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -2034,6 +2048,30 @@ describe('Bayn capital startup recovery boundary', () => {
     }
     operations.length = 0
     rearmBlocked = true
+    const discrepancyFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          request,
+          null,
+          buildLineage,
+          session,
+          authorityStore,
+          lifecycle,
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation(ReconciliationStatus.Discrepancy)
+          }),
+          config.operationTimeoutMs,
+        ).pipe(Effect.flip)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(discrepancyFailure.message).toBe('research capital pre-activation reconciliation was not exact')
+    expect(operations).toEqual(['reconcile'])
+
+    operations.length = 0
     const recovered = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
@@ -2045,7 +2083,10 @@ describe('Bayn capital startup recovery boundary', () => {
           session,
           authorityStore,
           lifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         )
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -2078,6 +2119,7 @@ describe('Bayn capital startup recovery boundary', () => {
       refreshResearchCapitalActivationReconciliation(
         Effect.sync(() => {
           operations.push('reconcile')
+          return capitalActivationReconciliation()
         }),
         1_000,
       ).pipe(

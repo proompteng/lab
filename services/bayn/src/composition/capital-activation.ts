@@ -17,6 +17,7 @@ import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionRe
 import {
   Authority,
   KillState,
+  ReconciliationStatus,
   type AuthorityState,
   type CapitalGrantGeneration,
   type CapitalGrantProofBinding,
@@ -948,8 +949,16 @@ export const prepareResearchCapitalActivation = (
     )
   })
 
+interface CapitalActivationReconciliationObservation {
+  readonly report: {
+    readonly reconciliation: {
+      readonly status: ReconciliationStatus
+    }
+  }
+}
+
 export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
-  reconcile: Effect.Effect<unknown, E, R>,
+  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
   operationTimeoutMs: number,
 ): Effect.Effect<void, OperationalError, R> =>
   reconcile.pipe(
@@ -961,13 +970,21 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('research capital pre-activation reconciliation failed', cause),
     ),
-    Effect.asVoid,
+    Effect.flatMap((result) =>
+      result.report.reconciliation.status === ReconciliationStatus.Exact
+        ? Effect.void
+        : Effect.fail(
+            capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
+          ),
+    ),
   )
 
 export const refreshResearchCapitalActivationReconciliation = Pipeable.generic<
   <E, R>(
     operationTimeoutMs: number,
-  ) => (reconcile: Effect.Effect<unknown, E, R>) => Effect.Effect<void, OperationalError, R>,
+  ) => (
+    reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
+  ) => Effect.Effect<void, OperationalError, R>,
   typeof refreshResearchCapitalActivationReconciliationDataFirst
 >(2, refreshResearchCapitalActivationReconciliationDataFirst)
 
@@ -979,7 +996,7 @@ export const prepareOrRecoverResearchCapitalActivation = (
   session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  reconcile: Effect.Effect<unknown, ReconciliationPassError | OperationalError>,
+  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, ReconciliationPassError | OperationalError>,
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
