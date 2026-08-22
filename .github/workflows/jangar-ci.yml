@@ -15,7 +15,7 @@ jobs:
   lint-and-typecheck:
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.3.14
+      bun-version: 1.4.0
       node-version: 24.11.1
       install-command: ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/jangar --filter @proompteng/bumba --filter @proompteng/codex --filter @proompteng/cx-tools --filter @proompteng/design --filter @proompteng/discord --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build && cd services/jangar && bun install --frozen-lockfile --ignore-scripts
       lint-command: bunx oxfmt --check services/jangar packages/scripts/src/jangar argocd/applications/jangar
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
       - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/jangar --filter @proompteng/bumba --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk
       - run: bun run --filter @proompteng/otel build
       - run: bun run --filter @proompteng/temporal-bun-sdk build

@@ -56,6 +56,7 @@ test('lint-workflows fails on Bun environment, timer, file, and socket escape ha
       entry,
       [
         'export const env = () => Bun.env.FOO',
+        'export const importMetaEnv = () => import.meta.env.FOO',
         'export const sleep = () => Bun.sleep(1)',
         "export const file = () => Bun.file('/tmp/probe')",
         "export const write = () => Bun.write('/tmp/probe', 'x')",
@@ -72,7 +73,15 @@ test('lint-workflows fails on Bun environment, timer, file, and socket escape ha
     })
 
     expect(result.exitCode).toBe(1)
-    for (const api of ['Bun.env', 'Bun.sleep', 'Bun.file', 'Bun.write', 'Bun.connect', 'Bun.serve']) {
+    for (const api of [
+      'Bun.env',
+      'import.meta.env',
+      'Bun.sleep',
+      'Bun.file',
+      'Bun.write',
+      'Bun.connect',
+      'Bun.serve',
+    ]) {
       expect(
         result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes(api)),
       ).toBeTrue()

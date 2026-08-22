@@ -42,7 +42,7 @@ test "$toolchain_platforms" = linux/amd64,linux/arm64
 for platform in linux/amd64 linux/arm64; do
   crane config --platform "$platform" "$toolchain_ref" | jq -e '
     .config.Labels["proompteng.ai/toolchain.node"] == "24.11.1" and
-    .config.Labels["proompteng.ai/toolchain.bun"] == "1.3.14" and
+    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.0" and
     .config.Labels["proompteng.ai/toolchain.go"] == "1.25.5" and
     .config.Labels["proompteng.ai/toolchain.helm"] == "3.19.1" and
     .config.Labels["proompteng.ai/toolchain.kustomize"] == "5.8.0" and
@@ -172,8 +172,7 @@ The expected Hermes toolchain multi-architecture index digest is
    ```
 
    The Argo deployment history is the durable alert-enablement source and must contain a successful deployment. It remains
-   outside the Hermes namespace and is re-exported after monitoring restarts. Both reported key lengths must be at least
-   32. Do not include either value in rollout evidence.
+   outside the Hermes namespace and is re-exported after monitoring restarts. Both reported key lengths must be at least 32. Do not include either value in rollout evidence.
 
 ## Phase 1: API-only canary
 
@@ -267,8 +266,8 @@ The expected Hermes toolchain multi-architecture index digest is
      test "$(command -v shellcheck)" = /opt/lab-toolchain/bin/shellcheck
      test "$(command -v yq)" = /opt/lab-toolchain/bin/yq
      test "$(node --version)" = v24.11.1
-     test "$(bun --version)" = 1.3.14
-     test "$(bunx --version)" = 1.3.14
+     test "$(bun --version)" = 1.4.0
+     test "$(bunx --version)" = 1.4.0
      test "$(go version)" = "go version go1.25.5 linux/amd64"
      test "$(helm version --template "{{.Version}}")" = v3.19.1
      test "$(jq --version)" = jq-1.8.1
@@ -426,7 +425,7 @@ The expected Hermes toolchain multi-architecture index digest is
    Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
    authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
-7. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
+8. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
 
    ```bash
    set -euo pipefail
