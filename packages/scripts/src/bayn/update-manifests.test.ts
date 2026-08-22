@@ -423,6 +423,62 @@ describe('Bayn manifest promotion', () => {
     ).toEqual(before)
   })
 
+  test('promotes a freshly authored raw research request over a deployed build continuation', () => {
+    const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
+    const nativePaths = installNativeExecutionManifests(true)
+    if (directory === undefined) throw new Error('fixture directory is unavailable')
+    const deployedDeploymentPath = join(directory, 'deployed-deployment.yaml')
+    writeFileSync(
+      deployedDeploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8')
+        .replace(
+          environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalActivationRequest'),
+          environmentBlock('BAYN_CAPITAL_ACTIVATION_KIND', 'ResearchCapitalBuildContinuation'),
+        )
+        .replace(environmentBlock('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE', JSON.stringify(researchBuildLineage)), ''),
+    )
+
+    const sourceSha = 'a'.repeat(40)
+    const digest = `sha256:${'b'.repeat(64)}`
+    const nextStrategyName = 'opening-drive-momentum-v2'
+    const nextResearchRequestHash = '8'.repeat(64)
+    for (const path of [
+      paths.deploymentPath,
+      nativePaths.executionControllerPath,
+      nativePaths.executionActivationPath,
+    ]) {
+      writeFileSync(
+        path,
+        readFileSync(path, 'utf8')
+          .replaceAll(`sha256:${'0'.repeat(64)}`, digest)
+          .replaceAll('0'.repeat(40), sourceSha)
+          .replaceAll(researchRequestHash, nextResearchRequestHash)
+          .replace(
+            environmentBlock('BAYN_STRATEGY_NAME', strategyName),
+            environmentBlock('BAYN_STRATEGY_NAME', nextStrategyName),
+          ),
+      )
+    }
+
+    expect(
+      updateBaynManifests({
+        sourceSha,
+        tag: `sha-${sourceSha}`,
+        digest,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        deployedDeploymentPath,
+        ...paths,
+        ...nativePaths,
+      }),
+    ).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+    })
+  })
+
   test('atomically advances proved research build lineage across every runtime manifest', () => {
     const paths = makeFixture({ qualificationRunId: null, capitalActivationRequest: true })
     const nativePaths = installNativeExecutionManifests(true)

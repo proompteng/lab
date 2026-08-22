@@ -449,15 +449,19 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST block')
   }
   const hasCapitalActivationRequest = capitalActivationRequests.length === 1
+  const deployedCapitalActivationKind = hasCapitalActivationRequest
+    ? environmentValue(deployedDeployment, 'BAYN_CAPITAL_ACTIVATION_KIND')
+    : null
   const capitalActivationKind = hasCapitalActivationRequest
     ? environmentValue(deployment, 'BAYN_CAPITAL_ACTIVATION_KIND')
     : null
-  if (
-    capitalActivationKind !== null &&
-    capitalActivationKind !== 'ResearchCapitalActivationRequest' &&
-    capitalActivationKind !== researchCapitalBuildContinuation
-  ) {
-    throw new Error(`invalid BAYN_CAPITAL_ACTIVATION_KIND: ${capitalActivationKind}`)
+  for (const [role, kind] of [
+    ['deployed', deployedCapitalActivationKind],
+    ['candidate', capitalActivationKind],
+  ] as const) {
+    if (kind !== null && kind !== 'ResearchCapitalActivationRequest' && kind !== researchCapitalBuildContinuation) {
+      throw new Error(`invalid ${role} BAYN_CAPITAL_ACTIVATION_KIND: ${kind}`)
+    }
   }
   const deployedRuntime = runtimeFromDeployment(deployedDeployment)
   const candidateManifestRuntime = runtimeFromDeployment(deployment)
@@ -506,11 +510,10 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   let researchRequestHashChanged = false
   if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
     researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
-    const deployedResearchBuildLineage = researchCapitalBuildLineageFromManifest(
-      deployedDeployment,
-      'deployed deployment',
-    )
-    researchRequestHashChanged = deployedResearchBuildLineage.requestHash !== researchBuildLineage.requestHash
+    researchRequestHashChanged =
+      deployedCapitalActivationKind !== 'ResearchCapitalActivationRequest' ||
+      researchCapitalBuildLineageFromManifest(deployedDeployment, 'deployed deployment').requestHash !==
+        researchBuildLineage.requestHash
     const candidateBinding = {
       sourceRevision: candidateDeploymentSourceSha,
       imageRepository: candidateImageRepository,
