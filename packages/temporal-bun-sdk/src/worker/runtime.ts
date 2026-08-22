@@ -330,7 +330,8 @@ export class WorkerRuntime {
 
     // Install workflow runtime guards before importing any workflow code so top-level module
     // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope). Bun 1.4's
-    // immutable Bun.env binding is proven safe by the focused source lint above.
+    // immutable Bun.env binding is protected by the focused source lint above together with
+    // runtime guards for dynamic code-generation constructors.
     installWorkflowRuntimeGuards({ mode: workflowGuards })
 
     const workflows = await runWithWorkflowModuleLoadContext({ mode: workflowGuards }, async () => {

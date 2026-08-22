@@ -40,6 +40,16 @@ const ORIGINAL_BUN_WRITE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.origi
 const ORIGINAL_BUN_CONNECT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.connect')
 const ORIGINAL_BUN_SERVE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.serve')
 
+const codeGenerationConstructorPrototypes = (): ReadonlyArray<{ readonly api: string; readonly prototype: object }> => [
+  { api: 'Function constructor', prototype: Function.prototype },
+  { api: 'AsyncFunction constructor', prototype: Object.getPrototypeOf(async function () {}) as object },
+  { api: 'GeneratorFunction constructor', prototype: Object.getPrototypeOf(function* () {}) as object },
+  {
+    api: 'AsyncGeneratorFunction constructor',
+    prototype: Object.getPrototypeOf(async function* () {}) as object,
+  },
+]
+
 type ViolationDetails = {
   readonly api: string
   readonly message: string
@@ -222,6 +232,35 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   }
 
   const globalRef = globalThis as unknown as Record<symbol, unknown>
+
+  // Dynamic property dispatch is common in workflow dependencies, so source lint cannot reject every
+  // object[key]() call. Guard every JavaScript code-generation constructor at its intrinsic prototype;
+  // this also covers aliases, computed keys, call/apply/bind, and constructor chains.
+  for (const codeGeneration of codeGenerationConstructorPrototypes()) {
+    const descriptor = Object.getOwnPropertyDescriptor(codeGeneration.prototype, 'constructor')
+    if (!descriptor || typeof descriptor.value !== 'function') continue
+
+    const original = descriptor.value as (...args: unknown[]) => unknown
+    const guarded = new Proxy(original, {
+      apply(target, thisArg, args) {
+        handleViolation({
+          api: codeGeneration.api,
+          message: `${codeGeneration.api} is not allowed in workflow code`,
+          remediation: 'Define workflow functions statically; dynamic code generation is not replay-safe.',
+        })
+        return Reflect.apply(target, thisArg, args)
+      },
+      construct(target, args, newTarget) {
+        handleViolation({
+          api: codeGeneration.api,
+          message: `${codeGeneration.api} is not allowed in workflow code`,
+          remediation: 'Define workflow functions statically; dynamic code generation is not replay-safe.',
+        })
+        return Reflect.construct(target, args, newTarget)
+      },
+    })
+    Object.defineProperty(codeGeneration.prototype, 'constructor', { ...descriptor, value: guarded })
+  }
 
   const OriginalDate = Date
   globalRef[ORIGINAL_DATE_SYMBOL] = OriginalDate

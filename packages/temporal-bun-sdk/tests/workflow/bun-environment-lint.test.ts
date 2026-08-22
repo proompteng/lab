@@ -216,6 +216,7 @@ test('rejects dynamic code through invoked constructor properties', async () => 
       "export const optional = () => (() => {})?.constructor?.('return Bun.env.FLAG')()",
       "export const bracket = () => (() => {})['constructor']('return Bun.env.FLAG')()",
       "export const computed = (fn: () => void) => fn[constructorKey]('return Bun.env.FLAG')()",
+      "export const unresolved = (key: string) => (() => {})[key]('return Bun.env.FLAG')()",
       "export const call = () => (() => {}).constructor.call(undefined, 'return Bun.env.FLAG')()",
       "export const chained = () => ({}).constructor.constructor('return Bun.env.FLAG')()",
     ].join('\n'),
@@ -224,6 +225,7 @@ test('rejects dynamic code through invoked constructor properties', async () => 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
   expect(violations.filter((violation) => violation.details?.memberProperty === 'constructor')).toHaveLength(6)
+  expect(violations.filter((violation) => violation.details?.memberProperty === '[...]')).toHaveLength(1)
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )

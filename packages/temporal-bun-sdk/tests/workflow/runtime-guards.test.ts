@@ -221,6 +221,39 @@ test('workflow module initialization guards environment reads in strict mode', a
   ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
 })
 
+test('workflow module initialization guards computed code-generation constructors in strict mode', async () => {
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+  const constructorKey = 'constructor'
+  const codeGenerators = [
+    () => undefined,
+    async () => undefined,
+    function* () {
+      yield undefined
+    },
+    async function* () {
+      yield undefined
+    },
+  ]
+
+  for (const codeGenerator of codeGenerators) {
+    await expect(
+      runWithWorkflowModuleLoadContext({ mode: 'strict' }, async () => {
+        const constructor = (codeGenerator as unknown as Record<string, (...args: string[]) => Function>)[
+          constructorKey
+        ]
+        constructor('return Bun.env.FLAG')()
+      }),
+    ).rejects.toBeInstanceOf(WorkflowNondeterminismError)
+  }
+})
+
+test('code-generation constructor guards preserve calls outside workflow code', () => {
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+  const constructor = (() => undefined).constructor as (...args: string[]) => () => unknown
+
+  expect(constructor('return 42')()).toBe(42)
+})
+
 test('setTimeout() throws in strict mode when called from workflow code', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(

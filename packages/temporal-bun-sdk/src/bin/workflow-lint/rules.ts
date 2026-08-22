@@ -287,15 +287,19 @@ const staticPropertyKeyAt = (
   ) {
     return { kind: 'symbol' }
   }
+  if (
+    next?.kind === SyntaxKind.DotToken &&
+    isIdentifierLikeToken(tokens[range.startIndex + 2]) &&
+    range.startIndex + 2 === range.endIndex
+  ) {
+    return { kind: 'symbol' }
+  }
 
   return undefined
 }
 
-const collectStaticPropertyBindings = (
-  tokens: readonly WorkflowSyntaxToken[],
-): ReadonlyMap<string, StaticPropertyKey> => {
-  const bindings = new Map<string, StaticPropertyBinding>()
-  const symbolIsUnshadowed = !tokens.some((token, index) => {
+const isSymbolUnshadowed = (tokens: readonly WorkflowSyntaxToken[]): boolean =>
+  !tokens.some((token, index) => {
     if (token.text !== 'Symbol') return false
     const previous = tokens[index - 1]
     const next = tokens[index + 1]
@@ -308,6 +312,12 @@ const collectStaticPropertyBindings = (
         previous?.kind !== SyntaxKind.QuestionDotToken)
     )
   })
+
+const collectStaticPropertyBindings = (
+  tokens: readonly WorkflowSyntaxToken[],
+  symbolIsUnshadowed: boolean,
+): ReadonlyMap<string, StaticPropertyKey> => {
+  const bindings = new Map<string, StaticPropertyBinding>()
 
   for (let index = 0; index < tokens.length; index += 1) {
     const declarationKeyword = tokens[index]
@@ -370,11 +380,33 @@ const resolveStaticPropertyKey = (
   startIndex: number,
   endIndex: number,
   bindings: ReadonlyMap<string, StaticPropertyKey>,
+  symbolIsUnshadowed: boolean,
 ): StaticPropertyKey | undefined => {
   const range = stripParentheses(tokens, startIndex, endIndex)
   const token = tokens[range.startIndex]
   if (range.startIndex === range.endIndex && isIdentifierLikeToken(token)) return bindings.get(token.text)
-  return staticPropertyKeyAt(tokens, range.startIndex, range.endIndex, { symbolIsUnshadowed: false })
+  return staticPropertyKeyAt(tokens, range.startIndex, range.endIndex, { symbolIsUnshadowed })
+}
+
+const computedMemberPropertyAtBracket = (
+  tokens: readonly WorkflowSyntaxToken[],
+  bracketIndex: number,
+): { propertyStartIndex: number; propertyEndIndex: number; endIndex: number } | undefined => {
+  if (tokens[bracketIndex]?.kind !== SyntaxKind.OpenBracketToken) return undefined
+
+  let depth = 0
+  for (let index = bracketIndex; index < tokens.length; index += 1) {
+    const kind = tokens[index]?.kind
+    if (kind === SyntaxKind.OpenBracketToken) depth += 1
+    if (kind === SyntaxKind.CloseBracketToken) {
+      depth -= 1
+      if (depth === 0) {
+        return { propertyStartIndex: bracketIndex + 1, propertyEndIndex: index - 1, endIndex: index }
+      }
+    }
+  }
+
+  return undefined
 }
 
 const computedMemberProperty = (
@@ -391,21 +423,8 @@ const computedMemberProperty = (
     tokens[objectIndex + 2]?.kind === SyntaxKind.OpenBracketToken
       ? objectIndex + 2
       : objectIndex + 1
-  if (tokens[bracketIndex]?.kind !== SyntaxKind.OpenBracketToken) return undefined
-
-  let depth = 0
-  for (let index = bracketIndex; index < tokens.length; index += 1) {
-    const kind = tokens[index]?.kind
-    if (kind === SyntaxKind.OpenBracketToken) depth += 1
-    if (kind === SyntaxKind.CloseBracketToken) {
-      depth -= 1
-      if (depth === 0) {
-        return { object, propertyStartIndex: bracketIndex + 1, propertyEndIndex: index - 1, endIndex: index }
-      }
-    }
-  }
-
-  return undefined
+  const property = computedMemberPropertyAtBracket(tokens, bracketIndex)
+  return property ? { object, ...property } : undefined
 }
 
 const isInvokedMemberExpression = (tokens: readonly WorkflowSyntaxToken[], endIndex: number): boolean => {
@@ -677,7 +696,8 @@ export const lintWorkflowSourceAst = (options: {
   const sourceText = options.sourceText
   const tokens = scanWorkflowSyntaxTokens(sourceText)
   const positionOf = createWorkflowPositionResolver(sourceText)
-  const staticPropertyBindings = collectStaticPropertyBindings(tokens)
+  const symbolIsUnshadowed = isSymbolUnshadowed(tokens)
+  const staticPropertyBindings = collectStaticPropertyBindings(tokens, symbolIsUnshadowed)
   const reportedInvokedMemberProperties = new Set<number>()
 
   const report = (position: number, violation: Omit<WorkflowLintViolation, 'filePath' | 'line' | 'column'>) => {
@@ -709,6 +729,47 @@ export const lintWorkflowSourceAst = (options: {
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]
+    if (token.kind === SyntaxKind.OpenBracketToken && options.denyInvokedMemberProperties) {
+      const optionalMember = previousToken(tokens, index)?.kind === SyntaxKind.QuestionDotToken
+      const objectEndIndex = optionalMember ? index - 2 : index - 1
+      const objectEnd = tokens[objectEndIndex]
+      // Parenthesized inline receivers include function expressions such as (() => {})[key](...).
+      // Fail closed when their invoked key cannot be resolved; known dynamic dispatch on application
+      // objects remains valid and is protected by the workflow runtime's code-generation guards.
+      const inlineObject = objectEnd?.kind === SyntaxKind.CloseParenToken
+      const followsExpression =
+        objectEnd?.kind === SyntaxKind.CloseParenToken ||
+        objectEnd?.kind === SyntaxKind.CloseBracketToken ||
+        objectEnd?.kind === SyntaxKind.StringLiteral ||
+        objectEnd?.kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+        isIdentifierLikeToken(objectEnd)
+      const computedProperty = followsExpression ? computedMemberPropertyAtBracket(tokens, index) : undefined
+      if (computedProperty && isInvokedMemberExpression(tokens, computedProperty.endIndex)) {
+        const property = resolveStaticPropertyKey(
+          tokens,
+          computedProperty.propertyStartIndex,
+          computedProperty.propertyEndIndex,
+          staticPropertyBindings,
+          symbolIsUnshadowed,
+        )
+        const propertyToken = tokens[computedProperty.propertyStartIndex]
+        if (
+          ((!property && inlineObject) ||
+            (property?.kind === 'string' && options.denyInvokedMemberProperties.has(property.value))) &&
+          propertyToken &&
+          !reportedInvokedMemberProperties.has(propertyToken.start)
+        ) {
+          reportedInvokedMemberProperties.add(propertyToken.start)
+          report(propertyToken.start, {
+            rule: 'deny-member-expression',
+            message: property
+              ? `Disallowed invoked member property in workflow module: ${property.value}`
+              : 'Unable to prove invoked member property safe in workflow module: object[...]()',
+            details: { memberProperty: property?.kind === 'string' ? property.value : '[...]' },
+          })
+        }
+      }
+    }
     if (
       (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral) &&
       options.denyInvokedMemberProperties?.has(token.value) &&
@@ -835,6 +896,7 @@ export const lintWorkflowSourceAst = (options: {
         computedProperty.propertyStartIndex,
         computedProperty.propertyEndIndex,
         staticPropertyBindings,
+        symbolIsUnshadowed,
       )
       if (!property || (property.kind === 'string' && deniedComputedProperties.has(property.value))) {
         report(computedProperty.object.start, {
@@ -855,6 +917,7 @@ export const lintWorkflowSourceAst = (options: {
         computedProperty.propertyStartIndex,
         computedProperty.propertyEndIndex,
         staticPropertyBindings,
+        symbolIsUnshadowed,
       )
       const propertyToken = tokens[computedProperty.propertyStartIndex]
       if (
@@ -867,8 +930,10 @@ export const lintWorkflowSourceAst = (options: {
         reportedInvokedMemberProperties.add(propertyToken.start)
         report(propertyToken.start, {
           rule: 'deny-member-expression',
-          message: `Disallowed invoked member property in workflow module: ${property.value}`,
-          details: { memberProperty: property.value },
+          message: property
+            ? `Disallowed invoked member property in workflow module: ${property.value}`
+            : 'Unable to prove invoked member property safe in workflow module: object[...]()',
+          details: { memberProperty: property?.kind === 'string' ? property.value : '[...]' },
         })
       }
     }
@@ -886,6 +951,7 @@ export const lintWorkflowSourceAst = (options: {
           reflectiveAccess.propertyStartIndex,
           reflectiveAccess.propertyEndIndex,
           staticPropertyBindings,
+          symbolIsUnshadowed,
         )
         if (!property || (property.kind === 'string' && deniedReflectiveProperties.has(property.value))) {
           report(member.token.start, {
