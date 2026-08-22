@@ -54,8 +54,18 @@ const memberExpressionName = (
   ) {
     const name = `${objectToken.text}.${propertyToken.text}`
     if (name === 'import.meta') {
-      const nestedDotToken = tokens[objectEndIndex + 3]
-      const nestedPropertyToken = tokens[objectEndIndex + 4]
+      let expressionStartIndex = objectStartIndex
+      let expressionEndIndex = objectEndIndex + 2
+      while (
+        tokens[expressionStartIndex - 1]?.kind === SyntaxKind.OpenParenToken &&
+        tokens[expressionEndIndex + 1]?.kind === SyntaxKind.CloseParenToken
+      ) {
+        expressionStartIndex -= 1
+        expressionEndIndex += 1
+      }
+
+      const nestedDotToken = tokens[expressionEndIndex + 1]
+      const nestedPropertyToken = tokens[expressionEndIndex + 2]
       if (
         (nestedDotToken?.kind === SyntaxKind.DotToken || nestedDotToken?.kind === SyntaxKind.QuestionDotToken) &&
         isIdentifierLikeToken(nestedPropertyToken)
@@ -63,9 +73,9 @@ const memberExpressionName = (
         return { name: `${name}.${nestedPropertyToken.text}`, token: objectToken }
       }
 
-      const nestedOpenBracketToken = tokens[objectEndIndex + 3]
-      const nestedElementToken = tokens[objectEndIndex + 4]
-      const nestedCloseBracketToken = tokens[objectEndIndex + 5]
+      const nestedOpenBracketToken = tokens[expressionEndIndex + 1]
+      const nestedElementToken = tokens[expressionEndIndex + 2]
+      const nestedCloseBracketToken = tokens[expressionEndIndex + 3]
       if (
         nestedOpenBracketToken?.kind === SyntaxKind.OpenBracketToken &&
         nestedElementToken?.kind === SyntaxKind.StringLiteral &&
@@ -308,14 +318,15 @@ const isTypeOnlyTypeofMemberExpression = (
   )
 }
 
-export const lintWorkflowModuleAst = async (options: {
+export const lintWorkflowSourceAst = (options: {
   readonly filePath: string
+  readonly sourceText: string
   readonly denyGlobals: ReadonlySet<string>
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
-}): Promise<WorkflowLintViolation[]> => {
+}): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
-  const sourceText = await readFile(options.filePath, 'utf8')
+  const sourceText = options.sourceText
   const tokens = scanWorkflowSyntaxTokens(sourceText)
   const positionOf = createWorkflowPositionResolver(sourceText)
 
@@ -426,10 +437,7 @@ export const lintWorkflowModuleAst = async (options: {
       })
     }
 
-    if (
-      previous?.kind === SyntaxKind.EqualsToken &&
-      (options.denyMemberExpressions.has(member.name) || member.name === 'Date.now')
-    ) {
+    if (previous?.kind === SyntaxKind.EqualsToken && options.denyMemberExpressions.has(member.name)) {
       report(member.token.start, {
         rule: 'capture-member-expression',
         message: `Capturing disallowed member expression in workflow module: const x = ${member.name}`,
@@ -440,3 +448,14 @@ export const lintWorkflowModuleAst = async (options: {
 
   return violations
 }
+
+export const lintWorkflowModuleAst = async (options: {
+  readonly filePath: string
+  readonly denyGlobals: ReadonlySet<string>
+  readonly denyMemberExpressions: ReadonlySet<string>
+  readonly denyImports: ReadonlySet<string>
+}): Promise<WorkflowLintViolation[]> =>
+  lintWorkflowSourceAst({
+    ...options,
+    sourceText: await readFile(options.filePath, 'utf8'),
+  })

@@ -30,22 +30,6 @@ export type WorkflowLintGraphViolation = {
 const isRelative = (specifier: string): boolean =>
   specifier.startsWith('./') || specifier.startsWith('../') || specifier === '.'
 
-const inspectableModuleExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
-
-const tryResolveBareModule = (baseDir: string, specifier: string): string | undefined => {
-  let resolvedPath: string
-  try {
-    resolvedPath = Bun.resolveSync(specifier, baseDir)
-  } catch {
-    return undefined
-  }
-
-  if (!existsSync(resolvedPath) || !inspectableModuleExtensions.has(extname(resolvedPath))) {
-    return undefined
-  }
-  return resolvedPath
-}
-
 const tryResolveFile = (baseDir: string, specifier: string): string | undefined => {
   const base = resolve(baseDir, specifier)
   const explicitExt = extname(base)
@@ -86,22 +70,21 @@ export const buildWorkflowLintGraph = async (options: {
   readonly entry: string
   readonly cwd: string
   readonly denyImports: ReadonlySet<string>
-  readonly inspectBareImports?: boolean
-  readonly rejectUninspectableImports?: boolean
 }): Promise<{ graph: WorkflowLintGraph; violations: WorkflowLintGraphViolation[] }> => {
   const entryPath = resolve(options.cwd, options.entry)
   const seen = new Set<string>()
+  const scheduled = new Set<string>([entryPath])
   const edges: ImportEdge[] = []
   const violations: WorkflowLintGraphViolation[] = []
 
   const queue: string[] = [entryPath]
-  while (queue.length > 0) {
-    const filePath = queue.shift()
+  let queueIndex = 0
+  while (queueIndex < queue.length) {
+    const filePath = queue[queueIndex]
+    queueIndex += 1
     if (!filePath || seen.has(filePath)) {
       continue
     }
-    seen.add(filePath)
-
     let sourceText: string
     try {
       sourceText = await readFile(filePath, 'utf8')
@@ -114,7 +97,18 @@ export const buildWorkflowLintGraph = async (options: {
       continue
     }
 
-    const tokens = scanWorkflowSyntaxTokens(sourceText)
+    let tokens: ReturnType<typeof scanWorkflowSyntaxTokens>
+    try {
+      tokens = scanWorkflowSyntaxTokens(sourceText)
+    } catch (error) {
+      violations.push({
+        filePath,
+        rule: 'unresolved-import',
+        message: `Unable to inspect workflow module: ${error instanceof Error ? error.message : String(error)}`,
+      })
+      continue
+    }
+    seen.add(filePath)
     const dynamicImportPositions = collectWorkflowDynamicImportPositions(tokens)
     if (dynamicImportPositions.length > 0) {
       violations.push({
@@ -125,8 +119,9 @@ export const buildWorkflowLintGraph = async (options: {
     }
 
     const baseDir = dirname(filePath)
-    for (const { specifier } of collectWorkflowModuleSpecifiers(tokens)) {
+    for (const { specifier, typeOnly } of collectWorkflowModuleSpecifiers(tokens)) {
       edges.push({ from: filePath, specifier })
+      if (typeOnly) continue
 
       if (!isRelative(specifier)) {
         if (options.denyImports.has(specifier)) {
@@ -136,25 +131,6 @@ export const buildWorkflowLintGraph = async (options: {
             specifier,
             message: `Disallowed import in workflow module: ${specifier}`,
           })
-          continue
-        }
-        if (!options.inspectBareImports) continue
-
-        const resolvedPath = tryResolveBareModule(baseDir, specifier)
-        if (!resolvedPath) {
-          if (options.rejectUninspectableImports) {
-            violations.push({
-              filePath,
-              rule: 'unresolved-import',
-              specifier,
-              message: `Unable to inspect runtime import in workflow module: ${specifier}`,
-            })
-          }
-          continue
-        }
-        edges[edges.length - 1] = { from: filePath, specifier, resolved: resolvedPath }
-        if (!seen.has(resolvedPath)) {
-          queue.push(resolvedPath)
         }
         continue
       }
@@ -165,7 +141,8 @@ export const buildWorkflowLintGraph = async (options: {
         continue
       }
       edges[edges.length - 1] = { from: filePath, specifier, resolved: resolvedPath }
-      if (!seen.has(resolvedPath)) {
+      if (!scheduled.has(resolvedPath)) {
+        scheduled.add(resolvedPath)
         queue.push(resolvedPath)
       }
     }
