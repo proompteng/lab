@@ -287,6 +287,51 @@ describe('native Restate execution controller', () => {
     expect(deliveries[0]?.idempotencyKey).not.toBe(normalKey)
   })
 
+  test('quiesces a source catch-up routed to a different immutable worker', async () => {
+    const state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 7,
+      planHash,
+      sourceRevision,
+      initialSequence: 12,
+      nextSequence: 12,
+    }
+    const logged: string[] = []
+    let advances = 0
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: () => undefined,
+      genericSend: () => undefined,
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      request: () => ({ id: 'foreign-catch-up', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        advance: () => {
+          advances += 1
+          return Promise.reject(new Error('foreign catch-up must not advance'))
+        },
+        log: (_level, message) => {
+          logged.push(message)
+          return Promise.resolve()
+        },
+        projectState: () => Promise.resolve(),
+      }),
+    )
+
+    await object.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      sourceCatchUpRevision: 'f'.repeat(40),
+    })
+
+    expect(advances).toBe(0)
+    expect(logged).toEqual(['Bayn execution controller quiesced a foreign source catch-up'])
+  })
+
   test('fails activation closed before Restate state or scheduling when durable projection fails', async () => {
     let state: ExecutionControllerState | null = null
     let sets = 0
@@ -1124,6 +1169,106 @@ describe('native Restate execution controller', () => {
     expect(new Set(commands.map(({ issuedAt }) => issuedAt))).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     expect(deliveries).toHaveLength(0)
     expect(loggedLevels).toEqual(['warning', 'warning', 'error'])
+  })
+
+  test('releases the exclusive queue after a failed source catch-up so the established tick can advance', async () => {
+    const establishedSourceRevision = 'd'.repeat(40)
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 7,
+      planHash,
+      sourceRevision: establishedSourceRevision,
+      initialSequence: 12,
+      nextSequence: 12,
+      lastCompletion: {
+        sequence: 11,
+        outcome: ExecutionControllerOutcome.Blocked,
+        receiptHash: 'e'.repeat(64),
+        completedAt: '2026-08-13T17:59:30.000Z',
+      },
+    }
+    const deliveries: Delivery[] = []
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      request: () => ({ id: 'catch-up-failure', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    const replacement = handlers(
+      makeBaynExecutionController(
+        {
+          ...config,
+          previousBinding: { planHash: 'f'.repeat(64), sourceRevision: 'e'.repeat(40) },
+        },
+        {
+          advance: () => Promise.reject(new Error('replacement runtime is invalid')),
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+      ),
+    )
+    const established = handlers(
+      makeBaynExecutionController(
+        { ...config, sourceRevision: establishedSourceRevision },
+        {
+          advance: () =>
+            Promise.resolve({
+              completedAt: '2026-08-13T18:00:01.000Z',
+              outcome: {
+                _tag: ExecutionControllerOutcome.Blocked,
+                receiptHash: 'f'.repeat(64),
+                nextDelayMs: 30_000,
+              },
+            }),
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        },
+      ),
+    )
+    let catchUp: unknown = {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      attempt: 0,
+      sourceCatchUpRevision: sourceRevision,
+    }
+
+    const maximumAttempts = executionControllerAdvanceMaximumAttempts(false)
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+      await replacement.tick(context, catchUp)
+      if (attempt < maximumAttempts - 1) {
+        const retry = deliveries.shift()
+        if (retry === undefined) throw new Error('source catch-up failure did not schedule its bounded retry')
+        catchUp = retry.parameter
+      }
+    }
+    expect(state.nextSequence).toBe(12)
+    expect(deliveries).toHaveLength(0)
+
+    await established.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      attempt: 0,
+    })
+
+    expect(state).toMatchObject({
+      sourceRevision: establishedSourceRevision,
+      nextSequence: 13,
+      lastCompletion: { sequence: 12, receiptHash: 'f'.repeat(64) },
+    })
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        delay: 30_000,
+        parameter: expect.objectContaining({ sequence: 13, attempt: 0 }),
+      }),
+    ])
   })
 
   test('keeps a replacement tick retryable across the predecessor termination grace period', async () => {
