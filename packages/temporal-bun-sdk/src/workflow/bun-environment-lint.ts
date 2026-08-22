@@ -31,7 +31,11 @@ const bunEnvironmentDenyMemberExpressions = new Set([
   'import.meta',
   'import.meta.env',
   'import.meta.require',
+  'process.binding',
+  'process._linkedBinding',
+  'process.dlopen',
   'process.getBuiltinModule',
+  'process.loadEnvFile',
   'process.mainModule',
   'process.valueOf',
   'module.require',
@@ -44,7 +48,10 @@ const bunEnvironmentDenyGlobalObjectProperties = new Map([
   ...bunEnvironmentGlobalObjects.map(
     (object) => [object, new Set<string>(bunEnvironmentGlobalObjectProperties)] as const,
   ),
-  ['process', new Set(['getBuiltinModule', 'mainModule', 'valueOf'])] as const,
+  [
+    'process',
+    new Set(['binding', '_linkedBinding', 'dlopen', 'getBuiltinModule', 'loadEnvFile', 'mainModule', 'valueOf']),
+  ] as const,
   ['module', new Set(['require', 'valueOf'])] as const,
 ])
 const bunEnvironmentDenyGlobalCaptures = new Set([...bunEnvironmentGlobalObjects, 'process', 'module'])
@@ -53,6 +60,8 @@ const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.pr
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyCapturedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyImports = new Set([
+  'bun',
+  'bun:ffi',
   'node:vm',
   'vm',
   'node:module',
@@ -63,6 +72,8 @@ const bunEnvironmentDenyImports = new Set([
   'node:fs/promises',
   'fs',
   'fs/promises',
+  'node:os',
+  'os',
   'node:child_process',
   'child_process',
   'node:worker_threads',

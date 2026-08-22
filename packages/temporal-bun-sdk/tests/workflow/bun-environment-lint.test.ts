@@ -282,8 +282,10 @@ test('rejects filesystem modules that can read the process environment outside r
     [
       "import { readFileSync } from 'node:fs'",
       "import { readFile } from 'node:fs/promises'",
+      "import { tmpdir } from 'node:os'",
       "export const sync = () => readFileSync('/proc/self/environ')",
       "export const async = () => readFile('/proc/self/environ')",
+      'export const temp = () => tmpdir()',
     ].join('\n'),
   )
 
@@ -293,8 +295,69 @@ test('rejects filesystem modules that can read the process environment outside r
     expect.arrayContaining([
       expect.objectContaining({ rule: 'deny-import', details: { specifier: 'fs' } }),
       expect.objectContaining({ rule: 'deny-import', details: { specifier: 'fs/promises' } }),
+      expect.objectContaining({ rule: 'deny-import', details: { specifier: 'os' } }),
     ]),
   )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects Bun module and FFI imports that expose launch-specific state', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { env } from 'bun'",
+      "import { dlopen } from 'bun:ffi'",
+      'export const direct = () => env.WORKFLOW_FLAG',
+      'export const native = dlopen',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ rule: 'deny-import', details: { specifier: 'bun:ffi' } }),
+      expect.objectContaining({
+        rule: 'deny-member-expression',
+        details: { memberExpression: 'globalThis.Bun' },
+      }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('rejects process native bindings that bypass guarded environment APIs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const nativeFs = process.binding('fs')",
+      'const loadBinding = process.binding',
+      "export const direct = () => nativeFs.readFileUtf8('/proc/self/environ')",
+      "export const aliased = () => loadBinding('fs').readFileUtf8('/proc/self/environ')",
+      "export const linked = () => process._linkedBinding('fs')",
+      "export const nativeAddon = () => process.dlopen({}, '/tmp/addon.node')",
+      "export const dotenv = () => process.loadEnvFile('/tmp/workflow.env')",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  for (const memberExpression of [
+    'process.binding',
+    'process._linkedBinding',
+    'process.dlopen',
+    'process.loadEnvFile',
+  ]) {
+    expect(violations.some((violation) => violation.details?.memberExpression === memberExpression)).toBeTrue()
+  }
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )

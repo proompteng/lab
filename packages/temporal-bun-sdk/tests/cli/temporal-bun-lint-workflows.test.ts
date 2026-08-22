@@ -174,6 +174,34 @@ test('lint-workflows fails on filesystem promise imports', async () => {
   })
 })
 
+test('lint-workflows fails on Bun environment and FFI module imports', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import { env } from 'bun'\nimport { dlopen } from 'bun:ffi'\nexport const run = () => [env.FLAG, dlopen]\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: 'deny-import', details: { specifier: 'bun' } }),
+        expect.objectContaining({ rule: 'deny-import', details: { specifier: 'bun:ffi' } }),
+      ]),
+    )
+  })
+})
+
 test('lint-workflows fails on raw Promise constructors in workflow modules', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')
