@@ -60,6 +60,7 @@ import { makeStrategyProtocolHash } from './contracts.test-support'
 import { DatabaseError } from './db/evidence-store'
 import {
   CapitalGrantLifecycleStore,
+  ExecutionStoreError,
   type AuthorityGenerationStoreShape,
   type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,
@@ -1274,17 +1275,18 @@ describe('Bayn capital startup recovery boundary', () => {
         reconciliationContentHash: hash('5'),
       }),
     )
+    let qualifiedAuthority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: generation.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 2,
+      updatedAt: '2026-08-12T19:00:00.000Z',
+    }
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: () => Effect.die(new Error('qualified recovery must not rotate authority')),
-      readAuthorityState: Effect.succeed({
-        schemaVersion: 'bayn.paper-authority.v1',
-        generationHash: generation.generationHash,
-        maximum: Authority.Execution,
-        effective: Authority.Execution,
-        kill: KillState.Clear,
-        version: 2,
-        updatedAt: '2026-08-12T19:00:00.000Z',
-      }),
+      readAuthorityState: Effect.sync(() => qualifiedAuthority),
       readAuthorityGeneration: (generationHash) =>
         Effect.succeed(generationHash === generation.generationHash ? generation : undefined),
     }
@@ -1307,6 +1309,30 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(recovered).toEqual(generation)
+    expect(preparationStarted).toBe(false)
+
+    qualifiedAuthority = {
+      ...qualifiedAuthority,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
+      version: 3,
+      updatedAt: '2026-08-12T19:00:01.000Z',
+    }
+    const restricted = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-12T19:30:00.000Z'))
+        return yield* prepareOrRecoverQualifiedCapitalActivation(
+          continuationApplicationPlan,
+          qualifiedEvidence,
+          request,
+          authorityStore,
+          prepare,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(restricted).toEqual(generation)
     expect(preparationStarted).toBe(false)
   })
 
@@ -1842,25 +1868,37 @@ describe('Bayn capital startup recovery boundary', () => {
       updatedAt: '2026-08-31T19:59:59.000Z',
     }
     const operations: string[] = []
+    let rearmBlocked = false
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: ({ generationHash, maximum }) =>
-        Effect.sync(() => {
-          operations.push(`rearm:${generationHash}`)
-          expect({ generationHash, maximum }).toEqual({
-            generationHash: successorGenerationHash,
-            maximum: Authority.Observe,
-          })
-          authority = {
-            schemaVersion: 'bayn.paper-authority.v1',
-            generationHash: successorGenerationHash,
-            maximum: Authority.Observe,
-            effective: Authority.Observe,
-            kill: KillState.Clear,
-            version: 3,
-            updatedAt: '2026-08-31T20:00:00.500Z',
-          }
-          return authority
-        }),
+        Effect.sync(() => operations.push(`rearm:${generationHash}`)).pipe(
+          Effect.andThen(
+            rearmBlocked
+              ? Effect.fail(
+                  new ExecutionStoreError({
+                    operation: 'authority',
+                    failure: 'invariant',
+                    message: 'authority generation was not rotated',
+                  }),
+                )
+              : Effect.sync(() => {
+                  expect({ generationHash, maximum }).toEqual({
+                    generationHash: successorGenerationHash,
+                    maximum: Authority.Observe,
+                  })
+                  authority = {
+                    schemaVersion: 'bayn.paper-authority.v1',
+                    generationHash: successorGenerationHash,
+                    maximum: Authority.Observe,
+                    effective: Authority.Observe,
+                    kill: KillState.Clear,
+                    version: 3,
+                    updatedAt: '2026-08-31T20:00:00.500Z',
+                  }
+                  return authority
+                }),
+          ),
+        ),
       readAuthorityState: Effect.sync(() => authority),
       readResearchAuthorityGeneration: (generationHash) =>
         Effect.succeed(
@@ -1982,6 +2020,38 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(activated).toEqual(generation)
     expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`, `activate:${successorGenerationHash}`])
+
+    authority = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: previousExecutionGenerationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
+      version: 2,
+      updatedAt: '2026-08-31T19:59:59.000Z',
+    }
+    operations.length = 0
+    rearmBlocked = true
+    const recovered = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          request,
+          null,
+          buildLineage,
+          session,
+          authorityStore,
+          lifecycle,
+          Effect.sync(() => operations.push('reconcile')),
+          config.operationTimeoutMs,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(recovered).toEqual(restrictedGeneration)
+    expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`])
   })
 
   test('recovers a generation-bound continuation across worker revisions and rejects another generation', async () => {

@@ -30,9 +30,9 @@ import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
 import {
-  isExecutionMandateFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
+  isExecutionMandateRecoveryRestriction,
 } from '../execution/mandate'
 import {
   executionMandateCloseExpiresAt,
@@ -546,7 +546,7 @@ export const makeAutonomousServiceRuntime = (
                                 authorityState.maximum === Authority.Execution &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
-                                isExecutionMandateFailureRestriction(authorityState.reason)
+                                isExecutionMandateRecoveryRestriction(authorityState.reason)
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }

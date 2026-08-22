@@ -211,6 +211,10 @@ export const isExecutionMandateFailureRestriction = (reason: string | undefined)
   reason?.startsWith(legacyExecutionMandateFailureRestrictionPrefix) === true ||
   (reason !== undefined && legacyExecutionMandateFailureRestriction.test(reason))
 
+/** Restrictions whose current bound cycle must be allowed to reach the existing terminal recovery owner. */
+export const isExecutionMandateRecoveryRestriction = (reason: string | undefined): boolean =>
+  reason === reconciliationIncompleteRestrictionReason || isExecutionMandateFailureRestriction(reason)
+
 /** Durable persisted reason retained byte-for-byte so existing database rearm predicates keep accepting new mandates. */
 export const executionMandateCompletedRestrictionReason = `${executionMandateCompletionPersistenceSubject} restricted effective authority: flat exact receipt finalized`
 export const legacyV1CompletedRestrictionReason =

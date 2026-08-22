@@ -9,6 +9,7 @@ import {
   executionMandateAllocationCapitalMicros,
   executionMandateFailureRestrictionPrefix,
   isExecutionMandateFailureRestriction,
+  isExecutionMandateRecoveryRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
   validateExecutionMandateCloseWindow,
@@ -137,6 +138,8 @@ describe('execution mandate decisions', () => {
         `bound PAPER cycle ${cycleId.slice(1)} restricted effective authority: intent ${intentId} submit settled denied`,
       ),
     ).toBe(false)
+    expect(isExecutionMandateRecoveryRestriction(reconciliationIncompleteRestrictionReason)).toBe(true)
+    expect(isExecutionMandateRecoveryRestriction('operator requested PAPER stop')).toBe(false)
   })
 
   test('adapts legacy qualification history and research history to one grant boundary', () => {
