@@ -34,7 +34,7 @@ test('rejects direct, parenthesized, and aliased Bun environment access', async 
   )
 })
 
-test('rejects import.meta.env and Bun access through globalThis', async () => {
+test('rejects import.meta.env and Bun access through every global-object alias', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
   await writeFile(
@@ -42,10 +42,13 @@ test('rejects import.meta.env and Bun access through globalThis', async () => {
     [
       'const runtime = globalThis.Bun',
       "const bracketRuntime = globalThis['Bun']",
+      'const nodeGlobalRuntime = global.Bun',
+      "const selfRuntime = self['Bun']",
       'const meta = import.meta',
       'export const direct = () => import.meta.env.FLAG',
       'export const parenthesized = () => ((import.meta)).env.FLAG',
-      'export const indirect = () => runtime.env.FLAG ?? bracketRuntime.env.FLAG ?? meta.env.FLAG',
+      'export const indirect = () =>',
+      '  runtime.env.FLAG ?? bracketRuntime.env.FLAG ?? nodeGlobalRuntime.env.FLAG ?? selfRuntime.env.FLAG ?? meta.env.FLAG',
     ].join('\n'),
   )
 
@@ -58,12 +61,14 @@ test('rejects import.meta.env and Bun access through globalThis', async () => {
   expect(
     violations.filter((violation) => violation.details?.memberExpression === 'globalThis.Bun').length,
   ).toBeGreaterThanOrEqual(2)
+  expect(violations.some((violation) => violation.details?.memberExpression === 'global.Bun')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'self.Bun')).toBeTrue()
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
 })
 
-test('rejects aliases of globalThis without flagging safe property captures', async () => {
+test('rejects captures of global objects without flagging safe property captures', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
   await writeFile(
@@ -71,19 +76,42 @@ test('rejects aliases of globalThis without flagging safe property captures', as
     [
       'const root = globalThis',
       'const parenthesizedRoot = ((globalThis))',
+      'const nodeGlobal = global',
+      'const browserGlobal = self',
       "const safeProperty = globalThis['crypto']",
       'export const direct = () => root.Bun.env.FLAG',
       'export const parenthesized = () => parenthesizedRoot.Bun.env.FLAG',
+      'export const node = () => nodeGlobal.Bun.env.FLAG',
+      'export const browser = () => browserGlobal.Bun.env.FLAG',
       'export const safe = () => safeProperty',
     ].join('\n'),
   )
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.filter((violation) => violation.details?.global === 'globalThis')).toHaveLength(2)
+  expect(violations.filter((violation) => violation.rule === 'capture-global')).toHaveLength(4)
+  expect(violations.map((violation) => violation.details?.global)).toEqual(
+    expect.arrayContaining(['globalThis', 'global', 'self']),
+  )
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
+})
+
+test('accepts locally shadowed global-object alias names', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const self = { Bun: { env: { FLAG: 'local' } } }",
+      'export const local = () => self.Bun.env.FLAG',
+      'export const parameters = (global: typeof self, globalThis: typeof self) =>',
+      '  global.Bun.env.FLAG ?? globalThis.Bun.env.FLAG',
+    ].join('\n'),
+  )
+
+  expect(await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).toEqual([])
 })
 
 test('rejects reflective access to the Bun global', async () => {
@@ -95,6 +123,8 @@ test('rejects reflective access to the Bun global', async () => {
       "const object = { value: 'ok' }",
       "export const direct = () => Reflect.get(globalThis, 'Bun').env.FLAG",
       "export const bracket = () => Reflect['get'](globalThis, 'Bun').env.FLAG",
+      "export const nodeGlobal = () => Reflect.get(global, 'Bun').env.FLAG",
+      "export const browserGlobal = () => Reflect.get(self, 'Bun').env.FLAG",
       "export const safeObjectLookup = () => Reflect.get(object, 'value')",
       "export const safeGlobalLookup = () => Reflect.get(globalThis, 'crypto')",
     ].join('\n'),
@@ -102,7 +132,7 @@ test('rejects reflective access to the Bun global', async () => {
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(2)
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(4)
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )

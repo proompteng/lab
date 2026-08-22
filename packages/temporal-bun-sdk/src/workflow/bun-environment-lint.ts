@@ -3,18 +3,21 @@ import { relative, resolve } from 'node:path'
 import { lintWorkflowSourceAst, type WorkflowLintViolation } from '../bin/workflow-lint/rules'
 import type { WorkflowDefinitions } from './definition'
 
+const bunEnvironmentGlobalObjects = ['globalThis', 'global', 'self'] as const
+const bunEnvironmentGlobalObjectProperties = ['Bun', 'eval', 'Function'] as const
 const bunEnvironmentDenyGlobals = new Set(['Bun', 'eval', 'Function'])
 const bunEnvironmentDenyMemberExpressions = new Set([
   'Bun.env',
-  'globalThis.Bun',
-  'globalThis.eval',
-  'globalThis.Function',
   'import.meta',
   'import.meta.env',
+  ...bunEnvironmentGlobalObjects.flatMap((object) =>
+    bunEnvironmentGlobalObjectProperties.map((property) => `${object}.${property}`),
+  ),
 ])
-const bunEnvironmentDenyReflectiveGlobalProperties = new Set(['Bun', 'eval', 'Function'])
-const bunEnvironmentDenyComputedGlobalProperties = new Map([['globalThis', new Set(['Bun', 'eval', 'Function'])]])
-const bunEnvironmentDenyGlobalCaptures = new Set(['globalThis'])
+const bunEnvironmentDenyGlobalObjectProperties = new Map(
+  bunEnvironmentGlobalObjects.map((object) => [object, new Set(bunEnvironmentGlobalObjectProperties)]),
+)
+const bunEnvironmentDenyGlobalCaptures = new Set(bunEnvironmentGlobalObjects)
 const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function'])
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 
@@ -65,7 +68,9 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
       env: 'disable',
       treeShaking: true,
       ignoreDCEAnnotations: true,
-      minify: false,
+      // Renaming local bindings lets the scanner distinguish Bun's global-object aliases
+      // (`globalThis`, `global`, and `self`) from application parameters with the same names.
+      minify: { identifiers: true, syntax: false, whitespace: false },
       sourcemap: 'none',
       allowUnresolved: [],
     })
@@ -107,8 +112,8 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
         denyGlobals: bunEnvironmentDenyGlobals,
         denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
         denyImports: new Set<string>(),
-        denyReflectiveGlobalProperties: bunEnvironmentDenyReflectiveGlobalProperties,
-        denyComputedGlobalProperties: bunEnvironmentDenyComputedGlobalProperties,
+        denyReflectiveGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
+        denyComputedGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
         denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
         denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
         allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,

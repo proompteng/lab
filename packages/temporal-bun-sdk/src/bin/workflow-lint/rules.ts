@@ -162,7 +162,7 @@ const reflectivelyAccessedGlobalProperty = (
 ): { target: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
   if (tokens[memberEndIndex + 1]?.kind !== SyntaxKind.OpenParenToken) return undefined
   const target = parenthesizedIdentifier(tokens, memberEndIndex + 2)
-  if (!target || target.token.text !== 'globalThis') return undefined
+  if (!target) return undefined
   if (tokens[target.endIndex + 1]?.kind !== SyntaxKind.CommaToken) return undefined
 
   const propertyStartIndex = target.endIndex + 2
@@ -648,7 +648,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyGlobals: ReadonlySet<string>
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
-  readonly denyReflectiveGlobalProperties?: ReadonlySet<string>
+  readonly denyReflectiveGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyGlobalCaptures?: ReadonlySet<string>
   readonly denyIndirectGlobalReferences?: ReadonlySet<string>
@@ -734,6 +734,7 @@ export const lintWorkflowSourceAst = (options: {
       !runtimeVariableCapture &&
       previous?.kind !== SyntaxKind.DotToken &&
       previous?.kind !== SyntaxKind.QuestionDotToken &&
+      next?.kind !== SyntaxKind.ColonToken &&
       !isTypeOnlyTypeofMemberExpression(tokens, index, previous)
     ) {
       report(token.start, {
@@ -804,19 +805,22 @@ export const lintWorkflowSourceAst = (options: {
 
     if (member.name === 'Reflect.get') {
       const reflectiveAccess = reflectivelyAccessedGlobalProperty(tokens, member.endIndex)
-      if (reflectiveAccess && options.denyReflectiveGlobalProperties) {
+      const deniedReflectiveProperties = reflectiveAccess
+        ? options.denyReflectiveGlobalProperties?.get(reflectiveAccess.target.text)
+        : undefined
+      if (reflectiveAccess && deniedReflectiveProperties) {
         const property = resolveStaticPropertyKey(
           tokens,
           reflectiveAccess.propertyStartIndex,
           reflectiveAccess.propertyEndIndex,
           staticPropertyBindings,
         )
-        if (!property || (property.kind === 'string' && options.denyReflectiveGlobalProperties.has(property.value))) {
+        if (!property || (property.kind === 'string' && deniedReflectiveProperties.has(property.value))) {
           report(member.token.start, {
             rule: 'deny-member-expression',
             message: property
-              ? `Disallowed reflective global access in workflow module: Reflect.get(globalThis, '${property.value}')`
-              : 'Unable to prove reflective global property safe in workflow module: Reflect.get(globalThis, ...)',
+              ? `Disallowed reflective global access in workflow module: Reflect.get(${reflectiveAccess.target.text}, '${property.value}')`
+              : `Unable to prove reflective global property safe in workflow module: Reflect.get(${reflectiveAccess.target.text}, ...)`,
             details: {
               memberExpression: member.name,
               ...(property?.kind === 'string' ? { global: property.value } : {}),
