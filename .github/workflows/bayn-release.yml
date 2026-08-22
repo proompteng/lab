@@ -133,7 +133,10 @@ jobs:
             # Main is the reviewed configuration authority. The deployment branch only carries
             # renderer-generated pins, whose prior values were captured above for comparison.
             git merge --no-edit -X theirs "$SOURCE_SHA"
-            git restore --source "$SOURCE_SHA" -- \
+            # Stage the reviewed main baseline as well as restoring the worktree. A held
+            # renderer result can then prove it made no worktree changes without the
+            # deliberate baseline restore making the hold step fail.
+            git restore --source "$SOURCE_SHA" --staged --worktree -- \
               argocd/applications/bayn \
               argocd/applicationsets/product.yaml
           else
