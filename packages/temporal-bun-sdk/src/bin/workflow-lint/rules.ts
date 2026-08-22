@@ -721,6 +721,13 @@ export const lintWorkflowSourceAst = (options: {
     for (let index = startIndex; index < tokens.length; index += 1) {
       const kind = tokens[index]?.kind
       if (
+        (kind === SyntaxKind.CloseParenToken && parenthesisDepth === 0) ||
+        (kind === SyntaxKind.CloseBracketToken && bracketDepth === 0) ||
+        (kind === SyntaxKind.CloseBraceToken && braceDepth === 0)
+      ) {
+        return index - 1
+      }
+      if (
         parenthesisDepth === 0 &&
         bracketDepth === 0 &&
         braceDepth === 0 &&
@@ -832,45 +839,202 @@ export const lintWorkflowSourceAst = (options: {
     return false
   }
 
-  if (options.denyCapturedMemberProperties) {
-    for (let index = 0; index < tokens.length; index += 1) {
-      const declaration = tokens[index]
-      const binding = tokens[index + 1]
-      if (!isVariableDeclarationKeyword(declaration) || !isIdentifierLikeToken(binding)) continue
-      if (tokens[index + 2]?.kind !== SyntaxKind.EqualsToken) continue
+  const findBindingPatternEndIndex = (openIndex: number): number | undefined => {
+    const openKind = tokens[openIndex]?.kind
+    const closeKind =
+      openKind === SyntaxKind.OpenBraceToken
+        ? SyntaxKind.CloseBraceToken
+        : openKind === SyntaxKind.OpenBracketToken
+          ? SyntaxKind.CloseBracketToken
+          : undefined
+    if (closeKind == null) return undefined
 
-      const initializerStartIndex = index + 3
-      const initializerEndIndex = findInitializerEndIndex(initializerStartIndex)
-      const capturedProperty = capturedMemberPropertyAt(initializerStartIndex, initializerEndIndex)
-      if (!capturedProperty) continue
+    let depth = 0
+    for (let cursor = openIndex; cursor < tokens.length; cursor += 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === openKind) depth += 1
+      if (kind !== closeKind) continue
+      depth -= 1
+      if (depth === 0) return cursor
+    }
+    return undefined
+  }
 
-      const scopeEndIndex = findEnclosingScopeEndIndex(index)
-      let unsafeReference = false
-      for (let cursor = initializerEndIndex + 1; cursor < scopeEndIndex; cursor += 1) {
-        const reference = tokens[cursor]
-        if (!isIdentifierLikeToken(reference) || reference.text !== binding.text) continue
-        const previous = tokens[cursor - 1]
-        if (
-          isVariableDeclarationKeyword(previous) ||
-          previous?.kind === SyntaxKind.FunctionKeyword ||
-          previous?.kind === SyntaxKind.ClassKeyword ||
-          previous?.kind === SyntaxKind.DotToken ||
-          previous?.kind === SyntaxKind.QuestionDotToken
-        ) {
+  const findBindingElementEndIndex = (startIndex: number, containerEndIndex: number): number => {
+    let parenthesisDepth = 0
+    let bracketDepth = 0
+    let braceDepth = 0
+    for (let cursor = startIndex; cursor < containerEndIndex; cursor += 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === SyntaxKind.CommaToken && parenthesisDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+        return cursor - 1
+      }
+      if (kind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
+      if (kind === SyntaxKind.CloseParenToken) parenthesisDepth -= 1
+      if (kind === SyntaxKind.OpenBracketToken) bracketDepth += 1
+      if (kind === SyntaxKind.CloseBracketToken) bracketDepth -= 1
+      if (kind === SyntaxKind.OpenBraceToken) braceDepth += 1
+      if (kind === SyntaxKind.CloseBraceToken) braceDepth -= 1
+    }
+    return containerEndIndex - 1
+  }
+
+  type DestructuredMemberCapture = {
+    readonly binding: WorkflowSyntaxToken
+    readonly property: string
+    readonly position: number
+  }
+
+  const collectDestructuredMemberCaptures = (
+    patternStartIndex: number,
+    patternEndIndex: number,
+  ): DestructuredMemberCapture[] => {
+    const captures: DestructuredMemberCapture[] = []
+    const patternKind = tokens[patternStartIndex]?.kind
+
+    for (let cursor = patternStartIndex + 1; cursor < patternEndIndex; ) {
+      if (tokens[cursor]?.kind === SyntaxKind.CommaToken) {
+        cursor += 1
+        continue
+      }
+
+      const elementEndIndex = findBindingElementEndIndex(cursor, patternEndIndex)
+      if (tokens[cursor]?.kind === SyntaxKind.DotDotDotToken) {
+        cursor = elementEndIndex + 2
+        continue
+      }
+
+      if (patternKind === SyntaxKind.OpenBracketToken) {
+        const nestedPatternEndIndex = findBindingPatternEndIndex(cursor)
+        if (nestedPatternEndIndex != null && nestedPatternEndIndex <= elementEndIndex) {
+          captures.push(...collectDestructuredMemberCaptures(cursor, nestedPatternEndIndex))
+        }
+        cursor = elementEndIndex + 2
+        continue
+      }
+
+      const propertyToken = tokens[cursor]
+      let propertyEndIndex = cursor
+      let property: string | undefined
+      let propertyPosition = propertyToken?.start
+
+      if (propertyToken?.kind === SyntaxKind.OpenBracketToken) {
+        const computedProperty = computedMemberPropertyAtBracket(tokens, cursor)
+        if (!computedProperty || computedProperty.endIndex > elementEndIndex) {
+          cursor = elementEndIndex + 2
           continue
         }
-        if (!safeCapturedMemberReference(cursor)) {
-          unsafeReference = true
-          break
+        propertyEndIndex = computedProperty.endIndex
+        propertyPosition = tokens[computedProperty.propertyStartIndex]?.start ?? propertyToken.start
+        const resolvedProperty = resolveStaticPropertyKey(
+          tokens,
+          computedProperty.propertyStartIndex,
+          computedProperty.propertyEndIndex,
+          staticPropertyBindings,
+          symbolIsUnshadowed,
+        )
+        if (resolvedProperty?.kind === 'string') property = resolvedProperty.value
+        if (!resolvedProperty) property = '[...]'
+      } else if (propertyToken?.kind === SyntaxKind.StringLiteral) {
+        property = propertyToken.value
+      } else if (isIdentifierLikeToken(propertyToken)) {
+        property = propertyToken.text
+      }
+
+      const hasDeniedProperty = property === '[...]' || options.denyCapturedMemberProperties?.has(property ?? '')
+      const colonIndex = propertyEndIndex + 1
+      const hasAlias = tokens[colonIndex]?.kind === SyntaxKind.ColonToken
+      const bindingStartIndex = hasAlias ? colonIndex + 1 : cursor
+      const binding = tokens[bindingStartIndex]
+
+      if (hasDeniedProperty && isIdentifierLikeToken(binding) && propertyPosition != null) {
+        captures.push({ binding, property: property ?? '[...]', position: propertyPosition })
+      }
+
+      if (hasAlias && (binding?.kind === SyntaxKind.OpenBraceToken || binding?.kind === SyntaxKind.OpenBracketToken)) {
+        const nestedPatternEndIndex = findBindingPatternEndIndex(bindingStartIndex)
+        if (nestedPatternEndIndex != null && nestedPatternEndIndex <= elementEndIndex) {
+          captures.push(...collectDestructuredMemberCaptures(bindingStartIndex, nestedPatternEndIndex))
         }
       }
-      if (!unsafeReference) continue
 
-      report(capturedProperty.position, {
-        rule: 'capture-member-expression',
-        message: `Capturing disallowed member property in workflow module: const ${binding.text} = object.${capturedProperty.property}`,
-        details: { memberProperty: capturedProperty.property, binding: binding.text },
-      })
+      cursor = elementEndIndex + 2
+    }
+
+    return captures
+  }
+
+  if (options.denyCapturedMemberProperties) {
+    const processedBindingPatterns = new Set<number>()
+    const reportedCaptures = new Set<string>()
+    for (let index = 0; index < tokens.length; index += 1) {
+      const declaration = tokens[index]
+      const standaloneBindingPattern =
+        declaration?.kind === SyntaxKind.OpenBraceToken || declaration?.kind === SyntaxKind.OpenBracketToken
+      const bindingIndex = isVariableDeclarationKeyword(declaration)
+        ? index + 1
+        : standaloneBindingPattern
+          ? index
+          : undefined
+      if (bindingIndex == null) continue
+
+      const binding = tokens[bindingIndex]
+      if (!binding || processedBindingPatterns.has(binding.start)) continue
+
+      const patternEndIndex =
+        binding.kind === SyntaxKind.OpenBraceToken || binding.kind === SyntaxKind.OpenBracketToken
+          ? findBindingPatternEndIndex(bindingIndex)
+          : undefined
+      const bindingEndIndex = patternEndIndex ?? bindingIndex
+      if (tokens[bindingEndIndex + 1]?.kind !== SyntaxKind.EqualsToken) continue
+      processedBindingPatterns.add(binding.start)
+
+      const initializerStartIndex = bindingEndIndex + 2
+      const initializerEndIndex = findInitializerEndIndex(initializerStartIndex)
+      const capturedBindings: DestructuredMemberCapture[] = []
+      if (isIdentifierLikeToken(binding)) {
+        const capturedProperty = capturedMemberPropertyAt(initializerStartIndex, initializerEndIndex)
+        if (capturedProperty) {
+          capturedBindings.push({ binding, ...capturedProperty })
+        }
+      } else if (patternEndIndex != null) {
+        capturedBindings.push(...collectDestructuredMemberCaptures(bindingIndex, patternEndIndex))
+      }
+      if (capturedBindings.length === 0) continue
+
+      const scopeEndIndex = findEnclosingScopeEndIndex(index)
+      for (const capturedBinding of capturedBindings) {
+        let unsafeReference = false
+        for (let cursor = initializerEndIndex + 1; cursor < scopeEndIndex; cursor += 1) {
+          const reference = tokens[cursor]
+          if (!isIdentifierLikeToken(reference) || reference.text !== capturedBinding.binding.text) continue
+          const previous = tokens[cursor - 1]
+          if (
+            isVariableDeclarationKeyword(previous) ||
+            previous?.kind === SyntaxKind.FunctionKeyword ||
+            previous?.kind === SyntaxKind.ClassKeyword ||
+            previous?.kind === SyntaxKind.DotToken ||
+            previous?.kind === SyntaxKind.QuestionDotToken
+          ) {
+            continue
+          }
+          if (!safeCapturedMemberReference(cursor)) {
+            unsafeReference = true
+            break
+          }
+        }
+        if (!unsafeReference) continue
+
+        const captureKey = `${capturedBinding.position}:${capturedBinding.binding.start}`
+        if (reportedCaptures.has(captureKey)) continue
+        reportedCaptures.add(captureKey)
+
+        report(capturedBinding.position, {
+          rule: 'capture-member-expression',
+          message: `Capturing disallowed member property in workflow module: const ${capturedBinding.binding.text} = object.${capturedBinding.property}`,
+          details: { memberProperty: capturedBinding.property, binding: capturedBinding.binding.text },
+        })
+      }
     }
   }
 

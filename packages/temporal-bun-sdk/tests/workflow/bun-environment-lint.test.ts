@@ -628,6 +628,45 @@ test('rejects cached constructor captures that are invoked after module initiali
   )
 })
 
+test('rejects destructured constructor captures that are invoked after module initialization', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    helperPath,
+    [
+      'const { constructor: Code } = (() => {})',
+      "const { ['constructor']: ComputedCode } = (() => {})",
+      'const { constructor } = (() => {})',
+      'const { nested: { constructor: NestedCode } } = { nested: () => {} }',
+      'const ignored = 0, { constructor: MultiCode } = (() => {})',
+      'let AssignedCode = () => {}',
+      ';({ constructor: AssignedCode } = (() => {}))',
+      "export const direct = () => Code('return Bun.env.FLAG')()",
+      "export const computed = () => ComputedCode('return Bun.env.FLAG')()",
+      "export const shorthand = () => constructor('return Bun.env.FLAG')()",
+      "export const nested = () => NestedCode('return Bun.env.FLAG')()",
+      "export const multiple = () => MultiCode('return Bun.env.FLAG')()",
+      "export const assigned = () => AssignedCode('return Bun.env.FLAG')()",
+    ].join('\n'),
+  )
+  await writeFile(
+    workflowsPath,
+    "export { direct, computed, shorthand, nested, multiple, assigned } from './shared-helper'\n",
+  )
+
+  // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(6)
+  expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts captured constructor metadata that cannot invoke or escape the constructor', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
