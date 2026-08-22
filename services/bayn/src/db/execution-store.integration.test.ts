@@ -21,7 +21,9 @@ import {
 
 import accountNeutralRuntimeCompatibility from '../../migrations/0037_account_neutral_runtime_compatibility'
 import researchReconciliationRearm from '../../migrations/0048_research_reconciliation_rearm'
-import preserveReconciliationCycle from '../../migrations/0049_preserve_reconciliation_cycle'
+import preserveReconciliationCycle, {
+  reconciliationRearmIncidentCycleId,
+} from '../../migrations/0049_preserve_reconciliation_cycle'
 import type { RuntimeConfig } from '../config'
 import {
   executionObserveSuccessorGenerationHash,
@@ -2944,7 +2946,8 @@ describePostgres('paper accounting persistence', () => {
       strategyProtocolHash,
     } as const
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation, activationOverrides)
-    const cycleId = hash('migration-repair-cycle')
+    const cycleId = reconciliationRearmIncidentCycleId
+    const lookalikeCycleId = hash('migration-repair-lookalike-cycle')
     const runtime = makeStoreRuntime(
       { fail: false, planHashes: [] },
       researchRuntimeConfig(sourceGenerationHash, {
@@ -2981,6 +2984,12 @@ describePostgres('paper accounting persistence', () => {
               SELECT
                 clock_timestamp() AS created_at,
                 (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
+            ), cycle_candidates AS (
+              SELECT ${cycleId}::text AS cycle_id, created_at, execution_date
+              FROM timing
+              UNION ALL
+              SELECT ${lookalikeCycleId}::text, created_at, execution_date + 1
+              FROM timing
             )
             INSERT INTO autonomous_cycles (
               cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -2996,21 +3005,21 @@ describePostgres('paper accounting persistence', () => {
               decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
             )
             SELECT
-              ${cycleId}, 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle-identity.v3',
+              candidate.cycle_id, 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle-identity.v3',
               'opening-drive-momentum', ${activation.grant.planHash}, ${strategyProtocolHash}, ${accountId},
               NULL, NULL,
               'bayn.autonomous-cycle-execution-policy.v2', ${hash('migration-repair-policy')},
               ${hash('migration-repair-execution-model')}, 1500000, NULL, 1800000,
               'bayn.autonomous-cycle-window.v3', 'bayn.alpaca-market-calendar-observation.v1',
-              'alpaca-v2-calendar', ${hash('migration-repair-calendar')}, execution_date,
+              'alpaca-v2-calendar', ${hash('migration-repair-calendar')}, candidate.execution_date,
               NULL,
               NULL,
-              (execution_date + time '13:35') AT TIME ZONE 'UTC',
-              (execution_date + time '13:30') AT TIME ZONE 'UTC',
-              (execution_date + time '21:00') AT TIME ZONE 'UTC',
-              (execution_date + time '14:00') AT TIME ZONE 'UTC',
-              'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
-            FROM timing
+              (candidate.execution_date + time '13:35') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '21:00') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '14:00') AT TIME ZONE 'UTC',
+              'PENDING', NULL, NULL, NULL, 1, candidate.created_at, candidate.created_at, NULL
+            FROM cycle_candidates AS candidate
           `
           const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
@@ -3055,6 +3064,16 @@ describePostgres('paper accounting persistence', () => {
             FROM autonomous_cycles
             WHERE cycle_id = ${cycleId}
           `
+          const [lookalikeBefore] = yield* sql<{
+            state: string
+            state_version: number
+            terminal_at: Date | null
+            terminal_reason: string | null
+          }>`
+            SELECT state, state_version, terminal_reason, terminal_at
+            FROM autonomous_cycles
+            WHERE cycle_id = ${lookalikeCycleId}
+          `
           yield* preserveReconciliationCycle
           const [after] = yield* sql<{
             state: string
@@ -3066,12 +3085,22 @@ describePostgres('paper accounting persistence', () => {
             FROM autonomous_cycles
             WHERE cycle_id = ${cycleId}
           `
+          const [lookalikeAfter] = yield* sql<{
+            state: string
+            state_version: number
+            terminal_at: Date | null
+            terminal_reason: string | null
+          }>`
+            SELECT state, state_version, terminal_reason, terminal_at
+            FROM autonomous_cycles
+            WHERE cycle_id = ${lookalikeCycleId}
+          `
           const [definition] = yield* sql<{ definition: string }>`
             SELECT pg_get_functiondef(
               'research_paper_rearm_eligible(text,bigint,timestamptz)'::regprocedure
             ) AS definition
           `
-          return { after, before, definition: definition?.definition ?? '' }
+          return { after, before, definition: definition?.definition ?? '', lookalikeAfter, lookalikeBefore }
         }),
       )
 
@@ -3087,6 +3116,12 @@ describePostgres('paper accounting persistence', () => {
         terminal_at: null,
         terminal_reason: null,
       })
+      expect(result.lookalikeBefore).toMatchObject({
+        state: 'BLOCKED',
+        state_version: 2,
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
+      })
+      expect(result.lookalikeAfter).toEqual(result.lookalikeBefore)
       expect(result.definition).toContain("state.reason = 'reconciliation pass incomplete'")
       expect(result.definition).toContain("cycle.schema_version = 'bayn.autonomous-cycle.v3'")
     } finally {

@@ -1,6 +1,10 @@
 import { Effect } from 'effect'
 import { SqlClient } from 'effect/unstable/sql'
 
+// The pre-v49 runtime discarded the transient restriction reason when it rotated back through OBSERVE. Do not infer
+// that lost reason from a generic terminal shape: this reviewed migration may repair only the one observed incident.
+export const reconciliationRearmIncidentCycleId = '3d53e1c6f02adc1b930e3549e48cd4158ecb3be384a32ef2ecd228aeece16c49'
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
 
@@ -45,9 +49,10 @@ export default Effect.gen(function* () {
     $migration$
   `
 
-  // Repair only the immutable shape produced by the same-plan rearm defect: an untouched v3 cycle was terminalized at
-  // the exact OBSERVE successor activation, immediately followed by a same-plan PAPER generation on a flat, exactly
-  // reconciled sandbox account. The lifecycle trigger stays authoritative outside this one migration transaction.
+  // Repair only the reviewed incident declared above, after proving its immutable same-plan generation chain and
+  // untouched-cycle shape. The cycle ID is the durable identity binding for strategy, account, plan, and session; a
+  // similar clear-PAPER or failed-mandate rollover cannot be inferred into this repair. The lifecycle trigger stays
+  // authoritative outside this one migration transaction.
   yield* sql`
     DO $migration$
     DECLARE
@@ -83,7 +88,8 @@ export default Effect.gen(function* () {
           ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
           LIMIT 1
         ) AS reconciliation ON true
-        WHERE cycle.schema_version = 'bayn.autonomous-cycle.v3'
+        WHERE cycle.cycle_id = ${reconciliationRearmIncidentCycleId}
+          AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
           AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
           AND cycle.strategy_name = 'opening-drive-momentum'
           AND cycle.state = 'BLOCKED'
