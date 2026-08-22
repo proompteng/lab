@@ -25,6 +25,9 @@ export enum BrokerAccess {
 
 export const BrokerAccessSchema = Schema.Enum(BrokerAccess)
 
+/** Durable authority restriction written when broker reconciliation does not complete. */
+export const reconciliationIncompleteRestrictionReason = 'reconciliation pass incomplete'
+
 export enum CapitalAuthorityKind {
   None = 'none',
   Granted = 'granted-capital',

@@ -31,6 +31,7 @@ import {
 import {
   advanceRestrictedGenerationRecovery,
   executionObserveSuccessorGenerationHash,
+  recognizeRestrictedGenerationRebind,
   recoverTerminalGenerationToObserve,
 } from './blocked-generation-recovery'
 import { provideTestLayer } from './effect-test-support'
@@ -60,11 +61,12 @@ import { makeStrategyProtocolHash } from './contracts.test-support'
 import { DatabaseError } from './db/evidence-store'
 import {
   CapitalGrantLifecycleStore,
+  ExecutionStoreError,
   type AuthorityGenerationStoreShape,
   type AuthorityRestrictionStoreShape,
   type CapitalGrantLifecycleStoreShape,
 } from './db/execution-store'
-import { BrokerAccess, noCapitalAuthority } from './execution/authority'
+import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from './execution/authority'
 import {
   capitalActivationRequiresQualificationEvidence,
   makeResearchCapitalActivationRequest,
@@ -75,6 +77,7 @@ import {
 import {
   Authority,
   KillState,
+  ReconciliationStatus,
   makeCapitalGrantGenerationResult,
   makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
@@ -317,6 +320,10 @@ const continuationAuthority: AuthorityState = {
   version: 2,
   updatedAt: '2026-08-10T18:00:00.000Z',
 }
+
+const capitalActivationReconciliation = (status: ReconciliationStatus = ReconciliationStatus.Exact) => ({
+  report: { reconciliation: { status } },
+})
 
 const continuationAuthorityStore = (
   generation: typeof continuationGeneration | null = continuationGeneration,
@@ -1274,17 +1281,18 @@ describe('Bayn capital startup recovery boundary', () => {
         reconciliationContentHash: hash('5'),
       }),
     )
+    let qualifiedAuthority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: generation.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 2,
+      updatedAt: '2026-08-12T19:00:00.000Z',
+    }
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: () => Effect.die(new Error('qualified recovery must not rotate authority')),
-      readAuthorityState: Effect.succeed({
-        schemaVersion: 'bayn.paper-authority.v1',
-        generationHash: generation.generationHash,
-        maximum: Authority.Execution,
-        effective: Authority.Execution,
-        kill: KillState.Clear,
-        version: 2,
-        updatedAt: '2026-08-12T19:00:00.000Z',
-      }),
+      readAuthorityState: Effect.sync(() => qualifiedAuthority),
       readAuthorityGeneration: (generationHash) =>
         Effect.succeed(generationHash === generation.generationHash ? generation : undefined),
     }
@@ -1307,6 +1315,30 @@ describe('Bayn capital startup recovery boundary', () => {
     )
 
     expect(recovered).toEqual(generation)
+    expect(preparationStarted).toBe(false)
+
+    qualifiedAuthority = {
+      ...qualifiedAuthority,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
+      version: 3,
+      updatedAt: '2026-08-12T19:00:01.000Z',
+    }
+    const restricted = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-12T19:30:00.000Z'))
+        return yield* prepareOrRecoverQualifiedCapitalActivation(
+          continuationApplicationPlan,
+          qualifiedEvidence,
+          request,
+          authorityStore,
+          prepare,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(restricted).toEqual(generation)
     expect(preparationStarted).toBe(false)
   })
 
@@ -1728,7 +1760,10 @@ describe('Bayn capital startup recovery boundary', () => {
           unusedBrokerSession,
           authorityStore,
           unusedCapitalGrantLifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         ).pipe(Effect.flip)
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -1753,7 +1788,10 @@ describe('Bayn capital startup recovery boundary', () => {
           unusedBrokerSession,
           authorityStore,
           unusedCapitalGrantLifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         ).pipe(Effect.flip)
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -1763,11 +1801,7 @@ describe('Bayn capital startup recovery boundary', () => {
     expect(operations).toEqual([])
   })
 
-  test('reconciles a completed capital generation before rearming and activates from its OBSERVE successor', async () => {
-    const previousExecutionGenerationHash = continuationGeneration.generationHash
-    const successorGenerationHash = Result.getOrThrow(
-      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
-    )
+  test('reconciles a restricted capital generation before rearming and activates from its OBSERVE successor', async () => {
     const riskPolicy = await Effect.runPromise(
       loadObserveRiskPolicy(continuationAccountId, continuationApplicationPlan.strategy.definition.parameters.universe),
     )
@@ -1780,6 +1814,32 @@ describe('Bayn capital startup recovery boundary', () => {
         grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchCapitalPlanHash(plan)) },
         ...planFields,
       }),
+    )
+    const restrictedGeneration = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash: continuationGeneration.generationHash,
+        grant: request.grant,
+        activationSourceRevision: continuationBuild.sourceRevision,
+        activationImageRepository: continuationBuild.imageRepository,
+        activationImageDigest: continuationBuild.imageDigest,
+        strategyName: request.strategy.name,
+        strategyBehaviorHash: request.strategy.behaviorHash,
+        strategyParameterHash: request.strategy.parameterHash,
+        strategyParameterSchemaVersion: request.strategy.parameterSchemaVersion,
+        strategyProtocolHash: request.strategy.protocolHash,
+        accountId: request.broker.accountId,
+        brokerIdentityHash: request.broker.identityHash,
+        riskPolicyHash: request.riskPolicyHash,
+        proofPlanHash: request.grant.planHash,
+        reconciliationId: hash('13'),
+        reconciliationContentHash: hash('24'),
+      }),
+    )
+    const previousExecutionGenerationHash = restrictedGeneration.generationHash
+    const successorGenerationHash = Result.getOrThrow(
+      executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash }),
     )
     const generation = Result.getOrThrow(
       makeResearchCapitalGrantGenerationResult({
@@ -1813,36 +1873,49 @@ describe('Bayn capital startup recovery boundary', () => {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: previousExecutionGenerationHash,
       maximum: Authority.Execution,
-      effective: Authority.Execution,
-      kill: KillState.Clear,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
       version: 2,
       updatedAt: '2026-08-31T19:59:59.000Z',
     }
     const operations: string[] = []
+    let rearmBlocked = false
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: ({ generationHash, maximum }) =>
-        Effect.sync(() => {
-          operations.push(`rearm:${generationHash}`)
-          expect({ generationHash, maximum }).toEqual({
-            generationHash: successorGenerationHash,
-            maximum: Authority.Observe,
-          })
-          authority = {
-            schemaVersion: 'bayn.paper-authority.v1',
-            generationHash: successorGenerationHash,
-            maximum: Authority.Observe,
-            effective: Authority.Observe,
-            kill: KillState.Clear,
-            version: 3,
-            updatedAt: '2026-08-31T20:00:00.500Z',
-          }
-          return authority
-        }),
+        Effect.sync(() => operations.push(`rearm:${generationHash}`)).pipe(
+          Effect.andThen(
+            rearmBlocked
+              ? Effect.fail(
+                  new ExecutionStoreError({
+                    operation: 'authority',
+                    failure: 'invariant',
+                    message: 'authority generation was not rotated',
+                  }),
+                )
+              : Effect.sync(() => {
+                  expect({ generationHash, maximum }).toEqual({
+                    generationHash: successorGenerationHash,
+                    maximum: Authority.Observe,
+                  })
+                  authority = {
+                    schemaVersion: 'bayn.paper-authority.v1',
+                    generationHash: successorGenerationHash,
+                    maximum: Authority.Observe,
+                    effective: Authority.Observe,
+                    kill: KillState.Clear,
+                    version: 3,
+                    updatedAt: '2026-08-31T20:00:00.500Z',
+                  }
+                  return authority
+                }),
+          ),
+        ),
       readAuthorityState: Effect.sync(() => authority),
       readResearchAuthorityGeneration: (generationHash) =>
         Effect.succeed(
-          generationHash === continuationGeneration.generationHash
-            ? continuationGeneration
+          generationHash === restrictedGeneration.generationHash
+            ? restrictedGeneration
             : generationHash === generation.generationHash
               ? generation
               : undefined,
@@ -1951,7 +2024,10 @@ describe('Bayn capital startup recovery boundary', () => {
           session,
           authorityStore,
           lifecycle,
-          Effect.sync(() => operations.push('reconcile')),
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
           config.operationTimeoutMs,
         )
       }).pipe(provideTestLayer(TestClock.layer())),
@@ -1959,6 +2035,65 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(activated).toEqual(generation)
     expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`, `activate:${successorGenerationHash}`])
+
+    authority = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: previousExecutionGenerationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: reconciliationIncompleteRestrictionReason,
+      version: 2,
+      updatedAt: '2026-08-31T19:59:59.000Z',
+    }
+    operations.length = 0
+    rearmBlocked = true
+    const discrepancyFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          request,
+          null,
+          buildLineage,
+          session,
+          authorityStore,
+          lifecycle,
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation(ReconciliationStatus.Discrepancy)
+          }),
+          config.operationTimeoutMs,
+        ).pipe(Effect.flip)
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(discrepancyFailure.message).toBe('research capital pre-activation reconciliation was not exact')
+    expect(operations).toEqual(['reconcile'])
+
+    operations.length = 0
+    const recovered = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-31T20:00:00.000Z'))
+        return yield* prepareOrRecoverResearchCapitalActivation(
+          continuationApplicationPlan,
+          request,
+          null,
+          buildLineage,
+          session,
+          authorityStore,
+          lifecycle,
+          Effect.sync(() => {
+            operations.push('reconcile')
+            return capitalActivationReconciliation()
+          }),
+          config.operationTimeoutMs,
+        )
+      }).pipe(provideTestLayer(TestClock.layer())),
+    )
+
+    expect(recovered).toEqual(restrictedGeneration)
+    expect(operations).toEqual(['reconcile', `rearm:${successorGenerationHash}`])
   })
 
   test('recovers a generation-bound continuation across worker revisions and rejects another generation', async () => {
@@ -1984,6 +2119,7 @@ describe('Bayn capital startup recovery boundary', () => {
       refreshResearchCapitalActivationReconciliation(
         Effect.sync(() => {
           operations.push('reconcile')
+          return capitalActivationReconciliation()
         }),
         1_000,
       ).pipe(
@@ -2131,6 +2267,32 @@ describe('Bayn capital startup recovery boundary', () => {
 
     expect(waiting).toEqual({ _tag: 'Waiting', advance: 'recovered-once' })
     expect(advances).toBe(1)
+  })
+
+  test('keeps the durable driver advancing while a restricted generation has not terminalized yet', async () => {
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.succeed('advanced-before-terminal' as const),
+        Effect.succeed({ _tag: 'NotRequired' as const }),
+      ),
+    )
+
+    expect(waiting).toEqual({ _tag: 'Waiting', advance: 'advanced-before-terminal' })
+  })
+
+  test('rebinds a stale restricted driver after another recovery owner advances authority', async () => {
+    const waiting = await Effect.runPromise(
+      advanceRestrictedGenerationRecovery(
+        Effect.succeed('advanced-before-concurrent-rollover' as const),
+        Effect.succeed({ _tag: 'NotRequired' as const }),
+      ),
+    )
+
+    expect(recognizeRestrictedGenerationRebind(waiting, hash('2'), hash('2'))).toBe(waiting)
+    expect(recognizeRestrictedGenerationRebind(waiting, hash('2'), hash('3'))).toEqual({
+      _tag: 'Rebind',
+      advance: 'advanced-before-concurrent-rollover',
+    })
   })
 
   test('keeps activation disabled when the fresh reconciliation fails', async () => {

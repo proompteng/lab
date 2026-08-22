@@ -11,6 +11,7 @@ import {
 } from '../app'
 import {
   advanceRestrictedGenerationRecovery,
+  recognizeRestrictedGenerationRebind,
   recoverTerminalGenerationToObserve,
   type TerminalGenerationRolloverReceipt,
 } from '../blocked-generation-recovery'
@@ -30,9 +31,9 @@ import { makeExecutionProgram } from '../execution/runtime-program'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
 import {
-  isExecutionMandateFailureRestriction,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
+  isExecutionMandateRecoveryRestriction,
 } from '../execution/mandate'
 import {
   executionMandateCloseExpiresAt,
@@ -546,7 +547,7 @@ export const makeAutonomousServiceRuntime = (
                                 authorityState.maximum === Authority.Execution &&
                                 authorityState.effective === Authority.Observe &&
                                 authorityState.kill === KillState.Active &&
-                                isExecutionMandateFailureRestriction(authorityState.reason)
+                                isExecutionMandateRecoveryRestriction(authorityState.reason)
                               if (prepared._tag === 'ReceiptFinalization' && !restricted) {
                                 return resolveReceiptFinalization(prepared)
                               }
@@ -730,13 +731,41 @@ export const makeAutonomousServiceRuntime = (
                                                 driver.advance,
                                                 recoverBlockedGeneration,
                                               ).pipe(
+                                                Effect.flatMap((step) => {
+                                                  if (step._tag !== 'Waiting') return Effect.succeed(step)
+                                                  if (
+                                                    runtimeServices.authorityGenerationStore.readAuthorityState ===
+                                                    undefined
+                                                  ) {
+                                                    return Effect.fail(
+                                                      capitalActivationOperationalError(
+                                                        'restricted generation rebind requires durable authority state reads',
+                                                      ),
+                                                    )
+                                                  }
+                                                  return runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
+                                                    Effect.mapError((cause) =>
+                                                      capitalActivationOperationalError(
+                                                        'restricted generation rebind authority read failed',
+                                                        cause,
+                                                      ),
+                                                    ),
+                                                    Effect.map((authority) =>
+                                                      recognizeRestrictedGenerationRebind(
+                                                        step,
+                                                        prepared.generation.generationHash,
+                                                        authority.generationHash,
+                                                      ),
+                                                    ),
+                                                  )
+                                                }),
                                                 Effect.catch((cause) =>
                                                   cause instanceof OperationalError
                                                     ? Effect.die(cause)
                                                     : Effect.fail(cause),
                                                 ),
                                                 Effect.tap((step) =>
-                                                  step._tag === 'RolledOver'
+                                                  step._tag !== 'Waiting'
                                                     ? Deferred.succeed(rolledOver, undefined)
                                                     : Effect.void,
                                                 ),

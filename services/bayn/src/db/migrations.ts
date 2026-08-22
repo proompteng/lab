@@ -47,6 +47,7 @@ import executionControllerPassObservation from '../../migrations/0044_execution_
 import intradayAutonomousCycles from '../../migrations/0045_intraday_autonomous_cycles'
 import intradayNativeCycles from '../../migrations/0046_intraday_native_cycles'
 import openingDriveQualificationEvidence from '../../migrations/0047_opening_drive_qualification_evidence'
+import researchReconciliationRearm from '../../migrations/0048_research_reconciliation_rearm'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -96,4 +97,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '45_intraday_autonomous_cycles': intradayAutonomousCycles,
   '46_intraday_native_cycles': intradayNativeCycles,
   '47_opening_drive_qualification_evidence': openingDriveQualificationEvidence,
+  '48_research_reconciliation_rearm': researchReconciliationRearm,
 })
