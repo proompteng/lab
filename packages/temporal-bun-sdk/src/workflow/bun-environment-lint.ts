@@ -86,6 +86,8 @@ const bunEnvironmentDenyImports = new Set([
   'os',
   'node:child_process',
   'child_process',
+  'node:cluster',
+  'cluster',
   'node:worker_threads',
   'worker_threads',
 ])

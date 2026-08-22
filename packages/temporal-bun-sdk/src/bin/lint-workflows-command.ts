@@ -78,6 +78,7 @@ const defaultDenyImports = new Set<string>([
   'node:dgram',
   'node:tls',
   'node:child_process',
+  'node:cluster',
   'node:worker_threads',
   'node:os',
   'fs',
@@ -87,6 +88,7 @@ const defaultDenyImports = new Set<string>([
   'http',
   'https',
   'child_process',
+  'cluster',
   'worker_threads',
 ])
 

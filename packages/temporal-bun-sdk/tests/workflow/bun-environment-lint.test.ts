@@ -274,6 +274,28 @@ test('rejects child process modules that can recover inherited environment state
   )
 })
 
+test('rejects cluster modules that can fork unguarded processes with inherited environment state', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import nodeCluster from 'node:cluster'",
+      "import cluster from 'cluster'",
+      "export const nodePrefixed = () => nodeCluster.setupPrimary({ exec: './unscanned-child.js' })",
+      "export const bare = () => cluster.fork()",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-import')).toHaveLength(2)
+  expect(violations.every((violation) => violation.details?.specifier === 'cluster')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects filesystem modules that can read the process environment outside runtime guards', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
