@@ -3,9 +3,10 @@ import { describe, expect, test } from 'bun:test'
 import { TerminalError, type Context, type ObjectContext } from '@restatedev/restate-sdk'
 import { Result } from 'effect'
 
-import type { ExecutionControllerState } from '../execution/controller'
+import { executionControllerMaximumRecoveryWindow, type ExecutionControllerState } from '../execution/controller'
+import { TransientExecutionFailure } from '../execution/advance'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
-import { CycleNotDueReason } from '../cycle/runner/model'
+import { CycleNotDueReason, CycleRunnerError } from '../cycle/runner/model'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
@@ -16,6 +17,8 @@ import {
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
+  executionControllerRecoveryDelayMs,
+  executionControllerRecoveryMaximumDelayMs,
   executionControllerRecoveryTickDelayMs,
   executionControllerRecoveryTickIdempotencyKey,
   executionControllerSuccessorPassCompleted,
@@ -77,6 +80,11 @@ describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerRecoveryTickDelayMs).toBe(30_000)
+    expect(executionControllerRecoveryDelayMs(1)).toBe(30_000)
+    expect(executionControllerRecoveryDelayMs(2)).toBe(120_000)
+    expect(executionControllerRecoveryDelayMs(executionControllerMaximumRecoveryWindow)).toBe(
+      executionControllerRecoveryMaximumDelayMs,
+    )
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
     expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
@@ -1086,7 +1094,7 @@ describe('native Restate execution controller', () => {
     expect(controllerCalls).toBe(0)
   })
 
-  test('retries the same command identity durably and starts a fresh recovery window after exhaustion', async () => {
+  test('retries the same command identity durably and starts a diagnosed recovery window after exhaustion', async () => {
     const state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -1105,6 +1113,17 @@ describe('native Restate execution controller', () => {
     const commands: Array<Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]> = []
     const deliveries: Delivery[] = []
     const loggedLevels: string[] = []
+    const loggedAnnotations: Array<Readonly<Record<string, string | number | boolean>>> = []
+    const failure = new TransientExecutionFailure({
+      operation: 'advance',
+      message: 'execution advance did not complete within its bounded interpreter',
+      cause: new CycleRunnerError({
+        operation: 'read-authority-slot',
+        failure: 'database',
+        message: 'cycle runner could not read the authority slot',
+        cause: new Error('database-secret-must-not-be-logged'),
+      }),
+    })
     let invocation = 0
     const context = {
       key: controllerKey,
@@ -1127,10 +1146,11 @@ describe('native Restate execution controller', () => {
         {
           advance: (command) => {
             commands.push(command)
-            return Promise.reject(new Error('temporary database outage'))
+            return Promise.reject(failure)
           },
-          log: (level) => {
+          log: (level, _message, annotations) => {
             loggedLevels.push(level)
+            loggedAnnotations.push(annotations)
             return Promise.reject(new Error('telemetry unavailable'))
           },
           projectState: () => Promise.resolve(),
@@ -1171,6 +1191,7 @@ describe('native Restate execution controller', () => {
       sequence: 12,
       attempt: 0,
       issuedAt: '2026-08-13T18:00:00.000Z',
+      recoveryWindow: 1,
     })
     expect(recoveryTick.retryWindowHash).toMatch(/^[0-9a-f]{64}$/)
     expect(recovery.idempotencyKey).toBe(
@@ -1180,6 +1201,88 @@ describe('native Restate execution controller', () => {
     expect(new Set(commands.map(({ issuedAt }) => issuedAt))).toEqual(new Set(['2026-08-13T18:00:00.000Z']))
     expect(deliveries).toHaveLength(0)
     expect(loggedLevels).toEqual(['warning', 'warning', 'error', 'warning'])
+    expect(loggedAnnotations[2]).toMatchObject({
+      failureCauseCategory: 'database',
+      failureCauseOperation: 'read-authority-slot',
+      failureCauseTag: 'CycleRunnerError',
+      failureMessage: 'execution advance did not complete within its bounded interpreter',
+      failureOperation: 'advance',
+      failureTag: 'TransientExecutionFailure',
+    })
+    expect(loggedAnnotations[2]?.['failureFingerprint']).toMatch(/^[0-9a-f]{64}$/)
+    expect(JSON.stringify(loggedAnnotations)).not.toContain('database-secret-must-not-be-logged')
+  })
+
+  test('backs off recovery windows and terminates after the durable recovery budget', async () => {
+    const state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 7,
+      planHash,
+      sourceRevision,
+      initialSequence: 12,
+      nextSequence: 12,
+    }
+    const deliveries: Delivery[] = []
+    let invocation = 0
+    const failure = new TransientExecutionFailure({
+      operation: 'advance',
+      message: 'execution advance did not complete within its bounded interpreter',
+      cause: new Error('persistent database outage'),
+    })
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: () => undefined,
+      genericSend: (delivery: Delivery) => deliveries.push(delivery),
+      run: async <A>(_name: string, action: () => Promise<A>) => action(),
+      date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+      request: () => ({
+        id: `recovery-budget-${invocation++}`,
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+    } as unknown as TestContext
+    const object = handlers(
+      makeBaynExecutionController(config, {
+        advance: () => Promise.reject(failure),
+        log: () => Promise.resolve(),
+        projectState: () => Promise.resolve(),
+      }),
+    )
+    let tick: unknown = {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 7,
+      sequence: 12,
+      attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
+    }
+
+    for (let recoveryWindow = 1; recoveryWindow <= executionControllerMaximumRecoveryWindow; recoveryWindow += 1) {
+      await object.tick(context, tick)
+      const recovery = deliveries.shift()
+      if (recovery === undefined) throw new Error(`recovery window ${recoveryWindow} was not scheduled`)
+      expect(recovery.delay).toBe(executionControllerRecoveryDelayMs(recoveryWindow))
+      expect(recovery.parameter).toMatchObject({ recoveryWindow })
+      tick = {
+        ...(recovery.parameter as object),
+        attempt: executionControllerAdvanceMaximumAttempts(false) - 1,
+      }
+    }
+
+    let terminalFailure: unknown
+    try {
+      await object.tick(context, tick)
+    } catch (cause: unknown) {
+      terminalFailure = cause
+    }
+    expect(terminalFailure).toBeInstanceOf(TerminalError)
+    expect((terminalFailure as TerminalError).message).toBe('execution controller recovery budget exhausted')
+    expect((terminalFailure as TerminalError).metadata).toMatchObject({
+      failureOperation: 'advance',
+      failureTag: 'TransientExecutionFailure',
+      recoveryWindow: String(executionControllerMaximumRecoveryWindow),
+    })
+    expect((terminalFailure as TerminalError).metadata?.['failureFingerprint']).toMatch(/^[0-9a-f]{64}$/)
+    expect(deliveries).toHaveLength(0)
   })
 
   test('releases the exclusive queue after a failed source catch-up so the established tick can advance', async () => {

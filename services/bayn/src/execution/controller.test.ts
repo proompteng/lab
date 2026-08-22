@@ -11,6 +11,7 @@ import {
   decideExecutionControllerBootstrap,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
+  executionControllerMaximumRecoveryWindow,
   resolveOptionalExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
@@ -219,6 +220,28 @@ describe('execution controller decisions', () => {
           epoch: 1,
           sequence: 0,
           attempt: 7,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.getOrThrow(
+        decodeExecutionControllerTick({
+          schemaVersion: 'bayn.execution-controller-tick.v1',
+          epoch: 1,
+          sequence: 0,
+          recoveryWindow: executionControllerMaximumRecoveryWindow,
+          retryWindowHash: 'f'.repeat(64),
+        }),
+      ),
+    ).toMatchObject({ recoveryWindow: executionControllerMaximumRecoveryWindow })
+    expect(
+      Result.isFailure(
+        decodeExecutionControllerTick({
+          schemaVersion: 'bayn.execution-controller-tick.v1',
+          epoch: 1,
+          sequence: 0,
+          recoveryWindow: executionControllerMaximumRecoveryWindow + 1,
+          retryWindowHash: 'f'.repeat(64),
         }),
       ),
     ).toBe(true)
