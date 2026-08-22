@@ -47,7 +47,7 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly candidateRuntime?: BaynCandidateRuntime
   readonly acceptedQualificationRunId?: string
-  /** Authored source whose ancestry and immutable strategy identity were proved by the release workflow. */
+  /** Authored source whose ancestry was proved by the release workflow. Strategy identity is checked separately. */
   readonly researchLineageSourceSha?: string
   readonly deployedDeploymentPath?: string
   readonly kustomizationPath?: string
@@ -136,6 +136,13 @@ const qualificationIdentityNames = [
   'BAYN_TIGERBEETLE_LEDGER',
 ] as const
 const candidateRuntimeNames = [...qualificationIdentityNames, 'BAYN_TIGERBEETLE_ADDRESSES'] as const
+const researchRequestIdentityNames = [
+  'BAYN_STRATEGY_BEHAVIOR_HASH',
+  'BAYN_STRATEGY_PARAMETER_HASH',
+  'BAYN_STRATEGY_NAME',
+  'BAYN_STRATEGY_PROTOCOL_HASH',
+  'BAYN_EXECUTION_RISK_POLICY_HASH',
+] as const
 
 const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_SIGNAL_SNAPSHOT_ID: environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID'),
@@ -442,15 +449,19 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error('expected at most one BAYN_CAPITAL_ACTIVATION_REQUEST block')
   }
   const hasCapitalActivationRequest = capitalActivationRequests.length === 1
+  const deployedCapitalActivationKind = hasCapitalActivationRequest
+    ? environmentValue(deployedDeployment, 'BAYN_CAPITAL_ACTIVATION_KIND')
+    : null
   const capitalActivationKind = hasCapitalActivationRequest
     ? environmentValue(deployment, 'BAYN_CAPITAL_ACTIVATION_KIND')
     : null
-  if (
-    capitalActivationKind !== null &&
-    capitalActivationKind !== 'ResearchCapitalActivationRequest' &&
-    capitalActivationKind !== researchCapitalBuildContinuation
-  ) {
-    throw new Error(`invalid BAYN_CAPITAL_ACTIVATION_KIND: ${capitalActivationKind}`)
+  for (const [role, kind] of [
+    ['deployed', deployedCapitalActivationKind],
+    ['candidate', capitalActivationKind],
+  ] as const) {
+    if (kind !== null && kind !== 'ResearchCapitalActivationRequest' && kind !== researchCapitalBuildContinuation) {
+      throw new Error(`invalid ${role} BAYN_CAPITAL_ACTIVATION_KIND: ${kind}`)
+    }
   }
   const deployedRuntime = runtimeFromDeployment(deployedDeployment)
   const candidateManifestRuntime = runtimeFromDeployment(deployment)
@@ -481,6 +492,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateStrategyIdentityMatches =
     candidateDeploymentBehaviorHash === options.strategyBehaviorHash &&
     candidateDeploymentParameterHash === options.strategyParameterHash
+  const researchRequestIdentityMatches = researchRequestIdentityNames.every(
+    (name) => environmentValue(deployedDeployment, name) === environmentValue(deployment, name),
+  )
   const deployedBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
@@ -492,8 +506,14 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   )
   const candidateImageRepository = environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY')
   let researchBuildLineage: ResearchCapitalBuildLineage | null = null
+  let researchRequestAuthoredForCandidate = false
+  let researchRequestHashChanged = false
   if (capitalActivationKind === 'ResearchCapitalActivationRequest') {
     researchBuildLineage = researchCapitalBuildLineageFromManifest(deployment, 'candidate deployment')
+    researchRequestHashChanged =
+      deployedCapitalActivationKind === 'ResearchCapitalActivationRequest' &&
+      researchCapitalBuildLineageFromManifest(deployedDeployment, 'deployed deployment').requestHash !==
+        researchBuildLineage.requestHash
     const candidateBinding = {
       sourceRevision: candidateDeploymentSourceSha,
       imageRepository: candidateImageRepository,
@@ -502,6 +522,11 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     if (!researchCapitalBuildBindingMatches(researchBuildLineage.activation, candidateBinding)) {
       throw new Error('candidate research build lineage does not end at the manifest activation build')
     }
+    researchRequestAuthoredForCandidate = researchCapitalBuildBindingMatches(researchBuildLineage.authoredActivation, {
+      sourceRevision: options.sourceSha,
+      imageRepository: candidateImageRepository,
+      imageDigest: options.digest,
+    })
     if (nativeExecution !== undefined) {
       const controllerLineage = researchCapitalBuildLineageFromManifest(
         nativeExecution.controller,
@@ -601,8 +626,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (
     researchCapitalRelease &&
     (capitalActivationKind === researchCapitalBuildContinuation
-      ? !strategyIdentityMatches || !candidateRuntimeMatchesDeployment
-      : !candidateStrategyIdentityMatches ||
+      ? !researchRequestIdentityMatches || !candidateStrategyIdentityMatches || !candidateRuntimeMatchesDeployment
+      : (!researchRequestIdentityMatches && !(researchRequestAuthoredForCandidate && researchRequestHashChanged)) ||
+        !candidateStrategyIdentityMatches ||
         !candidateRuntimeMatchesManifest ||
         ((candidateDeploymentSourceSha !== options.sourceSha || candidateDeploymentImageDigest !== options.digest) &&
           options.researchLineageSourceSha === undefined))
