@@ -3,6 +3,7 @@ import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
+import { reconciliationIncompleteRestrictionReason } from '../authority'
 import {
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
@@ -182,6 +183,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
+              OR state.reason = ${reconciliationIncompleteRestrictionReason}
             ) AS requires_blocked_cycle,
             state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern} AS legacy_failure_restriction
           FROM authority_state AS state
@@ -195,6 +197,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
+              OR state.reason = ${reconciliationIncompleteRestrictionReason}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
