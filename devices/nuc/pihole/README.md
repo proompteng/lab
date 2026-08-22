@@ -5,7 +5,7 @@ This bundle tracks the NUC Pi-hole changes needed for Kubernetes split DNS over 
 Desired state:
 
 - Pi-hole on `nuc` remains the DNS server for the LAN.
-- Tailscale clients use the NUC Tailscale IP (`100.88.12.116` as observed on 2026-03-11) for `cluster.local` split DNS.
+- Tailscale clients use the NUC Tailscale IP (`100.78.240.108` as observed on 2026-08-22) for `cluster.local` split DNS.
 - Tailscale clients also use the same NUC Tailscale IP for `k8s.proompteng.ai` split DNS.
 - Pi-hole forwards `cluster.local` to the in-cluster CoreDNS service at `10.96.0.10`.
 - Pi-hole serves curated `*.k8s.proompteng.ai` CNAMEs that target `traefik.traefik.svc.cluster.local` for private HTTPS ingress.
@@ -51,7 +51,7 @@ tailscale debug prefs | jq '{CorpDNS, RouteAll}'
 grep -E '^(\\[dns\\]|interface|listeningMode|upstreams|\\[dhcp\\]|active|start|end|router)' /etc/pihole/pihole.toml
 dig +short @127.0.0.1 google.com
 dig +short @127.0.0.1 kubernetes.default.svc.cluster.local
-dig +short @100.88.12.116 kubernetes.default.svc.cluster.local
+dig +short @100.78.240.108 kubernetes.default.svc.cluster.local
 dig +short @127.0.0.1 grafana.k8s.proompteng.ai
 dig +short @127.0.0.1 argocd.k8s.proompteng.ai
 dig +short @127.0.0.1 ceph.k8s.proompteng.ai
@@ -77,7 +77,7 @@ After the Tailscale split DNS rule is applied from [tofu/tailscale/main.tf](../.
 
 ```bash
 dig +short kubernetes.default.svc.cluster.local
-dig +short @100.88.12.116 kubernetes.default.svc.cluster.local
+dig +short @100.78.240.108 kubernetes.default.svc.cluster.local
 dig +short grafana.k8s.proompteng.ai
 dig +short argocd.k8s.proompteng.ai
 dig +short ceph.k8s.proompteng.ai

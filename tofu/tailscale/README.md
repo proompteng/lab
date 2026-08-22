@@ -32,7 +32,7 @@ The production default is split-only Kubernetes DNS:
 
 - `override_local_dns = false`
 - no global nameservers are pushed to the tailnet
-- `dns_split_nameservers = { "cluster.local" = ["100.88.12.116"], "k8s.proompteng.ai" = ["100.88.12.116"] }`
+- `dns_split_nameservers = { "cluster.local" = ["100.78.240.108"], "k8s.proompteng.ai" = ["100.78.240.108"] }`
 
 This keeps Pi-hole off the critical path for non-Kubernetes DNS while still routing raw Kubernetes names and curated private service hostnames through the `nuc` device over Tailscale.
 
@@ -46,8 +46,8 @@ Example split DNS for Kubernetes through Pi-hole on the `nuc` device:
 
 ```hcl
 dns_split_nameservers = {
-  "cluster.local"     = ["100.88.12.116"]
-  "k8s.proompteng.ai" = ["100.88.12.116"]
+  "cluster.local"     = ["100.78.240.108"]
+  "k8s.proompteng.ai" = ["100.78.240.108"]
 }
 ```
 

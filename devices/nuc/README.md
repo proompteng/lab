@@ -1,10 +1,12 @@
 # NUC device configuration
 
-This directory describes services hosted on the NUC at `192.168.1.130`.
+This directory describes services hosted on the NUC at `100.100.244.148/25` on the Elauwit LAN. Its current
+Tailscale identity is `nuc.ide-newton.ts.net` (`100.78.240.108`).
 
 - `nginx-proxy-manager/` — Docker compose bundle and data snapshot for Nginx Proxy Manager.
 - `k8s-api-lb/` — HAProxy TCP load balancer for the Talos/Kubernetes API (`:6443`) on the LAN.
 - `pihole/` — Pi-hole runbook and repo-tracked config for Kubernetes split DNS over Tailscale.
+- `omni/` — pinned, reproducible self-hosted Omni and Tailscale OIDC bundle.
 
 ## Sunshine + Moonlight (remote desktop/streaming)
 
