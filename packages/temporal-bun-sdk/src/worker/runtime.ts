@@ -91,7 +91,7 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
-import { assertWorkflowBunEnvironmentSafety } from '../workflow/bun-environment-lint'
+import { assertWorkflowBunEnvironmentSafety, lintWorkflowBunEnvironmentSafety } from '../workflow/bun-environment-lint'
 import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
@@ -297,6 +297,19 @@ export interface WorkerRuntimeOptions {
   plugins?: WorkerPlugin[]
   tuner?: WorkerTuner
 }
+
+const reportWorkflowBunEnvironmentWarning = async (
+  logger: Logger | undefined,
+  message: string,
+  fields: LogFields,
+): Promise<void> => {
+  if (logger) {
+    await Effect.runPromise(logger.log('warn', message, fields))
+    return
+  }
+  console.warn(`[temporal-bun-sdk] ${message}`, fields)
+}
+
 export class WorkerRuntime {
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
@@ -318,14 +331,36 @@ export class WorkerRuntime {
     }
 
     if (
-      workflowGuards === 'strict' &&
       !canGuardBunEnvironmentAtRuntime() &&
       (options.workflowsPath || (options.workflows && options.workflows.length > 0))
     ) {
-      await assertWorkflowBunEnvironmentSafety({
-        workflowsPath: options.workflowsPath,
-        workflows: options.workflows,
-      })
+      if (workflowGuards === 'strict') {
+        await assertWorkflowBunEnvironmentSafety({
+          workflowsPath: options.workflowsPath,
+          workflows: options.workflows,
+        })
+      } else if (workflowGuards === 'warn') {
+        if (options.workflowsPath) {
+          const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath: options.workflowsPath })
+          for (const violation of violations) {
+            await reportWorkflowBunEnvironmentWarning(options.logger, 'Workflow Bun environment safety violation', {
+              workflowGuards,
+              rule: violation.rule,
+              filePath: violation.filePath,
+              line: violation.line,
+              column: violation.column,
+              violationMessage: violation.message,
+              details: violation.details,
+            })
+          }
+        } else {
+          await reportWorkflowBunEnvironmentWarning(
+            options.logger,
+            'Bun.env cannot be intercepted for in-memory workflows under Bun 1.4',
+            { workflowGuards },
+          )
+        }
+      }
     }
 
     // Install workflow runtime guards before importing any workflow code so top-level module

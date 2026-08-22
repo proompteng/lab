@@ -50,6 +50,7 @@ const bunEnvironmentDenyGlobalCaptures = new Set([...bunEnvironmentGlobalObjects
 const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function', 'require'])
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
+const bunEnvironmentDenyCapturedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyImports = new Set([
   'node:vm',
   'vm',
@@ -265,6 +266,7 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
         denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
         allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,
         denyInvokedMemberProperties: bunEnvironmentDenyInvokedMemberProperties,
+        denyCapturedMemberProperties: bunEnvironmentDenyCapturedMemberProperties,
       }),
     )
   }

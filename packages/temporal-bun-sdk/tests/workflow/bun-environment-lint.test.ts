@@ -2,6 +2,9 @@ import { expect, test } from 'bun:test'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+import { Effect } from 'effect'
 
 import {
   assertWorkflowBunEnvironmentSafety,
@@ -388,6 +391,50 @@ test('rejects dynamic code through invoked constructor properties', async () => 
   )
 })
 
+test('rejects cached constructor captures that are invoked after module initialization', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const helperPath = join(dir, 'shared-helper.ts')
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    helperPath,
+    [
+      "const constructorKey = 'constructor'",
+      'const Code = (() => {}).constructor',
+      'const BracketCode = (() => {})[constructorKey]',
+      "export const direct = () => Code('return Bun.env.FLAG')()",
+      "export const bracket = () => BracketCode('return Bun.env.FLAG')()",
+    ].join('\n'),
+  )
+  await writeFile(workflowsPath, "export { direct, bracket } from './shared-helper'\n")
+
+  // Activities can populate Bun's module cache before WorkerRuntime.create() installs workflow guards.
+  await import(pathToFileURL(helperPath).href)
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'capture-member-expression')).toHaveLength(2)
+  expect(violations.every((violation) => violation.details?.memberProperty === 'constructor')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('accepts captured constructor metadata that cannot invoke or escape the constructor', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      'const GeneratorFunction = function* () {}.constructor',
+      'const isGenerator = (value: unknown) =>',
+      '  typeof value === "function" && value.constructor === GeneratorFunction',
+      'export const workflow = (value: unknown) => isGenerator(value)',
+    ].join('\n'),
+  )
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
+})
+
 test('rejects computed Bun global access and fails closed for dynamic keys', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
@@ -572,4 +619,41 @@ test('worker startup enforces source safety before loading workflows under Bun 1
       workflowGuards: 'strict',
     }),
   ).rejects.toBeInstanceOf(WorkflowBunEnvironmentSafetyError)
+})
+
+test('worker startup reports Bun environment source violations in warn mode under Bun 1.4', async () => {
+  if (canGuardBunEnvironmentAtRuntime()) return
+
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(workflowsPath, 'export const workflows = Bun.env.FLAG\n')
+  const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = []
+
+  await expect(
+    WorkerRuntime.create({
+      config: createTestTemporalConfig({ workflowGuards: 'warn' }),
+      workflowsPath,
+      workflowGuards: 'warn',
+      logger: {
+        log: (level, message, fields) =>
+          Effect.sync(() => {
+            logs.push({ level, message, fields: fields as Record<string, unknown> })
+          }),
+      },
+    }),
+  ).rejects.toThrow('No workflow definitions were registered')
+
+  expect(logs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        level: 'warn',
+        message: 'Workflow Bun environment safety violation',
+        fields: expect.objectContaining({
+          workflowGuards: 'warn',
+          rule: 'deny-member-expression',
+          violationMessage: 'Disallowed member expression in workflow module: Bun.env',
+        }),
+      }),
+    ]),
+  )
 })

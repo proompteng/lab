@@ -693,6 +693,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyIndirectGlobalReferences?: ReadonlySet<string>
   readonly allowIndirectGlobalMemberExpressions?: ReadonlySet<string>
   readonly denyInvokedMemberProperties?: ReadonlySet<string>
+  readonly denyCapturedMemberProperties?: ReadonlySet<string>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
@@ -711,6 +712,166 @@ export const lintWorkflowSourceAst = (options: {
       column,
       ...violation,
     })
+  }
+
+  const findInitializerEndIndex = (startIndex: number): number => {
+    let parenthesisDepth = 0
+    let bracketDepth = 0
+    let braceDepth = 0
+    for (let index = startIndex; index < tokens.length; index += 1) {
+      const kind = tokens[index]?.kind
+      if (
+        parenthesisDepth === 0 &&
+        bracketDepth === 0 &&
+        braceDepth === 0 &&
+        (kind === SyntaxKind.SemicolonToken || kind === SyntaxKind.CommaToken)
+      ) {
+        return index - 1
+      }
+      if (kind === SyntaxKind.OpenParenToken) parenthesisDepth += 1
+      if (kind === SyntaxKind.CloseParenToken) parenthesisDepth -= 1
+      if (kind === SyntaxKind.OpenBracketToken) bracketDepth += 1
+      if (kind === SyntaxKind.CloseBracketToken) bracketDepth -= 1
+      if (kind === SyntaxKind.OpenBraceToken) braceDepth += 1
+      if (kind === SyntaxKind.CloseBraceToken) braceDepth -= 1
+    }
+    return tokens.length - 1
+  }
+
+  const findEnclosingScopeEndIndex = (index: number): number => {
+    let nesting = 0
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === SyntaxKind.CloseBraceToken) {
+        nesting += 1
+        continue
+      }
+      if (kind !== SyntaxKind.OpenBraceToken) continue
+      if (nesting > 0) {
+        nesting -= 1
+        continue
+      }
+
+      let forwardNesting = 0
+      for (let end = cursor; end < tokens.length; end += 1) {
+        const forwardKind = tokens[end]?.kind
+        if (forwardKind === SyntaxKind.OpenBraceToken) forwardNesting += 1
+        if (forwardKind === SyntaxKind.CloseBraceToken) {
+          forwardNesting -= 1
+          if (forwardNesting === 0) return end
+        }
+      }
+      return tokens.length
+    }
+    return tokens.length
+  }
+
+  const capturedMemberPropertyAt = (
+    startIndex: number,
+    endIndex: number,
+  ): { readonly property: string; readonly position: number } | undefined => {
+    const range = stripParentheses(tokens, startIndex, endIndex)
+    const propertyToken = tokens[range.endIndex]
+    const propertySeparator = tokens[range.endIndex - 1]
+    if (
+      isIdentifierLikeToken(propertyToken) &&
+      (propertySeparator?.kind === SyntaxKind.DotToken || propertySeparator?.kind === SyntaxKind.QuestionDotToken) &&
+      options.denyCapturedMemberProperties?.has(propertyToken.text)
+    ) {
+      return { property: propertyToken.text, position: propertyToken.start }
+    }
+    if (propertyToken?.kind !== SyntaxKind.CloseBracketToken) return undefined
+
+    let bracketDepth = 0
+    for (let cursor = range.endIndex; cursor >= range.startIndex; cursor -= 1) {
+      const kind = tokens[cursor]?.kind
+      if (kind === SyntaxKind.CloseBracketToken) bracketDepth += 1
+      if (kind !== SyntaxKind.OpenBracketToken) continue
+      bracketDepth -= 1
+      if (bracketDepth !== 0) continue
+
+      const property = resolveStaticPropertyKey(
+        tokens,
+        cursor + 1,
+        range.endIndex - 1,
+        staticPropertyBindings,
+        symbolIsUnshadowed,
+      )
+      const computedPropertyToken = tokens[cursor + 1]
+      if (
+        property?.kind === 'string' &&
+        options.denyCapturedMemberProperties?.has(property.value) &&
+        computedPropertyToken
+      ) {
+        return { property: property.value, position: computedPropertyToken.start }
+      }
+      return undefined
+    }
+    return undefined
+  }
+
+  const safeCapturedMemberReference = (index: number): boolean => {
+    const previous = tokens[index - 1]
+    const next = tokens[index + 1]
+    const previousIsStrictComparison =
+      previous?.kind === SyntaxKind.EqualsEqualsEqualsToken ||
+      previous?.kind === SyntaxKind.ExclamationEqualsEqualsToken
+    const nextIsStrictComparison =
+      next?.kind === SyntaxKind.EqualsEqualsEqualsToken || next?.kind === SyntaxKind.ExclamationEqualsEqualsToken
+    if (previousIsStrictComparison || nextIsStrictComparison) return true
+    if (previous?.kind === SyntaxKind.TypeOfKeyword || previous?.kind === SyntaxKind.ExclamationToken) return true
+    if (next?.kind === SyntaxKind.AmpersandAmpersandToken || next?.kind === SyntaxKind.QuestionToken) return true
+    if (
+      (next?.kind === SyntaxKind.DotToken || next?.kind === SyntaxKind.QuestionDotToken) &&
+      tokens[index + 2]?.text === 'name' &&
+      !isAssignmentOperator(tokens[index + 3]) &&
+      !isInvokedMemberExpression(tokens, index + 2)
+    ) {
+      return true
+    }
+    return false
+  }
+
+  if (options.denyCapturedMemberProperties) {
+    for (let index = 0; index < tokens.length; index += 1) {
+      const declaration = tokens[index]
+      const binding = tokens[index + 1]
+      if (!isVariableDeclarationKeyword(declaration) || !isIdentifierLikeToken(binding)) continue
+      if (tokens[index + 2]?.kind !== SyntaxKind.EqualsToken) continue
+
+      const initializerStartIndex = index + 3
+      const initializerEndIndex = findInitializerEndIndex(initializerStartIndex)
+      const capturedProperty = capturedMemberPropertyAt(initializerStartIndex, initializerEndIndex)
+      if (!capturedProperty) continue
+
+      const scopeEndIndex = findEnclosingScopeEndIndex(index)
+      let unsafeReference = false
+      for (let cursor = initializerEndIndex + 1; cursor < scopeEndIndex; cursor += 1) {
+        const reference = tokens[cursor]
+        if (!isIdentifierLikeToken(reference) || reference.text !== binding.text) continue
+        const previous = tokens[cursor - 1]
+        if (
+          isVariableDeclarationKeyword(previous) ||
+          previous?.kind === SyntaxKind.FunctionKeyword ||
+          previous?.kind === SyntaxKind.ClassKeyword ||
+          previous?.kind === SyntaxKind.DotToken ||
+          previous?.kind === SyntaxKind.QuestionDotToken
+        ) {
+          continue
+        }
+        if (!safeCapturedMemberReference(cursor)) {
+          unsafeReference = true
+          break
+        }
+      }
+      if (!unsafeReference) continue
+
+      report(capturedProperty.position, {
+        rule: 'capture-member-expression',
+        message: `Capturing disallowed member property in workflow module: const ${binding.text} = object.${capturedProperty.property}`,
+        details: { memberProperty: capturedProperty.property, binding: binding.text },
+      })
+    }
   }
 
   for (let index = 0; index < tokens.length; index += 1) {
