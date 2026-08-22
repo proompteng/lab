@@ -205,6 +205,30 @@ test('accepts a capture of the built-in Function apply implementation', async ()
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
 })
 
+test('rejects dynamic code through invoked constructor properties', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const constructorKey = 'constructor'",
+      "export const direct = () => (() => {}).constructor('return Bun.env.FLAG')()",
+      "export const optional = () => (() => {})?.constructor?.('return Bun.env.FLAG')()",
+      "export const bracket = () => (() => {})['constructor']('return Bun.env.FLAG')()",
+      "export const computed = (fn: () => void) => fn[constructorKey]('return Bun.env.FLAG')()",
+      "export const call = () => (() => {}).constructor.call(undefined, 'return Bun.env.FLAG')()",
+      "export const chained = () => ({}).constructor.constructor('return Bun.env.FLAG')()",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.memberProperty === 'constructor')).toHaveLength(6)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects computed Bun global access and fails closed for dynamic keys', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

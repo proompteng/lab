@@ -380,7 +380,9 @@ const resolveStaticPropertyKey = (
 const computedMemberProperty = (
   tokens: readonly WorkflowSyntaxToken[],
   objectIndex: number,
-): { object: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number } | undefined => {
+):
+  | { object: WorkflowSyntaxToken; propertyStartIndex: number; propertyEndIndex: number; endIndex: number }
+  | undefined => {
   const object = tokens[objectIndex]
   if (!isIdentifierLikeToken(object)) return undefined
 
@@ -398,12 +400,28 @@ const computedMemberProperty = (
     if (kind === SyntaxKind.CloseBracketToken) {
       depth -= 1
       if (depth === 0) {
-        return { object, propertyStartIndex: bracketIndex + 1, propertyEndIndex: index - 1 }
+        return { object, propertyStartIndex: bracketIndex + 1, propertyEndIndex: index - 1, endIndex: index }
       }
     }
   }
 
   return undefined
+}
+
+const isInvokedMemberExpression = (tokens: readonly WorkflowSyntaxToken[], endIndex: number): boolean => {
+  const next = tokens[endIndex + 1]
+  if (next?.kind === SyntaxKind.OpenParenToken) return true
+  if (next?.kind === SyntaxKind.QuestionDotToken && tokens[endIndex + 2]?.kind === SyntaxKind.OpenParenToken)
+    return true
+  if (
+    (next?.kind === SyntaxKind.DotToken || next?.kind === SyntaxKind.QuestionDotToken) &&
+    (tokens[endIndex + 2]?.text === 'call' ||
+      tokens[endIndex + 2]?.text === 'apply' ||
+      tokens[endIndex + 2]?.text === 'bind') &&
+    tokens[endIndex + 3]?.kind === SyntaxKind.OpenParenToken
+  )
+    return true
+  return false
 }
 
 const previousToken = (tokens: readonly WorkflowSyntaxToken[], index: number): WorkflowSyntaxToken | undefined =>
@@ -653,12 +671,14 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyGlobalCaptures?: ReadonlySet<string>
   readonly denyIndirectGlobalReferences?: ReadonlySet<string>
   readonly allowIndirectGlobalMemberExpressions?: ReadonlySet<string>
+  readonly denyInvokedMemberProperties?: ReadonlySet<string>
 }): WorkflowLintViolation[] => {
   const violations: WorkflowLintViolation[] = []
   const sourceText = options.sourceText
   const tokens = scanWorkflowSyntaxTokens(sourceText)
   const positionOf = createWorkflowPositionResolver(sourceText)
   const staticPropertyBindings = collectStaticPropertyBindings(tokens)
+  const reportedInvokedMemberProperties = new Set<number>()
 
   const report = (position: number, violation: Omit<WorkflowLintViolation, 'filePath' | 'line' | 'column'>) => {
     const { line, column } = positionOf(position)
@@ -689,6 +709,21 @@ export const lintWorkflowSourceAst = (options: {
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]
+    if (
+      (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral) &&
+      options.denyInvokedMemberProperties?.has(token.value) &&
+      previousToken(tokens, index)?.kind === SyntaxKind.OpenBracketToken &&
+      nextToken(tokens, index)?.kind === SyntaxKind.CloseBracketToken &&
+      isInvokedMemberExpression(tokens, index + 1) &&
+      !reportedInvokedMemberProperties.has(token.start)
+    ) {
+      reportedInvokedMemberProperties.add(token.start)
+      report(token.start, {
+        rule: 'deny-member-expression',
+        message: `Disallowed invoked member property in workflow module: ${token.value}`,
+        details: { memberProperty: token.value },
+      })
+    }
     if (!isIdentifierLikeToken(token)) continue
 
     const previous = previousToken(tokens, index)
@@ -703,6 +738,20 @@ export const lintWorkflowSourceAst = (options: {
     const allowedIndirectGlobalMemberExpression = options.allowIndirectGlobalMemberExpressions?.has(
       memberExpressionChainName(tokens, index) ?? '',
     )
+
+    if (
+      options.denyInvokedMemberProperties?.has(name) &&
+      (previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken) &&
+      isInvokedMemberExpression(tokens, index) &&
+      !reportedInvokedMemberProperties.has(token.start)
+    ) {
+      reportedInvokedMemberProperties.add(token.start)
+      report(token.start, {
+        rule: 'deny-member-expression',
+        message: `Disallowed invoked member property in workflow module: ${name}`,
+        details: { memberProperty: name },
+      })
+    }
 
     if (
       options.denyIndirectGlobalReferences?.has(name) &&
@@ -797,6 +846,29 @@ export const lintWorkflowSourceAst = (options: {
             memberExpression: `${computedProperty.object.text}[...]`,
             ...(property?.kind === 'string' ? { global: property.value } : {}),
           },
+        })
+      }
+    }
+    if (computedProperty && options.denyInvokedMemberProperties) {
+      const property = resolveStaticPropertyKey(
+        tokens,
+        computedProperty.propertyStartIndex,
+        computedProperty.propertyEndIndex,
+        staticPropertyBindings,
+      )
+      const propertyToken = tokens[computedProperty.propertyStartIndex]
+      if (
+        property?.kind === 'string' &&
+        options.denyInvokedMemberProperties.has(property.value) &&
+        isInvokedMemberExpression(tokens, computedProperty.endIndex) &&
+        propertyToken &&
+        !reportedInvokedMemberProperties.has(propertyToken.start)
+      ) {
+        reportedInvokedMemberProperties.add(propertyToken.start)
+        report(propertyToken.start, {
+          rule: 'deny-member-expression',
+          message: `Disallowed invoked member property in workflow module: ${property.value}`,
+          details: { memberProperty: property.value },
         })
       }
     }

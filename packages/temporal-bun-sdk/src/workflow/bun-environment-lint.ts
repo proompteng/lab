@@ -20,6 +20,7 @@ const bunEnvironmentDenyGlobalObjectProperties = new Map(
 const bunEnvironmentDenyGlobalCaptures = new Set(bunEnvironmentGlobalObjects)
 const bunEnvironmentDenyIndirectGlobalReferences = new Set(['eval', 'Function'])
 const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.prototype.apply'])
+const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
 
 const bundleDiagnosticViolation = (entry: string, diagnostic: unknown): WorkflowLintViolation => {
   const details = diagnostic as {
@@ -117,6 +118,7 @@ export const lintWorkflowBunEnvironmentSafety = async (options: {
         denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
         denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
         allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,
+        denyInvokedMemberProperties: bunEnvironmentDenyInvokedMemberProperties,
       }),
     )
   }
