@@ -141,12 +141,14 @@ test('rejects global recovery through inherited accessors', async () => {
     [
       "Object.defineProperty(Object.prototype, 'root', { get() { return this } })",
       'export const inherited = () => globalThis.root.Bun.env.FLAG',
+      "export const nativeBinding = () => process.root.binding('fs')",
     ].join('\n'),
   )
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
   expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.root')).toBeTrue()
+  expect(violations.some((violation) => violation.details?.memberExpression === 'process.root')).toBeTrue()
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )

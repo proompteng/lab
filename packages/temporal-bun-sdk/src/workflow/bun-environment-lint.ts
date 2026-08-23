@@ -12,7 +12,11 @@ import {
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentGlobalObjects = ['globalThis', 'global', 'self'] as const
-const bunEnvironmentDenyAllGlobalObjectProperties = new Set<string>(bunEnvironmentGlobalObjects)
+const bunEnvironmentDenyAllGlobalObjectProperties = new Set<string>([
+  ...bunEnvironmentGlobalObjects,
+  'process',
+  'module',
+])
 const bunEnvironmentGlobalObjectProperties = [
   'Bun',
   'eval',
