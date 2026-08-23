@@ -22,8 +22,10 @@ source "$env_file"
 set +a
 
 readonly bind_address="${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}"
+readonly bind_port="${IMAGE_FACTORY_BIND_PORT:-8081}"
 readonly data_root="${IMAGE_FACTORY_DATA_ROOT:-/var/lib/image-factory}"
 [[ "$bind_address" == '100.100.244.148' ]] || die 'Image Factory must bind the NUC Elauwit provider-LAN address'
+[[ "$bind_port" == '8081' ]] || die 'Image Factory must use the documented provider-LAN port 8081'
 [[ "$data_root" == /* && "$data_root" != '/' ]] || die 'IMAGE_FACTORY_DATA_ROOT must be an absolute dedicated directory'
 ip -4 -brief address | grep -Eq '(^|[[:space:]])100\.100\.244\.148/25([[:space:]]|$)' \
   || die "$bind_address/25 is not configured on this host"
@@ -33,7 +35,7 @@ key_path="$data_root/secrets/cache-signing-key.key"
 openssl ec -check -noout -in "$key_path" >/dev/null 2>&1 || die 'cache-signing key is invalid'
 
 grep -Eq '^[[:space:]]+extensionManifest: proompteng/talos-extensions$' "$image_factory_dir/config.yaml"
-grep -Eq '^[[:space:]]+externalURL: http://100\.100\.244\.148:8080/$' "$image_factory_dir/config.yaml"
+grep -Eq '^[[:space:]]+externalURL: http://100\.100\.244\.148:8081/$' "$image_factory_dir/config.yaml"
 if grep -Eq '^[[:space:]]+disabled: true$' "$image_factory_dir/config.yaml"; then
   die 'container signature verification must stay enabled'
 fi
