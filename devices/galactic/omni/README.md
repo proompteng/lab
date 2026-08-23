@@ -37,8 +37,23 @@ omnictl cluster template sync \
 
 The first sync applies only `image-factory-registry.yaml` and removes the three stale installer-image overrides. Wait
 for those configuration updates to finish before adding any `systemExtensions` list. Then add the custom extension to
-one `kind: Machine` document at a time in Ryzen, Turin, Altra order, rerender, validate, dry-run, and sync each phase.
-The control-plane `upgradeStrategy` remains rolling with `maxParallelism: 1`.
+one `kind: Machine` document at a time. A new rollout uses Ryzen, Turin, Altra order; a resumed rollout finishes the
+already-started machine before changing another. Rerender, validate, dry-run, and sync each phase. The control-plane
+`upgradeStrategy` remains rolling with `maxParallelism: 1`.
+
+`systemExtensions` is a customization request, not immutable artifact proof. Image Factory hashes the ordered request
+into a schematic ID, while the catalog can later resolve an extension name to a new digest. The same schematic ID and
+Talos version may therefore still address a cached installer built from an older catalog. Before each sync, use the
+artifact identity gate in `docs/runbooks/talos-latest-upgrade-plan.md` to tie the exact generated installer to the
+signed Kata digest. `MachineUpgradeStatus: machine is up to date`, a matching schematic ID, and extension version
+`4.1.0` prove convergence to that installer; they do not prove which extension digest built it.
+
+Omni's normal lifecycle cordons and drains before the installer reboot, then `FinalizeReboot` uncordons the Kubernetes
+node after it returns. That automatic uncordon means the installer transport finished; it is not Kata acceptance. The
+operator must immediately apply a separate runtime-validation cordon and keep the node
+`Ready,SchedulingDisabled` until QEMU, Cloud Hypervisor, Firecracker, and Dragonball have all passed the runbook's
+guest and host-side checks. Do not manually uncordon a node with incomplete artifact identity or runtime proof, and do
+not add the next machine's extension while the current phase is incomplete.
 
 The Image Factory endpoint is intentionally plain HTTP on the isolated Elauwit provider LAN. This works only because
 the cluster template first installs an explicit `RegistryMirrorConfig` whose `name` exactly matches the installer

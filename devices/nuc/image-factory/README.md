@@ -45,6 +45,33 @@ docker compose --env-file .env logs --tail 100 image-factory
 ./verify.sh
 ```
 
+## Catalog and installer cache semantics
+
+`ghcr.io/proompteng/talos-extensions:v1.13.9` is a transport tag. Rollout authority is the signed catalog digest and
+the digest-pinned `proompteng/talos-kata-runtimes` entry inside it. Confirm the live factory resolution before every
+node phase:
+
+```bash
+export FACTORY='http://100.100.244.148:8081'
+export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+
+curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
+  | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
+  | grep -Fx "$EXPECTED_KATA_DIGEST"
+```
+
+`verify.sh` proves this catalog readback and a smoke schematic. It does not prove that every existing per-machine
+installer cache entry was rebuilt. A schematic ID hashes the ordered customization request, not the resolved extension
+image contents. Publishing a new digest under the catalog tag, restarting Image Factory, and receiving the same
+schematic ID can therefore leave an older `metal-installer` manifest cached for that schematic and Talos version.
+
+Before Omni reboots a target, capture its exact schematic customization with
+`GET /schematics/<schematic-id>`, the current catalog digest readback, the generated installer manifest digest, and
+factory or registry build evidence tying that installer to `EXPECTED_KATA_DIGEST`. Extension name/version, catalog
+tag, schematic ID, or a successful pull is not sufficient. If that chain cannot be established, stop and rebuild or
+invalidate only the target artifact through a reviewed procedure. The complete gate and rollout sequence are in
+`docs/runbooks/talos-latest-upgrade-plan.md`.
+
 ## Omni handoff
 
 The installer registry is HTTP on a private LAN. Before changing a schematic, apply this Talos config document to all
@@ -73,6 +100,7 @@ Then add `proompteng/talos-kata-runtimes` to each machine's `systemExtensions`, 
 | Altra / `12345678-9abc-deff-1234-56789abcdeff` | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
 
 The control-plane machine-set upgrade strategy must remain rolling with `maxParallelism: 1`. Change and sync only one
-machine's extension list per phase in the fixed Ryzen, Turin, Altra order; do not lock the cluster or unrelated
-machines. Omni then generates a different schematic only for the current target. Start the next phase only after the
-Kubernetes, etcd, Ceph, and drain gates in the Galactic runbook pass again.
+machine's extension list per phase. A new rollout uses Ryzen, Turin, Altra order; a resumed rollout finishes the
+already-started machine first. Do not lock the cluster or unrelated machines. Start the next phase only after the
+current target passes installer identity, Kubernetes, etcd, Ceph, drain, and all four runtime gates in the Galactic
+runbook.
