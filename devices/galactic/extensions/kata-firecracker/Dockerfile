@@ -143,6 +143,8 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     sed -i 's#/opt/kata#/usr/local#g' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-*.toml; \
+    sed -i '/^firmware = /c\firmware = ""' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     awk ' \
       /^default_maxvcpus = 0$/ { \
         print "default_maxvcpus = 32"; \
@@ -180,6 +182,8 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'reconnect_timeout_ms = 45000' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
+    test "$(grep -c '^firmware = ""$' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml)" -eq 1; \
     if [ "${TARGETARCH}" = arm64 ]; then \
       test -s /extension/rootfs/usr/local/share/aavmf/AAVMF_CODE.fd; \
     fi; \
@@ -196,7 +200,7 @@ FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
 LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
-LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9"
+LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r1"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
 COPY --from=payload /extension/rootfs /rootfs
