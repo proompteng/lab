@@ -1072,7 +1072,10 @@ describe('native OCI build workflows', () => {
 
     expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
     expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
-    expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
+    expect(jangarReleaseWorkflow).toContain('REGISTRY_SERVICE: registry.registry.svc.cluster.local')
+    expect(jangarReleaseWorkflow).toContain('regctl registry set "${REGISTRY_SERVICE}" --tls disabled --skip-check')
+    expect(jangarReleaseWorkflow).toContain('VERIFY_IMAGE="${REGISTRY_SERVICE}/${REPOSITORY}"')
+    expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${VERIFY_IMAGE}@${DIGEST}"')
     expect(jangarReleaseWorkflow).toContain(`source_ci_run_id:
         description: Successful jangar-build-push run ID that produced the image
         required: true`)
