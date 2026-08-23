@@ -144,6 +144,10 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     sed -i 's#/opt/kata#/usr/local#g' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-*.toml; \
     awk ' \
+      /^default_maxvcpus = 0$/ { \
+        print "default_maxvcpus = 32"; \
+        next; \
+      } \
       /^dial_timeout_ms = 45000$/ { \
         print "dial_timeout_ms = 100"; \
         print "reconnect_timeout_ms = 45000"; \
@@ -170,6 +174,8 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     test -x /extension/rootfs/usr/local/libexec/virtiofsd; \
     test -L /extension/rootfs/usr/local/bin/qemu-bundle/opt/kata/share/kata-qemu/qemu; \
     test -s /extension/rootfs/usr/local/share/kata-containers/vmlinux-dragonball-experimental.container; \
+    grep -Fxq 'default_maxvcpus = 32' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'dial_timeout_ms = 100' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'reconnect_timeout_ms = 45000' \

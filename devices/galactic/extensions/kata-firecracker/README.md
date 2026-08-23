@@ -66,6 +66,13 @@ Omni does not select these installers from a `machine.install.image` config patc
 signed combined catalog and generates the desired per-machine schematic from each machine's `systemExtensions`. See
 `devices/nuc/image-factory/README.md` for the factory and registry-mirror handoff.
 
+Talos disables containerd's built-in `blockfile` snapshotter in `/etc/cri/containerd.toml`, and its default CRI image
+settings discard layer blobs after overlayfs unpack. Each Kata-enabled machine patch in
+`devices/galactic/omni/cluster-template.yaml` therefore removes only `io.containerd.snapshotter.v1.blockfile` from
+`disabled_plugins` and sets `discard_unpacked_layers = false` plus `use_local_image_pull = false` in
+`/etc/cri/conf.d/20-customization.part`. Omni applies those files and restarts CRI; without both settings,
+Firecracker fails before guest boot.
+
 Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing the agent image, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
 eligible by itself.
@@ -87,4 +94,6 @@ Kata shim, so it deliberately has no separate VMM process.
 
 Firecracker cannot use an overlayfs root inside the guest. Its handler alone selects containerd `2.2`'s built-in
 `blockfile` snapshotter. The bundled 512 MiB scratch filesystem limits each ephemeral container root filesystem to
-512 MiB; persistent data belongs on Kubernetes volumes.
+512 MiB; persistent data belongs on Kubernetes volumes. The Firecracker configuration caps `default_maxvcpus` at
+32, matching Firecracker `1.12.1`; leaving Kata's generated value at `0` expands it to the host CPU count and makes
+runtime validation fail on Turin's 128-CPU host.
