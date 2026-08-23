@@ -52,8 +52,8 @@ chmod 0600 "$key_path"
 docker compose --env-file "$env_file" -f "$image_factory_dir/compose.yaml" pull
 docker compose --env-file "$env_file" -f "$image_factory_dir/compose.yaml" up -d
 
-for _ in $(seq 1 30); do
-  if curl --fail --silent --show-error \
+for ((attempt = 1; attempt <= 15; attempt++)); do
+  if curl --connect-timeout 1 --fail --max-time 2 --silent --show-error \
     "http://${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:${IMAGE_FACTORY_BIND_PORT:-8081}/readyz" >/dev/null; then
     "$image_factory_dir/verify.sh"
     exit 0

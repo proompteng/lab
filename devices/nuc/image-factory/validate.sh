@@ -36,6 +36,7 @@ openssl ec -check -noout -in "$key_path" >/dev/null 2>&1 || die 'cache-signing k
 
 grep -Eq '^[[:space:]]+extensionManifest: proompteng/talos-extensions$' "$image_factory_dir/config.yaml"
 grep -Eq '^[[:space:]]+externalURL: http://100\.100\.244\.148:8081/$' "$image_factory_dir/config.yaml"
+grep -Eq '^[[:space:]]+jobs: 64$' "$image_factory_dir/config.yaml"
 if grep -Eq '^[[:space:]]+disabled: true$' "$image_factory_dir/config.yaml"; then
   die 'container signature verification must stay enabled'
 fi
