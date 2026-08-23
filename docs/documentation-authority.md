@@ -17,11 +17,9 @@ Use this authority order when documents disagree.
 3. Current operational indexes and runbooks
    - Current `README.md` files and runbooks that explicitly say they are current
    - Files with a recent status section that points to live desired state and runtime checks
-4. Historical design snapshots and accepted handoffs
+4. Retained historical design contracts
    - `docs/agents/designs/**`
-   - `docs/agents/release-handoffs/**`
    - `docs/torghut/design-system/**`
-   - dated rollout reports and closeout notes
 5. Research and whitepaper workups
    - `docs/whitepapers/**`
    - research-derived implementation ideas that still need current code/GitOps validation
@@ -33,15 +31,19 @@ Use this authority order when documents disagree.
 A design doc is authority only for its own historical decision. It is not current production truth unless it explicitly
 says so and points to live code, GitOps, and runtime readback.
 
-When updating a stale design doc, prefer one of these actions:
+When a design doc becomes stale:
 
-- mark it as a historical snapshot and add a current-truth notice;
+- delete it when it is superseded, orphaned, or only records a completed handoff or rollout;
 - move current operational guidance into a maintained README or runbook;
-- replace “implementation-ready/current/source of truth” wording with “historical rationale” wording;
-- add links to live desired state, service code, runtime APIs, and current runbooks.
+- retain it only while live code, configuration, tests, a current document, or another retained contract cites it;
+- when retained, replace “implementation-ready/current/source of truth” wording with “historical rationale” wording
+  and link to live desired state, service code, runtime APIs, and current runbooks.
 
 Do not solve stale design drift by adding another link checker. Broken links are secondary. The main failure mode is an
 old design claiming current authority after implementation reality moved.
+
+Git history is the archive for deleted documentation. The working tree should not accumulate one-time verification
+reports, release handoffs, rollout journals, retired investigations, or generated catalogs.
 
 ## Current Source Maps
 
@@ -63,3 +65,4 @@ Before treating a design doc as actionable, verify:
 - the documented status is consistent with current runtime status and CI;
 - the document does not conflict with a current README/runbook;
 - implementation work has a validation path in tests, CI, or runtime readback.
+- the document still has a live consumer or unique operational value that justifies keeping it in the working tree.

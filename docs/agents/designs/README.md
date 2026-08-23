@@ -1,21 +1,30 @@
-# Agents Design Archive
+# Retained Agents Design Contracts
 
-Status: Historical design and handoff archive.
+Status: Supporting implementation and historical contracts.
 
-This directory contains dated design proposals, accepted handoffs, and architecture notes for the Agents/Jangar control
-plane. These files are valuable for rationale, but they are not automatically current implementation authority.
+This directory is intentionally curated. A document remains here because live code, configuration, tests, current
+documentation, or another retained contract still names it. Retention does not make a design current production
+authority.
 
 For current behavior, start with:
 
 - `docs/agents/README.md`
-- `services/jangar/README.md`
+- `docs/agents/current-source-state.md`
+- `services/agents/**`
+- `packages/agent-contracts/**`
 - `charts/agents/**`
 - `argocd/applications/agents/**`
-- current CRDs and controller code under `services/jangar/**`
-- live Argo/Kubernetes/CI readback
+- live Argo, Kubernetes, API, and CI readback
 
-Design files in this directory should be read as snapshots unless the file explicitly states that it is current and
-points to live desired state plus validation evidence. When a design conflicts with code, GitOps, or runtime status,
-code/GitOps/runtime status wins.
+`handoff-common.md` contains the shared render and validation commands used by maintained Agents docs. Other files are
+supporting rationale for contracts still surfaced by the implementation.
 
-Use `docs/documentation-authority.md` as the repository-wide authority model.
+## Retention Rule
+
+- Keep a design while a live contract or maintained document cites it.
+- Move reusable operational instructions into a current runbook or component README.
+- Delete superseded variants, completed handoffs, rollout journals, and orphaned proposals.
+- Use Git history when historical text is needed after deletion.
+
+Do not add a generated catalog or preserve a file solely because another obsolete index listed it. Use
+`docs/documentation-authority.md` when source and documentation disagree.

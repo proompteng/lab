@@ -15,7 +15,6 @@ Status: Accepted for engineer and deployer handoff
   - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
 - Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-
 ## Decision
 
 I am selecting an **alpha closure settlement and feature replay market** as the next Torghut quant architecture
@@ -366,7 +365,7 @@ M5: Add Jangar slot-governor enforcement.
 
 Architecture PR validation:
 
-- `bunx oxfmt --check docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md docs/torghut/design-system/v6/201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md docs/agents/release-handoffs/torghut-alpha-closure-settlement-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
+- `bunx oxfmt --check docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md docs/torghut/design-system/v6/201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Engineer validation:
