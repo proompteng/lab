@@ -36,7 +36,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
       }}
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     permissions:
       actions: read
       contents: write
