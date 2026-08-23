@@ -59,6 +59,11 @@ endpoints:
 skipFallback: true
 ```
 
+The exact Talos `v1.13.9` lifecycle path validates installer images with the system-containerd registry resolver, and
+that resolver consumes `RegistryMirrorConfig`. The explicit `http://` endpoint is therefore used for both Talos-owned
+installer pulls and CRI pulls. Without this mirror, an image reference such as
+`100.100.244.148:8081/metal-installer/...` defaults to HTTPS and fails against this factory.
+
 Then add `proompteng/talos-kata-runtimes` to each machine's `systemExtensions`, preserving its existing extensions:
 
 | Machine                                        | Required extension set                                                                                                                               |

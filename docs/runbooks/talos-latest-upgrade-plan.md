@@ -83,20 +83,28 @@ Its cache-signing key and registry state under `/var/lib/image-factory` are pers
 
 ## Export and review Omni desired state
 
-Authenticate `omnictl`, export the live template, and commit the exact export before changing it:
+Authenticate `omnictl` and export the live template to a mode-`0600` temporary file. Imported patches contain the
+Tailscale auth key and SideroLink join token, so never commit the raw export:
 
 ```bash
+umask 077
 omnictl cluster template export galactic \
   --include-kernel-args \
-  --output devices/galactic/omni/cluster-template.yaml \
+  --output /tmp/galactic-cluster-template.raw.yaml \
   --force
 
+bun devices/galactic/omni/render-template.ts \
+  --secrets-from /tmp/galactic-cluster-template.raw.yaml \
+  --output /tmp/galactic-cluster-template.rendered.yaml
+
 omnictl cluster template validate \
-  --file devices/galactic/omni/cluster-template.yaml
+  --file /tmp/galactic-cluster-template.rendered.yaml
 ```
 
-Preserve every existing machine patch and extension. Confirm that the control-plane machine set has a rolling upgrade
-strategy with `maxParallelism: 1`.
+The checked-in `devices/galactic/omni/cluster-template.yaml` is the authoritative secret-redacted template. It
+preserves every imported patch, uses placeholders for both credentials, and removes stale imported
+`machine.install.image` overrides so Omni derives the desired installer from the machine schematic. Confirm that the
+control-plane machine set retains a rolling upgrade strategy with `maxParallelism: 1`.
 
 Apply the registry transport configuration as a separate phase before changing any schematic. In the exported
 `kind: Cluster` document, add the checked-in file as a cluster-wide config patch (file paths are resolved relative to
@@ -109,21 +117,25 @@ patches:
 
 ```bash
 omnictl cluster template sync \
-  --file devices/galactic/omni/cluster-template.yaml \
+  --file /tmp/galactic-cluster-template.rendered.yaml \
   --dry-run \
   --verbose
 
 omnictl cluster template sync \
-  --file devices/galactic/omni/cluster-template.yaml \
+  --file /tmp/galactic-cluster-template.rendered.yaml \
   --verbose
 ```
 
 Wait until all three machines report the registry config applied with no pending configuration update. Verify that
-each node can reach `http://100.100.244.148:8081` before changing a `systemExtensions` list. Do not use a
-`machine.install.image` patch: Omni derives the desired installer from each machine's schematic and selected system
-extensions.
+each node has the `RegistryMirrorConfig` in its effective machine configuration before changing a `systemExtensions`
+list. The explicit HTTP mirror is material: Talos `v1.13.9` validates installer images through the same configured
+registry resolver used by system containerd, while an unmirrored reference defaults to HTTPS. Prove the factory's
+generated `metal-installer` manifest is retrievable through the HTTP OCI endpoint; a health check alone is not enough.
+Do not use a `machine.install.image` patch: Omni derives the desired installer from each machine's schematic and
+selected system extensions.
 
-Add `proompteng/talos-kata-runtimes` to only one `kind: Machine` document per rollout phase. On Ryzen, remove
+Add `proompteng/talos-kata-runtimes` to only one `kind: Machine` document in the checked-in redacted template per
+rollout phase, then rerender it. On Ryzen, remove
 `siderolabs/kata-containers` in the same change; on Turin and Altra, preserve all three existing NVIDIA/Tailscale
 extensions. Validate, review, commit, and sync each phase independently in the fixed Ryzen, Turin, Altra order. This
 keeps the other two machines' desired schematics unchanged and guarantees that an Omni sync cannot start their
@@ -169,7 +181,8 @@ For each node:
 1. Confirm the checked-in template changes only this machine's `systemExtensions` list and the control-plane
    `upgradeStrategy.rolling.maxParallelism` is `1`.
 2. Run and retain the complete preflight evidence.
-3. Run `omnictl cluster template sync --dry-run --verbose` and reject any unexpected resource or machine change.
+3. Rerender the template, run `omnictl cluster template sync --dry-run --verbose`, and reject any unexpected resource
+   or machine change.
 4. Sync the reviewed template and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health
    checks. Do not lock the cluster or unrelated machines, and do not run a competing manual `talosctl upgrade`.
 5. Wait for the target to return on Talos `v1.13.9`, Kubernetes `v1.36.4`, `Ready`, and schedulable.
@@ -193,6 +206,21 @@ Argo CD application `kata-runtimes` owns four node-gated RuntimeClasses:
 | `kata-dragonball` | Dragonball       | `runtime.proompteng.ai/kata-dragonball=ready` |
 
 Installing the handlers does not schedule a canary. Activate one runtime on one node at a time:
+
+Before activating Firecracker, verify the effective Talos CRI configuration on that node:
+
+```bash
+! talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/containerd.toml \
+  | rg -F 'io.containerd.snapshotter.v1.blockfile'
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/cri.toml \
+  | rg 'discard_unpacked_layers = false|use_local_image_pull = false|snapshotter = .blockfile.'
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \
+  | rg 'loading plugin.*io.containerd.snapshotter.v1.blockfile'
+```
+
+The node's Omni machine patch owns the first two settings. The extension owns the blockfile handler, bundled scratch
+filesystem, and Firecracker `default_maxvcpus = 32` cap. A failure in any of these checks is an installer or machine
+configuration failure, not a RuntimeClass scheduling problem.
 
 ```bash
 kubectl --context galactic-lan label node "$NODE" \

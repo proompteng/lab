@@ -99,9 +99,9 @@ for node in "${nodes[@]}"; do
     >"$node_dir/extensions.yaml"
   rg -q 'kata-runtimes' "$node_dir/extensions.yaml"
 
-  talosctl --nodes "$address" --endpoints "$address" service containerd \
-    >"$node_dir/containerd-service.txt"
-  rg -q 'Running|STATE[[:space:]]+Running|state:[[:space:]]+Running' "$node_dir/containerd-service.txt"
+  talosctl --nodes "$address" --endpoints "$address" service cri \
+    >"$node_dir/cri-service.txt"
+  rg -q 'Running|STATE[[:space:]]+Running|state:[[:space:]]+Running' "$node_dir/cri-service.txt"
 
   talosctl --nodes "$address" --endpoints "$address" read /etc/cri/conf.d/10-kata-runtimes.part \
     >"$node_dir/10-kata-runtimes.part"
@@ -114,8 +114,8 @@ for node in "${nodes[@]}"; do
   talosctl --nodes "$address" --endpoints "$address" processes \
     | rg '(^|[ /])(PID|containerd-shim-kata-v2|qemu-system-(x86_64|aarch64)|cloud-hypervisor|firecracker|virtiofsd)([ /]|$)' \
     >"$node_dir/vmm-processes.txt"
-  talosctl --nodes "$address" --endpoints "$address" logs containerd --tail 4000 \
-    >"$node_dir/containerd.log"
+  talosctl --nodes "$address" --endpoints "$address" logs cri --tail 4000 \
+    >"$node_dir/cri.log"
 
   for vmm in "${vmms[@]}"; do
     runtime_class="$(runtime_class_for_vmm "$vmm")"
