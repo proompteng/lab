@@ -52,4 +52,4 @@ features:
 registries:
   factories:
     primary:
-      url: http://100.100.244.148:8080/
+      url: http://100.100.244.148:8081/

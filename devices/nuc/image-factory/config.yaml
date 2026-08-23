@@ -53,11 +53,11 @@ containerSignature:
 http:
   allowedOrigins:
     - https://nuc.ide-newton.ts.net
-  externalURL: http://100.100.244.148:8080/
+  externalURL: http://100.100.244.148:8081/
   httpListenAddr: :8080
 
 metrics:
   addr: :2122
 
 registry:
-  jobs: 16
+  jobs: 64

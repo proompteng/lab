@@ -76,7 +76,7 @@ Factory and a private backing registry from `devices/nuc/image-factory`.
 4. Require `./validate.sh` and `./verify.sh` to pass.
 5. Deploy the checked-in `devices/nuc/omni/omni.yaml` to `/home/kalmyk/omni/omni.yaml`.
 6. Restart only the Omni service and verify that its primary factory is
-   `http://100.100.244.148:8080/`.
+   `http://100.100.244.148:8081/`.
 
 The factory catalog accepts only official Sidero Labs signing identities and the exact main-branch Kata workflow.
 Its cache-signing key and registry state under `/var/lib/image-factory` are persistent and must be backed up.
@@ -119,7 +119,7 @@ omnictl cluster template sync \
 ```
 
 Wait until all three machines report the registry config applied with no pending configuration update. Verify that
-each node can reach `http://100.100.244.148:8080` before adding `proompteng/talos-kata-runtimes` to the three
+each node can reach `http://100.100.244.148:8081` before adding `proompteng/talos-kata-runtimes` to the three
 `systemExtensions` lists. Do not use a `machine.install.image` patch: Omni derives the desired installer from each
 machine's schematic and selected system extensions.
 
