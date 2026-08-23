@@ -12,6 +12,7 @@ import {
 import type { WorkflowDefinitions } from './definition'
 
 const bunEnvironmentGlobalObjects = ['globalThis', 'global', 'self'] as const
+const bunEnvironmentDenyAllGlobalObjectProperties = new Set<string>(bunEnvironmentGlobalObjects)
 const bunEnvironmentGlobalObjectProperties = [
   'Bun',
   'eval',
@@ -351,6 +352,7 @@ const inspectWorkflowBunEnvironmentSafety = async (options: {
       denyImports: bunEnvironmentDenyImports,
       denyReflectiveGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
       denyComputedGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
+      denyAllGlobalObjectProperties: bunEnvironmentDenyAllGlobalObjectProperties,
       denyGlobalCaptures: bunEnvironmentDenyGlobalCaptures,
       denyIndirectGlobalReferences: bunEnvironmentDenyIndirectGlobalReferences,
       allowIndirectGlobalMemberExpressions: bunEnvironmentAllowIndirectGlobalMemberExpressions,

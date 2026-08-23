@@ -771,6 +771,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyImports: ReadonlySet<string>
   readonly denyReflectiveGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
+  readonly denyAllGlobalObjectProperties?: ReadonlySet<string>
   readonly denyGlobalCaptures?: ReadonlySet<string>
   readonly denyIndirectGlobalReferences?: ReadonlySet<string>
   readonly allowIndirectGlobalMemberExpressions?: ReadonlySet<string>
@@ -1399,7 +1400,9 @@ export const lintWorkflowSourceAst = (options: {
     const deniedReflectiveProperties = reflectiveAccess
       ? options.denyReflectiveGlobalProperties?.get(reflectiveAccess.target.text)
       : undefined
-    if (!reflectiveAccess || !deniedReflectiveProperties) continue
+    const denyAllReflectiveProperties =
+      reflectiveAccess !== undefined && options.denyAllGlobalObjectProperties?.has(reflectiveAccess.target.text)
+    if (!reflectiveAccess || (!deniedReflectiveProperties && !denyAllReflectiveProperties)) continue
     const property = resolveStaticPropertyKey(
       tokens,
       reflectiveAccess.propertyStartIndex,
@@ -1407,7 +1410,11 @@ export const lintWorkflowSourceAst = (options: {
       staticPropertyBindings,
       symbolIsUnshadowed,
     )
-    if (!isDeniedGlobalProperty(property, deniedReflectiveProperties)) {
+    if (
+      !denyAllReflectiveProperties &&
+      deniedReflectiveProperties &&
+      !isDeniedGlobalProperty(property, deniedReflectiveProperties)
+    ) {
       safeReflectiveGlobalTargets.add(reflectiveAccess.target.start)
     }
   }
@@ -1607,7 +1614,9 @@ export const lintWorkflowSourceAst = (options: {
     const deniedComputedProperties = computedProperty
       ? options.denyComputedGlobalProperties?.get(computedProperty.object.text)
       : undefined
-    if (computedProperty && deniedComputedProperties) {
+    const denyAllComputedProperties =
+      computedProperty !== undefined && options.denyAllGlobalObjectProperties?.has(computedProperty.object.text)
+    if (computedProperty && (deniedComputedProperties || denyAllComputedProperties)) {
       const property = resolveStaticPropertyKey(
         tokens,
         computedProperty.propertyStartIndex,
@@ -1615,7 +1624,10 @@ export const lintWorkflowSourceAst = (options: {
         staticPropertyBindings,
         symbolIsUnshadowed,
       )
-      if (isDeniedGlobalProperty(property, deniedComputedProperties)) {
+      if (
+        denyAllComputedProperties ||
+        (deniedComputedProperties && isDeniedGlobalProperty(property, deniedComputedProperties))
+      ) {
         report(computedProperty.object.start, {
           rule: 'deny-member-expression',
           message: property
@@ -1663,7 +1675,9 @@ export const lintWorkflowSourceAst = (options: {
       const deniedReflectiveProperties = reflectiveAccess
         ? options.denyReflectiveGlobalProperties?.get(reflectiveAccess.target.text)
         : undefined
-      if (reflectiveAccess && deniedReflectiveProperties) {
+      const denyAllReflectiveProperties =
+        reflectiveAccess !== undefined && options.denyAllGlobalObjectProperties?.has(reflectiveAccess.target.text)
+      if (reflectiveAccess && (deniedReflectiveProperties || denyAllReflectiveProperties)) {
         const property = resolveStaticPropertyKey(
           tokens,
           reflectiveAccess.propertyStartIndex,
@@ -1671,7 +1685,10 @@ export const lintWorkflowSourceAst = (options: {
           staticPropertyBindings,
           symbolIsUnshadowed,
         )
-        if (isDeniedGlobalProperty(property, deniedReflectiveProperties)) {
+        if (
+          denyAllReflectiveProperties ||
+          (deniedReflectiveProperties && isDeniedGlobalProperty(property, deniedReflectiveProperties))
+        ) {
           report(member.token.start, {
             rule: 'deny-member-expression',
             message: property
@@ -1687,7 +1704,12 @@ export const lintWorkflowSourceAst = (options: {
       }
     }
 
-    if (options.denyMemberExpressions.has(member.name) && !isTypeOnlyTypeofMemberExpression(tokens, index, previous)) {
+    const denyAllDirectGlobalProperties =
+      computedProperty === undefined && options.denyAllGlobalObjectProperties?.has(member.token.text)
+    if (
+      (options.denyMemberExpressions.has(member.name) || denyAllDirectGlobalProperties) &&
+      !isTypeOnlyTypeofMemberExpression(tokens, index, previous)
+    ) {
       report(member.token.start, {
         rule: 'deny-member-expression',
         message: `Disallowed member expression in workflow module: ${member.name}`,

@@ -72,7 +72,7 @@ test('rejects import.meta.env and Bun access through every global-object alias',
   )
 })
 
-test('rejects captures of global objects without flagging safe property captures', async () => {
+test('rejects captures and property reads of global objects', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
   await writeFile(
@@ -97,6 +97,7 @@ test('rejects captures of global objects without flagging safe property captures
   expect(violations.map((violation) => violation.details?.global)).toEqual(
     expect.arrayContaining(['globalThis', 'global', 'self']),
   )
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis[...]')).toBeTrue()
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
@@ -132,6 +133,25 @@ test('rejects global-object recovery through method calls, reflection, and argum
   )
 })
 
+test('rejects global recovery through inherited accessors', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "Object.defineProperty(Object.prototype, 'root', { get() { return this } })",
+      'export const inherited = () => globalThis.root.Bun.env.FLAG',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.some((violation) => violation.details?.memberExpression === 'globalThis.root')).toBeTrue()
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('accepts locally shadowed global-object alias names', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
@@ -148,7 +168,7 @@ test('accepts locally shadowed global-object alias names', async () => {
   expect(await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).toEqual([])
 })
 
-test('rejects reflective access to the Bun global', async () => {
+test('rejects reflective access to every global-object property', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
   await writeFile(
@@ -166,7 +186,7 @@ test('rejects reflective access to the Bun global', async () => {
 
   const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
 
-  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(4)
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(5)
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
@@ -901,7 +921,7 @@ test('rejects computed Bun global access and fails closed for dynamic keys', asy
   )
 })
 
-test('accepts computed global keys proven not to resolve to Bun', async () => {
+test('rejects computed global keys because inherited accessors can recover the receiver', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')
   await writeFile(
@@ -914,7 +934,13 @@ test('accepts computed global keys proven not to resolve to Bun', async () => {
     ].join('\n'),
   )
 
-  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'globalThis[...]')).toHaveLength(2)
+  expect(violations.filter((violation) => violation.details?.memberExpression === 'Reflect.get')).toHaveLength(1)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
 })
 
 test('rejects access to Temporal runtime guard state through registered symbols', async () => {
