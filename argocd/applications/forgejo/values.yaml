@@ -2,6 +2,10 @@
 # For medium/large instances, add external Redis/Valkey for session/cache/queue.
 replicaCount: 1
 
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
 persistence:
   enabled: true
   size: 50Gi
