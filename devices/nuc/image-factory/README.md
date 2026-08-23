@@ -61,12 +61,13 @@ skipFallback: true
 
 Then add `proompteng/talos-kata-runtimes` to each machine's `systemExtensions`, preserving its existing extensions:
 
-| Machine | Required extension set |
-| --- | --- |
-| Ryzen / `ff115a00-c307-11f0-a28f-648eab3e4100` | `amdgpu`, `amd-ucode`, `glibc`, `tailscale`, `talos-kata-runtimes` |
-| Turin / `8bf7ec00-171c-11f1-8000-7cc255f16774` | NVIDIA LTS kernel modules/toolkit, `tailscale`, `talos-kata-runtimes` |
-| Altra / `12345678-9abc-deff-1234-56789abcdeff` | NVIDIA LTS kernel modules/toolkit, `tailscale`, `talos-kata-runtimes` |
+| Machine                                        | Required extension set                                                                                                                               |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ryzen / `ff115a00-c307-11f0-a28f-648eab3e4100` | `siderolabs/amdgpu`, `siderolabs/amd-ucode`, `siderolabs/glibc`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes`                            |
+| Turin / `8bf7ec00-171c-11f1-8000-7cc255f16774` | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
+| Altra / `12345678-9abc-deff-1234-56789abcdeff` | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
 
-The control-plane machine-set upgrade strategy must remain rolling with `maxParallelism: 1`. Omni then generates a
-different schematic for each extension set and upgrades one control-plane/etcd member at a time. Do not unlock the
-rollout until the Kubernetes, etcd, Ceph, and drain gates in the Galactic runbook pass.
+The control-plane machine-set upgrade strategy must remain rolling with `maxParallelism: 1`. Change and sync only one
+machine's extension list per phase in the fixed Ryzen, Turin, Altra order; do not lock the cluster or unrelated
+machines. Omni then generates a different schematic only for the current target. Start the next phase only after the
+Kubernetes, etcd, Ceph, and drain gates in the Galactic runbook pass again.
