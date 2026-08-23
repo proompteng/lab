@@ -335,21 +335,25 @@ export class WorkerRuntime {
       throw new Error('workflowGuards must be strict in production')
     }
 
+    const hasWorkflowOverrides = options.workflows !== undefined && options.workflows.length > 0
     let isolatedWorkflowBundle: WorkflowBunEnvironmentBundle | undefined
-    if (
-      !canGuardBunEnvironmentAtRuntime() &&
-      (options.workflowsPath || (options.workflows && options.workflows.length > 0))
-    ) {
+    if (!canGuardBunEnvironmentAtRuntime() && (hasWorkflowOverrides || options.workflowsPath)) {
       if (workflowGuards === 'strict') {
-        if (options.workflowsPath) {
+        if (hasWorkflowOverrides) {
+          await assertWorkflowBunEnvironmentSafety({ workflows: options.workflows })
+        } else if (options.workflowsPath) {
           isolatedWorkflowBundle = await prepareWorkflowBunEnvironmentBundle({
             workflowsPath: options.workflowsPath,
           })
-        } else {
-          await assertWorkflowBunEnvironmentSafety({ workflows: options.workflows })
         }
       } else if (workflowGuards === 'warn') {
-        if (options.workflowsPath) {
+        if (hasWorkflowOverrides) {
+          await reportWorkflowBunEnvironmentWarning(
+            options.logger,
+            'Bun.env cannot be intercepted for in-memory workflows under Bun 1.4',
+            { workflowGuards },
+          )
+        } else if (options.workflowsPath) {
           const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath: options.workflowsPath })
           for (const violation of violations) {
             await reportWorkflowBunEnvironmentWarning(options.logger, 'Workflow Bun environment safety violation', {
@@ -362,12 +366,6 @@ export class WorkerRuntime {
               details: violation.details,
             })
           }
-        } else {
-          await reportWorkflowBunEnvironmentWarning(
-            options.logger,
-            'Bun.env cannot be intercepted for in-memory workflows under Bun 1.4',
-            { workflowGuards },
-          )
         }
       }
     }

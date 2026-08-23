@@ -12,6 +12,7 @@ import {
   WorkflowBunEnvironmentSafetyError,
 } from '../../src/workflow/bun-environment-lint'
 import { canGuardBunEnvironmentAtRuntime } from '../../src/workflow/guards'
+import { createWorker } from '../../src/worker'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import { createTestTemporalConfig } from '../helpers/observability'
 
@@ -1064,6 +1065,18 @@ test('rejects in-memory workflows when Bun environment interception is unavailab
   await expect(assertWorkflowBunEnvironmentSafety({ workflows: [{}] as never })).rejects.toBeInstanceOf(
     WorkflowBunEnvironmentSafetyError,
   )
+})
+
+test('worker startup prioritizes in-memory workflows over the public API default path under Bun 1.4', async () => {
+  if (canGuardBunEnvironmentAtRuntime()) return
+
+  await expect(
+    createWorker({
+      config: createTestTemporalConfig({ workflowGuards: 'strict' }),
+      workflows: [{}] as never,
+      workflowGuards: 'strict',
+    }),
+  ).rejects.toBeInstanceOf(WorkflowBunEnvironmentSafetyError)
 })
 
 test('worker startup enforces source safety before loading workflows under Bun 1.4', async () => {
