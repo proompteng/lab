@@ -42,6 +42,7 @@ import kotlin.random.Random
 
 private val clickHouseLogger = KotlinLogging.logger {}
 private val clickHouseIdentifierPattern = Regex("[A-Za-z_][A-Za-z0-9_]*")
+private const val CLICKHOUSE_PART_MODIFICATION_GRACE_MS = 60_000L
 
 data class ClickHouseReadinessUpdate(
   val ready: Boolean,
@@ -323,12 +324,23 @@ class ClickHouseSink(
   private suspend fun queryTableFreshness(observedAt: Long): ClickHouseTableFreshness {
     val database = clickHouseIdentifier(config.database)
     val tables = config.readyTables.sorted().map(::clickHouseIdentifier)
+    // An acknowledged fresh insert must belong to a part modified within the readiness window.
+    // The grace covers DateTime precision and small clock differences without filtering by event_ts,
+    // so delayed or replayed market data retains the existing ingest-based readiness semantics.
+    val oldestRelevantPartModificationMs =
+      (observedAt - config.tableReadyMaxAgeMs - CLICKHOUSE_PART_MODIFICATION_GRACE_MS).coerceAtLeast(0)
     val union =
       tables.joinToString("\nUNION ALL\n") { table ->
         "SELECT '$table' AS table, " +
           "max(parseDateTimeBestEffort(ingest_ts)) AS latest_ingest, " +
           "max(parseDateTimeBestEffort(event_ts)) AS latest_event " +
-          "FROM $database.$table WHERE network = ${sqlString(network)}"
+          "FROM $database.$table " +
+          "PREWHERE _part IN (" +
+          "SELECT name FROM system.parts " +
+          "WHERE database = ${sqlString(database)} AND table = ${sqlString(table)} AND active " +
+          "AND modification_time >= fromUnixTimestamp64Milli($oldestRelevantPartModificationMs)" +
+          ") " +
+          "WHERE network = ${sqlString(network)}"
       }
     val query =
       """
