@@ -61,7 +61,7 @@ install -d "$requested_output_dir"
 declare output_dir
 output_dir="$(cd "$requested_output_dir" && pwd -P)"
 readonly output_dir
-readonly expected_output="$output_dir/metal-${arch}-installer.tar"
+readonly expected_output="$output_dir/installer-${arch}.tar"
 
 declare -a docker_config_mount=()
 readonly docker_config_dir="${DOCKER_CONFIG:-$HOME/.docker}"
