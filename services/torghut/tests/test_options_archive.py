@@ -232,6 +232,23 @@ def _watermark_row(
     }
 
 
+def _finalizing_checkpoint(
+    shard: ArchiveShard, fingerprint: str, counts: tuple[int, int]
+) -> ArchiveCheckpoint:
+    page_count, seen_count = counts
+    return ArchiveCheckpoint(
+        shard=shard,
+        query_fingerprint=fingerprint,
+        status="finalizing",
+        cursor=None,
+        page_count=page_count,
+        seen_count=seen_count,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+    )
+
+
 def test_archive_shards_are_stable_calendar_weeks() -> None:
     shards = archive_shards(
         today=date(2026, 7, 15),
@@ -765,17 +782,7 @@ def test_finalize_fails_closed_on_inconsistent_durable_state(
 
     with pytest.raises(ArchiveStateError, match=message):
         repository.finalize_shard(
-            checkpoint=ArchiveCheckpoint(
-                shard=_shard(),
-                query_fingerprint=fingerprint,
-                status="finalizing",
-                cursor=None,
-                page_count=1,
-                seen_count=seen_count,
-                retry_count=0,
-                next_eligible_at=None,
-                last_success_at=None,
-            ),
+            checkpoint=_finalizing_checkpoint(_shard(), fingerprint, (1, seen_count)),
             observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
             refresh_seconds=86400,
             batch_size=1000,
@@ -802,17 +809,7 @@ def test_finalize_completes_only_after_the_cursor_exhausts_candidates() -> None:
     )
 
     completion = repository.finalize_shard(
-        checkpoint=ArchiveCheckpoint(
-            shard=_shard(),
-            query_fingerprint=fingerprint,
-            status="finalizing",
-            cursor=None,
-            page_count=2,
-            seen_count=2,
-            retry_count=0,
-            next_eligible_at=None,
-            last_success_at=None,
-        ),
+        checkpoint=_finalizing_checkpoint(_shard(), fingerprint, (2, 2)),
         observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
         refresh_seconds=86400,
         batch_size=1000,
@@ -844,23 +841,47 @@ def test_finalize_rejects_empty_result_for_nonempty_active_shard() -> None:
 
     with pytest.raises(ArchiveStateError, match="nonempty active shard"):
         repository.finalize_shard(
-            checkpoint=ArchiveCheckpoint(
-                shard=_shard(),
-                query_fingerprint=fingerprint,
-                status="finalizing",
-                cursor=None,
-                page_count=1,
-                seen_count=0,
-                retry_count=0,
-                next_eligible_at=None,
-                last_success_at=None,
-            ),
+            checkpoint=_finalizing_checkpoint(_shard(), fingerprint, (1, 0)),
             observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
             refresh_seconds=86400,
             batch_size=1000,
             statement_timeout_ms=30000,
             lock_timeout_ms=5000,
         )
+
+
+def test_finalize_allows_empty_current_shard_after_contracts_expire() -> None:
+    shard = ArchiveShard(start=date(2026, 8, 17), end=date(2026, 8, 23))
+    fingerprint = archive_query_fingerprint(shard=shard, page_limit=10_000)
+    session = _ArchiveSession(active_count=0)
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="finalizing",
+            page_count=1,
+            seen_count=0,
+        ),
+        membership_count=0,
+        session=session,
+    )
+    observed_at = datetime(2026, 8, 23, 12, tzinfo=UTC)
+
+    completion = repository.finalize_shard(
+        checkpoint=_finalizing_checkpoint(shard, fingerprint, (1, 0)),
+        observed_at=observed_at,
+        refresh_seconds=86400,
+        batch_size=1000,
+        statement_timeout_ms=30000,
+        lock_timeout_ms=5000,
+    )
+
+    assert completion.checkpoint.status == "complete"
+    active_sql, active_parameters = next(
+        call for call in session.calls if "SELECT EXISTS" in call[0]
+    )
+    assert "expiration_date >= :observed_date" in active_sql
+    parameters = cast(Mapping[str, object], active_parameters)
+    assert parameters["observed_date"] == observed_at.date()
 
 
 def test_finalize_allows_empty_completed_shard_after_every_contract_expired() -> None:
@@ -887,17 +908,7 @@ def test_finalize_allows_empty_completed_shard_after_every_contract_expired() ->
     )
 
     completion = repository.finalize_shard(
-        checkpoint=ArchiveCheckpoint(
-            shard=shard,
-            query_fingerprint=fingerprint,
-            status="finalizing",
-            cursor=None,
-            page_count=1,
-            seen_count=0,
-            retry_count=0,
-            next_eligible_at=None,
-            last_success_at=None,
-        ),
+        checkpoint=_finalizing_checkpoint(shard, fingerprint, (1, 0)),
         observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
         refresh_seconds=86400,
         batch_size=1000,
