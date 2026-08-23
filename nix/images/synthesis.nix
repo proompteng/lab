@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "synthesis";
   packageName = "synthesis";
   depsHash = {
-    x86_64-linux = "sha256-BYgbunlSO+2zrFVF60ghdhBbAd+Wo3/ADnFeIScW5p8=";
-    aarch64-linux = "sha256-6zDKz/gUnNKFI+Rnjm3wLRbi0iIq6jVjntnmBRWOeOk=";
+    x86_64-linux = "sha256-xS3A0C7LOvCvZjYo0Dh0pE2lsxZma3Q8ZLfuMveJfFg=";
+    aarch64-linux = "sha256-xVtfVaHxiOSvwcpKCzTQXJHiYQYlhSWZfYW8GLmq0Mw=";
   };
   dependencyClosure = "bunCache";
   installFilters = [

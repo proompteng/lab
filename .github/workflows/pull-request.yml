@@ -29,7 +29,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Derive changed files from Git
         id: files
@@ -95,7 +95,7 @@ jobs:
         if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Install build tools
         if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}

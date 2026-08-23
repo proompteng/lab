@@ -13,9 +13,9 @@ never use the Discord token concurrently.
 - Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
 - Lab toolchain:
-  `registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031`.
+  `registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e`.
   The dedicated multi-architecture Nix OCI image is pinned by index digest and restricted to Node `24.11.1`, Bun/Bunx
-  `1.3.14`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
+  `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
   `4.49.2`.
 
 All runtime image references are immutable digests. Updating Hermes requires a new release review, amd64 mirror, rootless

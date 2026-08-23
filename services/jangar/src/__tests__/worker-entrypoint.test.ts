@@ -24,6 +24,18 @@ describe('worker entrypoint', () => {
     expect(source).not.toContain('from "@/')
   })
 
+  it('loads Bumba workflows from a file so strict Bun guards can inspect them', () => {
+    const workerUrl = new URL('../worker.ts', import.meta.url)
+    const source = readFileSync(workerUrl, 'utf8')
+    const workflowsPath = fileURLToPath(new URL('../../bumba/src/workflows/index.ts', workerUrl))
+
+    expect(existsSync(workflowsPath)).toBe(true)
+    expect(source).toContain(
+      "workflowsPath: fileURLToPath(new URL('../../bumba/src/workflows/index.ts', import.meta.url))",
+    )
+    expect(source).not.toContain('workflows: workflows')
+  })
+
   it('copies worker runtime config into both runtime images', () => {
     const dockerfile = readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8')
     const copyDirective =

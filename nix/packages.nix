@@ -260,34 +260,34 @@ let
     };
   };
 
-  bunVersion = "1.3.14";
+  bunVersion = "1.4.0";
   bunSource = sourceFor "bun" {
     x86_64-linux = {
       sourceRoot = "bun-linux-x64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-x64.zip";
-        hash = "sha256-lR7iruhV8IWVruxiJSJqKY0/6oOj3NZGXAnLzN9+hI8=";
+        hash = "sha256-LQP7X7g6yLVnrKCigbLOGhoZ1Ij1bClo2Iw/Jekv5FI=";
       };
     };
     aarch64-linux = {
       sourceRoot = "bun-linux-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-linux-aarch64.zip";
-        hash = "sha256-on/7Y6gxA3WDbg1vZorhf6jY0YuIw3yCHGUzGXOhmjs=";
+        hash = "sha256-SxozLuhhmD65O8/m93D/+U4+MbLDiL2uo8jtNeWO7Q4=";
       };
     };
     x86_64-darwin = {
       sourceRoot = "bun-darwin-x64-baseline";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-x64-baseline.zip";
-        hash = "sha256-PjWtb1OXGpg0v55nhuKt9ytfGSHMmpxf3gc9KXKUQHY=";
+        hash = "sha256-2pufG0unZsbymXEfON+qmGI+HtnECJaqU9uAPFLsH6A=";
       };
     };
     aarch64-darwin = {
       sourceRoot = "bun-darwin-aarch64";
       src = fetchurl {
         url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/bun-darwin-aarch64.zip";
-        hash = "sha256-2LliIYKK1vl6x6wKt+lYcjQa92MAHogD6CZ2UsJlJiA=";
+        hash = "sha256-xmnpf2Fk4cluBwF0jbmN+ndJKQjL2DlMdVcTSnNd44E=";
       };
     };
   };

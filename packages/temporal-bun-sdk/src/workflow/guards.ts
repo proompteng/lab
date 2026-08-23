@@ -30,6 +30,7 @@ const ORIGINAL_SET_TIMEOUT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.ori
 const ORIGINAL_SET_INTERVAL_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.setInterval')
 const ORIGINAL_PERFORMANCE_NOW_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.performance.now')
 const ORIGINAL_WEBSOCKET_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.WebSocket')
+const ORIGINAL_WORKER_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Worker')
 const ORIGINAL_PROCESS_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.process.env')
 const ORIGINAL_BUN_ENV_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.env')
 const ORIGINAL_BUN_SPAWN_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.spawn')
@@ -39,6 +40,16 @@ const ORIGINAL_BUN_FILE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.origin
 const ORIGINAL_BUN_WRITE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.write')
 const ORIGINAL_BUN_CONNECT_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.connect')
 const ORIGINAL_BUN_SERVE_SYMBOL = Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.serve')
+
+const codeGenerationConstructorPrototypes = (): ReadonlyArray<{ readonly api: string; readonly prototype: object }> => [
+  { api: 'Function constructor', prototype: Function.prototype },
+  { api: 'AsyncFunction constructor', prototype: Object.getPrototypeOf(async function () {}) as object },
+  { api: 'GeneratorFunction constructor', prototype: Object.getPrototypeOf(function* () {}) as object },
+  {
+    api: 'AsyncGeneratorFunction constructor',
+    prototype: Object.getPrototypeOf(async function* () {}) as object,
+  },
+]
 
 type ViolationDetails = {
   readonly api: string
@@ -189,11 +200,14 @@ const guardedEnvironment = <T extends object>(target: T, api: string): T =>
       }
       return Reflect.get(current, property, receiver)
     },
-    set(current, property, value, receiver) {
+    set(current, property, value) {
       if (typeof property === 'string') {
         guardEnvironmentViolation(api, 'mutation')
       }
-      return Reflect.set(current, property, value, receiver)
+      // Bun's process.env target only accepts fully configurable data descriptors. Passing the
+      // proxy as the receiver makes Reflect.set synthesize a descriptor against that proxy, which
+      // Bun 1.4 rejects even outside workflow execution. Write directly to the environment target.
+      return Reflect.set(current, property, value)
     },
     has(current, property) {
       if (typeof property === 'string') {
@@ -207,66 +221,10 @@ const guardedEnvironment = <T extends object>(target: T, api: string): T =>
     },
   })
 
-const guardEnvironmentObjectProperties = (target: Record<string, string | undefined>, api: string) => {
-  const values = new Map<string, string | undefined>()
-  for (const key of Object.keys(target)) {
-    const descriptor = Object.getOwnPropertyDescriptor(target, key)
-    if (!descriptor?.configurable) {
-      continue
-    }
-    values.set(key, descriptor.get ? (descriptor.get.call(target) as string | undefined) : descriptor.value)
-    Object.defineProperty(target, key, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get() {
-        guardEnvironmentViolation(api, 'read')
-        return values.get(key)
-      },
-      set(value: string | undefined) {
-        guardEnvironmentViolation(api, 'mutation')
-        values.set(key, value)
-      },
-    })
-  }
-
-  const originalPrototype = Object.getPrototypeOf(target)
-  if (!originalPrototype || Object.prototype.hasOwnProperty.call(originalPrototype, '__temporalBunSdkEnvGuard')) {
-    return
-  }
-
-  Object.setPrototypeOf(
-    target,
-    new Proxy(Object.create(originalPrototype) as Record<PropertyKey, unknown>, {
-      get(current, property, receiver) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'read')
-        }
-        return Reflect.get(current, property, receiver)
-      },
-      set(current, property, value, receiver) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'mutation')
-        }
-        return Reflect.set(current, property, value, receiver)
-      },
-      has(current, property) {
-        if (typeof property === 'string') {
-          guardEnvironmentViolation(api, 'inspection')
-        }
-        return Reflect.has(current, property)
-      },
-      getOwnPropertyDescriptor(current, property) {
-        if (property === '__temporalBunSdkEnvGuard') {
-          return {
-            configurable: true,
-            enumerable: false,
-            value: true,
-          }
-        }
-        return Reflect.getOwnPropertyDescriptor(current, property)
-      },
-    }),
-  )
+export const canGuardBunEnvironmentAtRuntime = (): boolean => {
+  const maybeBun = (globalThis as unknown as { Bun?: { env?: unknown } }).Bun
+  if (!maybeBun?.env || typeof maybeBun.env !== 'object') return true
+  return Object.getOwnPropertyDescriptor(maybeBun, 'env')?.writable === true
 }
 
 export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode }) => {
@@ -278,6 +236,35 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   }
 
   const globalRef = globalThis as unknown as Record<symbol, unknown>
+
+  // Dynamic property dispatch is common in workflow dependencies, so source lint cannot reject every
+  // object[key]() call. Guard every JavaScript code-generation constructor at its intrinsic prototype;
+  // this also covers aliases, computed keys, call/apply/bind, and constructor chains.
+  for (const codeGeneration of codeGenerationConstructorPrototypes()) {
+    const descriptor = Object.getOwnPropertyDescriptor(codeGeneration.prototype, 'constructor')
+    if (!descriptor || typeof descriptor.value !== 'function') continue
+
+    const original = descriptor.value as (...args: unknown[]) => unknown
+    const guarded = new Proxy(original, {
+      apply(target, thisArg, args) {
+        handleViolation({
+          api: codeGeneration.api,
+          message: `${codeGeneration.api} is not allowed in workflow code`,
+          remediation: 'Define workflow functions statically; dynamic code generation is not replay-safe.',
+        })
+        return Reflect.apply(target, thisArg, args)
+      },
+      construct(target, args, newTarget) {
+        handleViolation({
+          api: codeGeneration.api,
+          message: `${codeGeneration.api} is not allowed in workflow code`,
+          remediation: 'Define workflow functions statically; dynamic code generation is not replay-safe.',
+        })
+        return Reflect.construct(target, args, newTarget)
+      },
+    })
+    Object.defineProperty(codeGeneration.prototype, 'constructor', { ...descriptor, value: guarded })
+  }
 
   const OriginalDate = Date
   globalRef[ORIGINAL_DATE_SYMBOL] = OriginalDate
@@ -611,6 +598,25 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
     ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = PatchedWebSocket
   }
 
+  const originalWorker = (globalThis as unknown as { Worker?: unknown }).Worker
+  if (typeof originalWorker === 'function') {
+    globalRef[ORIGINAL_WORKER_SYMBOL] = originalWorker
+    // biome-ignore lint/complexity/useArrowFunction: must remain constructable (usable with `new`)
+    const PatchedWorker = function (...args: unknown[]) {
+      handleViolation({
+        api: 'Worker',
+        message: 'Worker is not allowed in workflow code',
+        remediation: 'Move concurrent or isolated work into an activity and call it through the workflow context.',
+      })
+      return new (originalWorker as unknown as new (...args: unknown[]) => unknown)(...args)
+    }
+    ;(PatchedWorker as unknown as { prototype: unknown }).prototype = (
+      originalWorker as unknown as { prototype: unknown }
+    ).prototype
+    Object.setPrototypeOf(PatchedWorker, originalWorker)
+    ;(globalThis as unknown as { Worker: unknown }).Worker = PatchedWorker
+  }
+
   const processRef = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process
   const maybeBun = (globalThis as unknown as { Bun?: unknown }).Bun as
     | (Record<string, unknown> & { env?: Record<string, string | undefined> })
@@ -627,10 +633,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   if (originalBunEnv && typeof originalBunEnv === 'object') {
     globalRef[ORIGINAL_BUN_ENV_SYMBOL] = originalBunEnv
     const bunEnvDescriptor = maybeBun ? Object.getOwnPropertyDescriptor(maybeBun, 'env') : undefined
+    // Bun 1.4 exposes Bun.env as a non-configurable launch-time snapshot. Replacing it is impossible, and
+    // redefining its string-valued entries with accessors now throws. Strict workflow lint rejects Bun.env;
+    // retain the runtime proxy only for runtimes that explicitly expose a writable environment binding.
     if (bunEnvDescriptor?.writable) {
       maybeBun.env = guardedEnvironment(originalBunEnv, 'Bun.env') as typeof maybeBun.env
-    } else {
-      guardEnvironmentObjectProperties(originalBunEnv, 'Bun.env')
     }
   }
 

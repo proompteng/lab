@@ -71,7 +71,12 @@ const positiveInteger = (name: string, fallback: number) =>
   Config.schema(PositiveInteger, name).pipe(Config.withDefault(fallback))
 
 const httpUrl = (value: string, name: string): string => {
-  const url = new URL(value)
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch (cause) {
+    throw new Error(`${name} cannot be parsed as a URL`, { cause })
+  }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`${name} must use http or https`)
   if (url.username || url.password) throw new Error(`${name} must not contain credentials`)
   return url.toString().replace(/\/$/, '')

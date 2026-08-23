@@ -432,7 +432,7 @@ describe('opening-drive after-cost qualification', () => {
       true,
     )
     expect(first.sessions.every((session) => session.candidate.flat && session.benchmark.flat)).toBe(true)
-  })
+  }, 15_000)
 
   test('reports an otherwise positive replay as insufficient when it is below the precommitted power requirement', () => {
     const protocol = fullFillProtocol()

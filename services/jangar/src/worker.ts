@@ -1,9 +1,8 @@
 import { createServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
 import activities from '@proompteng/bumba/src/activities/index'
-import workflows from '@proompteng/bumba/src/workflows/index'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { alignWorkerDeploymentRouting, createWorker } from '@proompteng/temporal-bun-sdk/worker'
-import type { WorkflowDefinitions } from '@proompteng/temporal-bun-sdk/workflow'
 import { resolveWorkerRuntimeConfig } from './server/runtime-entry-config'
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
@@ -148,7 +147,7 @@ const main = async () => {
   const taskQueue = resolveWorkerRuntimeConfig().temporalTaskQueue
   const { worker, config } = await createWorker({
     taskQueue,
-    workflows: workflows as WorkflowDefinitions,
+    workflowsPath: fileURLToPath(new URL('../../bumba/src/workflows/index.ts', import.meta.url)),
     activities: activities as Record<string, ActivityHandler>,
   })
 

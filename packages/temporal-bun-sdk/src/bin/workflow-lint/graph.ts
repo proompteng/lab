@@ -22,7 +22,7 @@ export type WorkflowLintGraph = {
 
 export type WorkflowLintGraphViolation = {
   readonly filePath: string
-  readonly rule: 'deny-import' | 'dynamic-import'
+  readonly rule: 'deny-import' | 'dynamic-import' | 'unresolved-import'
   readonly message: string
   readonly specifier?: string
 }
@@ -73,17 +73,18 @@ export const buildWorkflowLintGraph = async (options: {
 }): Promise<{ graph: WorkflowLintGraph; violations: WorkflowLintGraphViolation[] }> => {
   const entryPath = resolve(options.cwd, options.entry)
   const seen = new Set<string>()
+  const scheduled = new Set<string>([entryPath])
   const edges: ImportEdge[] = []
   const violations: WorkflowLintGraphViolation[] = []
 
   const queue: string[] = [entryPath]
-  while (queue.length > 0) {
-    const filePath = queue.shift()
+  let queueIndex = 0
+  while (queueIndex < queue.length) {
+    const filePath = queue[queueIndex]
+    queueIndex += 1
     if (!filePath || seen.has(filePath)) {
       continue
     }
-    seen.add(filePath)
-
     let sourceText: string
     try {
       sourceText = await readFile(filePath, 'utf8')
@@ -96,7 +97,18 @@ export const buildWorkflowLintGraph = async (options: {
       continue
     }
 
-    const tokens = scanWorkflowSyntaxTokens(sourceText)
+    let tokens: ReturnType<typeof scanWorkflowSyntaxTokens>
+    try {
+      tokens = scanWorkflowSyntaxTokens(sourceText)
+    } catch (error) {
+      violations.push({
+        filePath,
+        rule: 'unresolved-import',
+        message: `Unable to inspect workflow module: ${error instanceof Error ? error.message : String(error)}`,
+      })
+      continue
+    }
+    seen.add(filePath)
     const dynamicImportPositions = collectWorkflowDynamicImportPositions(tokens)
     if (dynamicImportPositions.length > 0) {
       violations.push({
@@ -107,8 +119,9 @@ export const buildWorkflowLintGraph = async (options: {
     }
 
     const baseDir = dirname(filePath)
-    for (const { specifier } of collectWorkflowModuleSpecifiers(tokens)) {
+    for (const { specifier, typeOnly } of collectWorkflowModuleSpecifiers(tokens)) {
       edges.push({ from: filePath, specifier })
+      if (typeOnly) continue
 
       if (!isRelative(specifier)) {
         if (options.denyImports.has(specifier)) {
@@ -128,7 +141,8 @@ export const buildWorkflowLintGraph = async (options: {
         continue
       }
       edges[edges.length - 1] = { from: filePath, specifier, resolved: resolvedPath }
-      if (!seen.has(resolvedPath)) {
+      if (!scheduled.has(resolvedPath)) {
+        scheduled.add(resolvedPath)
         queue.push(resolvedPath)
       }
     }

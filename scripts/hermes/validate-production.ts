@@ -6,7 +6,7 @@ const hermesImage =
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
 const hermesToolchainImage =
-  'registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031'
+  'registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e'
 const githubCliVersion = '2.96.0'
 const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
 const terminalPath =
@@ -650,8 +650,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'toolchain_bin=/opt/lab-toolchain/bin',
     'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
-    'check_tool_version bun 1.3.14 "$toolchain_bin/bun" --version',
-    'check_tool_version bunx 1.3.14 "$toolchain_bin/bunx" --version',
+    'check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version',
     'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
     'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
     'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
@@ -754,7 +754,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
     'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
-    'Node `24.11.1`, Bun/Bunx `1.3.14`, Go `1.25.5`',
+    'Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`',
     '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
@@ -1114,7 +1114,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
     'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
     'test "$(node --version)" = v24.11.1',
-    'test "$(bun --version)" = 1.3.14',
+    'test "$(bun --version)" = 1.4.0',
     'test "$(go version)" = "go version go1.25.5 linux/amd64"',
     'bun run scripts/hermes/validate-production.ts',
     'shellcheck argocd/applications/hermes/*.sh',
@@ -1157,8 +1157,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(git rev-parse HEAD)" = "$main_revision"',
     'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
     'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
-    'toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031',
-    'test "$toolchain_digest" = sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031',
+    'toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e',
+    'test "$toolchain_digest" = sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e',
     'test "$toolchain_platforms" = linux/amd64,linux/arm64',
     '.config.Labels["proompteng.ai/toolchain.node"] == "24.11.1"',
     '.config.Labels["proompteng.ai/toolchain.yq"] == "4.49.2"',
