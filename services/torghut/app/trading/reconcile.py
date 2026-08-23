@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,11 @@ from .order_feed import (
 from .route_metadata import coerce_route_text, resolve_order_route_metadata
 from .risk import FINAL_STATUSES
 from .tca import upsert_execution_tca_metric
+from .tigerbeetle_client import (
+    TigerBeetleClientError,
+    TigerBeetleClientTimeoutError,
+)
+from .tigerbeetle_journal import TigerBeetleLedgerJournal
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +38,44 @@ class Reconciler:
 
     def __init__(self, account_label: str | None = None) -> None:
         self.account_label = account_label
+        self._tigerbeetle_journal: TigerBeetleLedgerJournal | None = None
+
+    def close(self) -> None:
+        self._close_tigerbeetle_journal()
+
+    def _tigerbeetle_journal_for_runtime(self) -> TigerBeetleLedgerJournal:
+        if self._tigerbeetle_journal is None:
+            self._tigerbeetle_journal = TigerBeetleLedgerJournal()
+        return self._tigerbeetle_journal
+
+    def _close_tigerbeetle_journal(self) -> None:
+        journal = self._tigerbeetle_journal
+        self._tigerbeetle_journal = None
+        if journal is None:
+            return
+        try:
+            journal.close()
+        except (OSError, RuntimeError):  # pragma: no cover - defensive close
+            logger.debug("Reconciler TigerBeetle journal close failed", exc_info=True)
+
+    def _handle_tigerbeetle_journal_error(self, error: Exception) -> None:
+        if isinstance(error, TigerBeetleClientTimeoutError) or (
+            isinstance(error, TigerBeetleClientError)
+            and str(error) == "tigerbeetle_client_closed"
+        ):
+            self._close_tigerbeetle_journal()
+
+    def _upsert_execution_tca_metric(
+        self,
+        session: Session,
+        execution: Execution,
+    ) -> None:
+        upsert_execution_tca_metric(
+            session,
+            execution,
+            tigerbeetle_journal=self._tigerbeetle_journal_for_runtime(),
+            on_tigerbeetle_journal_error=self._handle_tigerbeetle_journal_error,
+        )
 
     def reconcile(self, session: Session, client: Any) -> int:
         updates = 0
@@ -81,7 +125,7 @@ class Reconciler:
                 execution_fallback_count=fallback_count,
             )
             if updated:
-                upsert_execution_tca_metric(session, execution)
+                self._upsert_execution_tca_metric(session, execution)
                 updates += 1
                 _update_trade_decision(session, execution)
         return updates
@@ -164,7 +208,7 @@ class Reconciler:
             execution.execution_expected_adapter = (
                 route_expected or execution.execution_expected_adapter
             )
-            upsert_execution_tca_metric(session, execution)
+            self._upsert_execution_tca_metric(session, execution)
             _update_trade_decision(session, execution)
             updates += 1
         return updates
