@@ -650,8 +650,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'toolchain_bin=/opt/lab-toolchain/bin',
     'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
-    'check_tool_version bun 1.3.14 "$toolchain_bin/bun" --version',
-    'check_tool_version bunx 1.3.14 "$toolchain_bin/bunx" --version',
+    'check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version',
     'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
     'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
     'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
@@ -754,7 +754,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
     'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
-    'Node `24.11.1`, Bun/Bunx `1.3.14`, Go `1.25.5`',
+    'Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`',
     '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
@@ -1114,7 +1114,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
     'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
     'test "$(node --version)" = v24.11.1',
-    'test "$(bun --version)" = 1.3.14',
+    'test "$(bun --version)" = 1.4.0',
     'test "$(go version)" = "go version go1.25.5 linux/amd64"',
     'bun run scripts/hermes/validate-production.ts',
     'shellcheck argocd/applications/hermes/*.sh',

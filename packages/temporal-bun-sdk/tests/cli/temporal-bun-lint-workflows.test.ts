@@ -56,6 +56,7 @@ test('lint-workflows fails on Bun environment, timer, file, and socket escape ha
       entry,
       [
         'export const env = () => Bun.env.FOO',
+        'export const importMetaEnv = () => import.meta.env.FOO',
         'export const sleep = () => Bun.sleep(1)',
         "export const file = () => Bun.file('/tmp/probe')",
         "export const write = () => Bun.write('/tmp/probe', 'x')",
@@ -72,7 +73,15 @@ test('lint-workflows fails on Bun environment, timer, file, and socket escape ha
     })
 
     expect(result.exitCode).toBe(1)
-    for (const api of ['Bun.env', 'Bun.sleep', 'Bun.file', 'Bun.write', 'Bun.connect', 'Bun.serve']) {
+    for (const api of [
+      'Bun.env',
+      'import.meta.env',
+      'Bun.sleep',
+      'Bun.file',
+      'Bun.write',
+      'Bun.connect',
+      'Bun.serve',
+    ]) {
       expect(
         result.violations.some((v) => v.rule === 'deny-member-expression' && v.message.includes(api)),
       ).toBeTrue()
@@ -142,6 +151,80 @@ test('lint-workflows fails when a workflow imports @proompteng/temporal-bun-sdk/
   })
 })
 
+test('lint-workflows fails on filesystem promise imports', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import { readFile } from 'fs/promises'\nexport const run = () => readFile('/proc/self/environ')\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-import' && v.message.includes('fs/promises'))).toBeTrue()
+  })
+})
+
+test('lint-workflows fails on cluster imports', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import cluster from 'node:cluster'\nexport const run = () => cluster.fork()\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-import' && v.message.includes('node:cluster'))).toBeTrue()
+  })
+})
+
+test('lint-workflows fails on Bun environment and FFI module imports', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(
+      entry,
+      "import { env } from 'bun'\nimport { dlopen } from 'bun:ffi'\nexport const run = () => [env.FLAG, dlopen]\n",
+    )
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: 'deny-import', details: { specifier: 'bun' } }),
+        expect.objectContaining({ rule: 'deny-import', details: { specifier: 'bun:ffi' } }),
+      ]),
+    )
+  })
+})
+
 test('lint-workflows fails on raw Promise constructors in workflow modules', async () => {
   await withTempDir(async (dir) => {
     const workflowsDir = join(dir, 'workflows')
@@ -159,6 +242,26 @@ test('lint-workflows fails on raw Promise constructors in workflow modules', asy
 
     expect(result.exitCode).toBe(1)
     expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Promise'))).toBeTrue()
+  })
+})
+
+test('lint-workflows fails on global Worker isolate creation', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, "export const run = () => new Worker('./worker.ts')\n")
+
+    const result = await executeLintWorkflows({
+      cwd: dir,
+      workflows: [entry],
+      mode: 'strict',
+      format: 'json',
+    })
+
+    expect(result.exitCode).toBe(1)
+    expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Worker'))).toBeTrue()
   })
 })
 

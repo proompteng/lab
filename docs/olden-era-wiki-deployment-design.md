@@ -4,7 +4,7 @@
 
 **Architecture:** Create a dedicated `apps/olden` Next.js 16 + Fumadocs MDX app, with curated MDX strategy pages and typed reference data for factions, units, heroes, skills, spells, artifacts, laws, buildings, map objects, game modes, and patch freshness. Deploy it as a standalone Kubernetes workload through Argo CD at `olden.proompteng.ai`, with Cloudflare Tunnel routing `olden.proompteng.ai` directly to the in-cluster `olden` Service.
 
-**Tech Stack:** Bun 1.3.14, Node 24.11.1, Next.js 16, React 19, Fumadocs, Tailwind CSS 4, MDX, Bun test, GitHub Actions, Docker BuildKit, Kustomize, Cloudflare Tunnel, Argo CD ApplicationSet, Argo CD Image Updater.
+**Tech Stack:** Bun 1.4.0, Node 24.11.1, Next.js 16, React 19, Fumadocs, Tailwind CSS 4, MDX, Bun test, GitHub Actions, Docker BuildKit, Kustomize, Cloudflare Tunnel, Argo CD ApplicationSet, Argo CD Image Updater.
 
 ---
 

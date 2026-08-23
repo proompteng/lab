@@ -86,12 +86,14 @@ hashes for the exact replay/load/fuzz artifacts. Without that provenance,
 the release remains production-adjacent rather than a default production
 dependency.
 
-Runtime guards and strict workflow lint cover direct `process.env`, `Bun.env`,
-`Bun.sleep`, `Bun.file`, `Bun.write`, `Bun.connect`, and `Bun.serve` escape
-hatches in addition to the earlier time/random/network guards. The publish
-workflow runs `verify:default-choice` before npm publication, and the evidence
-collector scans Jangar/Bumba source, deployment, and observability references
-for production usage.
+Runtime guards cover direct `process.env`, `Bun.sleep`, `Bun.file`,
+`Bun.write`, `Bun.connect`, and `Bun.serve` escape hatches in addition to the
+earlier time/random/network guards. Bun 1.4 exposes `Bun.env` as an immutable
+launch-time snapshot, so strict workflow lint rejects both `Bun.env` and
+`import.meta.env` without mutating the process-wide environment object. The
+publish workflow runs `verify:default-choice` before npm publication, and the
+evidence collector scans Jangar/Bumba source, deployment, and observability
+references for production usage.
 
 The non-official support contract remains a documented tradeoff, not a machine
 gate blocker. Broader Bun, Temporal Server, OS/arch, namespace, and workload

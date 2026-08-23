@@ -15,7 +15,7 @@ never use the Discord token concurrently.
 - Lab toolchain:
   `registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031`.
   The dedicated multi-architecture Nix OCI image is pinned by index digest and restricted to Node `24.11.1`, Bun/Bunx
-  `1.3.14`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
+  `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
   `4.49.2`.
 
 All runtime image references are immutable digests. Updating Hermes requires a new release review, amd64 mirror, rootless

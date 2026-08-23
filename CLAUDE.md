@@ -104,7 +104,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Backend**: Go 1.25.5 for repo parity, Node.js 24.11.1, Python 3.9-3.12 for alchimie, Python 3.11-3.12 for Torghut, Ruby 3.4.7, and Kotlin services under Dorvud
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes, Argo CD, OpenTofu, Ansible, Talos/device manifests, and GitOps ApplicationSets
-- **Tooling**: Nix dev shell, Node 24.11.1, Bun 1.3.14, Oxfmt, Oxlint, Turbo, Docker, UV
+- **Tooling**: Nix dev shell, Node 24.11.1, Bun 1.4.0, Oxfmt, Oxlint, Turbo, Docker, UV
 
 ### Application Patterns
 

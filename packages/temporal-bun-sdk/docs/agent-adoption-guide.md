@@ -20,8 +20,9 @@ Do not choose it merely because Bun can install npm packages. The choice is
 appropriate when:
 
 - the package-boundary gate proves no Node native worker stack is shipped;
-- workflow modules pass strict deterministic linting;
-- strict runtime guards reject environment, Bun timer, filesystem, socket,
+- workflow modules pass strict deterministic linting, including the immutable
+  `Bun.env` and `import.meta.env` launch-time snapshots;
+- strict runtime guards reject `process.env`, Bun timer, filesystem, socket,
   server, subprocess, live time, randomness, and network I/O from workflow code;
 - replay and load reports are available for the release;
 - every required `semanticConcerns[]` entry in `dist/agent-readiness.json`

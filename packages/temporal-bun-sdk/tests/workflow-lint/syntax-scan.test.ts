@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 
 import {
   collectWorkflowDynamicImportPositions,
+  collectWorkflowMacroImports,
   collectWorkflowModuleSpecifiers,
   scanWorkflowSyntaxTokens,
 } from '../../src/bin/workflow-lint/syntax-scan'
@@ -46,15 +47,61 @@ describe('workflow lint syntax scanner', () => {
     ])
   })
 
-  test('collects named import and export module specifiers', () => {
+  test('classifies runtime and type-only static module specifiers', () => {
     const source = [
       "import { readFile } from 'node:fs/promises'",
       "export { child } from './child'",
+      "import type { Activity } from './activity'",
+      "import { type Helper } from './helper'",
+      "export type { Result } from './result'",
+      "export { type Options } from './options'",
+      "import { type Config, run } from './mixed'",
     ].join('\n')
 
-    expect(collectWorkflowModuleSpecifiers(scanWorkflowSyntaxTokens(source)).map((item) => item.specifier)).toEqual([
-      'node:fs/promises',
-      './child',
+    expect(
+      collectWorkflowModuleSpecifiers(scanWorkflowSyntaxTokens(source)).map(({ specifier, typeOnly }) => ({
+        specifier,
+        typeOnly,
+      })),
+    ).toEqual([
+      { specifier: 'node:fs/promises', typeOnly: false },
+      { specifier: './child', typeOnly: false },
+      { specifier: './activity', typeOnly: true },
+      { specifier: './helper', typeOnly: true },
+      { specifier: './result', typeOnly: true },
+      { specifier: './options', typeOnly: true },
+      { specifier: './mixed', typeOnly: false },
+    ])
+  })
+
+  test('identifies Bun macro import attributes without flagging other attributes or strings', () => {
+    const source = [
+      "import { first } from './first' with { type: 'macro' }",
+      'import { second } from "./second" assert { "type": "macro" }',
+      'import { third } from "./third" with { type: "mac\\u0072o" }',
+      "import data from './data.json' with { type: 'json' }",
+      "const example = \"import { hidden } from './hidden' with { type: 'macro' }\"",
+    ].join('\n')
+
+    expect(collectWorkflowMacroImports(scanWorkflowSyntaxTokens(source))).toEqual([
+      expect.objectContaining({ specifier: './first' }),
+      expect.objectContaining({ specifier: './second' }),
+      expect.objectContaining({ specifier: './third' }),
+    ])
+  })
+
+  test('keeps imports in comments out of the graph after nested template expressions', () => {
+    const source = [
+      'const message = `before ${condition ? `nested ${value}` : { value }.value} after`',
+      '/**',
+      ' * @example',
+      ' * import { hidden } from "node:assert"',
+      ' */',
+      "import { actual } from './actual'",
+    ].join('\n')
+
+    expect(collectWorkflowModuleSpecifiers(scanWorkflowSyntaxTokens(source))).toEqual([
+      expect.objectContaining({ specifier: './actual', typeOnly: false }),
     ])
   })
 
@@ -227,6 +274,21 @@ describe('workflow lint syntax scanner', () => {
       'Date.now',
     ])
     expect(violations.map((violation) => violation.line)).toEqual([5, 6, 8])
+  })
+
+  test('does not flag captured member expressions outside the configured deny set', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'workflow-lint-'))
+    const filePath = join(dir, 'workflow.ts')
+    await writeFile(filePath, 'const now = Date.now\nexport const workflow = () => now()\n', 'utf8')
+
+    const violations = await lintWorkflowModuleAst({
+      filePath,
+      denyGlobals: new Set<string>(),
+      denyImports: new Set<string>(),
+      denyMemberExpressions: new Set<string>(),
+    })
+
+    expect(violations).toEqual([])
   })
 
   test('does not flag type-only typeof Bun.spawn queries', async () => {

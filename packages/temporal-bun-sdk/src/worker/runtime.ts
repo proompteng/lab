@@ -91,6 +91,12 @@ import {
 } from '../proto/temporal/api/workflowservice/v1/request_response_pb'
 import { WorkflowService } from '../proto/temporal/api/workflowservice/v1/service_pb'
 import type { WorkflowCommandIntent } from '../workflow/commands'
+import {
+  assertWorkflowBunEnvironmentSafety,
+  lintWorkflowBunEnvironmentSafety,
+  prepareWorkflowBunEnvironmentBundle,
+  type WorkflowBunEnvironmentBundle,
+} from '../workflow/bun-environment-lint'
 import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
@@ -106,7 +112,7 @@ import { intentsEqual, stableStringify } from '../workflow/determinism'
 import { WorkflowNondeterminismError } from '../workflow/errors'
 import type { WorkflowQueryEvaluationResult, WorkflowUpdateInvocation } from '../workflow/executor'
 import { WorkflowExecutor } from '../workflow/executor'
-import { installWorkflowRuntimeGuards } from '../workflow/guards'
+import { canGuardBunEnvironmentAtRuntime, installWorkflowRuntimeGuards } from '../workflow/guards'
 import {
   CHILD_WORKFLOW_COMPLETED_SIGNAL,
   type WorkflowQueryRequest,
@@ -296,6 +302,19 @@ export interface WorkerRuntimeOptions {
   plugins?: WorkerPlugin[]
   tuner?: WorkerTuner
 }
+
+const reportWorkflowBunEnvironmentWarning = async (
+  logger: Logger | undefined,
+  message: string,
+  fields: LogFields,
+): Promise<void> => {
+  if (logger) {
+    await Effect.runPromise(logger.log('warn', message, fields))
+    return
+  }
+  console.warn(`[temporal-bun-sdk] ${message}`, fields)
+}
+
 export class WorkerRuntime {
   static async create(options: WorkerRuntimeOptions = {}): Promise<WorkerRuntime> {
     const config = options.config ?? (await loadTemporalConfig())
@@ -316,12 +335,49 @@ export class WorkerRuntime {
       throw new Error('workflowGuards must be strict in production')
     }
 
+    const hasWorkflowOverrides = options.workflows !== undefined && options.workflows.length > 0
+    let isolatedWorkflowBundle: WorkflowBunEnvironmentBundle | undefined
+    if (!canGuardBunEnvironmentAtRuntime() && (hasWorkflowOverrides || options.workflowsPath)) {
+      if (workflowGuards === 'strict') {
+        if (hasWorkflowOverrides) {
+          await assertWorkflowBunEnvironmentSafety({ workflows: options.workflows })
+        } else if (options.workflowsPath) {
+          isolatedWorkflowBundle = await prepareWorkflowBunEnvironmentBundle({
+            workflowsPath: options.workflowsPath,
+          })
+        }
+      } else if (workflowGuards === 'warn') {
+        if (hasWorkflowOverrides) {
+          await reportWorkflowBunEnvironmentWarning(
+            options.logger,
+            'Bun.env cannot be intercepted for in-memory workflows under Bun 1.4',
+            { workflowGuards },
+          )
+        } else if (options.workflowsPath) {
+          const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath: options.workflowsPath })
+          for (const violation of violations) {
+            await reportWorkflowBunEnvironmentWarning(options.logger, 'Workflow Bun environment safety violation', {
+              workflowGuards,
+              rule: violation.rule,
+              filePath: violation.filePath,
+              line: violation.line,
+              column: violation.column,
+              violationMessage: violation.message,
+              details: violation.details,
+            })
+          }
+        }
+      }
+    }
+
     // Install workflow runtime guards before importing any workflow code so top-level module
-    // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope).
+    // initialization is protected (e.g. `fetch()` / `Date.now()` in module scope). Bun 1.4's
+    // immutable Bun.env binding is protected by the focused source lint above together with
+    // runtime guards for dynamic code-generation constructors.
     installWorkflowRuntimeGuards({ mode: workflowGuards })
 
     const workflows = await runWithWorkflowModuleLoadContext({ mode: workflowGuards }, async () => {
-      return await loadWorkflows(options.workflowsPath, options.workflows)
+      return await loadWorkflows(options.workflowsPath, options.workflows, isolatedWorkflowBundle)
     })
     if (workflows.length === 0) {
       throw new Error('No workflow definitions were registered; provide workflows or workflowsPath')
@@ -3651,9 +3707,21 @@ const hasOpenWorkflowCancellationRequest = (events: readonly HistoryEvent[]): bo
 
 const isAbortError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError'
 
+let isolatedWorkflowModuleSequence = 0
+
+const loadIsolatedWorkflowModule = async (bundle: WorkflowBunEnvironmentBundle): Promise<Record<string, unknown>> => {
+  isolatedWorkflowModuleSequence += 1
+  const sourceUrl = pathToFileURL(bundle.entry)
+  sourceUrl.searchParams.set('temporal-bun-isolated', String(isolatedWorkflowModuleSequence))
+  const sourceText = `${bundle.sourceText}\n//# sourceURL=${sourceUrl.href}\n`
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(sourceText).toString('base64')}`
+  return (await import(moduleUrl)) as Record<string, unknown>
+}
+
 async function loadWorkflows(
   workflowsPath?: string,
   overrides?: WorkflowDefinitions,
+  isolatedBundle?: WorkflowBunEnvironmentBundle,
 ): Promise<WorkflowDefinition<unknown, unknown>[]> {
   if (overrides && overrides.length > 0) {
     return [...overrides] as WorkflowDefinition<unknown, unknown>[]
@@ -3662,8 +3730,9 @@ async function loadWorkflows(
     return []
   }
 
-  const moduleUrl = pathToFileURL(workflowsPath)
-  const loaded = await import(moduleUrl.href)
+  const loaded = isolatedBundle
+    ? await loadIsolatedWorkflowModule(isolatedBundle)
+    : await import(pathToFileURL(workflowsPath).href)
   const exported = (loaded.workflows ?? loaded.default) as unknown
 
   if (Array.isArray(exported)) {

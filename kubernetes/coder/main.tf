@@ -482,16 +482,25 @@ resource "coder_script" "bootstrap_tools" {
 
     export PATH="$HOME/.local/bin:$PATH"
     export BUN_INSTALL="$HOME/.bun"
-    BOOTSTRAP_BUN_VERSION="1.3.14"
+    BOOTSTRAP_BUN_VERSION="1.4.0"
     mkdir -p "$BUN_INSTALL" "$HOME/.local/bin" /tmp/coder-script-data/bin
     case ":$PATH:" in
       *:"$BUN_INSTALL/bin":*) ;;
       *) export PATH="$BUN_INSTALL/bin:$PATH" ;;
     esac
 
-    if ! command -v bun >/dev/null 2>&1; then
-      log "Installing Bun runtime $BOOTSTRAP_BUN_VERSION"
-      if ! curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BOOTSTRAP_BUN_VERSION}" >"$LOG_DIR/bun-install.log" 2>&1; then
+    CURRENT_BUN_VERSION=""
+    if command -v bun >/dev/null 2>&1; then
+      CURRENT_BUN_VERSION=$(bun --version 2>/dev/null || true)
+    fi
+
+    if [ "$CURRENT_BUN_VERSION" != "$BOOTSTRAP_BUN_VERSION" ]; then
+      if [ -n "$CURRENT_BUN_VERSION" ]; then
+        log "Upgrading Bun runtime from $CURRENT_BUN_VERSION to $BOOTSTRAP_BUN_VERSION"
+      else
+        log "Installing Bun runtime $BOOTSTRAP_BUN_VERSION"
+      fi
+      if ! curl -fsSL https://bun.sh/install | bash -s -- "bun-v$BOOTSTRAP_BUN_VERSION" >"$LOG_DIR/bun-install.log" 2>&1; then
         fail "Bun install failed; see $LOG_DIR/bun-install.log"
       fi
       hash -r
@@ -501,10 +510,11 @@ resource "coder_script" "bootstrap_tools" {
       fail "Bun not found after install; see $LOG_DIR/bun-install.log"
     fi
 
-    if command -v bun >/dev/null 2>&1; then
-      BUN_VERSION=$(bun --version 2>/dev/null || echo "unknown")
-      log "bun $BUN_VERSION ready"
+    BUN_VERSION=$(bun --version 2>/dev/null || echo "unknown")
+    if [ "$BUN_VERSION" != "$BOOTSTRAP_BUN_VERSION" ]; then
+      fail "Bun version mismatch after install: expected $BOOTSTRAP_BUN_VERSION, got $BUN_VERSION"
     fi
+    log "bun $BUN_VERSION ready"
 
     if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
       log "Installing recommended CLI tools"
