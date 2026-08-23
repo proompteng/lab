@@ -17,6 +17,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ClickHouseSinkTest {
@@ -75,7 +76,8 @@ class ClickHouseSinkTest {
   @Test
   fun `optional table failure does not report a successful write`() =
     runBlocking {
-      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val successfulWrite = CompletableDeferred<Unit>()
+      val failedWrite = CompletableDeferred<ClickHouseReadinessUpdate>()
       val client =
         HttpClient(
           MockEngine { request ->
@@ -109,24 +111,18 @@ class ClickHouseSinkTest {
           metrics = HyperliquidMetrics(SimpleMeterRegistry()),
           json = Json,
           nowMs = { 10_000 },
-          onReady = { readySignals += it },
+          onReady = { update ->
+            if (update.writeSucceeded == true) successfulWrite.complete(Unit)
+            if (update.writeSucceeded == false) failedWrite.complete(update)
+          },
         )
       val job = sink.start(this)
 
       sink.enqueue(candleRecord())
-      withTimeout(1_000) {
-        while (readySignals.none { it.writeSucceeded == true }) {
-          delay(10)
-        }
-      }
+      withTimeout(5_000) { successfulWrite.await() }
       sink.enqueue(rawRecord())
-      withTimeout(1_000) {
-        while (readySignals.none { it.writeSucceeded == false }) {
-          delay(10)
-        }
-      }
+      val failure = withTimeout(5_000) { failedWrite.await() }
 
-      val failure = readySignals.last { it.writeSucceeded == false }
       assertEquals(true, failure.ready)
       assertEquals(false, failure.writeSucceeded)
       job.cancelAndJoin()
@@ -485,6 +481,65 @@ class ClickHouseSinkTest {
       job.cancelAndJoin()
 
       assertEquals(1, insertAttempts)
+      client.close()
+    }
+
+  @Test
+  fun `limits freshness scans to recently modified parts without filtering event timestamps`() =
+    runBlocking {
+      val freshnessQuery = CompletableDeferred<String>()
+      val observedAt =
+        java.time.Instant
+          .parse("2026-08-23T15:00:00Z")
+          .toEpochMilli()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val query = queryParam(request.url)
+            if (query.startsWith("INSERT")) {
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              freshnessQuery.complete(query)
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_bbo","latest_ingest_ms":$observedAt,"latest_event_ms":$observedAt}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":$observedAt,"latest_event_ms":$observedAt}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config =
+            clickHouseConfig(
+              readyMaxAgeMs = 300_000,
+              enabledTables = setOf("hyperliquid_bbo", "hyperliquid_candles"),
+              readyTables = setOf("hyperliquid_bbo", "hyperliquid_candles"),
+            ),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { observedAt },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord())
+      val query = withTimeout(1_000) { freshnessQuery.await() }
+
+      val partPredicate = "PREWHERE _part IN (SELECT name FROM system.parts"
+      val oldestRelevantPartModificationMs = observedAt - 300_000 - 60_000
+      assertEquals(2, Regex(Regex.escape(partPredicate)).findAll(query).count())
+      assertEquals(
+        2,
+        Regex("modification_time >= fromUnixTimestamp64Milli\\($oldestRelevantPartModificationMs\\)")
+          .findAll(query)
+          .count(),
+      )
+      assertFalse(query.contains("PREWHERE toDate(parseDateTimeBestEffort(event_ts))"))
+      job.cancelAndJoin()
       client.close()
     }
 
