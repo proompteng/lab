@@ -64,9 +64,24 @@ Symptoms:
 - New workflows remain scheduled without a workflow task start.
 
 The worker itself selects its exact configured `TEMPORAL_WORKER_BUILD_ID` and waits for propagation before readiness or
-event consumption. There is no bypass environment variable.
+event consumption. There is no bypass environment variable. Inspect Temporal's routing and version state first:
 
-To select a known deployed build explicitly:
+```bash
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" worker deployment describe \
+  --name bumba-deployment --output json
+
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" worker deployment describe-version \
+  --deployment-name bumba-deployment \
+  --build-id '<current-build-id>' \
+  --report-task-queue-stats \
+  --output json
+
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" task-queue describe \
+  --task-queue bumba \
+  --select-build-id '<current-build-id>'
+```
+
+Cross-check the Bumba/Jangar propagation contract without changing routing:
 
 ```bash
 bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
@@ -74,19 +89,22 @@ bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
   --namespace "$TEMPORAL_NAMESPACE" \
   --task-queue bumba \
   --deployment-name bumba-deployment \
-  --build-id '<build-id-from-the-running-worker-log>'
+  --dry-run
 ```
 
-If propagation remains stuck, inspect Worker Deployment versions through the Temporal SDK or a current Temporal CLI.
-A stale version may be deleted only when all of the following are proven:
+If propagation remains stuck, compare the CLI's Current Build ID with the running worker log and image revision. Changing
+routing requires authorization for that exact build. An empty `task-queue describe` poller table is not proof that no
+Worker is active; also inspect live Bumba pods and logs plus recent workflow-task execution. A stale version may be deleted
+only when all of the following are proven:
 
 - it is neither current nor ramping;
-- its drainage state is `DRAINED`;
+- its drainage state is `drained`;
+- it has no active pollers;
 - no pinned workflow references it;
 - a healthy poller exists on the intended current build.
 
-Deleting the stale version should cause routing propagation to become `COMPLETED`. Never weaken the startup gate or use
-the repository's pinned legacy CLI to infer Worker Deployment pollers; that CLI predates this API.
+Unused versions are normally garbage-collected. Do not delete a version merely to force propagation, weaken the startup
+gate, or bypass Temporal's drainage checks with `--skip-drainage`.
 
 ## Rebuild activity is running after its worker died
 

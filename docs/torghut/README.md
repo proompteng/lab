@@ -26,6 +26,8 @@ Trust these surfaces in order:
 - Storage write-pressure remediation design: `docs/torghut/storage-write-pressure-remediation-design.md`
 - Trading service local development: `services/torghut/README.md`
 - Current source-state map: `docs/torghut/current-source-state.md`
+- Data-plane recovery for TigerBeetle, options archive, and Hyperliquid readiness:
+  `docs/torghut/data-plane-recovery.md`
 - DB migrations: `services/torghut/migrations/README.md`
 - CI/CD and release commands: `docs/torghut/ci-cd.md`
 - Historical simulation operations: `docs/torghut/rollouts/historical-simulation-playbook.md`
