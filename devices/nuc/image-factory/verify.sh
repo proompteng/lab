@@ -21,7 +21,7 @@ set -a
 source "$env_file"
 set +a
 
-readonly base_url="http://${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:8080"
+readonly base_url="http://${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:${IMAGE_FACTORY_BIND_PORT:-8081}"
 
 docker compose --env-file "$env_file" -f "$image_factory_dir/compose.yaml" ps --status running --quiet registry | grep -q .
 docker compose --env-file "$env_file" -f "$image_factory_dir/compose.yaml" ps --status running --quiet image-factory | grep -q .

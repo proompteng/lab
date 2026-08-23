@@ -33,7 +33,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - ${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:8080:8080
+      - ${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:${IMAGE_FACTORY_BIND_PORT:-8081}:8080
     volumes:
       - ./config.yaml:/etc/image-factory/config.yaml:ro
       - ${IMAGE_FACTORY_DATA_ROOT:-/var/lib/image-factory}/secrets/cache-signing-key.key:/run/secrets/cache-signing-key.key:ro

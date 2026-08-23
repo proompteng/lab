@@ -2,7 +2,8 @@
 
 This directory runs the community Sidero Labs Image Factory `v1.5.0` on the NUC. Omni uses it as the primary factory
 for per-machine Talos schematics. The factory is reachable only on the Elauwit provider LAN at
-`http://100.100.244.148:8080`; its backing OCI registry is private to the Compose network.
+`http://100.100.244.148:8081`; port `8080` remains owned by Pi-hole, and the backing OCI registry is private to the
+Compose network.
 
 The factory replaces the upstream extension catalog with the signed combined catalog published by
 `.github/workflows/kata-firecracker-extension.yaml` at `ghcr.io/proompteng/talos-extensions:v1.13.9`. That catalog
@@ -33,7 +34,7 @@ cp .env.example .env
 `100.100.244.148/25`, pulls the digest-pinned images, starts both services, and verifies the signed Kata catalog.
 
 Only after `verify.sh` passes, deploy the updated `devices/nuc/omni/omni.yaml` and restart the Omni container. Confirm
-that Omni reports `http://100.100.244.148:8080/` as its primary Image Factory before changing any machine extensions.
+that Omni reports `http://100.100.244.148:8081/` as its primary Image Factory before changing any machine extensions.
 
 Routine commands:
 
@@ -52,9 +53,9 @@ three machines through the exported Omni cluster template and wait until every p
 ```yaml
 apiVersion: v1alpha1
 kind: RegistryMirrorConfig
-name: 100.100.244.148:8080
+name: 100.100.244.148:8081
 endpoints:
-  - url: http://100.100.244.148:8080
+  - url: http://100.100.244.148:8081
 skipFallback: true
 ```
 
