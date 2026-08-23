@@ -3,13 +3,23 @@ name: Kata multi-runtime Talos extension
 on:
   pull_request:
     paths:
-      - 'devices/galactic/extensions/kata-firecracker/**'
+      - 'devices/galactic/extensions/kata-firecracker/10-kata-firecracker.part'
+      - 'devices/galactic/extensions/kata-firecracker/Dockerfile'
+      - 'devices/galactic/extensions/kata-firecracker/build-catalog.sh'
+      - 'devices/galactic/extensions/kata-firecracker/build-installer.sh'
+      - 'devices/galactic/extensions/kata-firecracker/configuration-clh-runtime-rs.toml'
+      - 'devices/galactic/extensions/kata-firecracker/manifest.yaml'
       - '.github/workflows/kata-firecracker-extension.yaml'
   push:
     branches:
       - main
     paths:
-      - 'devices/galactic/extensions/kata-firecracker/**'
+      - 'devices/galactic/extensions/kata-firecracker/10-kata-firecracker.part'
+      - 'devices/galactic/extensions/kata-firecracker/Dockerfile'
+      - 'devices/galactic/extensions/kata-firecracker/build-catalog.sh'
+      - 'devices/galactic/extensions/kata-firecracker/build-installer.sh'
+      - 'devices/galactic/extensions/kata-firecracker/configuration-clh-runtime-rs.toml'
+      - 'devices/galactic/extensions/kata-firecracker/manifest.yaml'
       - '.github/workflows/kata-firecracker-extension.yaml'
   workflow_dispatch:
 
