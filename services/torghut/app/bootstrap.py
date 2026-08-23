@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
+from .api.health_checks import close_tigerbeetle_protocol_health_probe
 from .config import settings
 from .db import SessionLocal, ensure_schema
 from .trading.autonomy import assert_runtime_gate_policy_contract
@@ -244,6 +245,7 @@ async def lifespan(app: FastAPI):
         if whitepaper_worker is not None:
             await whitepaper_worker.stop()
         await scheduler.stop()
+        close_tigerbeetle_protocol_health_probe()
         logger.info("Torghut shutdown complete")
 
 

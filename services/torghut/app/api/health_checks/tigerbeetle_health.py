@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import cast
@@ -10,9 +11,14 @@ from typing import cast
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import Settings, settings
 from app.db import ping
-from app.trading.tigerbeetle_client import check_tigerbeetle_health
+from app.trading.tigerbeetle_client import (
+    TigerBeetleClientProtocol,
+    TigerBeetleHealth,
+    check_tigerbeetle_health,
+    create_tigerbeetle_client,
+)
 from app.trading.tigerbeetle_reconcile import (
     BLOCKER_RECONCILIATION_STALE,
     latest_tigerbeetle_reconciliation_payload,
@@ -21,6 +27,76 @@ from app.trading.tigerbeetle_reconcile import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TigerBeetleProtocolHealthProbe:
+    """Reuse one native client for process-local protocol health checks."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._reset_requested = threading.Event()
+        self._client: TigerBeetleClientProtocol | None = None
+        self._configuration: tuple[int, str, float] | None = None
+
+    @staticmethod
+    def _configuration_for(settings_obj: Settings) -> tuple[int, str, float]:
+        return (
+            settings_obj.tigerbeetle_cluster_id,
+            settings_obj.tigerbeetle_replica_addresses,
+            settings_obj.tigerbeetle_rpc_timeout_seconds,
+        )
+
+    def _close_client_locked(self) -> None:
+        client = self._client
+        self._client = None
+        self._configuration = None
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except (OSError, RuntimeError, ValueError) as exc:  # pragma: no cover
+            logger.warning("TigerBeetle protocol health client cleanup failed: %s", exc)
+
+    def request_reset(self) -> None:
+        """Invalidate the client after a caller-side timeout without blocking."""
+
+        self._reset_requested.set()
+
+    def check(self, settings_obj: Settings) -> TigerBeetleHealth:
+        configuration = self._configuration_for(settings_obj)
+        with self._lock:
+            if self._reset_requested.is_set() or self._configuration != configuration:
+                self._close_client_locked()
+                self._reset_requested.clear()
+            if self._client is None:
+                self._client = create_tigerbeetle_client(settings_obj)
+                self._configuration = configuration
+            health = check_tigerbeetle_health(
+                settings_obj,
+                client=self._client,
+            )
+            if not health.ok or self._reset_requested.is_set():
+                self._close_client_locked()
+                self._reset_requested.clear()
+            return health
+
+    def close(self) -> None:
+        self.request_reset()
+        with self._lock:
+            self._close_client_locked()
+            self._reset_requested.clear()
+
+
+_tigerbeetle_protocol_health_probe = TigerBeetleProtocolHealthProbe()
+
+
+def close_tigerbeetle_protocol_health_probe() -> None:
+    """Close the process-local native client during application shutdown."""
+
+    _tigerbeetle_protocol_health_probe.close()
 
 
 def apply_status_read_statement_timeout(
@@ -79,10 +155,11 @@ def check_tigerbeetle_protocol_health() -> dict[str, object]:
 
     timeout_seconds = max(0.1, float(settings.tigerbeetle_health_timeout_seconds))
     executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(check_tigerbeetle_health, settings)
+    future = executor.submit(_tigerbeetle_protocol_health_probe.check, settings)
     try:
         health = future.result(timeout=timeout_seconds)
     except TimeoutError:
+        _tigerbeetle_protocol_health_probe.request_reset()
         return {
             "enabled": True,
             "required": settings.tigerbeetle_required,
@@ -95,6 +172,18 @@ def check_tigerbeetle_protocol_health() -> dict[str, object]:
                 f"TimeoutError: tigerbeetle protocol health timed out after "
                 f"{timeout_seconds:.2f}s"
             ),
+        }
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        _tigerbeetle_protocol_health_probe.request_reset()
+        return {
+            "enabled": True,
+            "required": settings.tigerbeetle_required,
+            "ok": not settings.tigerbeetle_required,
+            "protocol_ok": False,
+            "protocol_probe_skipped": False,
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "replica_addresses": replica_addresses,
+            "last_error": f"{type(exc).__name__}: {exc}",
         }
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
@@ -428,10 +517,12 @@ def build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
 
 
 __all__ = (
+    "TigerBeetleProtocolHealthProbe",
     "apply_status_read_statement_timeout",
     "build_tigerbeetle_ledger_status",
     "check_postgres",
     "check_tigerbeetle_protocol_health",
+    "close_tigerbeetle_protocol_health_probe",
     "empty_tigerbeetle_ref_counts",
     "latest_reconciliation_ref_counts",
     "sqlalchemy_error_indicates_statement_timeout",
