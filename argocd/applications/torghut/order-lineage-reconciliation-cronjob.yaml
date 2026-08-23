@@ -39,7 +39,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: reconcile
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:2e60a81026882a4ca6f7f317ac777708bec76afce731f1b694aa329dd8e5a54d
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -88,11 +88,11 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_VERSION
-                  value: v0.596.0-3253-g44dc0a7e9
+                  value: v0.596.0-3255-ge28880f2a
                 - name: TORGHUT_COMMIT
-                  value: 44dc0a7e95c05850b7d2a8d8b2947c7c8b97e3ad
+                  value: e28880f2aef266ca2779731b70a11bb950cc289d
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:2e60a81026882a4ca6f7f317ac777708bec76afce731f1b694aa329dd8e5a54d
+                  value: sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
                   value: linux/amd64,linux/arm64
                 - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
