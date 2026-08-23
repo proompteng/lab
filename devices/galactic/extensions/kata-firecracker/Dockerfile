@@ -143,6 +143,17 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     sed -i 's#/opt/kata#/usr/local#g' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-*.toml; \
+    awk ' \
+      /^dial_timeout_ms = 45000$/ { \
+        print "dial_timeout_ms = 100"; \
+        print "reconnect_timeout_ms = 45000"; \
+        next; \
+      } \
+      { print } \
+    ' /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml \
+      > /tmp/configuration-rs-fc.toml; \
+    install -m 0644 /tmp/configuration-rs-fc.toml \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     truncate -s 512M \
       /extension/rootfs/usr/local/share/kata-containers/blockfile-scratch.ext4; \
     E2FSPROGS_FAKE_TIME=0 mkfs.ext4 -F -q -m 0 \
@@ -159,6 +170,10 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     test -x /extension/rootfs/usr/local/libexec/virtiofsd; \
     test -L /extension/rootfs/usr/local/bin/qemu-bundle/opt/kata/share/kata-qemu/qemu; \
     test -s /extension/rootfs/usr/local/share/kata-containers/vmlinux-dragonball-experimental.container; \
+    grep -Fxq 'dial_timeout_ms = 100' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
+    grep -Fxq 'reconnect_timeout_ms = 45000' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     if [ "${TARGETARCH}" = arm64 ]; then \
       test -s /extension/rootfs/usr/local/share/aavmf/AAVMF_CODE.fd; \
     fi; \
