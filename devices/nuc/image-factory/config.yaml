@@ -60,4 +60,4 @@ metrics:
   addr: :2122
 
 registry:
-  jobs: 16
+  jobs: 64
