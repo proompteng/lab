@@ -24,11 +24,14 @@ Start here when deciding which documentation to trust.
 
 - TypeScript Kubernetes manifest authoring: `cdk8s-manifest-authoring-design.md`
 
-## Historical And Research Corpora
+## Supporting And Historical Corpora
 
-- Agents design archive: `agents/designs/README.md`
-- Torghut design archive: `torghut/design-system/README.md`
-- Whitepaper research archive: `whitepapers/README.md`
+- Retained Agents implementation contracts: `agents/designs/README.md`
+- Torghut design history: `torghut/design-system/README.md`
+- Whitepaper research: `whitepapers/README.md`
 
 Dated design files and research workups are context. They are not current production authority unless they explicitly
 say so and point to live source, GitOps, runtime readback, and validation evidence.
+
+Completed handoffs, rollout journals, retired investigations, and orphaned proposals belong in Git history rather than
+the active documentation tree.

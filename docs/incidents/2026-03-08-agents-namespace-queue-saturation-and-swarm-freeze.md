@@ -137,5 +137,4 @@ The cleanup intentionally left historical failed swarm AgentRuns in place for po
 
 ## References
 
-- [docs/agents/designs/throughput-backpressure-quotas.md](../agents/designs/throughput-backpressure-quotas.md)
 - [docs/incidents/2026-03-01-jangar-control-plane-reconcile-storm.md](2026-03-01-jangar-control-plane-reconcile-storm.md)

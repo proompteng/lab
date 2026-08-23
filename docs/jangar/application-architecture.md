@@ -193,7 +193,6 @@ Historical or design context docs:
 
 - `docs/agents/designs/182-jangar-controller-witness-carry-and-failure-debt-maturity-2026-05-08.md`
 - `docs/torghut/design-system/v6/186-torghut-proof-lease-repair-market-and-capital-hold-2026-05-08.md`
-- `docs/jangar/current-state.md`
 - `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
 - `docs/torghut/design-system/v6/180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
 - `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
@@ -214,6 +213,5 @@ Historical or design context docs:
 - `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
 - `docs/agents/designs/124-jangar-disruption-budget-arbiter-and-data-freshness-settlement-2026-05-06.md`
 - `docs/agents/designs/120-jangar-material-action-verdict-arbiter-and-clock-budget-parity-2026-05-06.md`
-- `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`
 
 Generated inventory should be treated as factual structure. This document is the human-maintained index that explains how to interpret it.

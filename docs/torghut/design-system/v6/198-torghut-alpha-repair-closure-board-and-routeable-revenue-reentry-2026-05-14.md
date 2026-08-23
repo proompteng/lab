@@ -15,7 +15,6 @@ Status: Accepted for Jangar engineer and deployer handoff
   - `services/torghut/app/trading/tca`
 - Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-
 ## Decision
 
 I am selecting an **alpha repair closure board** as Torghut's companion contract for Jangar's cross-plane closure
@@ -292,7 +291,7 @@ M4: Let Jangar reserve one zero-notional repair slot only when the board is curr
 
 Architecture PR validation:
 
-- `bunx oxfmt --check docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md docs/torghut/design-system/v6/198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md docs/agents/release-handoffs/jangar-control-plane-cross-plane-closure-board-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
+- `bunx oxfmt --check docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md docs/torghut/design-system/v6/198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 
 Engineer implementation validation:
 

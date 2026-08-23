@@ -45,4 +45,3 @@ Jangar-specific primitive consumers remain under `docs/jangar/primitives/`:
 - [`code-search.md`](../../jangar/primitives/code-search.md)
 - [`jangar-implementation.md`](../../jangar/primitives/jangar-implementation.md)
 - [`production-validation.md`](../../jangar/primitives/production-validation.md)
-- [`agents-control-plane-log-viewer.md`](../../jangar/agents-control-plane-log-viewer.md)

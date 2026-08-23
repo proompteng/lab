@@ -9,9 +9,8 @@ Operational build/release contract: `docs/jangar/build-contract.md`.
 
 Runtime boot is now explicit: `src/server/app.ts` only builds the HTTP surface, while `src/server/index.ts` and
 `src/server/dev.ts` opt into startup behavior through `src/server/runtime-profile.ts`. The tech-debt program source of
-truth lives in `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`.
+truth is the current source map in `docs/jangar/application-architecture.md`.
 The generated architecture inventory lives in `docs/jangar/architecture-inventory.md`.
-The older `docs/jangar/current-state.md` note is historical context for the original chat-completions audit only.
 
 ```mermaid
 flowchart TD
