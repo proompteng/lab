@@ -1071,6 +1071,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
 
     expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(jangarReleaseWorkflow).toContain('runs-on: arc-amd64')
     expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
     expect(jangarReleaseWorkflow).toContain('REGISTRY_SERVICE: registry.registry.svc.cluster.local')
     expect(jangarReleaseWorkflow).toContain('regctl registry set "${REGISTRY_SERVICE}" --tls disabled --skip-check')
