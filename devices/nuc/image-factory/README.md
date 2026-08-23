@@ -72,6 +72,63 @@ tag, schematic ID, or a successful pull is not sufficient. If that chain cannot 
 invalidate only the target artifact through a reviewed procedure. The complete gate and rollout sequence are in
 `docs/runbooks/talos-latest-upgrade-plan.md`.
 
+### Rebuild exactly one cached installer
+
+Run this only on the NUC, only for the reviewed target schematic, and only after recording the current manifest digest.
+The expected-digest comparison prevents deleting a different or newly rebuilt manifest. The registry deletion removes
+one top-level installer index; its shared blobs and every other schematic remain intact.
+
+```bash
+export SCHEMATIC_ID='<64-character target schematic ID>'
+export TALOS_VERSION='v1.13.9'
+export EXPECTED_OLD_INSTALLER_DIGEST='sha256:<64-character current index digest>'
+export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+export FACTORY='http://100.100.244.148:8081'
+
+[[ "$SCHEMATIC_ID" =~ ^[0-9a-f]{64}$ ]]
+[[ "$TALOS_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ "$EXPECTED_OLD_INSTALLER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+registry_container="$(docker compose --env-file .env ps -q registry)"
+test -n "$registry_container"
+registry_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+  "$registry_container")"
+test -n "$registry_ip"
+repository="metal-installer/$SCHEMATIC_ID"
+manifest_url="http://${registry_ip}:5000/v2/${repository}/manifests/${TALOS_VERSION}"
+
+current_digest="$(
+  curl -fsSI \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "$manifest_url" \
+    | tr -d '\r' \
+    | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }'
+)"
+test "$current_digest" = "$EXPECTED_OLD_INSTALLER_DIGEST"
+
+curl -fsS -X DELETE \
+  "http://${registry_ip}:5000/v2/${repository}/manifests/${current_digest}"
+curl -fsS -o /dev/null \
+  "$FACTORY/v2/metal-installer/$SCHEMATIC_ID/manifests/$TALOS_VERSION"
+
+rebuilt_digest="$(
+  curl -fsSI \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "$manifest_url" \
+    | tr -d '\r' \
+    | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }'
+)"
+test -n "$rebuilt_digest"
+test "$rebuilt_digest" != "$EXPECTED_OLD_INSTALLER_DIGEST"
+docker compose --env-file .env logs image-factory \
+  | rg -F -e "amd64-$EXPECTED_KATA_DIGEST" -e "arm64-$EXPECTED_KATA_DIGEST"
+printf 'rebuilt installer: %s\n' "$rebuilt_digest"
+```
+
+Retain the old and new index digests, the selected architecture child digest and config creation time, and the matching
+factory log line. If the schematic and Talos version did not change, continue with the same-schematic replacement
+procedure in the cluster runbook; Omni will correctly report the machine as up to date and will not reinstall it.
+
 ## Omni handoff
 
 The installer registry is HTTP on a private LAN. Before changing a schematic, apply this Talos config document to all

@@ -98,6 +98,43 @@ Do not accept a tag, matching extension name/version, unchanged schematic ID, `M
 successful installer pull as a substitute for this chain. If the exact installer cannot be tied to the expected digest,
 stop and rebuild or invalidate that one factory artifact through a reviewed procedure; do not reboot the node.
 
+### Same-schematic artifact replacement
+
+Omni does not schedule another machine task when both the desired schematic ID and Talos version already match the
+machine. If the exact cached installer is rebuilt from a corrected extension digest without changing either value,
+`MachineUpgradeStatus: up to date` is expected and cannot install the replacement by itself. Do not invent a version
+bump, add a `machine.install.image` patch, or change the customization merely to force a new schematic ID.
+
+Use this exception only after the target-specific cache procedure in `devices/nuc/image-factory/README.md` has produced
+a new installer manifest digest and the factory build evidence ties it to `EXPECTED_KATA_DIGEST`:
+
+1. prove that Omni has no active machine or cluster upgrade task and that no template sync is running;
+2. capture the normal Kubernetes, etcd, KVM, drain, and artifact evidence, plus an etcd snapshot from a non-target
+   control-plane node;
+3. cordon and completely drain the target before installing; a failed PDB-aware drain still stops the operation unless
+   the operator explicitly authorizes a maintenance override, in which case retain the exact affected Pods and prove
+   every owning controller and stateful workload recovered afterward;
+4. if the target is the etcd leader, forfeit leadership and prove another voter became leader; and
+5. run the direct Talos upgrade only against the already-drained target, with Talos drainage disabled so that a second
+   drain cannot race the completed Kubernetes maintenance operation:
+
+   ```bash
+   export TALOS_NODE='<target Talos API address>'
+   export SCHEMATIC_ID='<proven target schematic>'
+
+   talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" upgrade \
+     --image "100.100.244.148:8081/metal-installer/${SCHEMATIC_ID}:v1.13.9" \
+     --drain=false \
+     --wait \
+     --timeout=30m \
+     --progress=plain 2>&1 | tee "$EVIDENCE_DIR/talos-upgrade.txt"
+   ```
+
+Require the pull line to contain the newly proven installer manifest digest. Keep the node cordoned after it returns,
+then perform the same extension, CRI, guest, and host-side runtime acceptance as an Omni-driven upgrade. This is a
+same-identity cache-replacement exception, not a second upgrade authority: normal version or schematic changes remain
+Omni-owned.
+
 ## One-time Image Factory handoff
 
 The public factory cannot consume an arbitrary private extension catalog. The NUC therefore runs the community Image
@@ -224,7 +261,8 @@ For each node:
    or machine change.
 4. Prove the exact installer-to-extension digest chain in the artifact identity gate above.
 5. Sync the reviewed template and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health
-   checks. Do not lock the cluster or unrelated machines, and do not run a competing manual `talosctl upgrade`.
+   checks. Do not lock the cluster or unrelated machines, and do not run a competing manual `talosctl upgrade`. The
+   only direct-upgrade exception is the already-drained, same-schematic artifact replacement documented above.
 6. Wait for the target to return on Talos `v1.13.9`, Kubernetes `v1.36.4`, and `Ready`. Omni's lifecycle finalizer
    normally uncordons the node after it returns; that is transport completion, not runtime acceptance.
 7. Immediately create the separate runtime-validation cordon and prove it took effect before adding a runtime label:
