@@ -1,16 +1,24 @@
-# galactic cluster (ryzen)
+# galactic cluster
 
-This directory documents the existing Talos/Kubernetes cluster:
+This directory is the repository source for the existing three-node Talos/Kubernetes cluster managed by Omni:
 
-- **Talos cluster name**: `ryzen`
-- **kubectl context name**: `galactic`
-- **Kubernetes API endpoint** (behind NUC HAProxy): `https://nuc:6443` (also `https://192.168.1.130:6443`)
+- **Omni/Talos cluster name**: `galactic`
+- **kubectl context**: `galactic-lan`
+- **desired Talos**: `v1.13.9`
+- **desired Kubernetes**: `v1.36.4`
+- **Kubernetes API endpoint**: NUC HAProxy on `https://nuc:6443`
 
-Inventory:
+The Elauwit provider LAN uses the following Talos API addresses. These are local-network endpoints even though they
+are in `100.100.244.0/24`; do not replace them with Tailscale addresses:
 
-- `ryzen`: `192.168.1.194` (control plane)
-- `ampone`: `192.168.1.203` (control plane)
-- `altra`: `192.168.1.85` (control plane)
+| Machine | Kubernetes node | Architecture | Talos API | Omni machine UUID |
+| --- | --- | --- | --- | --- |
+| Ryzen | `talos-192-168-1-194` | `amd64` | `100.100.244.141` | `ff115a00-c307-11f0-a28f-648eab3e4100` |
+| Turin | `turin` | `amd64` | `100.100.244.190` | `8bf7ec00-171c-11f1-8000-7cc255f16774` |
+| Altra | `talos-192-168-1-85` | `arm64` | `100.100.244.142` | `12345678-9abc-deff-1234-56789abcdeff` |
+
+Omni owns Talos machine configuration and OS/Kubernetes upgrades. Argo CD owns Kubernetes applications. Do not apply
+routine machine configuration directly with `talosctl` after the Omni handoff.
 
 Runbooks:
 
@@ -18,6 +26,8 @@ Runbooks:
 - `devices/galactic/docs/bootstrap-argocd.md`
 - `devices/galactic/docs/troubleshooting-networking.md`
 - `devices/galactic/docs/tailscale.md`
+- `docs/runbooks/talos-latest-upgrade-plan.md`
+- `devices/galactic/extensions/kata-firecracker/README.md`
 
 Related:
 

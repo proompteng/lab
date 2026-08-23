@@ -12,6 +12,9 @@ spec:
       helm:
         releaseName: arc-controller
         skipCrds: false
+        valuesObject:
+          nodeSelector:
+            kubernetes.io/arch: amd64
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
@@ -31,6 +34,8 @@ spec:
           maxRunners: 5
           listenerTemplate:
             spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -159,6 +164,8 @@ spec:
           maxRunners: 5
           listenerTemplate:
             spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -285,6 +292,8 @@ spec:
           maxRunners: 1
           listenerTemplate:
             spec:
+              nodeSelector:
+                kubernetes.io/arch: amd64
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
