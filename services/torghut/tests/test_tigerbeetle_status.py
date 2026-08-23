@@ -611,6 +611,26 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(second["protocol_ok"])
         self._protocol_client_factory_mock.assert_called_once_with(settings)
 
+    def test_required_protocol_unexpected_worker_failure_is_fail_closed(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        self._protocol_client_factory_mock.side_effect = TypeError(
+            "native binding mismatch"
+        )
+
+        payload = check_tigerbeetle_protocol_health()
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["protocol_ok"])
+        self.assertFalse(payload["protocol_probe_skipped"])
+        self.assertEqual(
+            payload["last_error"],
+            (
+                "TigerBeetleProtocolHealthProbeWorkerError: "
+                "TypeError: native binding mismatch"
+            ),
+        )
+
     def test_required_protocol_timeout_blocks_readiness_dependency(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_required = True
