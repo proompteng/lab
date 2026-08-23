@@ -11,7 +11,7 @@ die() {
   exit 1
 }
 
-for command in curl docker install openssl sudo; do
+for command in curl docker grep install ip jq openssl sudo; do
   command -v "$command" >/dev/null || die "required command is missing: $command"
 done
 
