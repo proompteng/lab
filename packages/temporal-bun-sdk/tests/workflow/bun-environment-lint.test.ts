@@ -916,6 +916,30 @@ test('accepts computed global keys proven not to resolve to Bun', async () => {
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
 })
 
+test('rejects access to Temporal runtime guard state through registered symbols', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "const processEnvKey = Symbol.for('@proompteng/temporal-bun-sdk.original.process.env')",
+      "const stateKeyName = '@proompteng/temporal-bun-sdk.workflowGuards.state'",
+      'const stateKey = Symbol.for(stateKeyName)',
+      'export const processEnv = () => globalThis[processEnvKey].FLAG',
+      "export const bunEnv = () => globalThis[Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.env')].FLAG",
+      'export const state = () => Reflect.get(globalThis, stateKey).mode',
+      "export const spawn = () => Object.getOwnPropertyDescriptor(globalThis, Symbol.for('@proompteng/temporal-bun-sdk.original.Bun.spawn'))?.value(['env'])",
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-member-expression')).toHaveLength(4)
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('ignores erased type-only imports when proving workflow source safety', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

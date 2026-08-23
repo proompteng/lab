@@ -223,6 +223,7 @@ const reflectiveGlobalPropertyAccessors = new Set(['Reflect.get', 'Object.getOwn
 type StaticPropertyKey =
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'symbol' }
+  | { readonly kind: 'registered-symbol'; readonly value: string }
   | { readonly kind: 'primitive' }
 
 type StaticPropertyBinding = {
@@ -278,7 +279,10 @@ const staticPropertyKeyAt = (
   tokens: readonly WorkflowSyntaxToken[],
   startIndex: number,
   endIndex: number,
-  options: { readonly symbolIsUnshadowed: boolean },
+  options: {
+    readonly symbolIsUnshadowed: boolean
+    readonly bindings?: ReadonlyMap<string, StaticPropertyKey>
+  },
 ): StaticPropertyKey | undefined => {
   const range = stripParentheses(tokens, startIndex, endIndex)
   const token = tokens[range.startIndex]
@@ -315,7 +319,15 @@ const staticPropertyKeyAt = (
     tokens[range.startIndex + 3]?.kind === SyntaxKind.OpenParenToken &&
     findMatchingCloseParenIndex(tokens, range.startIndex + 3) === range.endIndex
   ) {
-    return { kind: 'symbol' }
+    const key = staticPropertyKeyAt(tokens, range.startIndex + 4, range.endIndex - 1, options)
+    if (key?.kind === 'string') return { kind: 'registered-symbol', value: key.value }
+    if (key?.kind === 'primitive') return { kind: 'symbol' }
+    if (range.startIndex + 4 === range.endIndex - 1 && isIdentifierLikeToken(tokens[range.startIndex + 4])) {
+      const binding = options.bindings?.get(tokens[range.startIndex + 4]!.text)
+      if (binding?.kind === 'string') return { kind: 'registered-symbol', value: binding.value }
+      if (binding?.kind === 'primitive') return { kind: 'symbol' }
+    }
+    return undefined
   }
   if (
     next?.kind === SyntaxKind.DotToken &&
@@ -348,10 +360,27 @@ const collectStaticPropertyBindings = (
   symbolIsUnshadowed: boolean,
 ): ReadonlyMap<string, StaticPropertyKey> => {
   const bindings = new Map<string, StaticPropertyBinding>()
+  const knownStaticBindings = new Map<string, StaticPropertyKey>()
 
   for (let index = 0; index < tokens.length; index += 1) {
     const declarationKeyword = tokens[index]
     const identifier = tokens[index + 1]
+    const token = tokens[index]
+    if (isIdentifierLikeToken(token)) {
+      const previous = tokens[index - 1]
+      const next = tokens[index + 1]
+      const declaration = isVariableDeclarationKeyword(previous)
+      const memberProperty = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
+      if (!declaration && !memberProperty && isAssignmentOperator(next)) knownStaticBindings.delete(token.text)
+      if (
+        previous?.kind === SyntaxKind.PlusPlusToken ||
+        previous?.kind === SyntaxKind.MinusMinusToken ||
+        next?.kind === SyntaxKind.PlusPlusToken ||
+        next?.kind === SyntaxKind.MinusMinusToken
+      ) {
+        knownStaticBindings.delete(token.text)
+      }
+    }
     if (!isVariableDeclarationKeyword(declarationKeyword) || !isIdentifierLikeToken(identifier)) continue
 
     const existing = bindings.get(identifier.text) ?? { declarations: 0, mutations: 0 }
@@ -375,9 +404,15 @@ const collectStaticPropertyBindings = (
       }
       existing.initializer = staticPropertyKeyAt(tokens, initializerStartIndex, initializerEndIndex, {
         symbolIsUnshadowed,
+        bindings: knownStaticBindings,
       })
     }
     bindings.set(identifier.text, existing)
+    if (existing.declarations === 1 && existing.initializer) {
+      knownStaticBindings.set(identifier.text, existing.initializer)
+    } else {
+      knownStaticBindings.delete(identifier.text)
+    }
   }
 
   for (let index = 0; index < tokens.length; index += 1) {
@@ -415,7 +450,24 @@ const resolveStaticPropertyKey = (
   const range = stripParentheses(tokens, startIndex, endIndex)
   const token = tokens[range.startIndex]
   if (range.startIndex === range.endIndex && isIdentifierLikeToken(token)) return bindings.get(token.text)
-  return staticPropertyKeyAt(tokens, range.startIndex, range.endIndex, { symbolIsUnshadowed })
+  return staticPropertyKeyAt(tokens, range.startIndex, range.endIndex, { symbolIsUnshadowed, bindings })
+}
+
+const temporalRuntimeGuardSymbolPrefix = '@proompteng/temporal-bun-sdk.'
+
+const isDeniedGlobalProperty = (
+  property: StaticPropertyKey | undefined,
+  deniedStringProperties: ReadonlySet<string>,
+): boolean =>
+  !property ||
+  (property.kind === 'string' && deniedStringProperties.has(property.value)) ||
+  (property.kind === 'registered-symbol' && property.value.startsWith(temporalRuntimeGuardSymbolPrefix))
+
+const describeStaticPropertyKey = (property: StaticPropertyKey): string => {
+  if (property.kind === 'string') return JSON.stringify(property.value)
+  if (property.kind === 'registered-symbol') return `Symbol.for(${JSON.stringify(property.value)})`
+  if (property.kind === 'symbol') return 'Symbol(...)'
+  return '<primitive>'
 }
 
 const computedMemberPropertyAtBracket = (
@@ -1355,7 +1407,7 @@ export const lintWorkflowSourceAst = (options: {
       staticPropertyBindings,
       symbolIsUnshadowed,
     )
-    if (property && (property.kind !== 'string' || !deniedReflectiveProperties.has(property.value))) {
+    if (!isDeniedGlobalProperty(property, deniedReflectiveProperties)) {
       safeReflectiveGlobalTargets.add(reflectiveAccess.target.start)
     }
   }
@@ -1563,15 +1615,16 @@ export const lintWorkflowSourceAst = (options: {
         staticPropertyBindings,
         symbolIsUnshadowed,
       )
-      if (!property || (property.kind === 'string' && deniedComputedProperties.has(property.value))) {
+      if (isDeniedGlobalProperty(property, deniedComputedProperties)) {
         report(computedProperty.object.start, {
           rule: 'deny-member-expression',
           message: property
-            ? `Disallowed computed global access in workflow module: ${computedProperty.object.text}['${property.value}']`
+            ? `Disallowed computed global access in workflow module: ${computedProperty.object.text}[${describeStaticPropertyKey(property)}]`
             : `Unable to prove computed global property safe in workflow module: ${computedProperty.object.text}[...]`,
           details: {
             memberExpression: `${computedProperty.object.text}[...]`,
             ...(property?.kind === 'string' ? { global: property.value } : {}),
+            ...(property?.kind === 'registered-symbol' ? { globalSymbol: property.value } : {}),
           },
         })
       }
@@ -1618,15 +1671,16 @@ export const lintWorkflowSourceAst = (options: {
           staticPropertyBindings,
           symbolIsUnshadowed,
         )
-        if (!property || (property.kind === 'string' && deniedReflectiveProperties.has(property.value))) {
+        if (isDeniedGlobalProperty(property, deniedReflectiveProperties)) {
           report(member.token.start, {
             rule: 'deny-member-expression',
             message: property
-              ? `Disallowed reflective global access in workflow module: ${member.name}(${reflectiveAccess.target.text}, '${property.value}')`
+              ? `Disallowed reflective global access in workflow module: ${member.name}(${reflectiveAccess.target.text}, ${describeStaticPropertyKey(property)})`
               : `Unable to prove reflective global property safe in workflow module: ${member.name}(${reflectiveAccess.target.text}, ...)`,
             details: {
               memberExpression: member.name,
               ...(property?.kind === 'string' ? { global: property.value } : {}),
+              ...(property?.kind === 'registered-symbol' ? { globalSymbol: property.value } : {}),
             },
           })
         }
