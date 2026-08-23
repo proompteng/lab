@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "oirat";
   packageName = "@proompteng/oirat";
   depsHash = {
-    x86_64-linux = "sha256-sMB76pgg1K6nBXRIeigRKBNc10ekzWwZMQo77ZdcSmU=";
-    aarch64-linux = "sha256-qiAwdIYMykQl8fgtFyBhXSh1wfSHiZ4SFWiUU+ghHdQ=";
+    x86_64-linux = "sha256-10EldrwkxQjcGkmAtMU0cnNrrunGUSmDvOh+9JsnPaM=";
+    aarch64-linux = "sha256-RzafJ2atwGInc9ohjqTeXf972y3HwJRvJsU4i+wVF5k=";
   };
   installFilters = [
     "@proompteng/discord"
