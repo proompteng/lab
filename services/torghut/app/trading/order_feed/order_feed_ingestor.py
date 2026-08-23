@@ -20,7 +20,11 @@ from ..broker_account_activities import (
     BrokerStreamPosition,
     persist_broker_trade_update,
 )
-from ..tigerbeetle_client import TigerBeetleClientProtocol
+from ..tigerbeetle_client import (
+    TigerBeetleClientError,
+    TigerBeetleClientProtocol,
+    TigerBeetleClientTimeoutError,
+)
 from ..tigerbeetle_journal import TigerBeetleLedgerJournal
 from ..tigerbeetle_reconcile import BLOCKER_CLIENT_UNAVAILABLE
 from . import shared_context as _shared_context
@@ -211,6 +215,13 @@ class OrderFeedIngestor:
             journal.close()
         except (OSError, RuntimeError):  # pragma: no cover - defensive close
             logger.debug("Order-feed TigerBeetle journal close failed", exc_info=True)
+
+    def _handle_tigerbeetle_journal_error(self, error: Exception) -> None:
+        if isinstance(error, TigerBeetleClientTimeoutError) or (
+            isinstance(error, TigerBeetleClientError)
+            and str(error) == "tigerbeetle_client_closed"
+        ):
+            self._close_tigerbeetle_journal()
 
     @staticmethod
     def _new_counters() -> dict[str, int]:
@@ -471,6 +482,7 @@ class OrderFeedIngestor:
                 context.source_window.id if context.source_window is not None else None
             ),
             tigerbeetle_journal=self._tigerbeetle_journal_for_runtime(),
+            on_tigerbeetle_journal_error=self._handle_tigerbeetle_journal_error,
         )
         if context.source_window is not None:
             _classify_source_window_event(
@@ -623,6 +635,7 @@ class OrderFeedIngestor:
                 session,
                 execution,
                 tigerbeetle_journal=self._tigerbeetle_journal_for_runtime(),
+                on_tigerbeetle_journal_error=self._handle_tigerbeetle_journal_error,
             )
             session.add(execution)
         _upsert_cursor_and_count(

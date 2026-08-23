@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -90,6 +90,7 @@ def journal_tigerbeetle_execution_cost(
     metric: ExecutionTCAMetric,
     *,
     journal: TigerBeetleLedgerJournal | None = None,
+    on_error: Callable[[Exception], None] | None = None,
 ) -> None:
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         return
@@ -104,6 +105,8 @@ def journal_tigerbeetle_execution_cost(
                 owned_journal.journal_execution(session, execution)
                 owned_journal.journal_execution_tca_metric(session, metric)
     except Exception as exc:
+        if on_error is not None:
+            on_error(exc)
         if settings.tigerbeetle_required:
             raise
         blocker = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Mapping, cast
@@ -370,6 +371,7 @@ def persist_order_event(
     *,
     source_window_id: Any | None = None,
     tigerbeetle_journal: TigerBeetleLedgerJournal | None = None,
+    on_tigerbeetle_journal_error: Callable[[Exception], None] | None = None,
 ) -> tuple[ExecutionOrderEvent, bool]:
     """Persist a normalized event and link it to execution/trade_decision rows."""
 
@@ -416,6 +418,7 @@ def persist_order_event(
             session,
             existing,
             journal=tigerbeetle_journal,
+            on_error=on_tigerbeetle_journal_error,
         )
         return existing, True
 
@@ -502,6 +505,7 @@ def persist_order_event(
                     session,
                     row,
                     journal=tigerbeetle_journal,
+                    on_error=on_tigerbeetle_journal_error,
                 )
     except IntegrityError:
         existing = session.execute(
@@ -519,6 +523,7 @@ def persist_order_event(
             session,
             existing,
             journal=tigerbeetle_journal,
+            on_error=on_tigerbeetle_journal_error,
         )
         return existing, True
 
@@ -527,6 +532,7 @@ def persist_order_event(
             session,
             row,
             journal=tigerbeetle_journal,
+            on_error=on_tigerbeetle_journal_error,
         )
     return row, False
 
@@ -536,6 +542,7 @@ def _journal_tigerbeetle_order_event(
     row: ExecutionOrderEvent,
     *,
     journal: TigerBeetleLedgerJournal | None = None,
+    on_error: Callable[[Exception], None] | None = None,
 ) -> None:
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         return
@@ -547,6 +554,8 @@ def _journal_tigerbeetle_order_event(
             with TigerBeetleLedgerJournal() as owned_journal, session.begin_nested():
                 owned_journal.journal_order_event(session, row)
     except Exception as exc:
+        if on_error is not None:
+            on_error(exc)
         if settings.tigerbeetle_required:
             raise
         logger.warning(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -153,6 +153,7 @@ def upsert_execution_tca_metric(
     execution: Execution,
     *,
     tigerbeetle_journal: "TigerBeetleLedgerJournal | None" = None,
+    on_tigerbeetle_journal_error: Callable[[Exception], None] | None = None,
 ) -> ExecutionTCAMetric:
     """Derive deterministic TCA metrics for an execution and upsert a single row."""
 
@@ -170,6 +171,7 @@ def upsert_execution_tca_metric(
         execution,
         row,
         journal=tigerbeetle_journal,
+        on_error=on_tigerbeetle_journal_error,
     )
     return row
 
