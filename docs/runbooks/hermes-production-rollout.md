@@ -31,11 +31,11 @@ main_revision=$(git rev-parse origin/main)
 test "$(git rev-parse HEAD)" = "$main_revision"
 upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
 mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
-toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031
+toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e
 toolchain_digest=$(crane digest "$toolchain_ref")
 test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
 test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
-test "$toolchain_digest" = sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031
+test "$toolchain_digest" = sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
   '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(",")')
 test "$toolchain_platforms" = linux/amd64,linux/arm64
@@ -65,7 +65,7 @@ The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4
 The expected mirrored amd64 manifest digest is
 `sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
 The expected Hermes toolchain multi-architecture index digest is
-`sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031`.
+`sha256:1864320822cb274202f768a8333ac9ac8fb01d8e259394ca5f9f6dcbe6d1a20e`.
 
 ## Phase 0: preflight and secret
 
