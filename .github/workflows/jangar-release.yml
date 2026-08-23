@@ -127,13 +127,19 @@ jobs:
         env:
           IMAGE: ${{ steps.meta.outputs.image }}
           DIGEST: ${{ steps.digest.outputs.digest }}
+          REGISTRY_SERVICE: registry.registry.svc.cluster.local
         run: |
           set -euo pipefail
           if ! [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Invalid Jangar digest: ${DIGEST}" >&2
             exit 2
           fi
-          nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+          REPOSITORY="${IMAGE#*/}"
+          VERIFY_IMAGE="${REGISTRY_SERVICE}/${REPOSITORY}"
+          regctl registry set "${REGISTRY_SERVICE}" --tls disabled --skip-check
+          echo "Verifying ${IMAGE}@${DIGEST} through ${VERIFY_IMAGE}@${DIGEST}"
+          nix run .#assert-oci-platforms -- "${VERIFY_IMAGE}@${DIGEST}" linux/amd64 linux/arm64
 
       - name: Update Jangar manifests
         if: steps.meta.outputs.promote == 'true'
