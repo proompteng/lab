@@ -54,6 +54,7 @@ class _PipelineWithLlmReview:
 class _PipelineLabelStub:
     account_label = "live"
     order_feed_ingestor = SimpleNamespace(close=Mock())
+    reconciler = SimpleNamespace(close=Mock())
     capital_safety = SimpleNamespace(close=Mock())
 
 

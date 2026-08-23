@@ -53,6 +53,7 @@ from .broker_mutation_recovery_runtime import (
     reconcile_broker_mutation_recovery,
 )
 from .pipeline import TradingPipeline
+from .pipeline.lifecycle import close_trading_pipeline_runtime_resources
 from .pipeline_helpers import build_llm_policy_resolution
 from .rejected_outcome_runtime import run_rejected_signal_outcome_iteration
 from .runtime_pipeline_factory import build_trading_pipeline_for_account
@@ -551,8 +552,7 @@ class TradingScheduler(
             [self._pipeline] if self._pipeline is not None else []
         )
         for pipeline in active_pipelines:
-            pipeline.order_feed_ingestor.close()
-            pipeline.capital_safety.close()
+            close_trading_pipeline_runtime_resources(pipeline)
         self._pipelines = []
         self._pipeline = None
         await asyncio.to_thread(self._leadership.release)
