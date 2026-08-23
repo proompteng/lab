@@ -1858,7 +1858,7 @@ interface ValidWindowBrokerControl {
 }
 
 const makeValidWindowBroker = (
-  draft: CycleDraft,
+  draft: LegacyCycleDraft,
   control: ValidWindowBrokerControl,
   observedAt: string,
 ): { readonly read: BrokerReadShape; readonly mutation: BrokerMutationShape } => {
@@ -5864,6 +5864,9 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(draft, acquisitionAt)
         yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
         const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+        if (!isLegacyAutonomousCycle(activated.cycle)) {
+          return yield* Effect.die(new Error('valid-window fixture requires a legacy autonomous cycle'))
+        }
         return {
           activated: activated.cycle,
           draft,
@@ -5964,6 +5967,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
               proofPlanHash: researchPlanHash,
             },
             observeAuthority.generationHash,
+            setup.draft.window.executionCloseAt,
           )
           if (
             activatedAuthority.maximum !== Authority.Execution ||
