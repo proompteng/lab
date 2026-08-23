@@ -6,9 +6,35 @@ for the Turin H14SSL-NT tower.
 ## Identity
 
 - BMC IP: `100.100.244.170`
+- Current Talos API / Kubernetes node IP: `100.100.244.190`
+- Historical bring-up / maintenance IP: `100.100.244.171`; do not assume it is the current Talos endpoint
 - BMC MAC: `7c:c2:55:f1:69:a6`
 - Board: Supermicro `H14SSL-NT`
 - Cooler: SilverStone `XE360-SP5`
+
+Resolve current Talos endpoints from
+[`docs/runbooks/galactic-kubernetes-access.md`](../../../docs/runbooks/galactic-kubernetes-access.md) before operating
+the node.
+
+## Credential Handling
+
+For an explicitly authorized Turin BMC action, use the existing signed-in 1Password CLI session. Do not probe macOS
+Keychain, repeat sign-in attempts after the session is already authenticated, print the password, persist it, or place it
+on the command line. Keep shell tracing disabled.
+
+```bash
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
+
+IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+  ipmitool -I lanplus -H 100.100.244.170 -U "$TURIN_BMC_USER" -E chassis power status
+
+unset TURIN_BMC_ITEM TURIN_BMC_USER
+```
+
+If `op` returns an authentication error, stop and report that exact error. Do not loop over `op signin` or ask for the
+credential in chat.
 
 ## Fan State
 
@@ -119,25 +145,79 @@ a BMC fan-curve issue.
 ## Read-Only IPMI Checks
 
 ```bash
-export IPMI_PASSWORD='...'
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
 
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E chassis power status
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sensor get FAN2
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sensor get FAN4
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sensor | rg -i 'fan|temp'
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sel elist | tail -n 50
+turin_ipmi() {
+  IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+    ipmitool -I lanplus -H 100.100.244.170 -U "$TURIN_BMC_USER" -E "$@"
+}
+
+turin_ipmi chassis power status
+turin_ipmi sensor get FAN2
+turin_ipmi sensor get FAN4
+turin_ipmi sensor | rg -i 'fan|temp'
+turin_ipmi sel elist | tail -n 50
+
+unset -f turin_ipmi
+unset TURIN_BMC_ITEM TURIN_BMC_USER
 ```
+
+## Power Recovery
+
+Prefer a normal Talos reboot while the Talos API and storage stack are responsive. Use BMC power control only after the
+specific action is authorized and the exact node, etcd, Ceph, and workload gates have been checked.
+
+For the three-node `galactic` control plane:
+
+1. Verify all etcd members and identify the leader.
+2. Cordon `turin`.
+3. If Turin is the etcd leader, run `talosctl --nodes 100.100.244.190 etcd forfeit-leadership` and verify the new leader.
+4. Verify that the other Ceph storage host is available and no second control-plane/storage node is in maintenance.
+5. Issue exactly the authorized action.
+
+```bash
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
+
+IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+  ipmitool -I lanplus -H 100.100.244.170 -U "$TURIN_BMC_USER" -E chassis power cycle
+
+unset TURIN_BMC_ITEM TURIN_BMC_USER
+```
+
+After the node returns, verify the four expected NVMe devices by model, serial, and size; Kubernetes readiness and
+pressure; etcd membership; all six Ceph OSDs; PG recovery; and workload scheduling before uncordoning. The complete
+sequence is in
+[`docs/runbooks/galactic-storage-and-workload-recovery.md`](../../../docs/runbooks/galactic-storage-and-workload-recovery.md).
 
 ## Redfish Fan Checks
 
+Use `curl --config -` so the password is read from standard input instead of appearing in the process arguments:
+
 ```bash
-export BMC_PASSWORD='...'
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
 
-curl -sk -u "ADMIN:${BMC_PASSWORD}" \
-  https://100.100.244.170/redfish/v1/Managers/1/Oem/Supermicro/FanMode | jq .
+turin_redfish_get() {
+  printf 'user = "%s:%s"\nurl = "%s"\ninsecure\nsilent\nshow-error\n' \
+    "$TURIN_BMC_USER" \
+    "$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+    "$1" |
+    curl --config -
+}
 
-curl -sk -u "ADMIN:${BMC_PASSWORD}" \
-  https://100.100.244.170/redfish/v1/Chassis/1/ThermalSubsystem | jq '.FansFullSpeedOverrideEnable'
+turin_redfish_get \
+  'https://100.100.244.170/redfish/v1/Managers/1/Oem/Supermicro/FanMode' | jq .
+
+turin_redfish_get \
+  'https://100.100.244.170/redfish/v1/Chassis/1/ThermalSubsystem' | jq '.FansFullSpeedOverrideEnable'
+
+unset -f turin_redfish_get
+unset TURIN_BMC_ITEM TURIN_BMC_USER
 ```
 
 Disable full-speed override if it is enabled. Observed H14SSL-NT Redfish state:
@@ -145,11 +225,18 @@ the property was absent/null in `ThermalSubsystem`, not `true`, and subsystem
 status was OK.
 
 ```bash
-export BMC_PASSWORD='...'
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
 
-curl -sk -u "ADMIN:${BMC_PASSWORD}" -X PATCH -H 'Content-Type: application/json' \
-  -d '{"FansFullSpeedOverrideEnable":false}' \
-  https://100.100.244.170/redfish/v1/Chassis/1/ThermalSubsystem
+printf 'user = "%s:%s"\nurl = "%s"\ninsecure\nsilent\nshow-error\nrequest = "PATCH"\nheader = "Content-Type: application/json"\ndata = "%s"\n' \
+  "$TURIN_BMC_USER" \
+  "$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+  'https://100.100.244.170/redfish/v1/Chassis/1/ThermalSubsystem' \
+  '{\"FansFullSpeedOverrideEnable\":false}' |
+  curl --config -
+
+unset TURIN_BMC_ITEM TURIN_BMC_USER
 ```
 
 ## SEL Cleanup
@@ -157,17 +244,22 @@ curl -sk -u "ADMIN:${BMC_PASSWORD}" -X PATCH -H 'Content-Type: application/json'
 Clear SEL only after live sensor state is OK:
 
 ```bash
-export IPMI_PASSWORD='...'
+set +x
+TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
+TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
 
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sel clear
-ipmitool -I lanplus -H 100.100.244.170 -U ADMIN -E sel elist
+IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+  ipmitool -I lanplus -H 100.100.244.170 -U "$TURIN_BMC_USER" -E sel clear
+IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
+  ipmitool -I lanplus -H 100.100.244.170 -U "$TURIN_BMC_USER" -E sel elist
+
+unset TURIN_BMC_ITEM TURIN_BMC_USER
 ```
 
 ## SMCIPMITool Readback
 
-```bash
-java -jar /path/to/SMCIPMITool.jar 100.100.244.170 ADMIN '...' ipmi fan
-```
+Do not pass the real password to SMCIPMITool on the command line. Use `ipmitool -E` for live operations. The following
+SMCIPMITool output is retained only as historical capability evidence:
 
 ```text
 Current Fan Speed Mode is [ Optimal Speed ]

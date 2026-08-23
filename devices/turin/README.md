@@ -1,13 +1,14 @@
 # Turin (Talos node)
 
-This directory tracks the Turin-generation Supermicro tower being prepared as a
-new Talos node for the existing `galactic` Kubernetes cluster.
+This directory tracks the Turin-generation Supermicro tower running as a Talos
+control-plane and Ceph storage node in the `galactic` Kubernetes cluster.
 
 Inventory:
 
 - Device: `turin`
 - BMC address: `100.100.244.170`
-- Talos maintenance/LAN address: `100.100.244.171/25`
+- Talos bring-up/maintenance address: `100.100.244.171/25`
+- Current Talos API / Kubernetes node address: `100.100.244.190`
 - Board: Supermicro `H14SSL-NT`
 - CPU: AMD EPYC Turin `9965`
 - Memory: 12x Micron 96GB DDR5 ECC RDIMM, 1152GB total when all sticks are installed
@@ -28,6 +29,7 @@ Docs:
 
 - `devices/turin/docs/cluster-join-plan.md` (join + Ceph OSD migration plan)
 - `devices/turin/docs/bmc-fan-bringup.md` (BMC and fan alert notes)
+- `docs/runbooks/galactic-storage-and-workload-recovery.md` (BMC, NVMe, Ceph, filesystem, and workload recovery)
 - `devices/turin/docs/nvidia-gpu-on-talos.md` (NVIDIA driver/runtime plan)
 - `devices/turin/docs/kubevirt-on-turin.md` (KubeVirt runtime and canary checks)
 - `devices/turin/spikes/firecracker/README.md` (direct Firecracker microVM substrate proof)

@@ -128,4 +128,11 @@ The operator-driven journal runner emits stable JSON with schema version `torghu
 - PVC pending: check `rook-ceph-block` and node/storage availability.
 - Smoke job cannot import `tigerbeetle`: image digest was not updated to a build that includes the new Python dependency.
 - Smoke job times out: inspect TigerBeetle pod logs and the service endpoint.
+- Scheduler RSS or native connections grow while protocol checks pass: verify that
+  `services/torghut/app/api/health_checks/tigerbeetle_health.py` reuses one process-local client and closes it on reset,
+  configuration change, and shutdown. Record restart count, RSS, high-water memory, and connection cardinality over at
+  least 15 minutes; increasing the memory limit is not a lifecycle fix.
 - Synchronous journaling reports unlinked evidence: inspect journal settings and `tigerbeetle_transfer_refs`, then run `python scripts/run_tigerbeetle_journal_cron.py --preset live --json` explicitly if a bounded repair is required.
+
+The sustained scheduler acceptance gate and the 2026-08-23 runtime receipt are in
+[`data-plane-recovery.md`](data-plane-recovery.md).

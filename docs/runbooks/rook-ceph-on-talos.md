@@ -7,6 +7,11 @@ Current Kubernetes and Talos access endpoints are tracked in
 still contain old `192.168.1.*` addresses, but the current LAN reachability path
 uses the provider-managed `100.100.244.*` segment.
 
+For a shared outage where Turin loses NVMe enumeration and Ceph, RBD filesystems,
+host-local IPAM, and applications must be recovered in dependency order, use
+[`galactic-storage-and-workload-recovery.md`](galactic-storage-and-workload-recovery.md) first. Return here only if the
+incident requires Ceph-specific OSD or performance work.
+
 ## Safety
 
 Ceph will **wipe** any disks listed under `cephClusterSpec.storage.nodes[].devices`.
@@ -247,11 +252,11 @@ Do not migrate all three Turin OSDs at once. Do not wipe the whole Kingston NVMe
 
 Target mapping for the current Turin migration:
 
-| OSD | HDD by-id | active block device | stale/suspect DB LV observed on `/dev/nvme2n1` |
-| --- | --- | --- | --- |
-| `osd.0` | `ata-ST24000NM000C-3WD103_ZXA0LVM9` | `/dev/sdd` | `osd-db-bee41e04-e080-423b-a493-894495af0579` |
-| `osd.1` | `ata-ST24000NM000C-3WD103_ZXA0MZ1M` | `/dev/sdb` | `osd-db-c515cd50-a905-42bf-bfd2-c4a2125af075` |
-| `osd.2` | `ata-ST24000NM000C-3WD103_ZXA0NL5D` | `/dev/sdc` | `osd-db-98938ffa-1017-4e8d-9ad6-c2f7fe4ce2d5` |
+| OSD     | HDD by-id                           | active block device | stale/suspect DB LV observed on `/dev/nvme2n1` |
+| ------- | ----------------------------------- | ------------------- | ---------------------------------------------- |
+| `osd.0` | `ata-ST24000NM000C-3WD103_ZXA0LVM9` | `/dev/sdd`          | `osd-db-bee41e04-e080-423b-a493-894495af0579`  |
+| `osd.1` | `ata-ST24000NM000C-3WD103_ZXA0MZ1M` | `/dev/sdb`          | `osd-db-c515cd50-a905-42bf-bfd2-c4a2125af075`  |
+| `osd.2` | `ata-ST24000NM000C-3WD103_ZXA0NL5D` | `/dev/sdc`          | `osd-db-98938ffa-1017-4e8d-9ad6-c2f7fe4ce2d5`  |
 
 Preflight before each OSD:
 
