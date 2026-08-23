@@ -88,14 +88,21 @@ def journal_tigerbeetle_execution_cost(
     session: Session,
     execution: Execution,
     metric: ExecutionTCAMetric,
+    *,
+    journal: TigerBeetleLedgerJournal | None = None,
 ) -> None:
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         return
     session.flush()
     try:
-        with TigerBeetleLedgerJournal() as journal, session.begin_nested():
-            journal.journal_execution(session, execution)
-            journal.journal_execution_tca_metric(session, metric)
+        if journal is not None:
+            with session.begin_nested():
+                journal.journal_execution(session, execution)
+                journal.journal_execution_tca_metric(session, metric)
+        else:
+            with TigerBeetleLedgerJournal() as owned_journal, session.begin_nested():
+                owned_journal.journal_execution(session, execution)
+                owned_journal.journal_execution_tca_metric(session, metric)
     except Exception as exc:
         if settings.tigerbeetle_required:
             raise

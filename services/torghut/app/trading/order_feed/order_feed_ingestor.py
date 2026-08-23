@@ -20,6 +20,9 @@ from ..broker_account_activities import (
     BrokerStreamPosition,
     persist_broker_trade_update,
 )
+from ..tigerbeetle_client import TigerBeetleClientProtocol
+from ..tigerbeetle_journal import TigerBeetleLedgerJournal
+from ..tigerbeetle_reconcile import BLOCKER_CLIENT_UNAVAILABLE
 from . import shared_context as _shared_context
 from .shared_context import (
     AccountAliasResolution as _AccountAliasResolution,
@@ -80,6 +83,7 @@ class OrderFeedIngestor:
         self._disabled_logged = False
         self._manual_assignment_ready = False
         self._last_tigerbeetle_reconcile_at: float | None = None
+        self._tigerbeetle_journal: TigerBeetleLedgerJournal | None = None
 
     @property
     def default_account_label(self) -> str:
@@ -169,9 +173,16 @@ class OrderFeedIngestor:
         if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
             return
         try:
-            _shared_context.reconcile_tigerbeetle_transfers(session)
+            payload = _shared_context.reconcile_tigerbeetle_transfers(
+                session,
+                client=self._tigerbeetle_client_for_reconciliation(),
+            )
             session.commit()
+            blockers = payload.get("blockers")
+            if isinstance(blockers, list) and BLOCKER_CLIENT_UNAVAILABLE in blockers:
+                self._close_tigerbeetle_journal()
         except Exception as exc:
+            self._close_tigerbeetle_journal()
             # SQLAlchemy requires an explicit rollback after a database error.
             # Leaving the scheduler session failed poisons the rest of the
             # current cycle even when reconciliation is configured as optional.
@@ -179,6 +190,27 @@ class OrderFeedIngestor:
             if settings.tigerbeetle_reconcile_required:
                 raise
             logger.warning("TigerBeetle reconciliation failed: %s", exc)
+
+    def _tigerbeetle_journal_for_runtime(self) -> TigerBeetleLedgerJournal:
+        if self._tigerbeetle_journal is None:
+            self._tigerbeetle_journal = TigerBeetleLedgerJournal()
+        return self._tigerbeetle_journal
+
+    def _tigerbeetle_client_for_reconciliation(self) -> TigerBeetleClientProtocol:
+        client = self._tigerbeetle_journal_for_runtime().client_for_reconciliation()
+        if client is None:
+            raise RuntimeError("tigerbeetle_reconciliation_client_disabled")
+        return client
+
+    def _close_tigerbeetle_journal(self) -> None:
+        journal = self._tigerbeetle_journal
+        self._tigerbeetle_journal = None
+        if journal is None:
+            return
+        try:
+            journal.close()
+        except Exception:  # pragma: no cover - defensive close
+            logger.debug("Order-feed TigerBeetle journal close failed", exc_info=True)
 
     @staticmethod
     def _new_counters() -> dict[str, int]:
@@ -438,6 +470,7 @@ class OrderFeedIngestor:
             source_window_id=(
                 context.source_window.id if context.source_window is not None else None
             ),
+            tigerbeetle_journal=self._tigerbeetle_journal_for_runtime(),
         )
         if context.source_window is not None:
             _classify_source_window_event(
@@ -586,7 +619,11 @@ class OrderFeedIngestor:
             counters["apply_updates_total"] += 1
             if execution.trade_decision_id is not None:
                 _update_trade_decision_from_execution(session, execution)
-            _shared_context.upsert_execution_tca_metric(session, execution)
+            _shared_context.upsert_execution_tca_metric(
+                session,
+                execution,
+                tigerbeetle_journal=self._tigerbeetle_journal_for_runtime(),
+            )
             session.add(execution)
         _upsert_cursor_and_count(
             session=session,
@@ -620,13 +657,13 @@ class OrderFeedIngestor:
         return _IngestRecordOutcome(durable=True, commit_allowed=False)
 
     def close(self) -> None:
-        if self._consumer is None:
-            return
-        run_close = cast(
-            Callable[[], Any] | None, getattr(self._consumer, "close", None)
-        )
+        self._close_tigerbeetle_journal()
+        consumer = self._consumer
         self._consumer = None
         self._manual_assignment_ready = False
+        if consumer is None:
+            return
+        run_close = cast(Callable[[], Any] | None, getattr(consumer, "close", None))
         if run_close is None:
             return
         try:
