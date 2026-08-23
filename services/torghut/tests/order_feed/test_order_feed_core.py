@@ -381,7 +381,12 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 default_account_label="paper",
             )
 
-            def fail_reconciliation(reconciliation_session: Session) -> None:
+            def fail_reconciliation(
+                reconciliation_session: Session,
+                *,
+                client: FakeTigerBeetleClient,
+            ) -> None:
+                del client
                 # Model a failed PostgreSQL transaction from the optional audit.
                 # The already-committed broker event must not be rolled back with it.
                 reconciliation_session.rollback()
@@ -416,6 +421,10 @@ class TestOrderFeedCore(OrderFeedTestCase):
             )
             with (
                 patch(
+                    "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
+                    return_value=FakeTigerBeetleClient(),
+                ),
+                patch(
                     (
                         "app.trading.order_feed.shared_context"
                         ".reconcile_tigerbeetle_transfers"
@@ -442,13 +451,19 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 consumer_factory=lambda: FakeConsumer([]),
                 default_account_label="paper",
             )
-            with patch(
-                (
-                    "app.trading.order_feed.shared_context"
-                    ".reconcile_tigerbeetle_transfers"
+            with (
+                patch(
+                    "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
+                    return_value=FakeTigerBeetleClient(),
                 ),
-                return_value={"ok": True},
-            ) as reconcile:
+                patch(
+                    (
+                        "app.trading.order_feed.shared_context"
+                        ".reconcile_tigerbeetle_transfers"
+                    ),
+                    return_value={"ok": True},
+                ) as reconcile,
+            ):
                 ingestor.ingest_once(session)
                 ingestor.ingest_once(session)
 

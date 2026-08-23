@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,6 +38,9 @@ from .lineage_hashes import (
     text_from_payload,
 )
 from .lineage_read_model import journal_tigerbeetle_execution_cost
+
+if TYPE_CHECKING:
+    from ..tigerbeetle_journal import TigerBeetleLedgerJournal
 
 EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION = "torghut.execution-tca-cost-lineage.v1"
 
@@ -146,7 +149,11 @@ class _ExplicitCostLineage:
 
 
 def upsert_execution_tca_metric(
-    session: Session, execution: Execution
+    session: Session,
+    execution: Execution,
+    *,
+    tigerbeetle_journal: "TigerBeetleLedgerJournal | None" = None,
+    on_tigerbeetle_journal_error: Callable[[Exception], None] | None = None,
 ) -> ExecutionTCAMetric:
     """Derive deterministic TCA metrics for an execution and upsert a single row."""
 
@@ -159,7 +166,13 @@ def upsert_execution_tca_metric(
         avg_fill_price=values.avg_fill_price,
     )
     row = _upsert_execution_tca_row(session, execution, context, values)
-    journal_tigerbeetle_execution_cost(session, execution, row)
+    journal_tigerbeetle_execution_cost(
+        session,
+        execution,
+        row,
+        journal=tigerbeetle_journal,
+        on_error=on_tigerbeetle_journal_error,
+    )
     return row
 
 
