@@ -101,15 +101,16 @@ const bunEnvironmentDenyImports = new Set([
 ])
 const bunEnvironmentDenyImportPrefixes = ['node:', 'bun:'] as const
 const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
+const temporalBunSdkPackage = '@proompteng/temporal-bun-sdk'
+const temporalBunSdkWorkflowPackage = `${temporalBunSdkPackage}/workflow`
 // Bundle every application module so activity imports cannot seed workflow state. Keep only the
-// workflow SDK and Effect external to preserve their process-wide runtime/AsyncLocalStorage identity.
-const isolatedWorkflowRuntimeImports = /^(?:@proompteng\/temporal-bun-sdk(?:\/.*)?|effect(?:\/.*)?)$/
-const isolatedWorkflowRuntimeExternals = [
-  '@proompteng/temporal-bun-sdk',
-  '@proompteng/temporal-bun-sdk/*',
-  'effect',
-  'effect/*',
-] as const
+// workflow-only SDK entry point and Effect external to preserve their process-wide
+// runtime/AsyncLocalStorage identity. Other SDK entry points expose I/O and worker APIs.
+const isolatedWorkflowRuntimeImports = /^(?:@proompteng\/temporal-bun-sdk\/workflow|effect(?:\/.*)?)$/
+const isolatedWorkflowRuntimeExternals = [temporalBunSdkWorkflowPackage, 'effect', 'effect/*'] as const
+const isUnsafeTemporalBunSdkImport = (specifier: string): boolean =>
+  specifier === temporalBunSdkPackage ||
+  (specifier.startsWith(`${temporalBunSdkPackage}/`) && specifier !== temporalBunSdkWorkflowPackage)
 const couldContainMacroImport = (sourceText: string): boolean =>
   /\b(?:with|assert)(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\{/.test(sourceText)
 const workflowSourceLoader = (filePath: string): 'ts' | 'tsx' | 'js' | 'jsx' => {
@@ -201,7 +202,19 @@ const lintWorkflowMacroImports = async (entry: string): Promise<readonly Workflo
       continue
     }
 
-    for (const moduleSpecifier of moduleSpecifiers) {
+    for (const moduleSpecifier of new Set(moduleSpecifiers)) {
+      if (isUnsafeTemporalBunSdkImport(moduleSpecifier)) {
+        violations.push({
+          filePath,
+          rule: 'deny-import',
+          message: `Temporal Bun SDK entry point is not workflow-safe: ${moduleSpecifier}. Import workflow APIs from ${temporalBunSdkWorkflowPackage}.`,
+          line: 1,
+          column: 1,
+          details: { specifier: moduleSpecifier },
+        })
+        continue
+      }
+
       let resolvedPath: string
       try {
         resolvedPath = Bun.resolveSync(moduleSpecifier, dirname(filePath))

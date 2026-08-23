@@ -1024,6 +1024,53 @@ test('ignores erased type-only imports when proving workflow source safety', asy
   await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
 })
 
+test('rejects Temporal SDK entry points that expose I/O or worker APIs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import { installBundledSkill } from '@proompteng/temporal-bun-sdk'",
+      "import { createTemporalClient } from '@proompteng/temporal-bun-sdk/client'",
+      "import { installBundledSkill as installSkill } from '@proompteng/temporal-bun-sdk/skills'",
+      "import { createWorker } from '@proompteng/temporal-bun-sdk/worker'",
+      "import { createTestWorkflowEnvironment } from '@proompteng/temporal-bun-sdk/testing'",
+      'export const workflow = () => [',
+      '  installBundledSkill, createTemporalClient, installSkill, createWorker, createTestWorkflowEnvironment,',
+      ']',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-import').map((violation) => violation.details)).toEqual(
+    expect.arrayContaining([
+      { specifier: '@proompteng/temporal-bun-sdk' },
+      { specifier: '@proompteng/temporal-bun-sdk/client' },
+      { specifier: '@proompteng/temporal-bun-sdk/skills' },
+      { specifier: '@proompteng/temporal-bun-sdk/worker' },
+      { specifier: '@proompteng/temporal-bun-sdk/testing' },
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
+test('allows erased types from non-workflow Temporal SDK entry points', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import type { TemporalConfig } from '@proompteng/temporal-bun-sdk'",
+      'export const workflow = (_config: TemporalConfig) => undefined',
+    ].join('\n'),
+  )
+
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).resolves.toBeUndefined()
+})
+
 test('follows bare package imports before declaring workflow source safe', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const helperDir = join(dir, 'node_modules', '@fixture', 'workflow-helper')
