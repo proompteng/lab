@@ -55,6 +55,10 @@ patches:
     target:
       kind: StatefulSet
       name: argocd-application-controller
+  - path: overlays/argocd-applicationset-controller-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-applicationset-controller
   - path: overlays/argocd-dex-server-deployment.yaml
     target:
       kind: Deployment
