@@ -53,7 +53,7 @@ The custom extension replaces the stock Kata extension. Never install both on th
 The main-branch workflows create the immutable inputs:
 
 1. `.github/workflows/kata-firecracker-extension.yaml` builds
-   `ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9` for `linux/amd64` and `linux/arm64`.
+   `ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r1` for `linux/amd64` and `linux/arm64`.
 2. The workflow signs and verifies the multi-architecture digest with the exact main-branch GitHub Actions identity.
 3. It copies the full official `v1.13.9` extension catalog, appends the digest-pinned custom extension, publishes
    `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signs that immutable catalog digest.
@@ -73,7 +73,7 @@ the custom extension to that digest:
 
 ```bash
 export FACTORY='http://100.100.244.148:8081'
-export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+: "${EXPECTED_KATA_DIGEST:?set this to the signed r1 digest recorded in RELEASE-v4.1.0-talos-v1.13.9.md}"
 
 curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
   | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \

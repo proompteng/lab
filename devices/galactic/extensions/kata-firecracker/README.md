@@ -43,7 +43,7 @@ For a local extension-only validation:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --tag ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9 \
+  --tag ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r1 \
   devices/galactic/extensions/kata-firecracker
 ```
 
@@ -79,9 +79,11 @@ the exact installer on that already-drained node, and keep it cordoned until all
 Talos disables containerd's built-in `blockfile` snapshotter in `/etc/cri/containerd.toml`, and its default CRI image
 settings discard layer blobs after overlayfs unpack. Each Kata-enabled machine patch in
 `devices/galactic/omni/cluster-template.yaml` therefore removes only `io.containerd.snapshotter.v1.blockfile` from
-`disabled_plugins` and sets `discard_unpacked_layers = false` plus `use_local_image_pull = false` in
+`disabled_plugins` and sets `discard_unpacked_layers = false` plus `use_local_image_pull = true` in
 `/etc/cri/conf.d/20-customization.part`. Omni applies those files and restarts CRI; without both settings,
-Firecracker fails before guest boot.
+Firecracker fails before guest boot. Local pull mode is required because containerd's transfer-service pull path does
+not support the CRI `discard_unpacked_layers` option; retaining the compressed layer blob lets the runtime-specific
+`blockfile` snapshotter unpack an image that was already used by an overlayfs runtime.
 
 Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing the agent image, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node

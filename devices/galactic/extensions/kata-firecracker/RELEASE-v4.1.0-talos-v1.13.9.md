@@ -3,6 +3,17 @@
 Recorded on 2026-08-23. This receipt separates signed artifact publication, Image Factory resolution, Omni installer
 convergence, and live runtime acceptance. Only the last state proves that a RuntimeClass works on Galactic.
 
+## r1 publication gate
+
+The immutable artifacts recorded below are the superseded pre-r1 build. Do not use them for a new rollout. The
+`linux/arm64` archive generated `firmware = "/usr/local/share/aavmf/AAVMF_CODE.fd"` for Dragonball even though Kata
+runtime-rs rejects every non-empty Dragonball firmware value. QEMU, Cloud Hypervisor, and Firecracker booted on Altra,
+but Dragonball correctly failed before guest boot and exposed the packaging defect.
+
+The corrected workflow publishes tag `4.1.0-talos-v1.13.9-r1`, forces `firmware = ""` in both architecture images,
+and validates that invariant during the container build. No further node install is permitted until this receipt
+records the signed r1 extension, catalog, and installer digests and the NUC Image Factory resolves the r1 digest.
+
 ## Source and workflows
 
 - Runtime correction merge: [`a4efd5beae61ceb7ee3a4a2624ba6fe65f1e3bb0`](https://github.com/proompteng/lab/commit/a4efd5beae61ceb7ee3a4a2624ba6fe65f1e3bb0),
@@ -16,7 +27,7 @@ convergence, and live runtime acceptance. Only the last state proves that a Runt
 The correction caps Firecracker at 32 vCPUs and changes its VMM socket timing to a 100 ms initial dial with a
 45-second reconnect budget. It retains the Talos CRI blockfile prerequisites required for a Firecracker rootfs.
 
-## Immutable artifacts
+## Superseded pre-r1 immutable artifacts
 
 | Artifact                      | Platform                     | Immutable reference                                                                                              |
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -33,7 +44,7 @@ installer receipts use identity
 `https://github.com/proompteng/lab/.github/workflows/microvm-agent.yaml@refs/heads/main`. Both use issuer
 `https://token.actions.githubusercontent.com`.
 
-The live 84-entry catalog currently resolves the custom entry to:
+The superseded 84-entry catalog resolved the custom entry to:
 
 ```text
 ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9@sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46
