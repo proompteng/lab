@@ -109,6 +109,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             SimpleNamespace(
                 account_label="paper",
                 order_feed_ingestor=SimpleNamespace(close=Mock()),
+                reconciler=SimpleNamespace(close=Mock()),
                 capital_safety=SimpleNamespace(close=Mock()),
             )
         ]
@@ -131,6 +132,8 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         self.assertEqual(leadership.acquire_calls, 1)
         self.assertEqual(leadership.release_calls, 1)
         self.assertFalse(scheduler.leadership_status.acquired)
+        pipeline.order_feed_ingestor.close.assert_called_once_with()
+        pipeline.reconciler.close.assert_called_once_with()
         pipeline.capital_safety.close.assert_called_once_with()
         fatal_exit.assert_not_called()
 
@@ -348,6 +351,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         pipeline = SimpleNamespace(
             account_label="paper",
             order_feed_ingestor=SimpleNamespace(close=Mock()),
+            reconciler=SimpleNamespace(close=Mock()),
             capital_safety=SimpleNamespace(close=Mock()),
             run_once=blocking_run_once,
         )
@@ -409,6 +413,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         pipeline = SimpleNamespace(
             account_label="paper",
             order_feed_ingestor=SimpleNamespace(close=Mock()),
+            reconciler=SimpleNamespace(close=Mock()),
             capital_safety=SimpleNamespace(close=Mock()),
             run_once=run_once,
             ingest_broker_account_activities=ingest_broker_account_activities,
