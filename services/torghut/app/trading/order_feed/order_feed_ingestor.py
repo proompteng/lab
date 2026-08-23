@@ -209,7 +209,7 @@ class OrderFeedIngestor:
             return
         try:
             journal.close()
-        except Exception:  # pragma: no cover - defensive close
+        except (OSError, RuntimeError):  # pragma: no cover - defensive close
             logger.debug("Order-feed TigerBeetle journal close failed", exc_info=True)
 
     @staticmethod
