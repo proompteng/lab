@@ -535,10 +535,15 @@ class OptionsArchiveRepository:
                                   SELECT 1
                                   FROM {ACTIVE_CATALOG_VIEW}
                                   WHERE expiration_date BETWEEN :start_date AND :end_date
+                                    AND expiration_date >= :observed_date
                                 )
                                 """
                             ),
-                            {"start_date": shard.start, "end_date": shard.end},
+                            {
+                                "start_date": shard.start,
+                                "end_date": shard.end,
+                                "observed_date": observed_at.date(),
+                            },
                         ),
                     ).scalar_one()
                 )
