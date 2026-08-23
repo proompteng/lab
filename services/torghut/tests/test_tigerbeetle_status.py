@@ -24,7 +24,7 @@ from app.models import (
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
 )
-from app.trading.tigerbeetle_client import TigerBeetleHealth
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient, TigerBeetleHealth
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_RUNTIME_NET_PNL,
@@ -50,8 +50,17 @@ class TestTigerBeetleStatus(TestCase):
         settings.tigerbeetle_reconcile_required = False
         settings.tigerbeetle_reconcile_max_age_seconds = 3600
         settings.tigerbeetle_health_timeout_seconds = 1.0
+        health_checks_context.close_tigerbeetle_protocol_health_probe()
+        self._protocol_client_factory = patch.object(
+            health_checks_context,
+            "create_tigerbeetle_client",
+            return_value=FakeTigerBeetleClient(),
+        )
+        self._protocol_client_factory_mock = self._protocol_client_factory.start()
 
     def tearDown(self) -> None:
+        health_checks_context.close_tigerbeetle_protocol_health_probe()
+        self._protocol_client_factory.stop()
         settings.tigerbeetle_enabled = self._orig_enabled
         settings.tigerbeetle_required = self._orig_required
         settings.tigerbeetle_journal_enabled = self._orig_journal_enabled
@@ -591,12 +600,28 @@ class TestTigerBeetleStatus(TestCase):
         self.assertIsNone(payload["last_error"])
         health_mock.assert_not_called()
 
+    def test_required_protocol_probe_reuses_process_client(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+
+        first = check_tigerbeetle_protocol_health()
+        second = check_tigerbeetle_protocol_health()
+
+        self.assertTrue(first["protocol_ok"])
+        self.assertTrue(second["protocol_ok"])
+        self._protocol_client_factory_mock.assert_called_once_with(settings)
+
     def test_required_protocol_timeout_blocks_readiness_dependency(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_required = True
         settings.tigerbeetle_health_timeout_seconds = 0.01
 
-        def slow_health(_settings: object) -> TigerBeetleHealth:
+        def slow_health(
+            _settings: object,
+            *,
+            client: object | None = None,
+        ) -> TigerBeetleHealth:
+            del client
             time.sleep(0.2)
             return TigerBeetleHealth(
                 enabled=True,
