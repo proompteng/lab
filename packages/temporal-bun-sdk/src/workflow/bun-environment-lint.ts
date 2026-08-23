@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { builtinModules } from 'node:module'
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -76,6 +77,7 @@ const bunEnvironmentAllowIndirectGlobalMemberExpressions = new Set(['Function.pr
 const bunEnvironmentDenyInvokedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyCapturedMemberProperties = new Set(['constructor'])
 const bunEnvironmentDenyImports = new Set([
+  ...builtinModules,
   'bun',
   'bun:ffi',
   'node:vm',
@@ -97,6 +99,7 @@ const bunEnvironmentDenyImports = new Set([
   'node:worker_threads',
   'worker_threads',
 ])
+const bunEnvironmentDenyImportPrefixes = ['node:', 'bun:'] as const
 const inspectableWorkflowSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 // Bundle every application module so activity imports cannot seed workflow state. Keep only the
 // workflow SDK and Effect external to preserve their process-wide runtime/AsyncLocalStorage identity.
@@ -354,6 +357,7 @@ const inspectWorkflowBunEnvironmentSafety = async (options: {
       denyGlobals: bunEnvironmentDenyGlobals,
       denyMemberExpressions: bunEnvironmentDenyMemberExpressions,
       denyImports: bunEnvironmentDenyImports,
+      denyImportPrefixes: bunEnvironmentDenyImportPrefixes,
       denyReflectiveGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
       denyComputedGlobalProperties: bunEnvironmentDenyGlobalObjectProperties,
       denyAllGlobalObjectProperties: bunEnvironmentDenyAllGlobalObjectProperties,

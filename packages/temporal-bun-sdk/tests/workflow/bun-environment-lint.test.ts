@@ -275,6 +275,35 @@ test('rejects VM modules that can evaluate against the Bun global', async () => 
   )
 })
 
+test('rejects all runtime builtin imports instead of enumerating environment escape modules', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
+  const workflowsPath = join(dir, 'workflows.ts')
+  await writeFile(
+    workflowsPath,
+    [
+      "import inspector from 'node:inspector'",
+      "import repl from 'repl'",
+      "import { serialize } from 'bun:jsc'",
+      "export const inspect = () => inspector.open()",
+      "export const evaluate = () => repl.start()",
+      'export const jsc = () => serialize({})',
+    ].join('\n'),
+  )
+
+  const violations = await lintWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })
+
+  expect(violations.filter((violation) => violation.rule === 'deny-import')).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ details: { specifier: 'inspector' } }),
+      expect.objectContaining({ details: { specifier: 'repl' } }),
+      expect.objectContaining({ details: { specifier: 'bun:jsc' } }),
+    ]),
+  )
+  await expect(assertWorkflowBunEnvironmentSafety({ workflowsPath, cwd: dir })).rejects.toBeInstanceOf(
+    WorkflowBunEnvironmentSafetyError,
+  )
+})
+
 test('rejects child process modules that can recover inherited environment state', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'temporal-bun-env-lint-'))
   const workflowsPath = join(dir, 'workflows.ts')

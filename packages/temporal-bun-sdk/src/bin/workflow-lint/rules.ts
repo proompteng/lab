@@ -769,6 +769,7 @@ export const lintWorkflowSourceAst = (options: {
   readonly denyGlobals: ReadonlySet<string>
   readonly denyMemberExpressions: ReadonlySet<string>
   readonly denyImports: ReadonlySet<string>
+  readonly denyImportPrefixes?: readonly string[]
   readonly denyReflectiveGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyComputedGlobalProperties?: ReadonlyMap<string, ReadonlySet<string>>
   readonly denyAllGlobalObjectProperties?: ReadonlySet<string>
@@ -1420,7 +1421,10 @@ export const lintWorkflowSourceAst = (options: {
   }
 
   for (const moduleSpecifier of collectWorkflowModuleSpecifiers(tokens)) {
-    if (options.denyImports.has(moduleSpecifier.specifier)) {
+    if (
+      options.denyImports.has(moduleSpecifier.specifier) ||
+      options.denyImportPrefixes?.some((prefix) => moduleSpecifier.specifier.startsWith(prefix))
+    ) {
       report(moduleSpecifier.start, {
         rule: 'deny-import',
         message: `Disallowed import in workflow module: ${moduleSpecifier.specifier}`,
