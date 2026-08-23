@@ -65,6 +65,39 @@ The main-branch workflows create the immutable inputs:
 Before touching a node, retain the workflow URLs, image digests, Cosign verification output, and generated installer
 digests in the rollout evidence directory.
 
+### Artifact identity and Image Factory cache gate
+
+Tags and version strings are discovery aids, not rollout identity. The authoritative runtime input is the signed
+extension digest recorded in the release receipt. Before every node phase, prove that the live factory catalog resolves
+the custom extension to that digest:
+
+```bash
+export FACTORY='http://100.100.244.148:8081'
+export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+
+curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
+  | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
+  | grep -Fx "$EXPECTED_KATA_DIGEST"
+```
+
+An unchanged schematic ID does **not** prove that a rebuilt installer contains a new extension digest. Image Factory
+derives the ID from the customization request, including the ordered extension names, while the catalog tag can later
+resolve those names to a different digest. An installer already cached under the same schematic and Talos version can
+therefore predate the current catalog.
+
+For the exact target machine, retain all of the following before allowing Omni to reboot it:
+
+1. the current `SchematicConfiguration` ID and ordered customization returned by
+   `GET /schematics/<schematic-id>`;
+2. the live catalog readback showing `EXPECTED_KATA_DIGEST`;
+3. the generated `metal-installer` manifest digest for that exact schematic and Talos version; and
+4. Image Factory build or registry evidence that the installer was assembled from `EXPECTED_KATA_DIGEST`.
+
+Restarting Image Factory refreshes its catalog input but does not prove that an existing cached installer was rebuilt.
+Do not accept a tag, matching extension name/version, unchanged schematic ID, `MachineUpgradeStatus: up to date`, or a
+successful installer pull as a substitute for this chain. If the exact installer cannot be tied to the expected digest,
+stop and rebuild or invalidate that one factory artifact through a reviewed procedure; do not reboot the node.
+
 ## One-time Image Factory handoff
 
 The public factory cannot consume an arbitrary private extension catalog. The NUC therefore runs the community Image
@@ -73,7 +106,8 @@ Factory and a private backing registry from `devices/nuc/image-factory`.
 1. Publish and verify the signed combined catalog.
 2. Copy the checked-in Image Factory directory to `/home/kalmyk/image-factory` on the NUC.
 3. Create `.env` from `.env.example`, then run `./bootstrap.sh`.
-4. Require `./validate.sh` and `./verify.sh` to pass.
+4. Require `./validate.sh` and `./verify.sh` to pass. This verifies the live catalog, not every previously cached
+   per-machine installer; apply the artifact identity gate above separately to the rollout target.
 5. Deploy the checked-in `devices/nuc/omni/omni.yaml` to `/home/kalmyk/omni/omni.yaml`.
 6. Restart only the Omni service and verify that its primary factory is
    `http://100.100.244.148:8081/`.
@@ -137,9 +171,10 @@ selected system extensions.
 Add `proompteng/talos-kata-runtimes` to only one `kind: Machine` document in the checked-in redacted template per
 rollout phase, then rerender it. On Ryzen, remove
 `siderolabs/kata-containers` in the same change; on Turin and Altra, preserve all three existing NVIDIA/Tailscale
-extensions. Validate, review, commit, and sync each phase independently in the fixed Ryzen, Turin, Altra order. This
-keeps the other two machines' desired schematics unchanged and guarantees that an Omni sync cannot start their
-installer operations early.
+extensions. For a new rollout, validate, review, commit, and sync each phase independently in the Ryzen, Turin, Altra
+order. When resuming a partially completed rollout, finish and accept the already-started machine before returning to
+that order. This keeps the other two machines' desired schematics unchanged and prevents an Omni sync from starting
+their installer operations early.
 
 ## Hard safety gates
 
@@ -164,17 +199,21 @@ The script must prove all of the following:
 Any failed gate stops the rollout. Do not clear Ceph flags, bypass a PDB, force a drain, delete storage Pods, remove an
 etcd member, or reset a node to make the gate green. Fix the owning system first and rerun the complete preflight.
 
-At the time this runbook was authored, live Ceph was `HEALTH_WARN` with degraded, undersized, and remapped placement
-groups plus `nobackfill,norecover`. That is a hard blocker; publishing and merging may proceed, but no Talos
-installer reboot may start until fresh evidence passes.
+Never use a status copied into this document as a rollout gate. Record fresh command output immediately before the
+target phase. Any remapped, recovering, or backfilling placement group is a hard blocker even when all OSDs are up/in
+and there are no recovery-suppression flags.
 
 ## Sequential rollout
 
-Roll out in this fixed order:
+For a new rollout, use this order:
 
 1. Ryzen: `talos-192-168-1-194`
 2. Turin: `turin`
 3. Altra: `talos-192-168-1-85`
+
+If a previous attempt already changed one machine, that machine is the current phase. Finish its immutable artifact
+proof, installer convergence, and four-runtime acceptance before changing another machine; do not skip to the nominal
+first node.
 
 For each node:
 
@@ -183,16 +222,40 @@ For each node:
 2. Run and retain the complete preflight evidence.
 3. Rerender the template, run `omnictl cluster template sync --dry-run --verbose`, and reject any unexpected resource
    or machine change.
-4. Sync the reviewed template and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health
+4. Prove the exact installer-to-extension digest chain in the artifact identity gate above.
+5. Sync the reviewed template and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health
    checks. Do not lock the cluster or unrelated machines, and do not run a competing manual `talosctl upgrade`.
-5. Wait for the target to return on Talos `v1.13.9`, Kubernetes `v1.36.4`, `Ready`, and schedulable.
-6. Verify the exact expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions.
-7. Verify Kubernetes API readiness, three-member etcd health, and clean Ceph state again.
-8. Commit the next machine's extension-list change only after all gates pass again.
+6. Wait for the target to return on Talos `v1.13.9`, Kubernetes `v1.36.4`, and `Ready`. Omni's lifecycle finalizer
+   normally uncordons the node after it returns; that is transport completion, not runtime acceptance.
+7. Immediately create the separate runtime-validation cordon and prove it took effect before adding a runtime label:
 
-If Omni leaves a failed target cordoned, diagnose the current failure first; uncordon only after the attempted
-operation is no longer running and the node is healthy. Never add the next machine's desired extension until the
-current phase is complete.
+   ```bash
+   kubectl --context galactic-lan cordon "$NODE"
+   kubectl --context galactic-lan get node "$NODE"
+   ```
+
+   Require `Ready,SchedulingDisabled`. The canaries are DaemonSets, whose controller tolerates the built-in
+   unschedulable taint, so they can still be created on this validation-cordoned node. There is a short interval between
+   Omni's automatic uncordon and this command; do not call the phase complete during that interval.
+
+8. Verify the exact expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions, the CRI configuration,
+   and the installed schematic. Extension name `kata-runtimes` and version `4.1.0` alone do not identify its digest.
+9. Activate and prove QEMU, Cloud Hypervisor, Firecracker, and Dragonball one at a time as described below. Keep the
+   validation cordon in place throughout all four tests.
+10. Recheck Kubernetes API readiness, three-member etcd health, and clean Ceph state after all four runtimes pass.
+11. Only then uncordon the accepted node and prove it is `Ready` and schedulable:
+
+    ```bash
+    kubectl --context galactic-lan uncordon "$NODE"
+    kubectl --context galactic-lan get node "$NODE"
+    ```
+
+12. Commit the next machine's extension-list change only after the current node has passed every gate above.
+
+If Omni leaves a failed target cordoned, diagnose the current failure first. If Omni automatically uncordons after a
+successful reboot, restore the runtime-validation cordon before testing. A manual uncordon is forbidden while artifact
+identity or any of the four runtime proofs is missing. Never add the next machine's desired extension until the current
+phase is accepted.
 
 ## Runtime activation and proof
 
@@ -205,7 +268,8 @@ Argo CD application `kata-runtimes` owns four node-gated RuntimeClasses:
 | `kata-fc`         | Firecracker      | `runtime.proompteng.ai/kata-fc=ready`         |
 | `kata-dragonball` | Dragonball       | `runtime.proompteng.ai/kata-dragonball=ready` |
 
-Installing the handlers does not schedule a canary. Activate one runtime on one node at a time:
+Installing the handlers does not schedule a canary. The target must already be `Ready,SchedulingDisabled` under the
+post-Omni runtime-validation cordon. Activate one runtime on one node at a time:
 
 Before activating Firecracker, verify the effective Talos CRI configuration on that node:
 
@@ -249,7 +313,8 @@ Acceptance requires, for every runtime on every architecture:
    VMM process;
 7. no plaintext bootstrap proof nonce in agent logs.
 
-The canaries remain running for inspection. If a runtime fails, remove only its activation label:
+The canaries remain running for inspection. If a runtime fails, remove only its activation label and leave the node
+validation-cordoned:
 
 ```bash
 kubectl --context galactic-lan label node "$NODE" \
@@ -259,13 +324,15 @@ kubectl --context galactic-lan label node "$NODE" \
 ## Rollback boundaries
 
 - A failed RuntimeClass canary: remove that runtime's node label and inspect the retained evidence. No node reboot is
-  required.
-- A failed Talos installer rollout: keep the machine locked, preserve Omni and Talos logs, and restore the previously
-  proven schematic through Omni only after Kubernetes, etcd, and Ceph gates pass.
+  required, but the node remains validation-cordoned and the next node must not start.
+- A failed Talos installer rollout: preserve Omni and Talos logs and restore the previously proven schematic through
+  Omni only after Kubernetes, etcd, and Ceph gates pass. Do not lock the whole cluster merely to pause one failed
+  machine.
 - A failed Image Factory deployment: restore the previous `omni.yaml` primary factory and restart Omni; do not point
   machines at a partially verified catalog.
 - Never roll back by resetting a machine, deleting an etcd member, purging an OSD, bypassing PDBs, or changing disks
   without a separate recovery plan and explicit authorization.
 
-Completion means the signed artifacts and exact configuration are merged, all three sequential installer operations
-have passed the hard gates, and all twelve node/runtime combinations have fresh guest and host-side evidence.
+Completion means the signed artifacts and exact configuration are merged, every installed schematic is tied to the
+expected extension digest, all three sequential installer operations have passed the hard gates, and all twelve
+node/runtime combinations have fresh guest and host-side evidence. Only accepted nodes are uncordoned.
