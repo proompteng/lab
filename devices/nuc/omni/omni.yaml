@@ -48,3 +48,8 @@ features:
   enableBreakGlassConfigs: false
   enableConfigDataCompression: true
   enableClusterImport: true
+
+registries:
+  factories:
+    primary:
+      url: http://100.100.244.148:8080/

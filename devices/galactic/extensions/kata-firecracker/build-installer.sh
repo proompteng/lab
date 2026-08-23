@@ -5,7 +5,7 @@ set -euo pipefail
 readonly IMAGER_IMAGE='ghcr.io/siderolabs/imager:v1.13.9@sha256:bfeb72d58f918711f29f19337911ff845b7ce776cad17822149ac98e19751d55'
 
 usage() {
-  echo "usage: $0 <ryzen-amd64|nvidia-amd64|nvidia-arm64> <kata-extension@sha256:digest> <output-dir>" >&2
+  echo "usage: $0 <ryzen-amd64|turin-amd64|altra-arm64> <kata-extension@sha256:digest> <output-dir>" >&2
 }
 
 if [[ $# -ne 3 ]]; then
@@ -35,7 +35,7 @@ case "$profile" in
       'ghcr.io/siderolabs/tailscale:1.102.2@sha256:bbcde50aaa3fe655f5d898a4c55ba0170c0ed14b80f26468b4f7d25d2283d1ef'
     )
     ;;
-  nvidia-amd64)
+  turin-amd64 | nvidia-amd64)
     arch='amd64'
     official_extensions=(
       'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:a009ea88645161ef780db5f86f1df4b64881f1abd779b021b1a4bab7bfb3e4bb'
@@ -43,7 +43,7 @@ case "$profile" in
       'ghcr.io/siderolabs/tailscale:1.102.2@sha256:bbcde50aaa3fe655f5d898a4c55ba0170c0ed14b80f26468b4f7d25d2283d1ef'
     )
     ;;
-  nvidia-arm64)
+  altra-arm64 | nvidia-arm64)
     arch='arm64'
     official_extensions=(
       'ghcr.io/siderolabs/nvidia-container-toolkit-lts:580.178.04-v1.19.1@sha256:a009ea88645161ef780db5f86f1df4b64881f1abd779b021b1a4bab7bfb3e4bb'

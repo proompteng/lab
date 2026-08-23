@@ -1,0 +1,45 @@
+name: nuc-image-factory
+
+services:
+  registry:
+    image: registry:3.1.1@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+    restart: unless-stopped
+    environment:
+      OTEL_TRACES_EXPORTER: none
+      REGISTRY_LOG_LEVEL: info
+      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+    volumes:
+      - ${IMAGE_FACTORY_DATA_ROOT:-/var/lib/image-factory}/registry:/var/lib/registry
+    logging:
+      driver: json-file
+      options:
+        max-file: '5'
+        max-size: 20m
+
+  image-factory:
+    image: ghcr.io/siderolabs/image-factory:v1.5.0@sha256:a2a55196bbf65da40fa8726dd7a5de0dd486bddb0f2171da1867aa2fc260be45
+    restart: unless-stopped
+    depends_on:
+      - registry
+    command:
+      - /usr/bin/image-factory
+      - --config=/etc/image-factory/config.yaml
+    read_only: true
+    userns_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - ${IMAGE_FACTORY_BIND_ADDRESS:-100.100.244.148}:8080:8080
+    volumes:
+      - ./config.yaml:/etc/image-factory/config.yaml:ro
+      - ${IMAGE_FACTORY_DATA_ROOT:-/var/lib/image-factory}/secrets/cache-signing-key.key:/run/secrets/cache-signing-key.key:ro
+      - ${IMAGE_FACTORY_DATA_ROOT:-/var/lib/image-factory}/tmp:/tmp
+    logging:
+      driver: json-file
+      options:
+        max-file: '5'
+        max-size: 50m
