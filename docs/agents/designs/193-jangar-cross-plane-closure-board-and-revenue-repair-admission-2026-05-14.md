@@ -343,7 +343,7 @@ M5: Make deployer and verify stages require board evidence for green PR-to-healt
 
 Local validation for the architecture PR:
 
-- `bunx oxfmt --check docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md docs/torghut/design-system/v6/198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md docs/agents/release-handoffs/jangar-control-plane-cross-plane-closure-board-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
+- `bunx oxfmt --check docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md docs/torghut/design-system/v6/198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 
 Engineer implementation validation:
 

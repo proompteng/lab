@@ -401,7 +401,7 @@ M5: Dispatch enforcement.
 
 Architecture PR validation:
 
-- `bunx oxfmt --check docs/agents/designs/197-jangar-compact-alpha-closure-ingestion-and-stage-credit-repair-gate-2026-05-14.md docs/torghut/design-system/v6/202-torghut-compact-alpha-closure-export-and-no-delta-lease-2026-05-14.md docs/agents/release-handoffs/jangar-alpha-closure-ingestion-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
+- `bunx oxfmt --check docs/agents/designs/197-jangar-compact-alpha-closure-ingestion-and-stage-credit-repair-gate-2026-05-14.md docs/torghut/design-system/v6/202-torghut-compact-alpha-closure-export-and-no-delta-lease-2026-05-14.md docs/agents/README.md docs/torghut/design-system/v6/index.md`
 - `git diff --check`
 
 Engineer validation:

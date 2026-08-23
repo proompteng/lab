@@ -8,7 +8,8 @@ without owning generic Agents CRDs, controllers, mutation APIs, or browser resou
 
 ## Related docs
 
-- `docs/jangar/agents-control-plane-new-primitives.md`
+- `docs/agents/current-source-state.md`
+- `docs/agents/control-plane-ui.md`
 
 ## Responsibilities
 
@@ -64,12 +65,3 @@ to the Agents database.
 Generic Agents endpoints must accept an idempotency key (`deliveryId`) through the Agents service and return consistent
 results on retries. Jangar should preserve idempotency for domain callbacks and event consumers without duplicating the
 generic Agents run records.
-
-## UI surface
-
-- [Agents UI: YAML inspector + revision timeline](../agents-ui-yaml-inspector.md)
-
-## Related docs
-
-- [Agents control-plane filters (labels + phase)](../agents-control-plane-filters.md)
-- [Agents control-plane UI polish](../agents-control-plane-polish.md)

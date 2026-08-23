@@ -1,7 +1,7 @@
 # Torghut Design System
 
-This directory is the historical design corpus for Torghut. It is useful for rationale, contract archaeology, and
-implementation background. It is not the primary live operations source of truth.
+This directory contains retained Torghut design contracts. It is useful for rationale, contract archaeology, and
+implementation background, but it is not the primary live operations source of truth.
 
 For current operational decisions, start with `docs/torghut/README.md`, live GitOps, service code, and runtime status
 endpoints.
@@ -24,11 +24,12 @@ endpoints.
 - `v5/`: strategy build pack and per-paper technique synthesis.
 - `v6/`: historical intraday autonomy, proof, capital authority, and Jangar/Torghut contract archive. The March 2026 options-lane series in `v6/33` through `v6/37` is rationale/archaeology, not current cluster health or trading authority.
 
-## Authority
+## Authority And Retention
 
-This directory is an archive. A file inside it may explain why a design existed, but it is not current production truth
-without live code, GitOps, and runtime validation. Use `../../documentation-authority.md` and `../README.md` before
-treating any dated design as actionable.
+A file inside this directory may explain why a design existed, but it is not current production truth without live
+code, GitOps, and runtime validation. Keep files only while source, configuration, tests, maintained documentation, or
+another retained contract cites them. Completed rollout journals and orphaned proposals belong in Git history. Use
+`../../documentation-authority.md` and `../README.md` before treating any dated design as actionable.
 
 ## Operator Rule
 

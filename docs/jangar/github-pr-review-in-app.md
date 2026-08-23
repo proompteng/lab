@@ -178,7 +178,8 @@ Extend `services/jangar/src/server/github-client.ts` with:
 
 All calls should reuse the existing rate-limited queue in `github-client.ts`.
 
-**Note:** These GitHub client calls should be used only for write actions (review submission, merge, resolve) or one-time backfills; steady-state reads must come from webhook-ingested state to avoid polling. This aligns with the current Codex judge pipeline (filtered Kafka stream + no polling), documented in `docs/jangar/codex-judge-argo-implementation.md`.
+**Note:** These GitHub client calls should be used only for write actions (review submission, merge, resolve) or
+one-time backfills; steady-state reads must come from webhook-ingested state to avoid polling.
 
 ## Data Model / Persistence
 
