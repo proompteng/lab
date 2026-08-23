@@ -200,11 +200,14 @@ const guardedEnvironment = <T extends object>(target: T, api: string): T =>
       }
       return Reflect.get(current, property, receiver)
     },
-    set(current, property, value, receiver) {
+    set(current, property, value) {
       if (typeof property === 'string') {
         guardEnvironmentViolation(api, 'mutation')
       }
-      return Reflect.set(current, property, value, receiver)
+      // Bun's process.env target only accepts fully configurable data descriptors. Passing the
+      // proxy as the receiver makes Reflect.set synthesize a descriptor against that proxy, which
+      // Bun 1.4 rejects even outside workflow execution. Write directly to the environment target.
+      return Reflect.set(current, property, value)
     },
     has(current, property) {
       if (typeof property === 'string') {
