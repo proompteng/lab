@@ -7,13 +7,13 @@ privileged launcher, AgentRun, or KubeVirt.
 
 ## Pinned targets
 
-| Component | Target | Source of truth |
-| --- | --- | --- |
-| Talos | `v1.13.9` | [Talos release](https://github.com/siderolabs/talos/releases/tag/v1.13.9) |
-| Kubernetes | `v1.36.4` | [Kubernetes release](https://github.com/kubernetes/kubernetes/releases/tag/v1.36.4) |
-| Kata Containers | `4.1.0` | [Kata release](https://github.com/kata-containers/kata-containers/releases/tag/4.1.0) |
-| Firecracker | `1.12.1` | bundled by the Kata `4.1.0` release |
-| Image Factory | `v1.5.0` | [Image Factory release](https://github.com/siderolabs/image-factory/releases/tag/v1.5.0) |
+| Component       | Target    | Source of truth                                                                          |
+| --------------- | --------- | ---------------------------------------------------------------------------------------- |
+| Talos           | `v1.13.9` | [Talos release](https://github.com/siderolabs/talos/releases/tag/v1.13.9)                |
+| Kubernetes      | `v1.36.4` | [Kubernetes release](https://github.com/kubernetes/kubernetes/releases/tag/v1.36.4)      |
+| Kata Containers | `4.1.0`   | [Kata release](https://github.com/kata-containers/kata-containers/releases/tag/4.1.0)    |
+| Firecracker     | `1.12.1`  | bundled by the Kata `4.1.0` release                                                      |
+| Image Factory   | `v1.5.0`  | [Image Factory release](https://github.com/siderolabs/image-factory/releases/tag/v1.5.0) |
 
 The version pins, image digests, extension catalog, and node-specific installer profiles are code-reviewed in this
 repository. Do not replace them with a floating `latest` tag during a rollout.
@@ -32,19 +32,19 @@ Primary operational references:
 
 The addresses below are Elauwit provider-LAN addresses, not Tailscale addresses:
 
-| Machine | Kubernetes node | Architecture | Talos API | Omni machine UUID |
-| --- | --- | --- | --- | --- |
-| Ryzen | `talos-192-168-1-194` | `amd64` | `100.100.244.141` | `ff115a00-c307-11f0-a28f-648eab3e4100` |
-| Turin | `turin` | `amd64` | `100.100.244.190` | `8bf7ec00-171c-11f1-8000-7cc255f16774` |
-| Altra | `talos-192-168-1-85` | `arm64` | `100.100.244.142` | `12345678-9abc-deff-1234-56789abcdeff` |
+| Machine | Kubernetes node       | Architecture | Talos API         | Omni machine UUID                      |
+| ------- | --------------------- | ------------ | ----------------- | -------------------------------------- |
+| Ryzen   | `talos-192-168-1-194` | `amd64`      | `100.100.244.141` | `ff115a00-c307-11f0-a28f-648eab3e4100` |
+| Turin   | `turin`               | `amd64`      | `100.100.244.190` | `8bf7ec00-171c-11f1-8000-7cc255f16774` |
+| Altra   | `talos-192-168-1-85`  | `arm64`      | `100.100.244.142` | `12345678-9abc-deff-1234-56789abcdeff` |
 
 Expected final extension sets:
 
-| Machine | Required extensions |
-| --- | --- |
-| Ryzen | AMDGPU, AMD microcode, glibc, Tailscale, `talos-kata-runtimes` |
-| Turin | NVIDIA LTS kernel modules and toolkit, Tailscale, `talos-kata-runtimes` |
-| Altra | NVIDIA LTS kernel modules and toolkit, Tailscale, `talos-kata-runtimes` |
+| Machine | Required extensions                                                                                                                                  |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ryzen   | `siderolabs/amdgpu`, `siderolabs/amd-ucode`, `siderolabs/glibc`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes`                            |
+| Turin   | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
+| Altra   | `siderolabs/nvidia-open-gpu-kernel-modules-lts`, `siderolabs/nvidia-container-toolkit-lts`, `siderolabs/tailscale`, `proompteng/talos-kata-runtimes` |
 
 The custom extension replaces the stock Kata extension. Never install both on the same node.
 
@@ -119,11 +119,15 @@ omnictl cluster template sync \
 ```
 
 Wait until all three machines report the registry config applied with no pending configuration update. Verify that
-each node can reach `http://100.100.244.148:8081` before adding `proompteng/talos-kata-runtimes` to the three
-`systemExtensions` lists. Do not use a `machine.install.image` patch: Omni derives the desired installer from each
-machine's schematic and selected system extensions.
+each node can reach `http://100.100.244.148:8081` before changing a `systemExtensions` list. Do not use a
+`machine.install.image` patch: Omni derives the desired installer from each machine's schematic and selected system
+extensions.
 
-Preview and sync the extension change only after the registry phase is complete.
+Add `proompteng/talos-kata-runtimes` to only one `kind: Machine` document per rollout phase. On Ryzen, remove
+`siderolabs/kata-containers` in the same change; on Turin and Altra, preserve all three existing NVIDIA/Tailscale
+extensions. Validate, review, commit, and sync each phase independently in the fixed Ryzen, Turin, Altra order. This
+keeps the other two machines' desired schematics unchanged and guarantees that an Omni sync cannot start their
+installer operations early.
 
 ## Hard safety gates
 
@@ -162,28 +166,31 @@ Roll out in this fixed order:
 
 For each node:
 
-1. Ensure the other two machines are locked in Omni and the target is the only machine eligible for an operation.
+1. Confirm the checked-in template changes only this machine's `systemExtensions` list and the control-plane
+   `upgradeStrategy.rolling.maxParallelism` is `1`.
 2. Run and retain the complete preflight evidence.
-3. Unlock the target and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health checks.
-4. Do not run a competing manual `talosctl upgrade`.
+3. Run `omnictl cluster template sync --dry-run --verbose` and reject any unexpected resource or machine change.
+4. Sync the reviewed template and let Omni perform its normal cordon, drain, installer upgrade, reboot, and health
+   checks. Do not lock the cluster or unrelated machines, and do not run a competing manual `talosctl upgrade`.
 5. Wait for the target to return on Talos `v1.13.9`, Kubernetes `v1.36.4`, `Ready`, and schedulable.
-6. Verify the expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions.
+6. Verify the exact expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions.
 7. Verify Kubernetes API readiness, three-member etcd health, and clean Ceph state again.
-8. Lock the completed machine before allowing the next target to start.
+8. Commit the next machine's extension-list change only after all gates pass again.
 
-Do not unlock two control-plane machines simultaneously. If Omni leaves a failed target cordoned, diagnose the
-current failure first; uncordon only after the attempted operation is no longer running and the node is healthy.
+If Omni leaves a failed target cordoned, diagnose the current failure first; uncordon only after the attempted
+operation is no longer running and the node is healthy. Never add the next machine's desired extension until the
+current phase is complete.
 
 ## Runtime activation and proof
 
 Argo CD application `kata-runtimes` owns four node-gated RuntimeClasses:
 
-| RuntimeClass | VMM | Required node label |
-| --- | --- | --- |
-| `kata-qemu` | QEMU | `runtime.proompteng.ai/kata-qemu=ready` |
-| `kata-clh` | Cloud Hypervisor | `runtime.proompteng.ai/kata-clh=ready` |
-| `kata-fc` | Firecracker | `runtime.proompteng.ai/kata-fc=ready` |
-| `kata-dragonball` | Dragonball | `runtime.proompteng.ai/kata-dragonball=ready` |
+| RuntimeClass      | VMM              | Required node label                           |
+| ----------------- | ---------------- | --------------------------------------------- |
+| `kata-qemu`       | QEMU             | `runtime.proompteng.ai/kata-qemu=ready`       |
+| `kata-clh`        | Cloud Hypervisor | `runtime.proompteng.ai/kata-clh=ready`        |
+| `kata-fc`         | Firecracker      | `runtime.proompteng.ai/kata-fc=ready`         |
+| `kata-dragonball` | Dragonball       | `runtime.proompteng.ai/kata-dragonball=ready` |
 
 Installing the handlers does not schedule a canary. Activate one runtime on one node at a time:
 
