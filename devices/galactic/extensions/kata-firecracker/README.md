@@ -71,6 +71,11 @@ Omni does not select these installers from a `machine.install.image` config patc
 signed combined catalog and generates the desired per-machine schematic from each machine's `systemExtensions`. See
 `devices/nuc/image-factory/README.md` for the factory and registry-mirror handoff.
 
+If a corrected extension rebuild replaces the cached installer while its schematic ID and Talos version remain
+unchanged, Omni correctly reports the machine as up to date. The cluster runbook documents the only direct-install
+exception for that state: prove the new manifest digest, finish a target-only drain with no concurrent Omni task, run
+the exact installer on that already-drained node, and keep it cordoned until all four runtime proofs pass.
+
 Talos disables containerd's built-in `blockfile` snapshotter in `/etc/cri/containerd.toml`, and its default CRI image
 settings discard layer blobs after overlayfs unpack. Each Kata-enabled machine patch in
 `devices/galactic/omni/cluster-template.yaml` therefore removes only `io.containerd.snapshotter.v1.blockfile` from

@@ -48,6 +48,12 @@ artifact identity gate in `docs/runbooks/talos-latest-upgrade-plan.md` to tie th
 signed Kata digest. `MachineUpgradeStatus: machine is up to date`, a matching schematic ID, and extension version
 `4.1.0` prove convergence to that installer; they do not prove which extension digest built it.
 
+When a reviewed cache rebuild changes the installer manifest digest but leaves both the schematic ID and Talos version
+unchanged, Omni has no desired-state difference and correctly creates no new machine task. Do not mutate the template
+or fake a version change to force one. After proving there is no active Omni operation, use only the target-specific,
+already-drained same-schematic replacement procedure in `docs/runbooks/talos-latest-upgrade-plan.md`, then return to
+Omni ownership and the normal runtime-acceptance sequence.
+
 Omni's normal lifecycle cordons and drains before the installer reboot, then `FinalizeReboot` uncordons the Kubernetes
 node after it returns. That automatic uncordon means the installer transport finished; it is not Kata acceptance. The
 operator must immediately apply a separate runtime-validation cordon and keep the node
