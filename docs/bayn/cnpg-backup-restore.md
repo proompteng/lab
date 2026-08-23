@@ -5,7 +5,7 @@ are protected from ordinary Argo prune/delete operations. They must only be remo
 evidence-retention change. The database has two synchronous amd64 instances; loss of the standby blocks writes instead
 of acknowledging unreplicated evidence.
 
-The platform app installs Barman Cloud Plugin 0.14.0 in the same namespace as the CloudNativePG 1.30 operator. Its
+The platform app installs Barman Cloud Plugin 0.13.0 in the same namespace as the CloudNativePG 1.30 operator. Its
 manager and injected sidecar images are pinned by multi-architecture digest. Bayn uses the plugin API from its first
 backup, avoiding the native Barman API that CloudNativePG removes in 1.31.
 
@@ -70,26 +70,24 @@ the recovery Cluster has no backup stanza and only reads that archive.
 
 4. Add a temporary, uniquely named recovery `Cluster` and matching ingress-only `NetworkPolicy` to a reviewed GitOps
    change. The policy permits only its own peers, the CNPG operator on ports 5432/8000, and Alloy on 9187. Use one
-   instance, the same pinned image and storage class, and recover the exact named `Backup` object:
+   instance, the same pinned image and storage class, and this recovery source:
 
    ```yaml
    bootstrap:
      recovery:
+       source: bayn-db-source
        backup:
          name: bayn-db-proof-UTC_SUFFIX
        database: bayn
        owner: bayn_app
-       recoveryTarget:
-         backupID: BACKUP_STATUS_BACKUP_ID
-         targetImmediate: true
+   externalClusters:
+     - name: bayn-db-source
+       plugin:
+         name: barman-cloud.cloudnative-pg.io
+         parameters:
+           barmanObjectName: bayn-db
+           serverName: bayn-db-live
    ```
-
-   `recovery.backup` and `recovery.source` are mutually exclusive in the CloudNativePG API. The named-backup path is
-   required for this proof because step 3 intentionally writes a later `DROP SCHEMA` WAL record to the live archive;
-   a latest-state recovery could replay that later WAL and erase the proof row. Set `BACKUP_STATUS_BACKUP_ID` to the
-   selected Backup's `.status.backupId`; `targetImmediate: true` stops recovery at the end-of-backup consistency point
-   instead of replaying later archived WAL. The recovery Cluster must not configure `plugins` or `externalClusters`, so
-   it cannot archive WAL or select a different backup lineage.
 
 5. After Argo reports the recovery Cluster healthy, query the exact proof row through `kubectl cnpg psql`. Record the
    primary and recovery Cluster UIDs, backup name/ID, start/end timestamps, source image digest, proof row, and recovery

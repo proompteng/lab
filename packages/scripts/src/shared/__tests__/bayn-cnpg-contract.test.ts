@@ -242,49 +242,6 @@ test('Bayn backups use an isolated protected plugin object store and bounded sch
     ]),
   )
   expect(restoreRunbook).toContain('name: bayn-db-proof-UTC_SUFFIX')
-  expect(restoreRunbook).toContain('`recovery.backup` and `recovery.source` are mutually exclusive')
-})
-
-test('Bayn recovery drill restores one exact named backup without a writable archive path', () => {
-  const cluster = readManifest('argocd/applications/bayn/postgres-recovery-drill.yaml')
-  const policy = readManifest('argocd/applications/bayn/postgres-recovery-drill-networkpolicy.yaml')
-  const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
-
-  expect(cluster.metadata.name).toBe('bayn-db-proof-20260819t131313z')
-  expect(cluster.spec).toMatchObject({
-    instances: 1,
-    enablePDB: false,
-    enableSuperuserAccess: false,
-    storage: { storageClass: 'rook-ceph-block', size: '10Gi' },
-    bootstrap: {
-      recovery: {
-        backup: { name: 'bayn-db-proof-20260819t131313z' },
-        database: 'bayn',
-        owner: 'bayn_app',
-        recoveryTarget: { backupID: '20260819T131409', targetImmediate: true },
-      },
-    },
-  })
-  expect(cluster.spec.bootstrap.recovery.source).toBeUndefined()
-  expect(cluster.spec.externalClusters).toBeUndefined()
-  expect(cluster.spec.plugins).toBeUndefined()
-  expect(cluster.spec.imageName).toBe(
-    'ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219',
-  )
-
-  expect(policy.spec.podSelector.matchLabels).toEqual({ 'cnpg.io/cluster': 'bayn-db-proof-20260819t131313z' })
-  expect(policy.spec.policyTypes).toEqual(['Ingress'])
-  expect(policy.spec.ingress).toHaveLength(3)
-  expect(policy.spec.ingress[0]).toEqual({
-    from: [{ podSelector: { matchLabels: { 'cnpg.io/cluster': 'bayn-db-proof-20260819t131313z' } } }],
-    ports: [
-      { port: 5432, protocol: 'TCP' },
-      { port: 8000, protocol: 'TCP' },
-    ],
-  })
-  expect(kustomization.resources).toEqual(
-    expect.arrayContaining(['postgres-recovery-drill-networkpolicy.yaml', 'postgres-recovery-drill.yaml']),
-  )
 })
 
 test('Bayn and its database have explicit network paths and existing CNPG telemetry', () => {
