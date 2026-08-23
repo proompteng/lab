@@ -17,3 +17,19 @@ owner = "torghut-runtime"
 reason = "The required TigerBeetle safety boundary must fail closed for every ordinary client construction or probe exception."
 removal_target = "Remove after check_tigerbeetle_health converts all client construction failures into TigerBeetleHealth."
 line = 230
+
+[[allow]]
+path = "app/api/health_checks/tigerbeetle_health.py"
+symbol = "torghut-broad-exception"
+owner = "torghut-runtime"
+reason = "Native client cleanup must absorb every ordinary binding exception so the shared health future is always settled."
+removal_target = "Replace after the TigerBeetle binding exposes an exhaustive cleanup exception base class."
+line = 70
+
+[[allow]]
+path = "app/api/health_checks/tigerbeetle_health.py"
+symbol = "torghut-broad-exception"
+owner = "torghut-runtime"
+reason = "The daemon worker must settle its shared future for every ordinary native construction, probe, or cleanup exception."
+removal_target = "Replace after the TigerBeetle binding exposes one exhaustive client exception base class."
+line = 153

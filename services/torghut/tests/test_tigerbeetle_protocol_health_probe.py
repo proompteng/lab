@@ -76,6 +76,50 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
         self.assertEqual(failed_client.close_calls, 1)
         self.assertEqual(healthy_client.close_calls, 1)
 
+    def test_unexpected_worker_exception_settles_future_and_allows_retry(self) -> None:
+        healthy_client = _ClosableFakeTigerBeetleClient()
+        probe = health_checks_context.TigerBeetleProtocolHealthProbe()
+
+        with patch.object(
+            health_checks_context,
+            "create_tigerbeetle_client",
+            side_effect=(TypeError("native binding mismatch"), healthy_client),
+        ) as create_client:
+            with self.assertRaisesRegex(
+                health_checks_context.TigerBeetleProtocolHealthProbeWorkerError,
+                "TypeError: native binding mismatch",
+            ):
+                probe.check(settings)
+            recovered = probe.check(settings)
+            probe.close()
+
+        self.assertTrue(recovered.ok)
+        self.assertEqual(create_client.call_count, 2)
+        self.assertEqual(healthy_client.close_calls, 1)
+
+    def test_worker_start_failure_settles_future_and_allows_retry(self) -> None:
+        client = _ClosableFakeTigerBeetleClient()
+        probe = health_checks_context.TigerBeetleProtocolHealthProbe()
+
+        with patch.object(
+            threading.Thread,
+            "start",
+            side_effect=RuntimeError("worker unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "worker unavailable"):
+                probe.check(settings)
+
+        with patch.object(
+            health_checks_context,
+            "create_tigerbeetle_client",
+            return_value=client,
+        ):
+            recovered = probe.check(settings)
+            probe.close()
+
+        self.assertTrue(recovered.ok)
+        self.assertEqual(client.close_calls, 1)
+
     def test_reset_replaces_a_healthy_client(self) -> None:
         first_client = _ClosableFakeTigerBeetleClient()
         second_client = _ClosableFakeTigerBeetleClient()

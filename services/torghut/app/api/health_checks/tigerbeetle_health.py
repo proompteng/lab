@@ -67,7 +67,7 @@ class TigerBeetleProtocolHealthProbe:
             return
         try:
             close()
-        except (OSError, RuntimeError, ValueError) as exc:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover - native cleanup boundary
             logger.warning("TigerBeetle protocol health client cleanup failed: %s", exc)
 
     @classmethod
@@ -150,9 +150,16 @@ class TigerBeetleProtocolHealthProbe:
             self._close_client(client)
             client = None
             attempt.future.set_result(health)
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:
             self._close_client(client)
-            attempt.future.set_exception(exc)
+            if isinstance(exc, (ImportError, OSError, RuntimeError, ValueError)):
+                attempt.future.set_exception(exc)
+            else:
+                attempt.future.set_exception(
+                    TigerBeetleProtocolHealthProbeWorkerError(
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                )
 
     def _attempt_for(
         self,
@@ -185,7 +192,10 @@ class TigerBeetleProtocolHealthProbe:
     ) -> TigerBeetleHealth:
         attempt, worker = self._attempt_for(settings_obj)
         if worker is not None:
-            worker.start()
+            try:
+                worker.start()
+            except RuntimeError as exc:
+                attempt.future.set_exception(exc)
         try:
             return attempt.future.result(
                 timeout=max(0.001, float(timeout_seconds)),
@@ -229,6 +239,10 @@ class TigerBeetleProtocolHealthProbe:
 
 class TigerBeetleProtocolHealthProbeResetError(RuntimeError):
     """Raised when a stale in-flight probe is invalidated."""
+
+
+class TigerBeetleProtocolHealthProbeWorkerError(RuntimeError):
+    """Raised when the daemon probe fails outside expected client errors."""
 
 
 _tigerbeetle_protocol_health_probe = TigerBeetleProtocolHealthProbe()
