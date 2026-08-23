@@ -184,6 +184,25 @@ test('process.env throws in strict mode when called from workflow code', async (
   )
 })
 
+test('process.env remains mutable outside workflow code after guard installation', () => {
+  const envKey = 'TEMPORAL_BUN_SDK_RUNTIME_GUARD_MUTATION_TEST'
+  const originalValue = process.env[envKey]
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+
+  try {
+    expect(() => {
+      process.env[envKey] = 'updated'
+    }).not.toThrow()
+    expect(process.env[envKey]).toBe('updated')
+  } finally {
+    if (originalValue === undefined) {
+      delete process.env[envKey]
+    } else {
+      process.env[envKey] = originalValue
+    }
+  }
+})
+
 test('runtime guard installation preserves Bun 1.4 immutable Bun.env snapshots', () => {
   const bunRef = (globalThis as unknown as { Bun?: BunRuntimeForGuardTests }).Bun
   if (!bunRef?.env) {
