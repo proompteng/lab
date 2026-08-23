@@ -5,6 +5,7 @@ use (
 	./services/eclair
 	./services/facteur
 	./services/miel
+	./services/microvm-agent
 	./services/prt
 	./services/saigak/proxy
 )
