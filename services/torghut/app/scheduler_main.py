@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.types import ExceptionHandler
 
 from .api.application import build_registered_app
+from .api.health_checks import close_tigerbeetle_protocol_health_probe
 from .bootstrap import assert_dspy_cutover_migration_guard, sqlalchemy_exception_handler
 from .config import settings
 from .db import SessionLocal, ensure_schema
@@ -85,6 +86,7 @@ async def scheduler_lifespan(app: FastAPI):
         logger.info("Torghut scheduler shutdown initiated")
         await whitepaper_worker.stop()
         await scheduler.stop()
+        close_tigerbeetle_protocol_health_probe()
         logger.info("Torghut scheduler shutdown complete")
 
 
