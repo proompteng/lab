@@ -97,9 +97,81 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
         self.assertEqual(first_client.close_calls, 1)
         self.assertEqual(second_client.close_calls, 1)
 
-    def test_in_flight_probe_rejects_concurrent_work_and_does_not_block_close(
-        self,
-    ) -> None:
+    def test_concurrent_callers_reuse_in_flight_result(self) -> None:
+        client = _ClosableFakeTigerBeetleClient()
+        probe = health_checks_context.TigerBeetleProtocolHealthProbe()
+        probe_started = threading.Event()
+        release_probe = threading.Event()
+        concurrent_attempt_selected = threading.Event()
+        results: list[TigerBeetleHealth] = []
+        worker_errors: list[BaseException] = []
+        attempt_selection_count = 0
+        original_attempt_for = probe._attempt_for
+
+        def observe_attempt(settings_obj):
+            nonlocal attempt_selection_count
+            selected = original_attempt_for(settings_obj)
+            attempt_selection_count += 1
+            if attempt_selection_count == 2:
+                concurrent_attempt_selected.set()
+            return selected
+
+        def blocking_health(
+            _settings: object,
+            *,
+            client: object | None = None,
+        ) -> TigerBeetleHealth:
+            del client
+            probe_started.set()
+            release_probe.wait(timeout=1.0)
+            return TigerBeetleHealth(
+                enabled=True,
+                required=True,
+                ok=True,
+                cluster_id=settings.tigerbeetle_cluster_id,
+                replica_addresses=["tb:3000"],
+                last_error=None,
+            )
+
+        def run_probe() -> None:
+            try:
+                results.append(probe.check(settings, timeout_seconds=1.0))
+            except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                worker_errors.append(exc)
+
+        with (
+            patch.object(
+                health_checks_context,
+                "create_tigerbeetle_client",
+                return_value=client,
+            ) as create_client,
+            patch.object(
+                health_checks_context,
+                "check_tigerbeetle_health",
+                side_effect=blocking_health,
+            ),
+            patch.object(probe, "_attempt_for", side_effect=observe_attempt),
+        ):
+            worker = threading.Thread(target=run_probe, daemon=True)
+            worker.start()
+            self.assertTrue(probe_started.wait(timeout=1.0))
+            concurrent_worker = threading.Thread(target=run_probe, daemon=True)
+            concurrent_worker.start()
+            self.assertTrue(concurrent_attempt_selected.wait(timeout=1.0))
+            release_probe.set()
+            worker.join(timeout=1.0)
+            concurrent_worker.join(timeout=1.0)
+            probe.close()
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(concurrent_worker.is_alive())
+        self.assertEqual(worker_errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertIs(results[0], results[1])
+        create_client.assert_called_once_with(settings)
+        self.assertEqual(client.close_calls, 1)
+
+    def test_close_does_not_wait_for_blocked_probe(self) -> None:
         client = _ClosableFakeTigerBeetleClient()
         probe = health_checks_context.TigerBeetleProtocolHealthProbe()
         probe_started = threading.Event()
@@ -125,7 +197,7 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
 
         def run_probe() -> None:
             try:
-                probe.check(settings)
+                probe.check(settings, timeout_seconds=1.0)
             except (ImportError, OSError, RuntimeError, ValueError) as exc:
                 worker_errors.append(exc)
 
@@ -134,7 +206,7 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
                 health_checks_context,
                 "create_tigerbeetle_client",
                 return_value=client,
-            ) as create_client,
+            ),
             patch.object(
                 health_checks_context,
                 "check_tigerbeetle_health",
@@ -146,10 +218,6 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
             self.assertTrue(probe_started.wait(timeout=1.0))
 
             started_at = time.monotonic()
-            with self.assertRaises(
-                health_checks_context.TigerBeetleProtocolHealthProbeBusyError
-            ):
-                probe.check(settings)
             probe.close(wait_timeout_seconds=0.01)
             elapsed = time.monotonic() - started_at
 
@@ -158,6 +226,9 @@ class TestTigerBeetleProtocolHealthProbe(TestCase):
 
         self.assertLess(elapsed, 0.1)
         self.assertFalse(worker.is_alive())
-        self.assertEqual(worker_errors, [])
-        create_client.assert_called_once_with(settings)
+        self.assertEqual(len(worker_errors), 1)
+        self.assertIsInstance(
+            worker_errors[0],
+            health_checks_context.TigerBeetleProtocolHealthProbeResetError,
+        )
         self.assertEqual(client.close_calls, 1)
