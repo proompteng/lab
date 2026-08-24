@@ -1,164 +1,137 @@
 # Kata 4.1.0 / Talos v1.13.9 release receipt
 
-Recorded on 2026-08-23. This receipt separates signed artifact publication, Image Factory resolution, Omni installer
-convergence, and live runtime acceptance. Only the last state proves that a RuntimeClass works on Galactic.
+Recorded on 2026-08-24. Status: **complete**. All three Galactic control-plane nodes run the signed r4 extension,
+retain their machine-specific extensions, are Ready and schedulable, and pass all four native Kubernetes Kata
+RuntimeClasses. This receipt separates artifact publication, node installation, and live guest acceptance; only the
+last state proves that a runtime works.
 
-## r1 publication gate
+## Final r4 artifact chain
 
-The immutable artifacts recorded below are the superseded pre-r1 build. Do not use them for a new rollout. The
-`linux/arm64` archive generated `firmware = "/usr/local/share/aavmf/AAVMF_CODE.fd"` for Dragonball even though Kata
-runtime-rs rejects every non-empty Dragonball firmware value. QEMU, Cloud Hypervisor, and Firecracker booted on Altra,
-but Dragonball correctly failed before guest boot and exposed the packaging defect.
+Main-branch run [32679570540](https://github.com/proompteng/lab/actions/runs/32679570540) built, signed, and verified
+the final artifacts from merge commit
+[`699e4776dbeefdfc7c1a8348688f27428478ef82`](https://github.com/proompteng/lab/commit/699e4776dbeefdfc7c1a8348688f27428478ef82).
 
-The corrected workflow publishes tag `4.1.0-talos-v1.13.9-r1`, forces `firmware = ""` in both architecture images,
-and validates that invariant during the container build. No further node install is permitted until this receipt
-records the signed r1 extension, catalog, and installer digests and the NUC Image Factory resolves the r1 digest.
+| Artifact                   | Platform                     | Immutable reference                                                                                              |
+| -------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Kata runtime extension r4  | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/talos-kata-runtimes@sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44` |
+| Extension child            | `linux/amd64`                | `sha256:d826a1502799c0ee2af1537fcb592f20e17fb184dd55ea08fecf3db3e328f566`                                        |
+| Extension child            | `linux/arm64`                | `sha256:ad84cb227c60cafa50ad2c9cd9622fda347f9cc55fb923ba0331f3dba84d4baa`                                        |
+| Combined extension catalog | OCI manifest                 | `ghcr.io/proompteng/talos-extensions@sha256:9cc2637cbf2ad061f5d39164ce558d71ab4608cdea702d42753f94d87539433a`    |
+| Ryzen installer            | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:e12717e24f74b0d509a9c57cc2e5036854dfa3a9de0aafa33a3a0d2bf7b317d3` |
+| Turin installer            | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:fffaddf186ff39e4352b17fd032bac60aa518abac459346f43fde95586897db0` |
+| Altra installer            | `linux/arm64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:08a58afa7ca1ed0d02e23b9ff940edb37b131f0f1291392f2c00bdc9049dcfa2` |
+| Long-running microVM agent | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`       |
 
-## Source and workflows
+The amd64 extension child uses config digest
+`sha256:33607af06cc7064b91cefa7befb46d7e02421680dee2d41b37fd1dea970f99cb`; the arm64 child uses config digest
+`sha256:8bdbaa43a44172ca93b8f1ad98631c3cc99542294ff4b0969c30746f88959130`. Every r4 extension, catalog, and installer
+reference passed keyless Cosign verification with identity
+`https://github.com/proompteng/lab/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main`, issuer
+`https://token.actions.githubusercontent.com`. The NUC Image Factory live `v1.13.9` catalog resolved the custom
+extension to the r4 index digest before rollout.
 
-- Runtime correction merge: [`a4efd5beae61ceb7ee3a4a2624ba6fe65f1e3bb0`](https://github.com/proompteng/lab/commit/a4efd5beae61ceb7ee3a4a2624ba6fe65f1e3bb0),
-  [PR #14015](https://github.com/proompteng/lab/pull/14015).
-- Runtime workflow: [Kata multi-runtime Talos extension run 32661898945](https://github.com/proompteng/lab/actions/runs/32661898945),
-  successful for the multi-architecture extension, catalog, and all three installer build receipts.
-- Agent source: `ffebebfcf0bf4f11b8f0e44614749f08ed07e8d9`.
-- Agent workflow: [MicroVM agent run 32631290227](https://github.com/proompteng/lab/actions/runs/32631290227),
-  successful.
+## Correction history
 
-The correction caps Firecracker at 32 vCPUs and changes its VMM socket timing to a 100 ms initial dial with a
-45-second reconnect budget. It retains the Talos CRI blockfile prerequisites required for a Firecracker rootfs.
+Only r4 is accepted. The earlier artifacts remain immutable but are superseded:
 
-## Superseded pre-r1 immutable artifacts
+1. the initial build exposed a non-empty Dragonball firmware value that runtime-rs rejects;
+2. r1 cleared Dragonball firmware on both architectures;
+3. r2 isolated the QEMU guest image from the Dragonball-specific arm64 kernel configuration;
+4. r3 extended Dragonball's first-boot timeout; and
+5. r4 selected MMIO disks for Dragonball on arm64, fixing its final boot blocker.
 
-| Artifact                      | Platform                     | Immutable reference                                                                                              |
-| ----------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Kata runtime extension        | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/talos-kata-runtimes@sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46` |
-| Combined extension catalog    | OCI manifest                 | `ghcr.io/proompteng/talos-extensions@sha256:98c2013398434f1c0d0600d6d2071ec7aa9ef9444c04ca256c2bde640f8306c1`    |
-| Ryzen installer build receipt | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:6d8ee2f30b38384df6c0b021ddd0417f8891afb387e32fc3659b7cea70b8b39d` |
-| Turin installer build receipt | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:af107449c30a1cc9c06339392182e733c6a43bbb5f380df17648e1cbd6143ab9` |
-| Altra installer build receipt | `linux/arm64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:29ceb3c37b8eaca8b9d2d0f20609b05d1a707d4d5bd94569066130461e3b8d4d` |
-| Long-running microVM agent    | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`       |
+The final implementation also caps Firecracker at 32 vCPUs, uses a 100 ms initial VMM socket dial with a 45-second
+reconnect budget, enables containerd's blockfile snapshotter only for `kata-fc`, retains compressed OCI layers, and
+uses local CRI pulls so Firecracker can build its block-backed root filesystem.
 
-All six references passed keyless Cosign verification against GitHub Actions OIDC. The extension, catalog, and
-installer receipts use identity
-`https://github.com/proompteng/lab/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main`; the agent uses
-`https://github.com/proompteng/lab/.github/workflows/microvm-agent.yaml@refs/heads/main`. Both use issuer
-`https://token.actions.githubusercontent.com`.
+Source history:
 
-The superseded 84-entry catalog resolved the custom entry to:
+- [PR #14015](https://github.com/proompteng/lab/pull/14015): cap Firecracker vCPUs on large hosts;
+- [PR #14018](https://github.com/proompteng/lab/pull/14018): clear Dragonball firmware;
+- [PR #14019](https://github.com/proompteng/lab/pull/14019): isolate the QEMU guest image;
+- [PR #14020](https://github.com/proompteng/lab/pull/14020): extend Dragonball boot timeout; and
+- [PR #14021](https://github.com/proompteng/lab/pull/14021): use MMIO disks for Dragonball arm64.
 
-```text
-ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9@sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46
-```
+Superseded references such as the initial extension
+`sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46` and r1 extension
+`sha256:65a2f8262aaa57d2cf766b71840138a88bfb66e974622c7378fc25a6fe8ec1fc` must not be used for a new rollout.
 
-## NUC Image Factory handoff
+## Sequential node installation
 
-The community Image Factory `v1.5.0` and private registry are running at
-`http://100.100.244.148:8081`. After the service restart, live catalog readback returned the expected extension digest
-`sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46`.
+The resumed rollout completed Altra, Turin, then Ryzen. Before each machine, Kubernetes readiness, `/dev/kvm`, and
+three healthy non-learner etcd voters were proved. A fresh etcd snapshot was taken from a non-target voter, and etcd
+leadership was moved off the target when necessary. Ceph health and flags were recorded but did not block this rollout
+under the explicit operator policy. Existing PDBs were bypassed only for the authorized maintenance drains by using
+`kubectl drain --disable-eviction`; `--force` was never used.
 
-The smoke request returned schematic
-`2e2b452f790f45e5cc3be7e1fd6bf2fa5124b48454a908dd288aea898288c103` both before and after the catalog update. That
-is expected: a schematic ID identifies the ordered customization request, not the resolved extension content. The
-smoke result and catalog readback do not prove that an older per-machine installer cache entry was rebuilt. Every node
-still requires the exact installer-to-extension digest proof in the rollout runbook.
+| Machine                       | Installer digest                                                          | Post-install host boot ID              | Preserved extension set                        |
+| ----------------------------- | ------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------- |
+| Altra / `talos-192-168-1-85`  | `sha256:08a58afa7ca1ed0d02e23b9ff940edb37b131f0f1291392f2c00bdc9049dcfa2` | `7ffd1d61-9f88-4712-8d57-27ba8b505f6a` | Kata, NVIDIA kernel modules/toolkit, Tailscale |
+| Turin / `turin`               | `sha256:fffaddf186ff39e4352b17fd032bac60aa518abac459346f43fde95586897db0` | `19c29240-caea-4db7-a1e6-4fba8515e0c5` | Kata, NVIDIA kernel modules/toolkit, Tailscale |
+| Ryzen / `talos-192-168-1-194` | `sha256:e12717e24f74b0d509a9c57cc2e5036854dfa3a9de0aafa33a3a0d2bf7b317d3` | `9e25987c-2665-4a19-b578-befe3516a27c` | Kata, AMDGPU, AMD microcode, glibc, Tailscale  |
 
-## Live Galactic snapshot
+Snapshot receipts:
 
-The following was read directly from Kubernetes, Talos, Omni, Ceph, and Image Factory on 2026-08-23:
+| Target | SHA-256                                                            | etcd hash  | Revision    | Size              |
+| ------ | ------------------------------------------------------------------ | ---------- | ----------- | ----------------- |
+| Altra  | `9625f50090ff7755b607bf7bfad14fb5b88423c635cb931f86dc46161cf2372f` | `4f163e33` | `523964071` | `372760608` bytes |
+| Turin  | `7a6a95d5758559f986dd80b5b4e7428e792ad55f64ea6b28a20c4acdd0d65e10` | `f7baa3a8` | `524150330` | `372101120` bytes |
+| Ryzen  | `500ebb1cc886cd4d1a0be2a34c0f86202c1677c9ab832a416ced90b993b0ef54` | `9a76eef0` | `524192701` | `374329376` bytes |
 
-- all three Kubernetes nodes are `Ready`, schedulable, and running Kubernetes `v1.36.4`;
-- Omni reports Talos `v1.13.9` and `machine is up to date` for each node's current schematic;
-- Ryzen and Turin report installed extension `kata-runtimes` version `4.1.0`, but Talos does not expose the source OCI
-  digest in that resource;
-- Altra does not report an installed Kata extension;
-- Ryzen has all four runtime activation labels, and its QEMU, Cloud Hypervisor, Firecracker, and Dragonball canary Pods
-  are Ready and retained for inspection; Turin and Altra have no runtime activation labels;
-- Ceph has six of six OSDs up/in and three monitors, but remains `HEALTH_WARN`: 586 placement groups are active and
-  clean, 13 are waiting to backfill, 2 are backfilling, and 1.332% of objects are misplaced.
+### Altra EFI firmware exception
 
-Current installer and acceptance ledger:
+Altra's ADLINK firmware returned `input/output error` while the Talos installer updated
+`LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. The installer had already written a complete r4 UKI to the
+system ESP on `/dev/nvme0n1p1`; `/dev/nvme1n1` is the Ceph disk and was not touched. The staged UKI hash was
+`61c32f783d443887d4b4107f2f19e843ad2e0f4762098d1fcac7d1a632a62e5e`. The prior active UKI was retained as
+`/EFI/Linux/Talos-v1.12.4.efi.pre-kata-r4-20260824T014021Z`, hash
+`f6901e20d5902517a701b9d53e43657b4ab3aff1a207286daa7a7fc518030586`, before promoting the staged image to the
+firmware-selected `Talos-v1.12.4.efi` filename. The exact guarded recovery procedure is in the cluster runbook.
 
-| Machine | Current schematic                                                  | Installed Kata resource | Corrected digest proven in installer                                                 | Corrected runtime acceptance       |
-| ------- | ------------------------------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------ | ---------------------------------- |
-| Ryzen   | `1146e679c37da65960431dfb8f90ec3fe9af454d68da3a7ffe78ec72aa7571bd` | `kata-runtimes 4.1.0`   | Yes, index `sha256:93235a29a518661225b78d72a88797f4a389e4f53cddca6eb482dfa7f094844c` | QEMU, CLH, FC, Dragonball accepted |
-| Turin   | `cf3a3e88087d1ccb35a6aa3ebc4404bc7b66cd90f836bf66f42cea5b2854f0ca` | `kata-runtimes 4.1.0`   | No                                                                                   | None                               |
-| Altra   | `6e246b622304aee389cfed7ed4f13dd4dac4a751243ed43bae10d73c63195e7d` | Not installed           | No                                                                                   | None                               |
+### Turin reboot recovery
 
-Earlier Turin testing against a pre-correction build produced QEMU and Cloud Hypervisor evidence, exposed the
-Firecracker large-host vCPU failure, and did not prove Dragonball. That evidence explains the correction but cannot
-accept the current digest. No runtime is marked accepted until a fresh canary supplies guest boot, guest kernel, CRI
-sandbox, and host-side VMM or Dragonball shim evidence from the corrected installer.
+Turin installed r4 successfully, then its graceful power-cycle stopped Kubernetes and Talos services but remained in
+the reboot actor while Ceph CSI mounts were being torn down. A second Talos reboot correctly refused to acquire the
+lifecycle lock. After proving the other two etcd voters healthy and confirming Turin's boot ID had not changed, one
+authorized IPMI `chassis power cycle` was sent through the existing BMC procedure. Credentials were neither printed nor
+persisted. Turin returned on the new boot ID above, rejoined etcd, passed all four runtime proofs while still cordoned,
+and was then uncordoned.
 
-## Ryzen acceptance receipt
+Ryzen's staged install and graceful power-cycle completed normally. It remained cordoned until its post-reboot runtime
+proof passed, then was uncordoned.
 
-The cached Ryzen installer index was
-`sha256:6344e42093186c2a08f9857394ed249df8efed07caee7d91ad354f3279b51ab5`; its amd64 config was created before the
-corrected extension workflow completed. The target-only cache entry was invalidated after matching that exact digest.
-Image Factory then rebuilt the unchanged schematic from the live catalog entry
-`sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46` and produced:
+## Final 12-runtime acceptance
 
-- multi-architecture installer index
-  `sha256:93235a29a518661225b78d72a88797f4a389e4f53cddca6eb482dfa7f094844c`;
-- amd64 child `sha256:f07ba968ef14892d0c9aa11e8a0a164366ca195d94ddd9d77ac15f6314cc66a6`; and
-- amd64 config creation time `2026-08-23T21:14:42Z`.
+The final verifier bundle was captured at
+`/tmp/galactic-kata-r4-final-proof-20260824T015020Z`. The directory is ephemeral evidence; reproduce it with
+`verify-runtimes.sh` rather than copying it into Git. For every row, the verifier proved the RuntimeClass, Ready native
+Kubernetes canary Pod, CRI sandbox, architecture, guest boot ID, guest kernel, opaque bootstrap-token hash, microVM ID,
+and host-side VMM process. Dragonball is linked into runtime-rs and is proved by its Kata shim plus configuration.
 
-Because the corrected image kept schematic
-`1146e679c37da65960431dfb8f90ec3fe9af454d68da3a7ffe78ec72aa7571bd` and Talos `v1.13.9`, Omni correctly reported
-the machine as up to date and created no upgrade task. The documented same-schematic exception was therefore used with
-no concurrent Omni operation. Before install, an etcd snapshot was captured from Turin at revision `522353247` with
-snapshot hash `c91004ad`, and Ryzen forfeited etcd leadership to Turin.
+| Node                  | Runtime          | Architecture | Guest boot ID                          | Guest kernel | MicroVM ID                             |
+| --------------------- | ---------------- | ------------ | -------------------------------------- | ------------ | -------------------------------------- |
+| `talos-192-168-1-194` | QEMU             | `amd64`      | `eebd9d61-250f-417b-9b5e-6d3cd39a93b8` | `6.18.35`    | `3b9009c6-7ccd-4499-a55b-d4e59d2c011f` |
+| `talos-192-168-1-194` | Cloud Hypervisor | `amd64`      | `4f0d2a66-57e4-4302-bc80-7b66f1f6904f` | `6.18.35`    | `566d161c-86ed-4afb-880d-8f2eb5faa02e` |
+| `talos-192-168-1-194` | Firecracker      | `amd64`      | `b739702e-5662-48b7-a363-2971f0f59f8d` | `6.18.35`    | `7e325b8d-26df-4c80-96b6-118506309278` |
+| `talos-192-168-1-194` | Dragonball       | `amd64`      | `126e5d28-3895-467c-abf2-11878569e2ad` | `6.18.35`    | `c31f3988-7103-4abd-b060-63381c4eef2c` |
+| `turin`               | QEMU             | `amd64`      | `2e145a33-4ce9-4f8f-b9b5-85331e84b86c` | `6.18.35`    | `ed100cd7-59f5-4a9a-86e0-94ff15036ff0` |
+| `turin`               | Cloud Hypervisor | `amd64`      | `e81ede37-da19-41b7-964d-0aeaa07b264d` | `6.18.35`    | `23b6ac80-92bd-45bf-97f3-ce275ecd6e0d` |
+| `turin`               | Firecracker      | `amd64`      | `4d0368bf-f0fb-4d22-aaf8-1da5581d7435` | `6.18.35`    | `fd3f5e4c-ca08-40fc-8115-a23f5646fe82` |
+| `turin`               | Dragonball       | `amd64`      | `9c5597a8-6c48-41cd-92f9-8f42c396dcb3` | `6.18.35`    | `b9c5b2d9-7496-4c08-bce5-4827f0a3a3a5` |
+| `talos-192-168-1-85`  | QEMU             | `arm64`      | `a4100432-d5de-4a30-a3b2-ba8df2528cc2` | `6.18.35`    | `9312da87-a4d8-49bf-a3a8-2bba479cc312` |
+| `talos-192-168-1-85`  | Cloud Hypervisor | `arm64`      | `68b5f701-6623-40d8-a437-53e07fbc7891` | `6.18.35`    | `8ccd3ea8-54ca-43fb-af5c-e8253680efa8` |
+| `talos-192-168-1-85`  | Firecracker      | `arm64`      | `51143f67-6dd0-4dd8-9987-417754452d03` | `6.18.35`    | `5f4b488c-f921-405d-ad1d-58cdf2ee5cf9` |
+| `talos-192-168-1-85`  | Dragonball       | `arm64`      | `45132fc7-7fcf-4786-adcf-8458ff9210b0` | `6.18.35`    | `d08c0577-e236-4307-aee1-9daa9547e327` |
 
-The operator explicitly waived the Ceph-clean and PDB gates for this maintenance. Ryzen was drained with
-`--disable-eviction`; the already-terminating `bilig-db-1`, `synthesis-db-1`, and `torghut-db-1` Pods required immediate
-deletion because their configured grace period was 30 minutes. The already-drained node then ran:
+Final live state:
 
-```bash
-talosctl --nodes 100.100.244.141 --endpoints 100.100.244.141 upgrade \
-  --image 100.100.244.148:8081/metal-installer/1146e679c37da65960431dfb8f90ec3fe9af454d68da3a7ffe78ec72aa7571bd:v1.13.9 \
-  --drain=false \
-  --wait \
-  --timeout=30m \
-  --progress=plain
-```
+- all three nodes are Ready, schedulable, and running Talos `v1.13.9`, Kubernetes `v1.36.4`, kernel
+  `6.18.44-talos`, and containerd `2.2.7`;
+- etcd has three healthy non-learner voters with no errors;
+- all four RuntimeClasses map to their independent Kata handlers;
+- all 12 canary Pods are Running and Ready and remain available for inspection; and
+- Ceph is recorded as `HEALTH_WARN` with six of six OSDs up/in and three monitor quorum members. Its degraded and
+  backfilling placement groups were explicitly non-blocking for this rollout.
 
-Talos pulled the exact index digest
-`sha256:93235a29a518661225b78d72a88797f4a389e4f53cddca6eb482dfa7f094844c`, installed successfully, rebooted, and
-returned with Talos `v1.13.9`, Kubernetes `v1.36.4`, kernel `6.18.44-talos`, and containerd `2.2.7`. The installed
-extension set contains the corrected `kata-runtimes 4.1.0`, AMD microcode, AMDGPU, glibc, Tailscale, and the expected
-schematic extension. The live Firecracker configuration reports `default_maxvcpus = 32`, `dial_timeout_ms = 100`, and
-`reconnect_timeout_ms = 45000`; CRI selects the `blockfile` snapshotter only for `kata-fc`.
-
-Fresh canaries then passed all acceptance checks on Ryzen:
-
-| Runtime          | RuntimeClass      | Guest kernel | Guest boot ID                          | Host proof                    |
-| ---------------- | ----------------- | ------------ | -------------------------------------- | ----------------------------- |
-| QEMU             | `kata-qemu`       | `6.18.35`    | `476b2b27-7353-4823-a29f-c37f5e75a565` | `qemu-system-x86_64`          |
-| Cloud Hypervisor | `kata-clh`        | `6.18.35`    | `71bb0bff-a141-4152-9b02-6aaedf35164a` | `cloud-hypervisor`            |
-| Firecracker      | `kata-fc`         | `6.18.35`    | `78d7d88a-0dea-4e8a-94f9-f4da4107d663` | `firecracker`                 |
-| Dragonball       | `kata-dragonball` | `6.18.35`    | `9e591020-2e0c-426a-a4a5-71582d821f74` | runtime-rs Kata shim + config |
-
-The proof bundle was captured under `/tmp/galactic-kata-ryzen-proof-lPPcFG` and includes the RuntimeClasses, Pods,
-guest evidence, CRI sandbox mapping, and host processes. All four canaries remain Ready. Ryzen was uncordoned only
-after the combined proof passed and the Kubernetes API plus all three etcd voters were healthy.
-
-The drain also exposed an existing Altra Flannel pod-CIDR exhaustion condition: the CloudNativePG operator initially
-rescheduled there and could not create a sandbox. Deleting that stateless pending operator Pod allowed its Deployment
-to reschedule on Turin. CloudNativePG then recreated every drained database Pod; the `bilig-db`, `synthesis-db`,
-`torghut-db`, `agents-db-next`, `bayn-db`, and `buzz-db` clusters all returned to their full configured ready-instance
-counts before this receipt was updated.
-
-## Required next phase
-
-Ryzen is accepted. Turin is now the only allowed next machine because its pre-correction testing was already started:
-
-1. rerun the full live preflight; the Ryzen maintenance exception does not automatically waive any Turin gate;
-2. prove that Turin's exact generated installer was rebuilt from extension digest
-   `sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46`;
-3. use Omni normally if its desired schematic changes, or the documented same-schematic replacement only if the new
-   installer manifest keeps Turin's current schematic and Talos version;
-4. immediately re-cordon Turin for runtime validation;
-5. prove QEMU, Cloud Hypervisor, Firecracker, and Dragonball one at a time; and
-6. uncordon Turin and advance only after all four pass and the authorized postchecks pass.
-
-Publishing, catalog resolution, extension installation by name, and Omni `up to date` are not completion. Galactic
-completion requires exact digest proof plus fresh evidence for all twelve node/runtime combinations.
+There is no custom controller or CRD in this architecture. A normal Pod selects `kata-qemu`, `kata-clh`, `kata-fc`, or
+`kata-dragonball`; containerd and Kata create one microVM sandbox for that Pod.

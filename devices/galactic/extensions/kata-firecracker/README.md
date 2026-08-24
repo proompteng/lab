@@ -43,7 +43,7 @@ For a local extension-only validation:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --tag ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r1 \
+  --tag ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r4 \
   devices/galactic/extensions/kata-firecracker
 ```
 
@@ -59,7 +59,8 @@ devices/galactic/extensions/kata-firecracker/build-installer.sh \
 ## Activation
 
 Installing the extension changes the immutable Talos installer and reboots the node. Roll out one node at a time only
-after the Kubernetes, etcd, and Ceph gates in the cluster runbook pass. The custom Ryzen installer replaces the stock
+after the Kubernetes and etcd gates in the cluster runbook pass. Record Ceph health and flags for each phase; the
+current Galactic operator policy does not block this rollout on Ceph state. The custom installer replaces the stock
 Kata extension; it does not install both copies.
 
 Installer convergence is not runtime acceptance. The installed extension resource exposes only the extension name and
@@ -84,6 +85,14 @@ settings discard layer blobs after overlayfs unpack. Each Kata-enabled machine p
 Firecracker fails before guest boot. Local pull mode is required because containerd's transfer-service pull path does
 not support the CRI `discard_unpacked_layers` option; retaining the compressed layer blob lets the runtime-specific
 `blockfile` snapshotter unpack an image that was already used by an overlayfs runtime.
+
+Enabling retention cannot recreate compressed layers that containerd discarded earlier. Before a node's first
+Firecracker canary after this migration, fetch content only for both pinned sandbox images: the Kubernetes pause image
+and `ghcr.io/proompteng/microvm-agent`. Use the digest-pinned
+`ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480da6d740019891ecf8f8dda545d0d76652c1986a`
+debug image with the host containerd socket and `ctr --namespace k8s.io content fetch --platform <linux/amd64|linux/arm64>`.
+The exact command is in `docs/runbooks/talos-latest-upgrade-plan.md`. This recovery restores missing OCI content only;
+never prune shared containerd content or snapshots.
 
 Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing the agent image, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
@@ -126,6 +135,10 @@ kubectl --context galactic-lan get node <node>
 
 On any failure, remove only the failed runtime label, retain the evidence, leave the node validation-cordoned, and do
 not change the next machine's desired schematic.
+
+The signed r4 installer is accepted on Ryzen, Turin, and Altra. The final 12-combination receipt, immutable digests,
+guest boot IDs, host VMM evidence, and the two hardware-specific reboot recoveries are recorded in
+`RELEASE-v4.1.0-talos-v1.13.9.md`.
 
 ## Create an agent microVM Pod
 
