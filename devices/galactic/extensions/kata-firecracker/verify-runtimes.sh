@@ -161,6 +161,9 @@ for node in "${nodes[@]}"; do
       trap '\''rm -f "$marker"'\'' EXIT
       printf nanoagent-shell-ok >"$marker"
       test "$(cat "$marker")" = nanoagent-shell-ok
+      rm "$marker"
+      test ! -e "$marker"
+      trap - EXIT
 
       printf "uid=%s\n" "$(id -u)"
       printf "architecture=%s\n" "$(uname -m)"
