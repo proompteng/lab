@@ -21,6 +21,8 @@ done
 readonly upstream_catalog="$1"
 readonly kata_extension="$2"
 readonly requested_output_dir="$3"
+readonly kata_tagged_ref="${kata_extension%@sha256:*}"
+readonly kata_repository="${kata_tagged_ref%:*}"
 
 install -d "$requested_output_dir"
 output_dir="$(cd "$requested_output_dir" && pwd -P)"
@@ -36,7 +38,7 @@ crane export "$upstream_catalog" "$work_dir/upstream.tar"
 tar -xOf "$work_dir/upstream.tar" image-digests >"$output_dir/image-digests"
 tar -xOf "$work_dir/upstream.tar" descriptions.yaml >"$output_dir/descriptions.yaml"
 
-if grep -q '^ghcr.io/proompteng/talos-kata-runtimes:' "$output_dir/image-digests"; then
+if grep -Fq "${kata_repository}:" "$output_dir/image-digests"; then
   echo 'the upstream catalog unexpectedly already contains the custom Kata extension' >&2
   exit 1
 fi

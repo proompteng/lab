@@ -119,13 +119,14 @@ spec:
                   annotations:
                     # Prevent accidental namespace deletion when an app stops managing the Namespace object.
                     argocd.argoproj.io/sync-options: Prune=false
-              - name: kata-runtimes
-                path: devices/galactic/extensions/kata-firecracker
-                namespace: microvm-system
+              - name: kata
+                path: argocd/applications/kata
+                namespace: kata
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                enabled: "true"
+                # Phase one removes and cleans up Application/kata-runtimes before this replacement is created.
+                enabled: "false"
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: restricted

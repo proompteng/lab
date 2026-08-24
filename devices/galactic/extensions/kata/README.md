@@ -30,9 +30,8 @@ runtime-rs and virtualization documentation support Cloud Hypervisor on x86_64 a
 
 ## Build
 
-The workflow builds both architectures, publishes a multi-architecture extension, signs its immutable digest with
-Cosign, and publishes a signed combined `v1.13.9` extension catalog for the self-hosted Image Factory. It also produces
-and signs three architecture-specific Talos installers as independent build receipts:
+The accepted r4 release was built for both architectures, signed with Cosign, added to the signed combined `v1.13.9`
+extension catalog, and assembled into three architecture-specific Talos installers:
 
 - `ryzen-amd64`: Kata plus AMDGPU, AMD microcode, glibc, and Tailscale;
 - `turin-amd64`: Kata plus the NVIDIA LTS kernel/toolkit extensions and Tailscale;
@@ -43,14 +42,18 @@ For a local extension-only validation:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --tag ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r4 \
-  devices/galactic/extensions/kata-firecracker
+  --tag talos-kata-runtimes:validation \
+  devices/galactic/extensions/kata
 ```
 
-After CI publishes the extension, build an installer only from its immutable digest:
+The checked-in workflow now validates both architectures without publishing. The installed r4 release remains pinned
+to its existing immutable GHCR receipts; this repository move does not rebuild or replace it. Any future publication
+must use `registry.ide-newton.ts.net`, and consuming that release is a separate node-image rollout.
+
+To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 
 ```bash
-devices/galactic/extensions/kata-firecracker/build-installer.sh \
+devices/galactic/extensions/kata/build-installer.sh \
   ryzen-amd64 \
   ghcr.io/proompteng/talos-kata-runtimes@sha256:<extension-digest> \
   _out/kata-runtimes/ryzen
@@ -94,16 +97,19 @@ debug image with the host containerd socket and `ctr --namespace k8s.io content 
 The exact command is in `docs/runbooks/talos-latest-upgrade-plan.md`. This recovery restores missing OCI content only;
 never prune shared containerd content or snapshots.
 
-Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing Nanoagent, the long-running
+Argo CD application `kata` owns the RuntimeClasses and, after publishing Nanoagent, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
 eligible by itself.
+
+The Kubernetes package is deliberately separate from this node extension under `argocd/applications/kata`. The Argo
+application and its canaries use namespace `kata`; the installed Talos extension identity remains `kata-runtimes`.
 
 The Nanoagent rename changes the four DaemonSet resource identities. Its first sync must enable pruning so Argo CD
 deletes the superseded `microvm-agent-{qemu,clh,fc,dragonball}` DaemonSets instead of running both generations:
 
 ```bash
-argocd app sync kata-runtimes --prune
-kubectl --context galactic-lan -n microvm-system get daemonsets
+argocd app sync kata --prune
+kubectl --context galactic-lan -n kata get daemonsets
 ```
 
 Only `nanoagent-qemu`, `nanoagent-clh`, `nanoagent-fc`, and `nanoagent-dragonball` may remain. The runtime verifier
@@ -163,7 +169,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: nanoagent-example
-  namespace: microvm-system
+  namespace: kata
 spec:
   runtimeClassName: kata-fc
   restartPolicy: Never
@@ -218,7 +224,7 @@ spec:
 ```
 
 Create the referenced Secret through the workload's normal secret-management path, then apply the Pod with an explicit
-namespace. `kubectl get pod -n microvm-system -o wide` must place it only on a node labeled
+namespace. `kubectl get pod -n kata -o wide` must place it only on a node labeled
 `runtime.proompteng.ai/kata-fc=ready`. One Pod sandbox is one microVM; multiple containers in the same Pod share that
 guest. Use `kata-qemu`, `kata-clh`, or `kata-dragonball` to select another accepted VMM.
 
@@ -226,7 +232,7 @@ Nanoagent contains BusyBox `/bin/sh` and runs as non-root with a writable `/work
 runs the agent process; no shell sidecar or SSH service is required:
 
 ```bash
-kubectl --context galactic-lan -n microvm-system exec -it nanoagent-example -c nanoagent -- /bin/sh
+kubectl --context galactic-lan -n kata exec -it nanoagent-example -c nanoagent -- /bin/sh
 ```
 
 Firecracker cannot use an overlayfs root inside the guest. Its handler alone selects containerd `2.2`'s built-in

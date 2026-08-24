@@ -5,10 +5,10 @@ for per-machine Talos schematics. The factory is reachable only on the Elauwit p
 `http://100.100.244.148:8081`; port `8080` remains owned by Pi-hole, and the backing OCI registry is private to the
 Compose network.
 
-The factory replaces the upstream extension catalog with the signed combined catalog published by
-`.github/workflows/kata-firecracker-extension.yaml` at `ghcr.io/proompteng/talos-extensions:v1.13.9`. That catalog
-contains every official Sidero Labs extension plus `proompteng/talos-kata-runtimes`. This is the supported community
-path: the separate `enterprise.extraExtensions` feature is not required.
+The factory replaces the upstream extension catalog with the accepted signed r4 catalog at
+`ghcr.io/proompteng/talos-extensions:v1.13.9`. That catalog contains every official Sidero Labs extension plus
+`proompteng/talos-kata-runtimes`. The current Kata workflow is validation-only and cannot replace this catalog. This is
+the supported community path: the separate `enterprise.extraExtensions` feature is not required.
 
 ## Trust and persistent state
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly KUBE_CONTEXT='galactic-lan'
-readonly NAMESPACE='microvm-system'
+readonly NAMESPACE='kata'
 
 usage() {
   echo "usage: $0 <absolute-evidence-directory> [kubernetes-node] [qemu|clh|fc|dragonball]" >&2
@@ -75,7 +75,7 @@ legacy_daemonsets="$(
     | rg '/microvm-agent-(qemu|clh|fc|dragonball)$' || true
 )"
 if [[ -n "$legacy_daemonsets" ]]; then
-  echo 'legacy microvm-agent DaemonSets remain; sync kata-runtimes with pruning enabled:' >&2
+  echo 'legacy microvm-agent DaemonSets remain; sync kata with pruning enabled:' >&2
   echo "$legacy_daemonsets" >&2
   exit 1
 fi
