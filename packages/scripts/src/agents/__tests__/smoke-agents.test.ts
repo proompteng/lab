@@ -511,12 +511,18 @@ describe('scheduled AgentRun templates', () => {
     const agentRun = readYamlObjects('argocd/applications/agents/agents-primitives-agentrun.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentRun',
     )
+    const agentRunMetadata = objectAt(agentRun, 'metadata')
+    const agentRunAnnotations = objectAt(agentRunMetadata, 'annotations')
     const spec = objectAt(agentRun, 'spec')
     const workflow = objectAt(spec, 'workflow')
     const steps = objectAt(workflow, 'steps')
 
     expect(objectAt(defaults, 'systemPrompt')).toContain('deterministic Agents primitives smoke-test agent')
+    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/sync-wave')).toBe('1')
+    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/sync-options')).toBe('Force=true,Replace=true')
+    expect(objectAt(spec, 'ttlSecondsAfterFinished')).toBe(600)
     expect(objectAt(objectAt(spec, 'runtime'), 'type')).toBe('workflow')
+    expect(objectAt(objectAt(spec, 'runtime'), 'config')).toBeUndefined()
     expect(Array.isArray(steps)).toBe(true)
     expect(steps).toEqual([
       {
