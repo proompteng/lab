@@ -27,7 +27,7 @@ Runbooks:
 - `devices/galactic/docs/troubleshooting-networking.md`
 - `devices/galactic/docs/tailscale.md`
 - `docs/runbooks/talos-latest-upgrade-plan.md`
-- `devices/galactic/extensions/kata-firecracker/README.md`
+- `devices/galactic/extensions/kata/README.md`
 
 Related:
 

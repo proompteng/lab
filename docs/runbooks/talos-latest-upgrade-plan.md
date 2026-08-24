@@ -25,7 +25,7 @@ Primary operational references:
 - [Self-hosted Image Factory](https://docs.siderolabs.com/omni/self-hosted/run-image-factory-on-prem)
 - [Talos boot assets and system extensions](https://docs.siderolabs.com/talos/v1.13/platform-specific-installations/boot-assets)
 - [Kata virtualization design](https://github.com/kata-containers/kata-containers/blob/main/docs/design/virtualization.md)
-- local runtime documentation: `devices/galactic/extensions/kata-firecracker/README.md`
+- local runtime documentation: `devices/galactic/extensions/kata/README.md`
 - local Image Factory documentation: `devices/nuc/image-factory/README.md`
 
 ## Cluster inventory
@@ -50,18 +50,22 @@ The custom extension replaces the stock Kata extension. Never install both on th
 
 ## Signed artifact chain
 
-The main-branch workflows create the immutable inputs:
+The accepted r4 release produced these immutable inputs:
 
-1. `.github/workflows/kata-firecracker-extension.yaml` builds
+1. The historical main-branch workflow built
    `ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r4` for `linux/amd64` and `linux/arm64`.
-2. The workflow signs and verifies the multi-architecture digest with the exact main-branch GitHub Actions identity.
-3. It copies the full official `v1.13.9` extension catalog, appends the digest-pinned custom extension, publishes
-   `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signs that immutable catalog digest.
-4. It builds and signs independent `ryzen-amd64`, `turin-amd64`, and `altra-arm64` installer receipts. These prove
+2. It signed and verified the multi-architecture digest with the exact main-branch GitHub Actions identity.
+3. It copied the full official `v1.13.9` extension catalog, appended the digest-pinned custom extension, published
+   `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signed that immutable catalog digest.
+4. It built and signed independent `ryzen-amd64`, `turin-amd64`, and `altra-arm64` installer receipts. These prove
    that every architecture-specific extension combination can be assembled.
 5. `.github/workflows/nanoagent.yaml` publishes and signs the shell-capable `linux/amd64` and `linux/arm64`
    Nanoagent image.
 6. GitOps canary images must use the published Nanoagent digest, never a mutable tag.
+
+`.github/workflows/kata-firecracker-extension.yaml` is now validation-only and cannot publish. The accepted r4
+receipts remain authoritative for installed nodes. Future extension publication must use
+`registry.ide-newton.ts.net` and requires a separately reviewed node-image rollout before it can replace r4.
 
 Before touching a node, retain the workflow URLs, image digests, Cosign verification output, and generated installer
 digests in the rollout evidence directory.
@@ -302,7 +306,7 @@ Run the checked-in preflight immediately before every individual node:
 ```bash
 export NODE='<kubernetes-node>'
 export EVIDENCE_DIR="/tmp/galactic-kata-${NODE}-$(date -u +%Y%m%dT%H%M%SZ)"
-devices/galactic/extensions/kata-firecracker/preflight-node.sh "$NODE" "$EVIDENCE_DIR"
+devices/galactic/extensions/kata/preflight-node.sh "$NODE" "$EVIDENCE_DIR"
 ```
 
 The script must prove all of the following:
@@ -324,7 +328,7 @@ flags for the real drain:
 
 ```bash
 GALACTIC_ALLOW_PDB_BYPASS=true \
-  devices/galactic/extensions/kata-firecracker/preflight-node.sh "$NODE" "$EVIDENCE_DIR"
+  devices/galactic/extensions/kata/preflight-node.sh "$NODE" "$EVIDENCE_DIR"
 kubectl --context galactic-lan drain "$NODE" \
   --ignore-daemonsets \
   --delete-emptydir-data \
@@ -393,7 +397,7 @@ phase is accepted.
 
 ## Runtime activation and proof
 
-Argo CD application `kata-runtimes` owns four node-gated RuntimeClasses:
+Argo CD application `kata` owns four node-gated RuntimeClasses:
 
 | RuntimeClass      | VMM              | Required node label                           |
 | ----------------- | ---------------- | --------------------------------------------- |
@@ -456,7 +460,7 @@ canary is a native Kubernetes Pod using `runtimeClassName`; it is not a privileg
 
 ```bash
 export PROOF_DIR="/tmp/galactic-kata-proof-$(date -u +%Y%m%dT%H%M%SZ)"
-devices/galactic/extensions/kata-firecracker/verify-runtimes.sh "$PROOF_DIR" "$NODE" qemu
+devices/galactic/extensions/kata/verify-runtimes.sh "$PROOF_DIR" "$NODE" qemu
 ```
 
 Use `clh`, `fc`, or `dragonball` for the next individual activation. After all four labels pass on all three nodes,
