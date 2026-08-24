@@ -70,6 +70,16 @@ kubectl --context "$KUBE_CONTEXT" get runtimeclass -o yaml >"$evidence_dir/runti
 kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset,pod -o wide \
   >"$evidence_dir/canaries.txt"
 
+legacy_daemonsets="$(
+  kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonsets -o name \
+    | rg '/microvm-agent-(qemu|clh|fc|dragonball)$' || true
+)"
+if [[ -n "$legacy_daemonsets" ]]; then
+  echo 'legacy microvm-agent DaemonSets remain; sync kata-runtimes with pruning enabled:' >&2
+  echo "$legacy_daemonsets" >&2
+  exit 1
+fi
+
 declare -a nodes
 if [[ -n "$requested_node" ]]; then
   nodes=("$requested_node")
@@ -138,6 +148,30 @@ for node in "${nodes[@]}"; do
       >"$node_dir/$vmm-pod.json"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs "$pod" \
       >"$node_dir/$vmm-nanoagent.log"
+    # Expansions in this single-quoted script are intentionally evaluated by the guest shell.
+    # shellcheck disable=SC2016
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" exec "$pod" -c nanoagent -- /bin/sh -ceu '
+      test "$(id -u)" = 65532
+      test -x /bin/sh
+      test -x /usr/local/bin/nanoagent
+      test -w /workspace
+      tr "\000" " " </proc/1/cmdline | grep -Fq /usr/local/bin/nanoagent
+
+      marker=/workspace/.nanoagent-shell-proof-$$
+      trap '\''rm -f "$marker"'\'' EXIT
+      printf nanoagent-shell-ok >"$marker"
+      test "$(cat "$marker")" = nanoagent-shell-ok
+      rm "$marker"
+      test ! -e "$marker"
+      trap - EXIT
+
+      printf "uid=%s\n" "$(id -u)"
+      printf "architecture=%s\n" "$(uname -m)"
+      printf "kernel_release=%s\n" "$(uname -r)"
+      printf "boot_id=%s\n" "$(cat /proc/sys/kernel/random/boot_id)"
+      printf "workspace=writable\n"
+      printf "pid1=nanoagent\n"
+    ' >"$node_dir/$vmm-shell.txt"
     kubectl --context "$KUBE_CONTEXT" get runtimeclass "$runtime_class" -o yaml \
       >"$node_dir/$vmm-runtimeclass.yaml"
     kubectl --context "$KUBE_CONTEXT" get --raw \
@@ -155,6 +189,22 @@ for node in "${nodes[@]}"; do
     jq -e --arg runtime_class "$runtime_class" '.spec.runtimeClassName == $runtime_class' \
       "$node_dir/$vmm-pod.json" >/dev/null
     rg -Fq "$NAMESPACE/$pod" "$node_dir/kubernetes-containers.txt"
+    rg -Fxq 'uid=65532' "$node_dir/$vmm-shell.txt"
+    rg -Fxq 'workspace=writable' "$node_dir/$vmm-shell.txt"
+    rg -Fxq 'pid1=nanoagent' "$node_dir/$vmm-shell.txt"
+    rg -Fxq "kernel_release=$(jq -r '.kernelRelease' "$node_dir/$vmm-guest-evidence.json")" \
+      "$node_dir/$vmm-shell.txt"
+    rg -Fxq "boot_id=$(jq -r '.bootId' "$node_dir/$vmm-guest-evidence.json")" \
+      "$node_dir/$vmm-shell.txt"
+
+    case "$architecture" in
+      amd64) rg -Fxq 'architecture=x86_64' "$node_dir/$vmm-shell.txt" ;;
+      arm64) rg -Fxq 'architecture=aarch64' "$node_dir/$vmm-shell.txt" ;;
+      *)
+        echo "unsupported node architecture: $architecture" >&2
+        exit 1
+        ;;
+    esac
 
     if rg -Fq 'kata-canary-proof-v1' "$node_dir/$vmm-nanoagent.log"; then
       echo "$node/$vmm nanoagent log exposed the canary proof nonce" >&2
