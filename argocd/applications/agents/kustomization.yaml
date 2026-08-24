@@ -42,7 +42,6 @@ resources:
   - agents-primitives-orchestration.yaml
   - agents-primitives-sub-orchestration.yaml
   - agents-primitives-orchestrationrun.yaml
-  - agents-primitives-agentrun.yaml
   - ingressroute-agents-api.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml

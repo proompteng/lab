@@ -1481,7 +1481,11 @@
           "type": "object",
           "properties": {
             "labelSelector": { "type": "string" },
-            "agentRun": { "type": "object" }
+            "agentRun": { "type": "object" },
+            "additionalAgentRuns": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
           },
           "additionalProperties": false
         }

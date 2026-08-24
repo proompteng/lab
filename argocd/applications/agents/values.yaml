@@ -172,6 +172,32 @@ argocdHooks:
             calls
         secrets:
           - codex-auth
+    additionalAgentRuns:
+      - apiVersion: agents.proompteng.ai/v1alpha1
+        kind: AgentRun
+        metadata:
+          name: agents-primitives-agentrun
+        spec:
+          agentRef:
+            name: agents-primitives-agent
+          ttlSecondsAfterFinished: 600
+          implementation:
+            inline:
+              summary: "Run the agents primitives smoke implementation"
+              text: "Execute the sample implementation for the agents primitives workflow."
+          runtime:
+            type: workflow
+          workflow:
+            steps:
+              - name: implementation
+                timeoutSeconds: 600
+                parameters:
+                  stage: implementation
+          parameters:
+            repository: proompteng/lab
+            base: main
+            head: codex/issue-2425-6cedebf4
+            stage: implementation
 controllers:
   enabled: true
   replicaCount: 2

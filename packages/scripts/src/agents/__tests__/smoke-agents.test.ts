@@ -451,6 +451,7 @@ describe('scheduled AgentRun templates', () => {
     const postSync = objectAt(hooks, 'postSync')
     const smoke = objectAt(hooks, 'smoke')
     const smokeRun = objectAt(smoke, 'agentRun') as Record<string, unknown>
+    const additionalSmokeRuns = objectAt(smoke, 'additionalAgentRuns')
     const smokeRunSpec = objectAt(smokeRun, 'spec')
     const provider = readYamlObjects('argocd/applications/agents/codex-spark-smoke-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
@@ -471,6 +472,10 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(smokeRunSpec, 'vcsRef')).toBeUndefined()
     expect(objectAt(smokeRunSpec, 'vcsPolicy')).toBeUndefined()
     expect(objectAt(smokeRunSpec, 'secrets')).toEqual(['codex-auth'])
+    expect(Array.isArray(additionalSmokeRuns)).toBe(true)
+    expect(
+      (additionalSmokeRuns as Record<string, unknown>[]).map((run) => objectAt(objectAt(run, 'metadata'), 'name')),
+    ).toContain('agents-primitives-agentrun')
   })
 
   it('preserves the agents-shell full-depth workspace bootstrap value', () => {
@@ -495,22 +500,38 @@ describe('scheduled AgentRun templates', () => {
     expect(deploymentTemplate).toContain('preserve_checkout "target exists and is not an empty git checkout"')
   })
 
-  it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {
+  it('runs the primitives workflow smoke through the polling Argo hook', () => {
+    const agent = readYamlObjects('argocd/applications/agents/agents-primitives-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
     const provider = readYamlObjects('argocd/applications/agents/agents-primitives-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
     )
+    const agentSpec = objectAt(agent, 'spec')
+    const defaults = objectAt(agentSpec, 'defaults')
     const providerSpec = objectAt(provider, 'spec')
     const adapter = objectAt(providerSpec, 'adapter')
     const codex = objectAt(adapter, 'codex')
     const envTemplate = objectAt(providerSpec, 'envTemplate')
-    const agentRun = readYamlObjects('argocd/applications/agents/agents-primitives-agentrun.yaml').find(
-      (manifest) => objectAt(manifest, 'kind') === 'AgentRun',
+    const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
+    const hooks = objectAt(values, 'argocdHooks')
+    const smoke = objectAt(hooks, 'smoke')
+    const additionalAgentRuns = objectAt(smoke, 'additionalAgentRuns')
+    expect(Array.isArray(additionalAgentRuns)).toBe(true)
+    const agentRun = (additionalAgentRuns as Record<string, unknown>[]).find(
+      (manifest) => objectAt(objectAt(manifest, 'metadata'), 'name') === 'agents-primitives-agentrun',
     )
     const spec = objectAt(agentRun, 'spec')
     const workflow = objectAt(spec, 'workflow')
     const steps = objectAt(workflow, 'steps')
+    const hookTemplate = readFileSync(resolve(process.cwd(), 'charts/agents/templates/argocd-hooks.yaml'), 'utf8')
+    const kustomization = readYamlObjects('argocd/applications/agents/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources')
 
+    expect(objectAt(defaults, 'systemPrompt')).toContain('deterministic Agents primitives smoke-test agent')
+    expect(objectAt(spec, 'ttlSecondsAfterFinished')).toBe(600)
     expect(objectAt(objectAt(spec, 'runtime'), 'type')).toBe('workflow')
+    expect(objectAt(objectAt(spec, 'runtime'), 'config')).toBeUndefined()
     expect(Array.isArray(steps)).toBe(true)
     expect(steps).toEqual([
       {
@@ -519,6 +540,12 @@ describe('scheduled AgentRun templates', () => {
         parameters: { stage: 'implementation' },
       },
     ])
+    expect(hookTemplate).toContain('argocd.argoproj.io/hook: PostSync')
+    expect(hookTemplate).toContain('range $agentRun := $agentRuns')
+    expect(hookTemplate).toContain('Failed|Cancelled')
+    expect(hookTemplate).toContain('Succeeded)')
+    expect(resources).not.toContain('agents-primitives-agentrun.yaml')
+    expect(existsSync(resolve(process.cwd(), 'argocd/applications/agents/agents-primitives-agentrun.yaml'))).toBe(false)
     expect(objectAt(codex, 'binaryPath')).toBe('/usr/local/bin/agents-fake-codex-app-server')
     expect(objectAt(codex, 'model')).toBe('agents-fake-codex-app-server')
     expect(objectAt(codex, 'cwd')).toBeUndefined()

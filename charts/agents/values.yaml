@@ -639,6 +639,7 @@ argocdHooks:
   smoke:
     labelSelector: ''
     agentRun: {}
+    additionalAgentRuns: []
 
 tests:
   enabled: false
