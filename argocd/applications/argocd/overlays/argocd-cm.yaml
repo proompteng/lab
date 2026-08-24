@@ -111,58 +111,6 @@ data:
     hs.message = "Waiting for the Restate operator to report deployment readiness."
     return hs
   resource.customizations.useOpenLibs.restate.dev_RestateDeployment: "true"
-  resource.customizations.health.agents.proompteng.ai_AgentRun: |
-    hs = {}
-
-    local metadata = obj.metadata or {}
-    local status = obj.status or {}
-    local generation = metadata.generation
-    local observedGeneration = status.observedGeneration
-    if generation ~= nil and observedGeneration ~= generation then
-      hs.status = "Progressing"
-      hs.message = "Waiting for the Agents controller to observe the current AgentRun generation."
-      return hs
-    end
-
-    local phase = status.phase or ""
-    local message = status.message or ""
-    if message == "" then
-      message = status.reason or ""
-    end
-
-    if phase == "Succeeded" then
-      hs.status = "Healthy"
-      hs.message = message ~= "" and message or "AgentRun completed successfully."
-      return hs
-    end
-
-    if phase == "Template" then
-      hs.status = "Healthy"
-      hs.message = message ~= "" and message or "AgentRun is a reusable template."
-      return hs
-    end
-
-    if phase == "Failed" or phase == "Cancelled" then
-      hs.status = "Degraded"
-      hs.message = message ~= "" and message or "AgentRun completed with phase " .. phase .. "."
-      return hs
-    end
-
-    local progressing = phase == "" or
-      phase == "Pending" or
-      phase == "Queued" or
-      phase == "Progressing" or
-      phase == "Retrying" or
-      phase == "Running"
-    if progressing then
-      hs.status = "Progressing"
-      hs.message = message ~= "" and message or "Waiting for AgentRun completion."
-      return hs
-    end
-
-    hs.status = "Degraded"
-    hs.message = message ~= "" and message or "AgentRun reported unsupported phase " .. phase .. "."
-    return hs
   resource.customizations.health.batch_CronJob: |
     hs = {}
     local metadata = obj.metadata or {}
