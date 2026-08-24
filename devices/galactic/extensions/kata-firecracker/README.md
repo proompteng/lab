@@ -98,6 +98,17 @@ Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishin
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
 eligible by itself.
 
+The Nanoagent rename changes the four DaemonSet resource identities. Its first sync must enable pruning so Argo CD
+deletes the superseded `microvm-agent-{qemu,clh,fc,dragonball}` DaemonSets instead of running both generations:
+
+```bash
+argocd app sync kata-runtimes --prune
+kubectl --context galactic-lan -n microvm-system get daemonsets
+```
+
+Only `nanoagent-qemu`, `nanoagent-clh`, `nanoagent-fc`, and `nanoagent-dragonball` may remain. The runtime verifier
+rejects the rollout if any legacy DaemonSet is still present.
+
 Omni normally uncordons a node when its reboot lifecycle finalizes. Immediately cordon the returned node again for
 runtime validation and require `Ready,SchedulingDisabled` before applying any runtime label:
 
@@ -122,8 +133,9 @@ kubectl --context galactic-lan label node <node> runtime.proompteng.ai/kata-drag
 ```
 
 The four canaries remain running for inspection. `verify-runtimes.sh` captures their guest boot IDs and kernel
-releases, maps each Pod to its Talos CRI sandbox, and verifies the requested host VMM. Dragonball is built into the
-Kata shim, so it deliberately has no separate VMM process.
+releases, proves `/bin/sh`, Nanoagent PID 1, and writable `/workspace` behavior inside each guest, maps each Pod to its
+Talos CRI sandbox, and verifies the requested host VMM. Dragonball is built into the Kata shim, so it deliberately has
+no separate VMM process.
 
 Only after QEMU, Cloud Hypervisor, Firecracker, and Dragonball have each passed on the target may the node be accepted
 and uncordoned:
