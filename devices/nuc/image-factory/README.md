@@ -49,11 +49,12 @@ docker compose --env-file .env logs --tail 100 image-factory
 
 `ghcr.io/proompteng/talos-extensions:v1.13.9` is a transport tag. Rollout authority is the signed catalog digest and
 the digest-pinned `proompteng/talos-kata-runtimes` entry inside it. Confirm the live factory resolution before every
-node phase:
+node phase. The accepted r4 catalog is
+`ghcr.io/proompteng/talos-extensions@sha256:9cc2637cbf2ad061f5d39164ce558d71ab4608cdea702d42753f94d87539433a`:
 
 ```bash
 export FACTORY='http://100.100.244.148:8081'
-export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
 
 curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
   | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
@@ -82,7 +83,7 @@ one top-level installer index; its shared blobs and every other schematic remain
 export SCHEMATIC_ID='<64-character target schematic ID>'
 export TALOS_VERSION='v1.13.9'
 export EXPECTED_OLD_INSTALLER_DIGEST='sha256:<64-character current index digest>'
-export EXPECTED_KATA_DIGEST='sha256:f829d94e178a709d2c1bb46dd1c3c71dd7d50064db2843132768cf18d29d5d46'
+export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
 export FACTORY='http://100.100.244.148:8081'
 
 [[ "$SCHEMATIC_ID" =~ ^[0-9a-f]{64}$ ]]
@@ -94,7 +95,7 @@ test -n "$registry_container"
 registry_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
   "$registry_container")"
 test -n "$registry_ip"
-repository="metal-installer/$SCHEMATIC_ID"
+repository="image-factory/installers/metal-installer/$SCHEMATIC_ID"
 manifest_url="http://${registry_ip}:5000/v2/${repository}/manifests/${TALOS_VERSION}"
 
 current_digest="$(

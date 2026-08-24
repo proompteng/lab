@@ -53,7 +53,7 @@ The custom extension replaces the stock Kata extension. Never install both on th
 The main-branch workflows create the immutable inputs:
 
 1. `.github/workflows/kata-firecracker-extension.yaml` builds
-   `ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r1` for `linux/amd64` and `linux/arm64`.
+   `ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.13.9-r4` for `linux/amd64` and `linux/arm64`.
 2. The workflow signs and verifies the multi-architecture digest with the exact main-branch GitHub Actions identity.
 3. It copies the full official `v1.13.9` extension catalog, appends the digest-pinned custom extension, publishes
    `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signs that immutable catalog digest.
@@ -73,7 +73,7 @@ the custom extension to that digest:
 
 ```bash
 export FACTORY='http://100.100.244.148:8081'
-: "${EXPECTED_KATA_DIGEST:?set this to the signed r1 digest recorded in RELEASE-v4.1.0-talos-v1.13.9.md}"
+export EXPECTED_KATA_DIGEST='sha256:b7384435ad1393288e0235d8e467303348b252c2feb73973d309d07fee9afc44'
 
 curl -fsS "$FACTORY/version/v1.13.9/extensions/official" \
   | jq -er '.[] | select(.name == "proompteng/talos-kata-runtimes") | .digest' \
@@ -120,20 +120,101 @@ a new installer manifest digest and the factory build evidence ties it to `EXPEC
 
    ```bash
    export TALOS_NODE='<target Talos API address>'
-   export SCHEMATIC_ID='<proven target schematic>'
+   export INSTALLER_IMAGE='ghcr.io/proompteng/talos-kata-runtimes@sha256:<proven node installer digest>'
 
    talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" upgrade \
-     --image "100.100.244.148:8081/metal-installer/${SCHEMATIC_ID}:v1.13.9" \
+     --image "$INSTALLER_IMAGE" \
      --drain=false \
+     --no-reboot \
      --wait \
      --timeout=30m \
      --progress=plain 2>&1 | tee "$EVIDENCE_DIR/talos-upgrade.txt"
    ```
 
-Require the pull line to contain the newly proven installer manifest digest. Keep the node cordoned after it returns,
-then perform the same extension, CRI, guest, and host-side runtime acceptance as an Omni-driven upgrade. This is a
-same-identity cache-replacement exception, not a second upgrade authority: normal version or schematic changes remain
-Omni-owned.
+Require the pull line to contain the newly proven installer manifest digest. Verify installation completed before
+issuing exactly one `talosctl reboot --mode=powercycle`. Keep the node cordoned after it returns, then perform the same
+extension, CRI, guest, and host-side runtime acceptance as an Omni-driven upgrade. This is a same-identity
+cache-replacement exception, not a second upgrade authority: normal version or schematic changes remain Omni-owned.
+
+### Accepted r4 node installers
+
+The completed r4 rollout used these exact installer images. They already include every machine-specific extension in
+the cluster inventory table; do not substitute the extension-only index for a node installer:
+
+```bash
+export RYZEN_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:e12717e24f74b0d509a9c57cc2e5036854dfa3a9de0aafa33a3a0d2bf7b317d3'
+export TURIN_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:fffaddf186ff39e4352b17fd032bac60aa518abac459346f43fde95586897db0'
+export ALTRA_INSTALLER='ghcr.io/proompteng/talos-kata-runtimes@sha256:08a58afa7ca1ed0d02e23b9ff940edb37b131f0f1291392f2c00bdc9049dcfa2'
+```
+
+For Ryzen or Turin, after the target is fully drained and any etcd leadership has moved away:
+
+```bash
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" upgrade \
+  --image "$INSTALLER_IMAGE" \
+  --drain=false \
+  --no-reboot \
+  --wait \
+  --timeout=30m \
+  --progress=plain
+
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" reboot --mode=powercycle
+```
+
+Record the pre-reboot and post-reboot values of `/proc/sys/kernel/random/boot_id`; they must differ. If a Turin reboot
+has already stopped kubelet, CRI, and etcd but remains in the Talos reboot actor with an unchanged boot ID, do not send
+another Talos lifecycle request. Prove the other two etcd voters healthy, then use the single authorized BMC power
+cycle in `docs/runbooks/galactic-storage-and-workload-recovery.md`. Never print or persist its credential.
+
+### Altra ADLINK EFI exception
+
+Altra's firmware may reject the installer's `LoaderEntryDefault` EFI variable write after the new UKI is complete.
+The expected error is an `input/output error` for
+`LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f`. Stop for any earlier installer failure. The system disk is
+`/dev/nvme0n1`; `/dev/nvme1n1` is Ceph and must not be mounted or modified.
+
+Run the Altra installer with `--no-reboot`. If and only if it fails at the expected EFI-variable write, create a
+temporary privileged inspector pinned to Altra. This Pod is hardware recovery tooling, not part of the microVM
+runtime or GitOps application:
+
+```bash
+kubectl --context galactic-lan -n kube-system run efi-inspector-altra-r4 \
+  --image='docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662' \
+  --restart=Never \
+  --overrides='{"apiVersion":"v1","spec":{"nodeName":"talos-192-168-1-85","hostPID":true,"restartPolicy":"Never","tolerations":[{"operator":"Exists"}],"containers":[{"name":"efi-inspector-altra-r4","image":"docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662","command":["sleep","7200"],"securityContext":{"privileged":true},"volumeMounts":[{"name":"hostdev","mountPath":"/host-dev"},{"name":"hostsys","mountPath":"/host-sys","readOnly":true}]}],"volumes":[{"name":"hostdev","hostPath":{"path":"/dev"}},{"name":"hostsys","hostPath":{"path":"/sys"}}]}}'
+kubectl --context galactic-lan -n kube-system wait \
+  --for=condition=Ready pod/efi-inspector-altra-r4 --timeout=2m
+```
+
+Promote only the r4 UKI whose exact hash was observed in the accepted rollout, while retaining the previous active
+UKI under a timestamped rollback filename:
+
+```bash
+kubectl --context galactic-lan -n kube-system exec efi-inspector-altra-r4 -- sh -ceu '
+  test "$(cat /host-sys/class/nvme/nvme0/serial)" = 2441E98EAAFB
+  mkdir -p /mnt/esp
+  mount -t vfat /host-dev/nvme0n1p1 /mnt/esp
+  trap "umount /mnt/esp" EXIT
+  active=/mnt/esp/EFI/Linux/Talos-v1.12.4.efi
+  staged=/mnt/esp/EFI/Linux/Talos-v1.13.9.efi
+  rollback=/mnt/esp/EFI/Linux/Talos-v1.12.4.efi.pre-kata-r4-20260824T014021Z
+  test "$(sha256sum "$active" | cut -d " " -f 1)" = f6901e20d5902517a701b9d53e43657b4ab3aff1a207286daa7a7fc518030586
+  test "$(sha256sum "$staged" | cut -d " " -f 1)" = 61c32f783d443887d4b4107f2f19e843ad2e0f4762098d1fcac7d1a632a62e5e
+  ! grep -a -q talos.halt_if_installed "$staged"
+  test ! -e "$rollback"
+  mv "$active" "$rollback"
+  mv "$staged" "$active"
+  sync
+  test "$(sha256sum "$active" | cut -d " " -f 1)" = 61c32f783d443887d4b4107f2f19e843ad2e0f4762098d1fcac7d1a632a62e5e
+  test "$(sha256sum "$rollback" | cut -d " " -f 1)" = f6901e20d5902517a701b9d53e43657b4ab3aff1a207286daa7a7fc518030586
+'
+kubectl --context galactic-lan -n kube-system delete pod efi-inspector-altra-r4 --wait=true
+talosctl --nodes 100.100.244.142 --endpoints 100.100.244.142 reboot --mode=powercycle
+```
+
+If any pre-reboot validation fails after the rename, reverse the two files before deleting the inspector. If Altra
+cannot boot the promoted UKI, use its BMC/UEFI shell to restore the retained rollback file to
+`EFI/Linux/Talos-v1.12.4.efi`; do not reinstall Talos and do not touch `/dev/nvme1n1`.
 
 ## One-time Image Factory handoff
 
@@ -228,17 +309,30 @@ The script must prove all of the following:
 1. the Kubernetes API is ready and the target node is `Ready` and schedulable;
 2. etcd has three healthy non-learner members;
 3. `/dev/kvm` exists on the target;
-4. all six Ceph OSDs are up and in, all three monitors have quorum, and no placement group is degraded, undersized,
-   remapped, recovering, backfilling, inactive, down, stale, incomplete, inconsistent, or unknown;
-5. Ceph has no `noout`, `norecover`, `nobackfill`, or `pause` flag;
-6. a server-side Kubernetes drain dry-run succeeds.
+4. Ceph status and OSD flags are captured in the evidence directory; degraded, remapped, recovering, or backfilling
+   states emit a warning but do not block under the current explicit Galactic operator policy; and
+5. a server-side Kubernetes drain dry-run succeeds.
 
-Any failed gate stops the rollout. Do not clear Ceph flags, bypass a PDB, force a drain, delete storage Pods, remove an
-etcd member, or reset a node to make the gate green. Fix the owning system first and rerun the complete preflight.
+Any failure in Kubernetes readiness, etcd membership, or KVM stops the rollout. A failed PDB-aware drain also stops by
+default. An explicit maintenance authorization may permit `kubectl drain --disable-eviction`; retain the affected Pod
+list, never add `--force`, and prove every owning controller and stateful workload recovers after the node returns.
+Do not clear Ceph flags, delete storage Pods, remove an etcd member, or reset a node merely to make a check green.
+
+For that explicit exception only, rerun the preflight with the opt-in recorded in its environment, then use the same
+flags for the real drain:
+
+```bash
+GALACTIC_ALLOW_PDB_BYPASS=true \
+  devices/galactic/extensions/kata-firecracker/preflight-node.sh "$NODE" "$EVIDENCE_DIR"
+kubectl --context galactic-lan drain "$NODE" \
+  --ignore-daemonsets \
+  --delete-emptydir-data \
+  --disable-eviction \
+  --timeout=30m
+```
 
 Never use a status copied into this document as a rollout gate. Record fresh command output immediately before the
-target phase. Any remapped, recovering, or backfilling placement group is a hard blocker even when all OSDs are up/in
-and there are no recovery-suppression flags.
+target phase. Ceph remains an evidence requirement even when its current state is explicitly non-blocking.
 
 ## Sequential rollout
 
@@ -280,7 +374,8 @@ For each node:
    and the installed schematic. Extension name `kata-runtimes` and version `4.1.0` alone do not identify its digest.
 9. Activate and prove QEMU, Cloud Hypervisor, Firecracker, and Dragonball one at a time as described below. Keep the
    validation cordon in place throughout all four tests.
-10. Recheck Kubernetes API readiness, three-member etcd health, and clean Ceph state after all four runtimes pass.
+10. Recheck Kubernetes API readiness and three-member etcd health, and capture the post-rollout Ceph state after all
+    four runtimes pass.
 11. Only then uncordon the accepted node and prove it is `Ready` and schedulable:
 
     ```bash
@@ -314,8 +409,8 @@ Before activating Firecracker, verify the effective Talos CRI configuration on t
 ```bash
 ! talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/containerd.toml \
   | rg -F 'io.containerd.snapshotter.v1.blockfile'
-talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/cri.toml \
-  | rg 'discard_unpacked_layers = false|use_local_image_pull = false|snapshotter = .blockfile.'
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/20-customization.part \
+  | rg 'discard_unpacked_layers = false|use_local_image_pull = true'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \
   | rg 'loading plugin.*io.containerd.snapshotter.v1.blockfile'
 ```
@@ -323,6 +418,32 @@ talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \
 The node's Omni machine patch owns the first two settings. The extension owns the blockfile handler, bundled scratch
 filesystem, and Firecracker `default_maxvcpus = 32` cap. A failure in any of these checks is an installer or machine
 configuration failure, not a RuntimeClass scheduling problem.
+
+If the pinned pause or agent image was unpacked before retention was enabled, its compressed OCI layer can already be
+absent even after the corrected config converges. Restore only the two digest-pinned image contents before the first
+Firecracker canary; do not prune containerd content or snapshots:
+
+```bash
+export PLATFORM='linux/amd64' # use linux/arm64 on Altra
+export CONTENT_TOOL='ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480da6d740019891ecf8f8dda545d0d76652c1986a'
+
+for image in \
+  'registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a' \
+  'ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640'
+do
+  talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" debug "$CONTENT_TOOL" \
+    --args=/usr/local/bin/ctr \
+    --args=--address \
+    --args=/host/run/containerd/containerd.sock \
+    --args=--namespace \
+    --args=k8s.io \
+    --args=content \
+    --args=fetch \
+    --args=--platform \
+    --args="$PLATFORM" \
+    --args="$image"
+done
+```
 
 ```bash
 kubectl --context galactic-lan label node "$NODE" \
@@ -363,13 +484,15 @@ kubectl --context galactic-lan label node "$NODE" \
 
 - A failed RuntimeClass canary: remove that runtime's node label and inspect the retained evidence. No node reboot is
   required, but the node remains validation-cordoned and the next node must not start.
-- A failed Talos installer rollout: preserve Omni and Talos logs and restore the previously proven schematic through
-  Omni only after Kubernetes, etcd, and Ceph gates pass. Do not lock the whole cluster merely to pause one failed
+- A failed Talos installer rollout: preserve Omni and Talos logs and restore the previously proven digest-pinned
+  installer through Omni after the Kubernetes and etcd gates pass and Ceph state is recorded. For a same-schematic
+  direct-install exception, stage the proven rollback installer with `--drain=false --no-reboot`, verify it completed,
+  and issue one reboot while the node remains cordoned. Do not lock the whole cluster merely to pause one failed
   machine.
 - A failed Image Factory deployment: restore the previous `omni.yaml` primary factory and restart Omni; do not point
   machines at a partially verified catalog.
 - Never roll back by resetting a machine, deleting an etcd member, purging an OSD, bypassing PDBs, or changing disks
-  without a separate recovery plan and explicit authorization.
+  without explicit authorization and retained recovery evidence.
 
 Completion means the signed artifacts and exact configuration are merged, every installed schematic is tied to the
 expected extension digest, all three sequential installer operations have passed the hard gates, and all twelve

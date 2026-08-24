@@ -25,6 +25,11 @@ upgradeStrategy:
 ---
 kind: Machine
 name: 12345678-9abc-deff-1234-56789abcdeff
+systemExtensions:
+  - siderolabs/nvidia-open-gpu-kernel-modules-lts
+  - siderolabs/nvidia-container-toolkit-lts
+  - siderolabs/tailscale
+  - proompteng/talos-kata-runtimes
 patches:
   - idOverride: 10-12345678-9abc-deff-1234-56789abcdeff
     annotations:
@@ -102,6 +107,38 @@ patches:
       machine:
         certSANs:
           $patch: delete
+        files:
+          - content: |
+              version = 3
+
+              disabled_plugins = [
+                  "io.containerd.differ.v1.erofs",
+                  "io.containerd.internal.v1.tracing",
+                  "io.containerd.snapshotter.v1.erofs",
+                  "io.containerd.ttrpc.v1.otelttrpc",
+                  "io.containerd.tracing.processor.v1.otlp",
+              ]
+
+              imports = [
+                  "/etc/cri/conf.d/cri.toml",
+              ]
+
+              [debug]
+              level = "info"
+              format = "json"
+            op: overwrite
+            path: "/etc/cri/containerd.toml"
+            permissions: 420
+          - content: |
+              [plugins."io.containerd.cri.v1.images"]
+                discard_unpacked_layers = false
+                use_local_image_pull = true
+
+              [plugins."io.containerd.cri.v1.images".pinned_images]
+                sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+            op: overwrite
+            path: "/etc/cri/conf.d/20-customization.part"
+            permissions: 420
         install:
           disk: /dev/nvme0n1
         kernel:
@@ -244,7 +281,7 @@ patches:
         - content: |
             [plugins."io.containerd.cri.v1.images"]
               discard_unpacked_layers = false
-              use_local_image_pull = false
+              use_local_image_pull = true
 
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
@@ -401,7 +438,7 @@ patches:
         - content: |
             [plugins."io.containerd.cri.v1.images"]
               discard_unpacked_layers = false
-              use_local_image_pull = false
+              use_local_image_pull = true
 
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
