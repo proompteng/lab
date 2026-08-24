@@ -41,6 +41,40 @@ The original 12-runtime evidence rows below were captured before the rename with
 `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`.
 That reference is retained only to preserve the historical proof chain; active GitOps uses Nanoagent.
 
+## Nanoagent live migration
+
+[PR #14025](https://github.com/proompteng/lab/pull/14025), merged as
+[`77e85766f8c4f67bf276716a960a352f40ede1f4`](https://github.com/proompteng/lab/commit/77e85766f8c4f67bf276716a960a352f40ede1f4),
+replaced the four legacy canary DaemonSets with `nanoagent-qemu`, `nanoagent-clh`, `nanoagent-fc`, and
+`nanoagent-dragonball`. Argo CD reconciled that exact revision with pruning enabled, reached `Synced` and `Healthy`,
+deleted all four predecessor DaemonSets, and reported all four Nanoagent DaemonSets at three of three Ready.
+
+The final Nanoagent verifier bundle was captured at
+`/tmp/galactic-nanoagent-proof-shell-20260824T034915Z`. It proved all 12 RuntimeClass, CRI sandbox, guest-evidence, and host
+VMM combinations. A direct `/bin/sh` acceptance test in every container additionally proved UID 65532, Nanoagent as
+PID 1, executable BusyBox shell, a writable `/workspace`, and a write/read/delete cycle. The shell-reported guest boot
+ID and kernel matched the evidence endpoint for every row:
+
+| Node                  | Runtime          | Architecture | Guest boot ID                          | Guest kernel |
+| --------------------- | ---------------- | ------------ | -------------------------------------- | ------------ |
+| `talos-192-168-1-194` | QEMU             | `amd64`      | `e65fb914-f1c3-4867-b731-ed8d5141728c` | `6.18.35`    |
+| `talos-192-168-1-194` | Cloud Hypervisor | `amd64`      | `0d21f578-f174-4f18-abe9-61f14cafc2d0` | `6.18.35`    |
+| `talos-192-168-1-194` | Firecracker      | `amd64`      | `ca51d6dd-fd18-4192-b12c-4ccff08ea466` | `6.18.35`    |
+| `talos-192-168-1-194` | Dragonball       | `amd64`      | `92f6c1d2-2f70-48e4-93c0-6d065fe760f0` | `6.18.35`    |
+| `turin`               | QEMU             | `amd64`      | `5208f2f7-b1ce-4efd-bd7d-a2880dddadcc` | `6.18.35`    |
+| `turin`               | Cloud Hypervisor | `amd64`      | `3176fe96-f051-4768-adb4-0596e11ecf11` | `6.18.35`    |
+| `turin`               | Firecracker      | `amd64`      | `198e3acd-98d8-4ea9-841e-5c0ae3eaa2a4` | `6.18.35`    |
+| `turin`               | Dragonball       | `amd64`      | `bfdafe8e-b3d3-4a12-8fb1-a5544786e407` | `6.18.35`    |
+| `talos-192-168-1-85`  | QEMU             | `arm64`      | `fd4926bd-2a8a-47d3-9db9-6a8079fb0d6d` | `6.18.35`    |
+| `talos-192-168-1-85`  | Cloud Hypervisor | `arm64`      | `29db4e87-5242-4ffc-a80f-ad44ddd564fe` | `6.18.35`    |
+| `talos-192-168-1-85`  | Firecracker      | `arm64`      | `6ec2c471-055e-4da8-924d-2a6ec631bb9e` | `6.18.35`    |
+| `talos-192-168-1-85`  | Dragonball       | `arm64`      | `f69fc83d-89b8-49f8-8fa9-55ae8ba8579d` | `6.18.35`    |
+
+The first Firecracker start on Turin and Altra exposed the already-documented compressed-layer retention edge case for
+the newly published image. Only the missing digest-pinned Nanoagent OCI content was fetched into each node's existing
+containerd content store. No node was upgraded, drained, rebooted, cordoned, or reconfigured. All three nodes remained
+Ready and schedulable after acceptance.
+
 ## Correction history
 
 Only r4 is accepted. The earlier artifacts remain immutable but are superseded:
