@@ -518,8 +518,12 @@ describe('scheduled AgentRun templates', () => {
     const steps = objectAt(workflow, 'steps')
 
     expect(objectAt(defaults, 'systemPrompt')).toContain('deterministic Agents primitives smoke-test agent')
+    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/hook')).toBe('Sync')
+    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/hook-delete-policy')).toBe(
+      'BeforeHookCreation,HookSucceeded',
+    )
     expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/sync-wave')).toBe('1')
-    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/sync-options')).toBe('Force=true,Replace=true')
+    expect(objectAt(agentRunAnnotations, 'argocd.argoproj.io/sync-options')).toBeUndefined()
     expect(objectAt(spec, 'ttlSecondsAfterFinished')).toBe(600)
     expect(objectAt(objectAt(spec, 'runtime'), 'type')).toBe('workflow')
     expect(objectAt(objectAt(spec, 'runtime'), 'config')).toBeUndefined()
