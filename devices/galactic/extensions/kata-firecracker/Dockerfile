@@ -124,6 +124,9 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /tmp/kata/opt/kata/share/kata-containers/kata-ubuntu-noble.image \
       /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
     install -m 0644 \
+      /tmp/kata/opt/kata/share/kata-containers/kata-ubuntu-noble.image \
+      /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img; \
+    install -m 0644 \
       /tmp/kata/opt/kata/share/kata-containers/vmlinux-6.18.35-202 \
       /extension/rootfs/usr/local/share/kata-containers/vmlinux.container; \
     install -m 0644 \
@@ -143,6 +146,8 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     sed -i 's#/opt/kata#/usr/local#g' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-*.toml; \
+    sed -i '/^image = /c\image = "/usr/local/share/kata-containers/kata-containers-qemu.img"' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-qemu-runtime-rs.toml; \
     sed -i '/^firmware = /c\firmware = ""' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     awk ' \
@@ -176,6 +181,12 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     test -x /extension/rootfs/usr/local/libexec/virtiofsd; \
     test -L /extension/rootfs/usr/local/bin/qemu-bundle/opt/kata/share/kata-qemu/qemu; \
     test -s /extension/rootfs/usr/local/share/kata-containers/vmlinux-dragonball-experimental.container; \
+    grep -Fxq 'image = "/usr/local/share/kata-containers/kata-containers-qemu.img"' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-qemu-runtime-rs.toml; \
+    test "$(sha256sum /extension/rootfs/usr/local/share/kata-containers/kata-containers.img | cut -d ' ' -f 1)" = \
+      "$(sha256sum /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img | cut -d ' ' -f 1)"; \
+    test "$(stat -c '%i' /extension/rootfs/usr/local/share/kata-containers/kata-containers.img)" != \
+      "$(stat -c '%i' /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img)"; \
     grep -Fxq 'default_maxvcpus = 32' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'dial_timeout_ms = 100' \
@@ -200,7 +211,7 @@ FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
 LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
-LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r1"
+LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r2"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
 COPY --from=payload /extension/rootfs /rootfs
