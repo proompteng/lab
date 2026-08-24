@@ -134,6 +134,9 @@ patches:
                 discard_unpacked_layers = false
                 use_local_image_pull = true
 
+              [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+                snapshotter = "blockfile"
+
               [plugins."io.containerd.cri.v1.images".pinned_images]
                 sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
             op: overwrite
@@ -149,6 +152,8 @@ patches:
             - name: nvidia_modeset
         kubelet:
           extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
             maxPods: 500
           nodeIP:
             validSubnets:
@@ -283,6 +288,9 @@ patches:
               discard_unpacked_layers = false
               use_local_image_pull = true
 
+            [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+              snapshotter = "blockfile"
+
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
           op: overwrite
@@ -299,6 +307,8 @@ patches:
           - name: nvidia_modeset
         kubelet:
           extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
             maxPods: 500
           nodeIP:
             validSubnets:
@@ -440,6 +450,9 @@ patches:
               discard_unpacked_layers = false
               use_local_image_pull = true
 
+            [plugins."io.containerd.cri.v1.images".runtime_platforms.kata-fc]
+              snapshotter = "blockfile"
+
             [plugins."io.containerd.cri.v1.images".pinned_images]
               sandbox = "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
           op: overwrite
@@ -451,6 +464,8 @@ patches:
         kubelet:
           disableManifestsDirectory: false
           extraConfig:
+            featureGates:
+              RuntimeClassInImageCriApi: true
             maxPods: 500
           nodeIP:
             validSubnets:
