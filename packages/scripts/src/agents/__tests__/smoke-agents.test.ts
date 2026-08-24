@@ -496,9 +496,14 @@ describe('scheduled AgentRun templates', () => {
   })
 
   it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {
+    const agent = readYamlObjects('argocd/applications/agents/agents-primitives-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
     const provider = readYamlObjects('argocd/applications/agents/agents-primitives-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
     )
+    const agentSpec = objectAt(agent, 'spec')
+    const defaults = objectAt(agentSpec, 'defaults')
     const providerSpec = objectAt(provider, 'spec')
     const adapter = objectAt(providerSpec, 'adapter')
     const codex = objectAt(adapter, 'codex')
@@ -510,6 +515,7 @@ describe('scheduled AgentRun templates', () => {
     const workflow = objectAt(spec, 'workflow')
     const steps = objectAt(workflow, 'steps')
 
+    expect(objectAt(defaults, 'systemPrompt')).toContain('deterministic Agents primitives smoke-test agent')
     expect(objectAt(objectAt(spec, 'runtime'), 'type')).toBe('workflow')
     expect(Array.isArray(steps)).toBe(true)
     expect(steps).toEqual([
