@@ -54,13 +54,13 @@ if http_status=$(curl --silent --show-error --ipv4 --max-time 15 \
 fi
 
 printf '{"microvm_id":"%s","nonce":"%s","mmds_v2":"ok","network_egress":"%s","network_http_status":"%s"}\n' \
-  "${microvm_id}" "${nonce}" "${egress}" "${http_status}" >/run/microvm-agent.ready
+  "${microvm_id}" "${nonce}" "${egress}" "${http_status}" >/run/nanoagent.ready
 
 curl --fail --silent --show-error --max-time 5 \
   --request POST \
   --header 'Content-Type: application/json' \
   --header "X-Bootstrap-Nonce: ${nonce}" \
-  --data-binary @/run/microvm-agent.ready \
+  --data-binary @/run/nanoagent.ready \
   "${controller_url}"
 
 log "ready microvm_id=${microvm_id} mmds_v2=ok network_egress=${egress} http_status=${http_status}"

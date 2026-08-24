@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: microvm-agent-qemu
+  name: nanoagent-qemu
   labels:
-    app.kubernetes.io/name: microvm-agent
+    app.kubernetes.io/name: nanoagent
     app.kubernetes.io/instance: qemu
     app.kubernetes.io/component: runtime-canary
     app.kubernetes.io/part-of: kata-runtimes
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: microvm-agent
+      app.kubernetes.io/name: nanoagent
       app.kubernetes.io/instance: qemu
   updateStrategy:
     type: RollingUpdate
@@ -19,7 +19,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: microvm-agent
+        app.kubernetes.io/name: nanoagent
         app.kubernetes.io/instance: qemu
         app.kubernetes.io/component: runtime-canary
         app.kubernetes.io/part-of: kata-runtimes
@@ -35,12 +35,13 @@ spec:
           operator: Exists
           effect: NoSchedule
       securityContext:
+        fsGroup: 65532
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: agent
-          image: ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640
+        - name: nanoagent
+          image: ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c
           imagePullPolicy: IfNotPresent
           env:
             - name: MICROVM_ID
@@ -86,20 +87,27 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65532
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 256Mi
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: microvm-agent-clh
+  name: nanoagent-clh
   labels:
-    app.kubernetes.io/name: microvm-agent
+    app.kubernetes.io/name: nanoagent
     app.kubernetes.io/instance: clh
     app.kubernetes.io/component: runtime-canary
     app.kubernetes.io/part-of: kata-runtimes
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: microvm-agent
+      app.kubernetes.io/name: nanoagent
       app.kubernetes.io/instance: clh
   updateStrategy:
     type: RollingUpdate
@@ -108,7 +116,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: microvm-agent
+        app.kubernetes.io/name: nanoagent
         app.kubernetes.io/instance: clh
         app.kubernetes.io/component: runtime-canary
         app.kubernetes.io/part-of: kata-runtimes
@@ -124,12 +132,13 @@ spec:
           operator: Exists
           effect: NoSchedule
       securityContext:
+        fsGroup: 65532
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: agent
-          image: ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640
+        - name: nanoagent
+          image: ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c
           imagePullPolicy: IfNotPresent
           env:
             - name: MICROVM_ID
@@ -175,20 +184,27 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65532
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 256Mi
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: microvm-agent-fc
+  name: nanoagent-fc
   labels:
-    app.kubernetes.io/name: microvm-agent
+    app.kubernetes.io/name: nanoagent
     app.kubernetes.io/instance: fc
     app.kubernetes.io/component: runtime-canary
     app.kubernetes.io/part-of: kata-runtimes
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: microvm-agent
+      app.kubernetes.io/name: nanoagent
       app.kubernetes.io/instance: fc
   updateStrategy:
     type: RollingUpdate
@@ -197,7 +213,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: microvm-agent
+        app.kubernetes.io/name: nanoagent
         app.kubernetes.io/instance: fc
         app.kubernetes.io/component: runtime-canary
         app.kubernetes.io/part-of: kata-runtimes
@@ -213,12 +229,13 @@ spec:
           operator: Exists
           effect: NoSchedule
       securityContext:
+        fsGroup: 65532
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: agent
-          image: ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640
+        - name: nanoagent
+          image: ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c
           imagePullPolicy: IfNotPresent
           env:
             - name: MICROVM_ID
@@ -264,20 +281,27 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65532
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 256Mi
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: microvm-agent-dragonball
+  name: nanoagent-dragonball
   labels:
-    app.kubernetes.io/name: microvm-agent
+    app.kubernetes.io/name: nanoagent
     app.kubernetes.io/instance: dragonball
     app.kubernetes.io/component: runtime-canary
     app.kubernetes.io/part-of: kata-runtimes
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: microvm-agent
+      app.kubernetes.io/name: nanoagent
       app.kubernetes.io/instance: dragonball
   updateStrategy:
     type: RollingUpdate
@@ -286,7 +310,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: microvm-agent
+        app.kubernetes.io/name: nanoagent
         app.kubernetes.io/instance: dragonball
         app.kubernetes.io/component: runtime-canary
         app.kubernetes.io/part-of: kata-runtimes
@@ -302,12 +326,13 @@ spec:
           operator: Exists
           effect: NoSchedule
       securityContext:
+        fsGroup: 65532
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: agent
-          image: ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640
+        - name: nanoagent
+          image: ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c
           imagePullPolicy: IfNotPresent
           env:
             - name: MICROVM_ID
@@ -353,3 +378,10 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65532
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 256Mi
