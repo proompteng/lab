@@ -125,8 +125,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 automation: manual
-                # Phase one removes and cleans up Application/kata-runtimes before this replacement is created.
-                enabled: "false"
+                enabled: "true"
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: restricted
