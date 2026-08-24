@@ -14,7 +14,7 @@ The runtime image contains BusyBox `/bin/sh` and a writable `/workspace`, while 
 default entrypoint. A running Kata Pod can therefore be inspected without adding a sidecar:
 
 ```bash
-kubectl --context galactic-lan -n microvm-system exec -it <pod> -- /bin/sh
+kubectl --context galactic-lan -n kata exec -it <pod> -- /bin/sh
 ```
 
 Endpoints:
