@@ -32,7 +32,7 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/talos-kata-runtimes
   CATALOG_IMAGE: ghcr.io/${{ github.repository_owner }}/talos-extensions
   TALOS_VERSION: v1.13.9
-  VERSION: 4.1.0-talos-v1.13.9
+  VERSION: 4.1.0-talos-v1.13.9-r4
 
 jobs:
   build:
@@ -163,13 +163,13 @@ jobs:
         include:
           - profile: ryzen-amd64
             arch: amd64
-            tag: installer-v1.13.9-kata-4.1.0-ryzen-amd64
+            tag: installer-v1.13.9-kata-4.1.0-r4-ryzen-amd64
           - profile: turin-amd64
             arch: amd64
-            tag: installer-v1.13.9-kata-4.1.0-turin-amd64
+            tag: installer-v1.13.9-kata-4.1.0-r4-turin-amd64
           - profile: altra-arm64
             arch: arm64
-            tag: installer-v1.13.9-kata-4.1.0-altra-arm64
+            tag: installer-v1.13.9-kata-4.1.0-r4-altra-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6

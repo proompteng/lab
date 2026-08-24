@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/var/cache/downloads \
         kata_arch='amd64'; \
         kata_sha256="${KATA_AMD64_SHA256}"; \
         qemu_binary='qemu-system-x86_64'; \
+        dragonball_block_driver='virtio-blk-pci'; \
         firecracker_arch='x86_64'; \
         firecracker_sha256="${FIRECRACKER_AMD64_SHA256}"; \
         ;; \
@@ -33,6 +34,7 @@ RUN --mount=type=cache,target=/var/cache/downloads \
         kata_arch='arm64'; \
         kata_sha256="${KATA_ARM64_SHA256}"; \
         qemu_binary='qemu-system-aarch64'; \
+        dragonball_block_driver='virtio-blk-mmio'; \
         firecracker_arch='aarch64'; \
         firecracker_sha256="${FIRECRACKER_ARM64_SHA256}"; \
         ;; \
@@ -124,6 +126,9 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /tmp/kata/opt/kata/share/kata-containers/kata-ubuntu-noble.image \
       /extension/rootfs/usr/local/share/kata-containers/kata-containers.img; \
     install -m 0644 \
+      /tmp/kata/opt/kata/share/kata-containers/kata-ubuntu-noble.image \
+      /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img; \
+    install -m 0644 \
       /tmp/kata/opt/kata/share/kata-containers/vmlinux-6.18.35-202 \
       /extension/rootfs/usr/local/share/kata-containers/vmlinux.container; \
     install -m 0644 \
@@ -143,7 +148,23 @@ RUN --mount=type=cache,target=/var/cache/downloads \
       /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     sed -i 's#/opt/kata#/usr/local#g' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-*.toml; \
+    sed -i '/^image = /c\image = "/usr/local/share/kata-containers/kata-containers-qemu.img"' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-qemu-runtime-rs.toml; \
+    sed -i '/^firmware = /c\firmware = ""' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
+    sed -i \
+      -e 's/^dial_timeout_ms = 10$/dial_timeout_ms = 100/' \
+      -e 's/^reconnect_timeout_ms = 3000$/reconnect_timeout_ms = 45000/' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
+    sed -i \
+      -e "s#^vm_rootfs_driver = .*#vm_rootfs_driver = \"${dragonball_block_driver}\"#" \
+      -e "s#^block_device_driver = .*#block_device_driver = \"${dragonball_block_driver}\"#" \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     awk ' \
+      /^default_maxvcpus = 0$/ { \
+        print "default_maxvcpus = 32"; \
+        next; \
+      } \
       /^dial_timeout_ms = 45000$/ { \
         print "dial_timeout_ms = 100"; \
         print "reconnect_timeout_ms = 45000"; \
@@ -170,10 +191,28 @@ RUN --mount=type=cache,target=/var/cache/downloads \
     test -x /extension/rootfs/usr/local/libexec/virtiofsd; \
     test -L /extension/rootfs/usr/local/bin/qemu-bundle/opt/kata/share/kata-qemu/qemu; \
     test -s /extension/rootfs/usr/local/share/kata-containers/vmlinux-dragonball-experimental.container; \
+    grep -Fxq 'image = "/usr/local/share/kata-containers/kata-containers-qemu.img"' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-qemu-runtime-rs.toml; \
+    test "$(sha256sum /extension/rootfs/usr/local/share/kata-containers/kata-containers.img | cut -d ' ' -f 1)" = \
+      "$(sha256sum /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img | cut -d ' ' -f 1)"; \
+    test "$(stat -c '%i' /extension/rootfs/usr/local/share/kata-containers/kata-containers.img)" != \
+      "$(stat -c '%i' /extension/rootfs/usr/local/share/kata-containers/kata-containers-qemu.img)"; \
+    grep -Fxq 'default_maxvcpus = 32' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'dial_timeout_ms = 100' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
     grep -Fxq 'reconnect_timeout_ms = 45000' \
       /extension/rootfs/usr/local/share/kata-containers/configuration-rs-fc.toml; \
+    test "$(grep -c '^firmware = ""$' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml)" -eq 1; \
+    grep -Fxq 'dial_timeout_ms = 100' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
+    grep -Fxq 'reconnect_timeout_ms = 45000' \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
+    grep -Fxq "vm_rootfs_driver = \"${dragonball_block_driver}\"" \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
+    grep -Fxq "block_device_driver = \"${dragonball_block_driver}\"" \
+      /extension/rootfs/usr/local/share/kata-containers/configuration-dragonball.toml; \
     if [ "${TARGETARCH}" = arm64 ]; then \
       test -s /extension/rootfs/usr/local/share/aavmf/AAVMF_CODE.fd; \
     fi; \
@@ -190,7 +229,7 @@ FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
 LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
-LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9"
+LABEL org.opencontainers.image.version="4.1.0-talos-v1.13.9-r4"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
 COPY --from=payload /extension/rootfs /rootfs

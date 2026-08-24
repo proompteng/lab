@@ -45,5 +45,16 @@ schematic="$(
     "$base_url/schematics"
 )"
 jq -e '.id | test("^[0-9a-f]{64}$")' <<<"$schematic" >/dev/null
+schematic_id="$(jq -er .id <<<"$schematic")"
 
-echo "Image Factory is ready; Kata extension digest: $extension_digest; smoke schematic: $(jq -r .id <<<"$schematic")"
+installer_index="$(
+  curl "${curl_args[@]}" --max-time 900 \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "$base_url/v2/metal-installer/$schematic_id/manifests/v1.13.9"
+)"
+jq -e '
+  .schemaVersion == 2
+  and ([.manifests[].platform | select(.os == "linux") | .architecture] | sort) == ["amd64", "arm64"]
+' <<<"$installer_index" >/dev/null
+
+echo "Image Factory is ready; Kata extension digest: $extension_digest; smoke installer: $schematic_id"
