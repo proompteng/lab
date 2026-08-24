@@ -47,7 +47,7 @@ patches:
     target:
       kind: Deployment
       name: argocd-redis-ha-haproxy
-  - path: overlays/argocd-redis-ha-server-two-node-affinity.yaml
+  - path: overlays/argocd-redis-ha-server-recovery.yaml
     target:
       kind: StatefulSet
       name: argocd-redis-ha-server
