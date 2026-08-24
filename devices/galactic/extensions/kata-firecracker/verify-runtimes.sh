@@ -20,10 +20,10 @@ node_address() {
 
 daemonset_for_vmm() {
   case "$1" in
-    qemu) echo 'microvm-agent-qemu' ;;
-    clh) echo 'microvm-agent-clh' ;;
-    fc) echo 'microvm-agent-fc' ;;
-    dragonball) echo 'microvm-agent-dragonball' ;;
+    qemu) echo 'nanoagent-qemu' ;;
+    clh) echo 'nanoagent-clh' ;;
+    fc) echo 'nanoagent-fc' ;;
+    dragonball) echo 'nanoagent-dragonball' ;;
     *) return 1 ;;
   esac
 }
@@ -122,7 +122,7 @@ for node in "${nodes[@]}"; do
     daemonset="$(daemonset_for_vmm "$vmm")"
     pod="$(
       kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pods \
-        -l "app.kubernetes.io/name=microvm-agent,runtime.proompteng.ai/vmm=${vmm}" \
+        -l "app.kubernetes.io/name=nanoagent,runtime.proompteng.ai/vmm=${vmm}" \
         -o json \
         | jq -er --arg node "$node" '
             [.items[] | select(.spec.nodeName == $node) | .metadata.name]
@@ -137,7 +137,7 @@ for node in "${nodes[@]}"; do
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pod "$pod" -o json \
       >"$node_dir/$vmm-pod.json"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs "$pod" \
-      >"$node_dir/$vmm-agent.log"
+      >"$node_dir/$vmm-nanoagent.log"
     kubectl --context "$KUBE_CONTEXT" get runtimeclass "$runtime_class" -o yaml \
       >"$node_dir/$vmm-runtimeclass.yaml"
     kubectl --context "$KUBE_CONTEXT" get --raw \
@@ -156,8 +156,8 @@ for node in "${nodes[@]}"; do
       "$node_dir/$vmm-pod.json" >/dev/null
     rg -Fq "$NAMESPACE/$pod" "$node_dir/kubernetes-containers.txt"
 
-    if rg -Fq 'kata-canary-proof-v1' "$node_dir/$vmm-agent.log"; then
-      echo "$node/$vmm agent log exposed the canary proof nonce" >&2
+    if rg -Fq 'kata-canary-proof-v1' "$node_dir/$vmm-nanoagent.log"; then
+      echo "$node/$vmm nanoagent log exposed the canary proof nonce" >&2
       exit 1
     fi
 

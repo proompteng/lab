@@ -20,7 +20,7 @@ the final artifacts from merge commit
 | Ryzen installer            | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:e12717e24f74b0d509a9c57cc2e5036854dfa3a9de0aafa33a3a0d2bf7b317d3` |
 | Turin installer            | `linux/amd64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:fffaddf186ff39e4352b17fd032bac60aa518abac459346f43fde95586897db0` |
 | Altra installer            | `linux/arm64`                | `ghcr.io/proompteng/talos-kata-runtimes@sha256:08a58afa7ca1ed0d02e23b9ff940edb37b131f0f1291392f2c00bdc9049dcfa2` |
-| Long-running microVM agent | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`       |
+| Shell-capable Nanoagent    | `linux/amd64`, `linux/arm64` | `ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c`           |
 
 The amd64 extension child uses config digest
 `sha256:33607af06cc7064b91cefa7befb46d7e02421680dee2d41b37fd1dea970f99cb`; the arm64 child uses config digest
@@ -29,6 +29,17 @@ reference passed keyless Cosign verification with identity
 `https://github.com/proompteng/lab/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main`, issuer
 `https://token.actions.githubusercontent.com`. The NUC Image Factory live `v1.13.9` catalog resolved the custom
 extension to the r4 index digest before rollout.
+
+Nanoagent was published from merge commit
+[`0bd5113c453ce6b0c361253bafb7252614a0a887`](https://github.com/proompteng/lab/commit/0bd5113c453ce6b0c361253bafb7252614a0a887)
+by successful [main-branch run 32686402214](https://github.com/proompteng/lab/actions/runs/32686402214). That workflow
+built both architectures, generated provenance and an SBOM, and keylessly signed and verified the digest with the
+main-branch `nanoagent.yaml` workflow identity. The image runs as UID 65532, retains Nanoagent as its entrypoint, and
+contains BusyBox `/bin/sh` plus a writable `/workspace` for direct `kubectl exec` inspection.
+
+The original 12-runtime evidence rows below were captured before the rename with the immutable predecessor canary
+`ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640`.
+That reference is retained only to preserve the historical proof chain; active GitOps uses Nanoagent.
 
 ## Correction history
 

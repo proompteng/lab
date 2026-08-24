@@ -156,13 +156,13 @@ unsquashfs -no-progress -d /work/rootfs-tree "/work/${rootfs_name}"
 ssh-keygen -q -t ed25519 -N '' -f /work/id_ed25519
 install -d -m 0700 /work/rootfs-tree/root/.ssh
 install -m 0600 /work/id_ed25519.pub /work/rootfs-tree/root/.ssh/authorized_keys
-install -m 0755 /spike/guest-agent.sh /work/rootfs-tree/usr/local/bin/microvm-agent
+install -m 0755 /spike/guest-agent.sh /work/rootfs-tree/usr/local/bin/nanoagent
 install -m 0755 /spike/guest-control.py /work/rootfs-tree/usr/local/bin/microvm-control
-install -m 0644 /spike/microvm-agent.service /work/rootfs-tree/etc/systemd/system/microvm-agent.service
+install -m 0644 /spike/nanoagent.service /work/rootfs-tree/etc/systemd/system/nanoagent.service
 install -m 0644 /spike/microvm-control.service /work/rootfs-tree/etc/systemd/system/microvm-control.service
 install -d -m 0755 /work/rootfs-tree/etc/systemd/system/multi-user.target.wants
-ln -s ../microvm-agent.service \
-  /work/rootfs-tree/etc/systemd/system/multi-user.target.wants/microvm-agent.service
+ln -s ../nanoagent.service \
+  /work/rootfs-tree/etc/systemd/system/multi-user.target.wants/nanoagent.service
 ln -s ../microvm-control.service \
   /work/rootfs-tree/etc/systemd/system/multi-user.target.wants/microvm-control.service
 ln -sf /usr/lib/systemd/system/ssh.service \
@@ -267,7 +267,7 @@ for _ in $(seq 1 60); do
 done
 ssh "${ssh_options[@]}" root@172.16.0.2 true
 
-guest_ready="$(ssh "${ssh_options[@]}" root@172.16.0.2 cat /run/microvm-agent.ready)"
+guest_ready="$(ssh "${ssh_options[@]}" root@172.16.0.2 cat /run/nanoagent.ready)"
 guest_kernel="$(ssh "${ssh_options[@]}" root@172.16.0.2 uname -r)"
 guest_identity="$(ssh "${ssh_options[@]}" root@172.16.0.2 id -u)"
 callback="$(cat /work/agent-callback.json)"
@@ -275,7 +275,7 @@ readonly guest_ready guest_kernel guest_identity callback
 log "agent-callback=${callback}"
 if [[ "${callback}" != *'"mmds_v2":"ok"'* || "${guest_ready}" != *'"mmds_v2":"ok"'* ]]; then
   log 'assertion-failed=mmds-v2-bootstrap'
-  ssh "${ssh_options[@]}" root@172.16.0.2 journalctl --unit microvm-agent --no-pager --lines 50 || true
+  ssh "${ssh_options[@]}" root@172.16.0.2 journalctl --unit nanoagent --no-pager --lines 50 || true
   exit 1
 fi
 if [[ "${callback}" != *'"network_egress":"ok"'* || "${guest_ready}" != *'"network_egress":"ok"'* ]]; then

@@ -88,13 +88,13 @@ not support the CRI `discard_unpacked_layers` option; retaining the compressed l
 
 Enabling retention cannot recreate compressed layers that containerd discarded earlier. Before a node's first
 Firecracker canary after this migration, fetch content only for both pinned sandbox images: the Kubernetes pause image
-and `ghcr.io/proompteng/microvm-agent`. Use the digest-pinned
+and `ghcr.io/proompteng/nanoagent`. Use the digest-pinned
 `ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480da6d740019891ecf8f8dda545d0d76652c1986a`
 debug image with the host containerd socket and `ctr --namespace k8s.io content fetch --platform <linux/amd64|linux/arm64>`.
 The exact command is in `docs/runbooks/talos-latest-upgrade-plan.md`. This recovery restores missing OCI content only;
 never prune shared containerd content or snapshots.
 
-Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing the agent image, the long-running
+Argo CD application `kata-runtimes` owns the RuntimeClasses and, after publishing Nanoagent, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
 eligible by itself.
 
@@ -140,7 +140,7 @@ The signed r4 installer is accepted on Ryzen, Turin, and Altra. The final 12-com
 guest boot IDs, host VMM evidence, and the two hardware-specific reboot recoveries are recorded in
 `RELEASE-v4.1.0-talos-v1.13.9.md`.
 
-## Create an agent microVM Pod
+## Create a shell-capable Nanoagent microVM Pod
 
 After `kata-fc` has passed acceptance on at least one uncordoned node, an ordinary Pod creates a Firecracker microVM
 sandbox. No CRD, custom controller, privileged launcher, or nested QEMU process is involved. The RuntimeClass injects
@@ -150,19 +150,20 @@ the node selector for an accepted Firecracker node:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: microvm-agent-example
+  name: nanoagent-example
   namespace: microvm-system
 spec:
   runtimeClassName: kata-fc
   restartPolicy: Never
   automountServiceAccountToken: false
   securityContext:
+    fsGroup: 65532
     runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault
   containers:
-    - name: agent
-      image: ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640
+    - name: nanoagent
+      image: ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c
       env:
         - name: MICROVM_ID
           valueFrom:
@@ -171,7 +172,7 @@ spec:
         - name: MICROVM_BOOTSTRAP_TOKEN
           valueFrom:
             secretKeyRef:
-              name: microvm-agent-bootstrap
+              name: nanoagent-bootstrap
               key: token
       ports:
         - name: http
@@ -195,12 +196,26 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: 65532
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  volumes:
+    - name: workspace
+      emptyDir:
+        sizeLimit: 256Mi
 ```
 
 Create the referenced Secret through the workload's normal secret-management path, then apply the Pod with an explicit
 namespace. `kubectl get pod -n microvm-system -o wide` must place it only on a node labeled
 `runtime.proompteng.ai/kata-fc=ready`. One Pod sandbox is one microVM; multiple containers in the same Pod share that
 guest. Use `kata-qemu`, `kata-clh`, or `kata-dragonball` to select another accepted VMM.
+
+Nanoagent contains BusyBox `/bin/sh` and runs as non-root with a writable `/workspace`. Enter the same container that
+runs the agent process; no shell sidecar or SSH service is required:
+
+```bash
+kubectl --context galactic-lan -n microvm-system exec -it nanoagent-example -c nanoagent -- /bin/sh
+```
 
 Firecracker cannot use an overlayfs root inside the guest. Its handler alone selects containerd `2.2`'s built-in
 `blockfile` snapshotter. The bundled 512 MiB scratch filesystem limits each ephemeral container root filesystem to

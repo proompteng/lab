@@ -35,7 +35,7 @@ namespace_created='true'
 kubectl --context "${context}" --namespace "${namespace}" create configmap firecracker-turin-spike \
   --from-file=launcher.sh="${script_dir}/launcher.sh" \
   --from-file=guest-agent.sh="${script_dir}/guest-agent.sh" \
-  --from-file=microvm-agent.service="${script_dir}/microvm-agent.service" \
+  --from-file=nanoagent.service="${script_dir}/nanoagent.service" \
   --from-file=guest-control.py="${script_dir}/guest-control.py" \
   --from-file=microvm-control.service="${script_dir}/microvm-control.service" \
   --from-file=host-callback.py="${script_dir}/host-callback.py" \

@@ -59,8 +59,9 @@ The main-branch workflows create the immutable inputs:
    `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signs that immutable catalog digest.
 4. It builds and signs independent `ryzen-amd64`, `turin-amd64`, and `altra-arm64` installer receipts. These prove
    that every architecture-specific extension combination can be assembled.
-5. `.github/workflows/microvm-agent.yaml` publishes and signs the `linux/amd64` and `linux/arm64` canary agent.
-6. GitOps canary images must use the published agent digest, never a mutable tag.
+5. `.github/workflows/nanoagent.yaml` publishes and signs the shell-capable `linux/amd64` and `linux/arm64`
+   Nanoagent image.
+6. GitOps canary images must use the published Nanoagent digest, never a mutable tag.
 
 Before touching a node, retain the workflow URLs, image digests, Cosign verification output, and generated installer
 digests in the rollout evidence directory.
@@ -419,7 +420,7 @@ The node's Omni machine patch owns the first two settings. The extension owns th
 filesystem, and Firecracker `default_maxvcpus = 32` cap. A failure in any of these checks is an installer or machine
 configuration failure, not a RuntimeClass scheduling problem.
 
-If the pinned pause or agent image was unpacked before retention was enabled, its compressed OCI layer can already be
+If the pinned pause or Nanoagent image was unpacked before retention was enabled, its compressed OCI layer can already be
 absent even after the corrected config converges. Restore only the two digest-pinned image contents before the first
 Firecracker canary; do not prune containerd content or snapshots:
 
@@ -429,7 +430,7 @@ export CONTENT_TOOL='ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480
 
 for image in \
   'registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a' \
-  'ghcr.io/proompteng/microvm-agent@sha256:5573551391d01240297680da6ac172d3c819b57d493c3c3e2e11fa1388b06640'
+  'ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c'
 do
   talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" debug "$CONTENT_TOOL" \
     --args=/usr/local/bin/ctr \
