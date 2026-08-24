@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, test } from 'bun:test'
 
 import { extractSecrets, renderTemplate } from './render-template'
@@ -36,5 +38,16 @@ describe('Omni cluster template secret rendering', () => {
     expect(rendered).not.toContain('__GALACTIC_')
     expect(rendered.match(/TS_AUTHKEY=tskey-test/g)).toHaveLength(3)
     expect(rendered.match(/jointoken=join-test/g)).toHaveLength(3)
+  })
+
+  test('pulls Firecracker images into blockfile on every machine', () => {
+    const clusterTemplate = readFileSync(new URL('./cluster-template.yaml', import.meta.url), 'utf8')
+
+    expect(
+      clusterTemplate.match(
+        /\[plugins\."io\.containerd\.cri\.v1\.images"\.runtime_platforms\.kata-fc\]\n\s+snapshotter = "blockfile"/g,
+      ),
+    ).toHaveLength(3)
+    expect(clusterTemplate.match(/RuntimeClassInImageCriApi: true/g)).toHaveLength(3)
   })
 })
