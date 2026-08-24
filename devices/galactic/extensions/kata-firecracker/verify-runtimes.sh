@@ -148,6 +148,8 @@ for node in "${nodes[@]}"; do
       >"$node_dir/$vmm-pod.json"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs "$pod" \
       >"$node_dir/$vmm-nanoagent.log"
+    # Expansions in this single-quoted script are intentionally evaluated by the guest shell.
+    # shellcheck disable=SC2016
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" exec "$pod" -c nanoagent -- /bin/sh -ceu '
       test "$(id -u)" = 65532
       test -x /bin/sh
