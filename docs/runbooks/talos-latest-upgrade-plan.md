@@ -415,40 +415,18 @@ Before activating Firecracker, verify the effective Talos CRI configuration on t
 ! talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/containerd.toml \
   | rg -F 'io.containerd.snapshotter.v1.blockfile'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" read /etc/cri/conf.d/20-customization.part \
-  | rg 'discard_unpacked_layers = false|use_local_image_pull = true'
+  | rg 'discard_unpacked_layers = false|use_local_image_pull = true|runtime_platforms.kata-fc|snapshotter = "blockfile"'
+talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" get kubeletconfig -o yaml \
+  | rg 'RuntimeClassInImageCriApi: true'
 talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" logs cri --tail 1000 \
   | rg 'loading plugin.*io.containerd.snapshotter.v1.blockfile'
 ```
 
-The node's Omni machine patch owns the first two settings. The extension owns the blockfile handler, bundled scratch
-filesystem, and Firecracker `default_maxvcpus = 32` cap. A failure in any of these checks is an installer or machine
-configuration failure, not a RuntimeClass scheduling problem.
-
-If the pinned pause or Nanoagent image was unpacked before retention was enabled, its compressed OCI layer can already be
-absent even after the corrected config converges. Restore only the two digest-pinned image contents before the first
-Firecracker canary; do not prune containerd content or snapshots:
-
-```bash
-export PLATFORM='linux/amd64' # use linux/arm64 on Altra
-export CONTENT_TOOL='ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480da6d740019891ecf8f8dda545d0d76652c1986a'
-
-for image in \
-  'registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a' \
-  'ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c'
-do
-  talosctl --nodes "$TALOS_NODE" --endpoints "$TALOS_NODE" debug "$CONTENT_TOOL" \
-    --args=/usr/local/bin/ctr \
-    --args=--address \
-    --args=/host/run/containerd/containerd.sock \
-    --args=--namespace \
-    --args=k8s.io \
-    --args=content \
-    --args=fetch \
-    --args=--platform \
-    --args="$PLATFORM" \
-    --args="$image"
-done
-```
+The node's Omni machine patch owns image retention, runtime-specific image-pull routing, and the kubelet feature gate.
+The extension owns the blockfile handler, bundled scratch filesystem, and Firecracker `default_maxvcpus = 32` cap. A
+failure in any of these checks is an installer or machine configuration failure, not a RuntimeClass scheduling
+problem. Do not prefetch individual images through the host containerd socket: a normal `kata-fc` Pod pull must route
+to `blockfile` and recover any content it needs itself.
 
 ```bash
 kubectl --context galactic-lan label node "$NODE" \

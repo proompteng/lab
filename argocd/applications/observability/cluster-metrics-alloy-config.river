@@ -211,7 +211,7 @@ discovery.relabel "bayn_pod_logs" {
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
-		regex         = "bayn|lifecycle|register"
+		regex         = "bayn|execution-controller|activate"
 	}
 
 	rule {

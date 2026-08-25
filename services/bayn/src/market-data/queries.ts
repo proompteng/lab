@@ -1,6 +1,10 @@
+import { randomUUID } from 'node:crypto'
+
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Effect } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { withObservedSpan } from '../telemetry'
 import type { FinalizedPublicationRequest, MarketDataContract, SnapshotPublicationRequest } from './model'
 import { Pipeable } from '../pipeable'
 
@@ -13,9 +17,22 @@ const makeMarketDataQueriesDataFirst = (
   config: Pick<RuntimeConfig, 'clickhouse'>,
   contract: MarketDataContract,
 ) => {
+  const runQuery = <A, E, R>(logicalOperation: string, query: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.suspend(() =>
+      query.pipe(
+        sql.withQueryId(`bayn-${logicalOperation}-${randomUUID()}`),
+        withObservedSpan('market-data.clickhouse', {
+          'db.system': 'clickhouse',
+          'db.operation.name': logicalOperation,
+        }),
+      ),
+    )
+
   // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
   // hashes make an incomplete or stale replica read fail closed.
-  const loadManifests = sql`
+  const loadManifests = runQuery(
+    'manifest',
+    sql`
     SELECT
       snapshot_id,
       schema_version,
@@ -42,9 +59,12 @@ const makeMarketDataQueriesDataFirst = (
     FROM signal.snapshot_manifests_v2
     WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
     ORDER BY finalized_at
-  `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
+  `,
+  )
 
-  const loadSessions = sql`
+  const loadSessions = runQuery(
+    'sessions',
+    sql`
     SELECT
       snapshot_id,
       calendar_version,
@@ -56,9 +76,12 @@ const makeMarketDataQueriesDataFirst = (
     FROM signal.exchange_sessions_v1
     WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
     ORDER BY session_date
-  `.pipe(sql.withQueryId(`bayn-sessions-${config.clickhouse.snapshotId.slice(-32)}`))
+  `,
+  )
 
-  const loadBars = sql`
+  const loadBars = runQuery(
+    'bars',
+    sql`
     SELECT
       snapshot_id,
       symbol,
@@ -77,10 +100,13 @@ const makeMarketDataQueriesDataFirst = (
     FROM signal.adjusted_daily_bars_v2
     WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
     ORDER BY session_date, symbol
-  `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`))
+  `,
+  )
 
   const loadPublicationManifests = (request: FinalizedPublicationRequest) =>
-    sql`
+    runQuery(
+      'cycle-manifest',
+      sql`
       SELECT
         snapshot_id,
         schema_version,
@@ -112,9 +138,12 @@ const makeMarketDataQueriesDataFirst = (
         AND manifest.calendar_version = ${sql.param('String', request.signalCalendarVersion)}
       ORDER BY manifest.finalized_at DESC, manifest.snapshot_id DESC
       LIMIT 1
-    `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
+    `,
+    )
 
-  const loadCyclePublicationManifests = sql`
+  const loadCyclePublicationManifests = runQuery(
+    'cycle-publication-candidates',
+    sql`
     SELECT
       snapshot_id,
       schema_version,
@@ -145,10 +174,13 @@ const makeMarketDataQueriesDataFirst = (
     ORDER BY manifest.publication_asof DESC, manifest.finalized_at DESC, manifest.snapshot_id DESC
     LIMIT 1 BY manifest.publication_asof
     LIMIT ${sql.param('UInt8', cyclePublicationCandidateLimit)}
-  `.pipe(sql.withQueryId('bayn-cycle-publication-candidates'))
+  `,
+  )
 
   const loadSnapshotPublicationManifest = (request: SnapshotPublicationRequest) =>
-    sql`
+    runQuery(
+      'bound-manifest',
+      sql`
       SELECT
         snapshot_id,
         schema_version,
@@ -175,10 +207,13 @@ const makeMarketDataQueriesDataFirst = (
       FROM signal.snapshot_manifests_v2
       WHERE snapshot_id = ${sql.param('String', request.snapshotId)}
       ORDER BY finalized_at
-    `.pipe(sql.withQueryId(`bayn-bound-manifest-${request.snapshotId.slice(-32)}`))
+    `,
+    )
 
   const loadPublicationSessions = (snapshotId: string) =>
-    sql`
+    runQuery(
+      'cycle-sessions',
+      sql`
       SELECT
         snapshot_id,
         calendar_version,
@@ -190,10 +225,13 @@ const makeMarketDataQueriesDataFirst = (
       FROM signal.exchange_sessions_v1
       WHERE snapshot_id = ${sql.param('String', snapshotId)}
       ORDER BY session_date
-    `.pipe(sql.withQueryId(`bayn-cycle-sessions-${snapshotId.slice(-32)}`))
+    `,
+    )
 
   const loadSnapshotPublicationBars = (snapshotId: string) =>
-    sql`
+    runQuery(
+      'bound-bars',
+      sql`
       SELECT
         snapshot_id,
         symbol,
@@ -212,10 +250,13 @@ const makeMarketDataQueriesDataFirst = (
       FROM signal.adjusted_daily_bars_v2
       WHERE snapshot_id = ${sql.param('String', snapshotId)}
       ORDER BY session_date, symbol
-    `.pipe(sql.withQueryId(`bayn-bound-bars-${snapshotId.slice(-32)}`))
+    `,
+    )
 
   const loadCyclePublicationSessions = (snapshotIds: readonly string[]) =>
-    sql`
+    runQuery(
+      'cycle-publication-candidate-sessions',
+      sql`
       SELECT
         snapshot_id,
         calendar_version,
@@ -227,7 +268,8 @@ const makeMarketDataQueriesDataFirst = (
       FROM signal.exchange_sessions_v1
       WHERE has(${sql.param('Array(String)', snapshotIds)}, snapshot_id)
       ORDER BY snapshot_id, session_date
-    `.pipe(sql.withQueryId('bayn-cycle-publication-candidate-sessions'))
+    `,
+    )
 
   return {
     loadBars,

@@ -80,22 +80,22 @@ unchanged, Omni correctly reports the machine as up to date. The cluster runbook
 exception for that state: prove the new manifest digest, finish a target-only drain with no concurrent Omni task, run
 the exact installer on that already-drained node, and keep it cordoned until all four runtime proofs pass.
 
-Talos disables containerd's built-in `blockfile` snapshotter in `/etc/cri/containerd.toml`, and its default CRI image
-settings discard layer blobs after overlayfs unpack. Each Kata-enabled machine patch in
-`devices/galactic/omni/cluster-template.yaml` therefore removes only `io.containerd.snapshotter.v1.blockfile` from
-`disabled_plugins` and sets `discard_unpacked_layers = false` plus `use_local_image_pull = true` in
-`/etc/cri/conf.d/20-customization.part`. Omni applies those files and restarts CRI; without both settings,
-Firecracker fails before guest boot. Local pull mode is required because containerd's transfer-service pull path does
-not support the CRI `discard_unpacked_layers` option; retaining the compressed layer blob lets the runtime-specific
-`blockfile` snapshotter unpack an image that was already used by an overlayfs runtime.
+Talos disables containerd's built-in `blockfile` snapshotter in `/etc/cri/containerd.toml`, and Kubernetes does not
+enable runtime-class-aware CRI image pulls by default. Without runtime-aware pulls, kubelet asks containerd to unpack a
+`kata-fc` image into the default `overlayfs` snapshotter. A pre-existing overlayfs snapshot can then make containerd
+skip a discarded compressed layer, and container creation fails when `blockfile` tries to read that missing blob.
 
-Enabling retention cannot recreate compressed layers that containerd discarded earlier. Before a node's first
-Firecracker canary after this migration, fetch content only for both pinned sandbox images: the Kubernetes pause image
-and `ghcr.io/proompteng/nanoagent`. Use the digest-pinned
-`ghcr.io/containerd/nerdctl@sha256:ddf262a8a129c7e625e640480da6d740019891ecf8f8dda545d0d76652c1986a`
-debug image with the host containerd socket and `ctr --namespace k8s.io content fetch --platform <linux/amd64|linux/arm64>`.
-The exact command is in `docs/runbooks/talos-latest-upgrade-plan.md`. This recovery restores missing OCI content only;
-never prune shared containerd content or snapshots.
+Each Kata-enabled machine patch in `devices/galactic/omni/cluster-template.yaml` therefore:
+
+- removes only `io.containerd.snapshotter.v1.blockfile` from `disabled_plugins`;
+- enables kubelet's `RuntimeClassInImageCriApi` feature gate;
+- maps the `kata-fc` runtime handler to `blockfile` under the CRI image service's `runtime_platforms` table;
+- sets `discard_unpacked_layers = false` and `use_local_image_pull = true`.
+
+Kubelet now sends `kata-fc` on `PullImage`, and containerd pulls and unpacks the image directly into `blockfile`.
+Ordinary Pods require no image prefetch, host-socket debug container, or per-image recovery command. Talos `1.13`
+treats the legacy `/etc/cri/conf.d/20-customization.part` machine-file update as reboot-requiring, so Omni must roll
+this configuration across one node at a time.
 
 Argo CD application `kata` owns the RuntimeClasses and, after publishing Nanoagent, the long-running
 canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
