@@ -36,6 +36,8 @@ const makeMarketDataDataFirst = (
   pipe(
     ClickhouseClient.ClickhouseClient,
     Effect.map((sql): MarketDataService => {
+      const withClickHouseDeadline = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.timeout(`${config.operationTimeoutMs} millis`))
       const {
         loadBars,
         loadCyclePublicationManifests,
@@ -213,6 +215,7 @@ const makeMarketDataDataFirst = (
               ),
             ),
           ),
+          withClickHouseDeadline,
           Effect.mapError((cause) =>
             marketDataOperationError('check', 'failed to check finalized Signal snapshot', cause),
           ),
@@ -231,12 +234,14 @@ const makeMarketDataDataFirst = (
               ),
             ),
           ),
+          withClickHouseDeadline,
           Effect.mapError((cause) =>
             marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
           ),
         ),
         inspectCyclePublications: loadCyclePublicationManifests.pipe(
           Effect.flatMap(inspectCyclePublicationRows),
+          withClickHouseDeadline,
           Effect.mapError((cause) =>
             marketDataOperationError(
               'inspect-publication',
@@ -248,6 +253,7 @@ const makeMarketDataDataFirst = (
         inspectPublication: (input) =>
           loadPublicationManifests(input).pipe(
             Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows)),
+            withClickHouseDeadline,
             Effect.mapError((cause) =>
               marketDataOperationError(
                 'inspect-publication',
@@ -259,6 +265,7 @@ const makeMarketDataDataFirst = (
         inspectSnapshotPublication: (input) =>
           loadSnapshotPublicationManifest(input).pipe(
             Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows, input.snapshotId)),
+            withClickHouseDeadline,
             Effect.mapError((cause) =>
               marketDataOperationError(
                 'inspect-publication',
@@ -289,6 +296,7 @@ const makeMarketDataDataFirst = (
                 ),
               ),
             ),
+            withClickHouseDeadline,
             Effect.mapError((cause) =>
               marketDataOperationError(
                 'load',
@@ -311,6 +319,7 @@ const makeMarketDataDataFirst = (
               ),
             ),
           ),
+          withClickHouseDeadline,
           Effect.mapError((cause) =>
             marketDataOperationError('load', 'failed to load finalized Signal snapshot', cause),
           ),
