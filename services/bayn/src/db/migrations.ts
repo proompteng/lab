@@ -49,6 +49,7 @@ import intradayNativeCycles from '../../migrations/0046_intraday_native_cycles'
 import openingDriveQualificationEvidence from '../../migrations/0047_opening_drive_qualification_evidence'
 import researchReconciliationRearm from '../../migrations/0048_research_reconciliation_rearm'
 import preserveReconciliationCycle from '../../migrations/0049_preserve_reconciliation_cycle'
+import preserveFailureRearmCycle from '../../migrations/0050_preserve_failure_rearm_cycle'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -100,4 +101,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '47_opening_drive_qualification_evidence': openingDriveQualificationEvidence,
   '48_research_reconciliation_rearm': researchReconciliationRearm,
   '49_preserve_reconciliation_cycle': preserveReconciliationCycle,
+  '50_preserve_failure_rearm_cycle': preserveFailureRearmCycle,
 })

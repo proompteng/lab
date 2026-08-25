@@ -137,7 +137,13 @@ export const recoverTerminalGenerationToObserve = <R>(
       }),
     ).pipe(Effect.mapError((cause) => recoveryError('terminal generation OBSERVE successor hashing failed', cause)))
     const authority = yield* input.authorityStore
-      .ensureAuthorityGeneration({ generationHash: successorGenerationHash, maximum: Authority.Observe })
+      .ensureAuthorityGeneration({
+        generationHash: successorGenerationHash,
+        maximum: Authority.Observe,
+        ...(settlement.preserveCyclePlanHash === undefined
+          ? {}
+          : { preserveCyclePlanHash: settlement.preserveCyclePlanHash }),
+      })
       .pipe(Effect.mapError((cause) => recoveryError('terminal generation OBSERVE rollover failed', cause)))
     if (
       authority.generationHash !== successorGenerationHash ||
