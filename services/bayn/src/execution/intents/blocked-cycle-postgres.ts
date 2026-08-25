@@ -45,6 +45,7 @@ const CurrentSettlementInputSchema = Schema.Struct({
 const CurrentSettlementRows = Schema.Tuple([
   Schema.Struct({
     authority_generation_hash: Schema.NullOr(Sha256Schema),
+    preserve_cycle_plan_hash: Schema.NullOr(Sha256Schema),
     blocked_cycle_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     blocked_intent_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     expired_intent_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -322,6 +323,15 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         )
         SELECT
           (SELECT generation_hash FROM recoverable_generation) AS authority_generation_hash,
+          (
+            SELECT CASE
+              WHEN activation_schema_version = 'bayn.paper-authority-generation.v3'
+                AND (requires_blocked_cycle OR legacy_failure_restriction)
+              THEN research_plan_hash
+              ELSE NULL
+            END
+            FROM recoverable_generation
+          ) AS preserve_cycle_plan_hash,
           (SELECT count(*)::integer FROM blocked_cycles) AS blocked_cycle_count,
           terminalized_counts.blocked_intent_count,
           terminalized_counts.expired_intent_count,
@@ -347,6 +357,9 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         return Effect.succeed({
           _tag: 'TerminalGenerationSettled' as const,
           authorityGenerationHash: receipt.authority_generation_hash,
+          ...(receipt.preserve_cycle_plan_hash === null
+            ? {}
+            : { preserveCyclePlanHash: receipt.preserve_cycle_plan_hash }),
           blockedCycleCount: receipt.blocked_cycle_count,
           blockedIntentCount: receipt.blocked_intent_count,
           expiredIntentCount: receipt.expired_intent_count,

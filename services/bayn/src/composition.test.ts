@@ -2138,6 +2138,7 @@ describe('Bayn capital startup recovery boundary', () => {
   test('settles, freshly reconciles, and only then rolls a blocked generation to clear OBSERVE', async () => {
     const operations: string[] = []
     const previousGenerationHash = hash('2')
+    const preserveCyclePlanHash = hash('preserved-cycle-plan')
     const successorGenerationHash = Result.getOrThrow(
       executionObserveSuccessorGenerationHash({
         previousExecutionGenerationHash: previousGenerationHash,
@@ -2151,6 +2152,7 @@ describe('Bayn capital startup recovery boundary', () => {
           return {
             _tag: 'TerminalGenerationSettled' as const,
             authorityGenerationHash: previousGenerationHash,
+            preserveCyclePlanHash,
             blockedCycleCount: 1,
             blockedIntentCount: 0,
             expiredIntentCount: 1,
@@ -2162,6 +2164,11 @@ describe('Bayn capital startup recovery boundary', () => {
     const authorityStore: AuthorityGenerationStoreShape = {
       ensureAuthorityGeneration: (input) =>
         Effect.sync(() => {
+          expect(input).toEqual({
+            generationHash: successorGenerationHash,
+            maximum: Authority.Observe,
+            preserveCyclePlanHash,
+          })
           operations.push('rollover')
           return {
             schemaVersion: 'bayn.paper-authority.v1' as const,
