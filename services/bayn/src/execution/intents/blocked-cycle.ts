@@ -22,6 +22,8 @@ export type CurrentTerminalGenerationSettlementReceipt =
   | {
       readonly _tag: 'TerminalGenerationSettled'
       readonly authorityGenerationHash: string
+      /** Same-plan untouched cycles may survive a terminal-generation rollover until the replacement build resumes. */
+      readonly preserveCyclePlanHash?: string
       readonly blockedCycleCount: number
       readonly blockedIntentCount: number
       readonly expiredIntentCount: number

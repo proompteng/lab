@@ -24,6 +24,10 @@ import researchReconciliationRearm from '../../migrations/0048_research_reconcil
 import preserveReconciliationCycle, {
   reconciliationRearmIncidentCycleId,
 } from '../../migrations/0049_preserve_reconciliation_cycle'
+import {
+  failureRearmIncidentCycleId,
+  repairSamePlanSourceRearmCycle,
+} from '../../migrations/0050_preserve_failure_rearm_cycle'
 import type { RuntimeConfig } from '../config'
 import {
   executionObserveSuccessorGenerationHash,
@@ -2778,53 +2782,58 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('preserves and rearms the untouched same-plan cycle after fresh exact reconciliation', async () => {
-    const sourceGenerationHash = hash('reconciliation-rearm-source')
-    const nextSourceGenerationHash = hash('reconciliation-rearm-next-source')
-    const activationReconciliation = exactReconciliation('reconciliation-rearm-activation')
-    const strategyBehaviorHash = hash('reconciliation-rearm-opening-drive-behavior')
-    const strategyParameterHash = hash('reconciliation-rearm-opening-drive-parameters')
-    const strategyParameterSchemaVersion = 'bayn.opening-drive.protocol.v2' as const
-    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation, {
-      strategyName: 'opening-drive-momentum',
-      strategyBehaviorHash,
-      strategyParameterHash,
-      strategyParameterSchemaVersion,
-      strategyProtocolHash: makeStrategyProtocolHash({
-        name: 'opening-drive-momentum',
-        behaviorHash: strategyBehaviorHash,
-        parameterHash: strategyParameterHash,
-        parameterSchemaVersion: strategyParameterSchemaVersion,
-      }),
-    })
-    const cycleId = hash('reconciliation-rearm-cycle')
-    const runtime = makeStoreRuntime(
-      { fail: false, planHashes: [] },
-      researchRuntimeConfig(sourceGenerationHash, {
-        ...config.build,
+  test.each([
+    ['execution failure', `${executionMandateFailureRestrictionPrefix} build-decision: incompatible strategy cadence`],
+    ['reconciliation failure', incompletePassReason],
+  ] as const)(
+    'preserves and rearms the untouched same-plan cycle after a %s restriction',
+    async (fixture, reason) => {
+      const sourceGenerationHash = hash(`${fixture}-rearm-source`)
+      const nextSourceGenerationHash = hash(`${fixture}-rearm-next-source`)
+      const activationReconciliation = exactReconciliation(`${fixture}-rearm-activation`)
+      const strategyBehaviorHash = hash(`${fixture}-rearm-opening-drive-behavior`)
+      const strategyParameterHash = hash(`${fixture}-rearm-opening-drive-parameters`)
+      const strategyParameterSchemaVersion = 'bayn.opening-drive.protocol.v2' as const
+      const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation, {
+        strategyName: 'opening-drive-momentum',
         strategyBehaviorHash,
         strategyParameterHash,
-      }),
-    )
-    try {
-      const result = await runtime.runPromise(
-        Effect.gen(function* () {
-          const store = yield* ExecutionStore
-          const sql = yield* PgClient.PgClient
-          const activateResearch = store.activateResearchCapitalGrant
-          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+        strategyParameterSchemaVersion,
+        strategyProtocolHash: makeStrategyProtocolHash({
+          name: 'opening-drive-momentum',
+          behaviorHash: strategyBehaviorHash,
+          parameterHash: strategyParameterHash,
+          parameterSchemaVersion: strategyParameterSchemaVersion,
+        }),
+      })
+      const cycleId = hash(`${fixture}-rearm-cycle`)
+      const runtime = makeStoreRuntime(
+        { fail: false, planHashes: [] },
+        researchRuntimeConfig(sourceGenerationHash, {
+          ...config.build,
+          strategyBehaviorHash,
+          strategyParameterHash,
+        }),
+      )
+      try {
+        const result = await runtime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* ExecutionStore
+            const sql = yield* PgClient.PgClient
+            const activateResearch = store.activateResearchCapitalGrant
+            assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
 
-          yield* seedExactReconciliation(activationReconciliation)
-          yield* store.ensureAuthorityGeneration({
-            generationHash: sourceGenerationHash,
-            maximum: Authority.Observe,
-          })
-          const activated = yield* activateResearch(
-            researchProofBinding(activation),
-            sourceGenerationHash,
-            futureResearchActivationCutoff,
-          )
-          yield* sql`
+            yield* seedExactReconciliation(activationReconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: sourceGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const activated = yield* activateResearch(
+              researchProofBinding(activation),
+              sourceGenerationHash,
+              futureResearchActivationCutoff,
+            )
+            yield* sql`
             WITH timing AS (
               SELECT
                 clock_timestamp() AS created_at,
@@ -2847,10 +2856,10 @@ describePostgres('paper accounting persistence', () => {
               ${cycleId}, 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle-identity.v3',
               'opening-drive-momentum', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
               NULL, NULL,
-              'bayn.autonomous-cycle-execution-policy.v2', ${hash('reconciliation-rearm-policy')},
-              ${hash('reconciliation-rearm-execution-model')}, 1500000, NULL, 1800000,
+              'bayn.autonomous-cycle-execution-policy.v2', ${hash(`${fixture}-rearm-policy`)},
+              ${hash(`${fixture}-rearm-execution-model`)}, 1500000, NULL, 1800000,
               'bayn.autonomous-cycle-window.v3', 'bayn.alpaca-market-calendar-observation.v1',
-              'alpaca-v2-calendar', ${hash('reconciliation-rearm-calendar')}, execution_date,
+              'alpaca-v2-calendar', ${hash(`${fixture}-rearm-calendar`)}, execution_date,
               NULL,
               NULL,
               (execution_date + time '13:35') AT TIME ZONE 'UTC',
@@ -2860,68 +2869,70 @@ describePostgres('paper accounting persistence', () => {
               'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
             FROM timing
           `
-          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            const [restrictionTime] = yield* sql<{ updated_at: Date }>`
             SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
             FROM authority_state
             WHERE singleton
           `
-          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
-          yield* store.restrictAuthority(incompletePassReason, restrictionTime.updated_at.toISOString())
+            if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+            yield* store.restrictAuthority(reason, restrictionTime.updated_at.toISOString())
 
-          const beforeFreshReconciliation = yield* Effect.flip(
-            store.ensureAuthorityGeneration({
+            const beforeFreshReconciliation = yield* Effect.flip(
+              store.ensureAuthorityGeneration({
+                generationHash: nextSourceGenerationHash,
+                maximum: Authority.Observe,
+              }),
+            )
+            yield* sql`SELECT pg_sleep(0.01)`
+            yield* seedExactReconciliation(exactReconciliation(`${fixture}-rearm-fresh-exact`))
+            yield* sql`SELECT pg_sleep(0.01)`
+            const rearmed = yield* store.ensureAuthorityGeneration({
               generationHash: nextSourceGenerationHash,
               maximum: Authority.Observe,
-            }),
-          )
-          yield* sql`SELECT pg_sleep(0.01)`
-          yield* seedExactReconciliation(exactReconciliation('reconciliation-rearm-fresh-exact'))
-          yield* sql`SELECT pg_sleep(0.01)`
-          const rearmed = yield* store.ensureAuthorityGeneration({
-            generationHash: nextSourceGenerationHash,
-            maximum: Authority.Observe,
-            preserveCyclePlanHash: activation.grant.planHash,
-          })
-          const [cycle] = yield* sql<{
-            decision_hash: string | null
-            state: string
-            state_version: number
-            terminal_reason: string | null
-          }>`
+              preserveCyclePlanHash: activation.grant.planHash,
+            })
+            const [cycle] = yield* sql<{
+              decision_hash: string | null
+              state: string
+              state_version: number
+              terminal_reason: string | null
+            }>`
             SELECT state, decision_hash, state_version, terminal_reason
             FROM autonomous_cycles
             WHERE cycle_id = ${cycleId}
           `
-          return { activated, beforeFreshReconciliation, cycle, rearmed }
-        }),
-      )
+            return { activated, beforeFreshReconciliation, cycle, rearmed }
+          }),
+        )
 
-      expect(result.activated).toMatchObject({
-        maximum: Authority.Execution,
-        effective: Authority.Execution,
-        kill: KillState.Clear,
-      })
-      expect(result.beforeFreshReconciliation).toMatchObject({
-        operation: 'authority',
-        failure: 'invariant',
-      })
-      expect(result.rearmed).toMatchObject({
-        generationHash: nextSourceGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
-        kill: KillState.Clear,
-      })
-      expect(result.rearmed.reason).toBeUndefined()
-      expect(result.cycle).toEqual({
-        decision_hash: null,
-        state: 'PENDING',
-        state_version: 1,
-        terminal_reason: null,
-      })
-    } finally {
-      await runtime.dispose()
-    }
-  }, 15_000)
+        expect(result.activated).toMatchObject({
+          maximum: Authority.Execution,
+          effective: Authority.Execution,
+          kill: KillState.Clear,
+        })
+        expect(result.beforeFreshReconciliation).toMatchObject({
+          operation: 'authority',
+          failure: 'invariant',
+        })
+        expect(result.rearmed).toMatchObject({
+          generationHash: nextSourceGenerationHash,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Clear,
+        })
+        expect(result.rearmed.reason).toBeUndefined()
+        expect(result.cycle).toEqual({
+          decision_hash: null,
+          state: 'PENDING',
+          state_version: 1,
+          terminal_reason: null,
+        })
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    15_000,
+  )
 
   test('repairs the exact untouched cycle terminalized by the pre-v49 reconciliation rearm', async () => {
     const sourceGenerationHash = hash('migration-repair-source')
@@ -3124,6 +3135,183 @@ describePostgres('paper accounting persistence', () => {
       expect(result.lookalikeAfter).toEqual(result.lookalikeBefore)
       expect(result.definition).toContain("state.reason = 'reconciliation pass incomplete'")
       expect(result.definition).toContain("cycle.schema_version = 'bayn.autonomous-cycle.v3'")
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('repairs only the exact untouched cycle terminalized by the pre-v50 failure rearm', async () => {
+    const sourceGenerationHash = hash('failure-migration-repair-source')
+    const observeSuccessorGenerationHash = hash('failure-migration-repair-observe-successor')
+    const activationReconciliation = exactReconciliation('failure-migration-repair-activation')
+    const reactivationReconciliation = exactReconciliation('failure-migration-repair-reactivation')
+    const finalReconciliation = exactReconciliation('failure-migration-repair-final')
+    const strategyBehaviorHash = hash('failure-migration-repair-opening-drive-behavior')
+    const strategyParameterHash = hash('failure-migration-repair-opening-drive-parameters')
+    const strategyParameterSchemaVersion = 'bayn.opening-drive.protocol.v2' as const
+    const activationOverrides = {
+      strategyName: 'opening-drive-momentum',
+      strategyBehaviorHash,
+      strategyParameterHash,
+      strategyParameterSchemaVersion,
+      strategyProtocolHash: makeStrategyProtocolHash({
+        name: 'opening-drive-momentum',
+        behaviorHash: strategyBehaviorHash,
+        parameterHash: strategyParameterHash,
+        parameterSchemaVersion: strategyParameterSchemaVersion,
+      }),
+    } as const
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation, activationOverrides)
+    const lookalikeCycleId = hash('failure-migration-repair-lookalike-cycle')
+    const runtime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      researchRuntimeConfig(sourceGenerationHash, {
+        ...config.build,
+        strategyBehaviorHash,
+        strategyParameterHash,
+      }),
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+          // Reinstall the pre-v50 definition so the rollover reproduces the durable production incident.
+          yield* accountNeutralRuntimeCompatibility
+          yield* researchReconciliationRearm
+          yield* preserveReconciliationCycle
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* activateResearch(
+            researchProofBinding(activation),
+            sourceGenerationHash,
+            futureResearchActivationCutoff,
+          )
+          yield* sql`
+            WITH timing AS (
+              SELECT
+                clock_timestamp() AS created_at,
+                (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
+            ), cycle_candidates AS (
+              SELECT ${failureRearmIncidentCycleId}::text AS cycle_id, created_at, execution_date
+              FROM timing
+              UNION ALL
+              SELECT ${lookalikeCycleId}::text, created_at, execution_date + 1
+              FROM timing
+            )
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, submission_cutoff_after_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              candidate.cycle_id, 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle-identity.v3',
+              ${activation.strategyName}, ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
+              NULL, NULL,
+              'bayn.autonomous-cycle-execution-policy.v2', ${hash('failure-migration-repair-policy')},
+              ${hash('failure-migration-repair-execution-model')}, 1500000, NULL, 1800000,
+              'bayn.autonomous-cycle-window.v3', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash('failure-migration-repair-calendar')}, candidate.execution_date,
+              NULL,
+              NULL,
+              (candidate.execution_date + time '13:35') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '21:00') AT TIME ZONE 'UTC',
+              (candidate.execution_date + time '14:00') AT TIME ZONE 'UTC',
+              'PENDING', NULL, NULL, NULL, 1, candidate.created_at, candidate.created_at, NULL
+            FROM cycle_candidates AS candidate
+          `
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(
+            `${executionMandateFailureRestrictionPrefix} build-decision: incompatible strategy cadence`,
+            restrictionTime.updated_at.toISOString(),
+          )
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* seedExactReconciliation(exactReconciliation('failure-migration-repair-observe'))
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* store.ensureAuthorityGeneration({
+            generationHash: observeSuccessorGenerationHash,
+            maximum: Authority.Observe,
+          })
+
+          const reactivation = makeResearchActivation(
+            observeSuccessorGenerationHash,
+            reactivationReconciliation,
+            activationOverrides,
+          )
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* seedExactReconciliation(reactivationReconciliation)
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* activateResearch(
+            researchProofBinding(reactivation),
+            observeSuccessorGenerationHash,
+            futureResearchActivationCutoff,
+          )
+          yield* store.ingestPositions(
+            positionSnapshotInput(hash('failure-migration-repair-empty-positions'), [], accountId),
+          )
+          yield* sql`SELECT pg_sleep(0.01)`
+          yield* seedExactReconciliation(finalReconciliation)
+          yield* sql`SELECT pg_sleep(0.01)`
+
+          const readCycle = (cycleId: string) =>
+            sql<{
+              state: string
+              state_version: number
+              terminal_at: Date | null
+              terminal_reason: string | null
+            }>`
+              SELECT state, state_version, terminal_reason, terminal_at
+              FROM autonomous_cycles
+              WHERE cycle_id = ${cycleId}
+            `.pipe(Effect.map((rows) => rows[0]))
+          const before = yield* readCycle(failureRearmIncidentCycleId)
+          const lookalikeBefore = yield* readCycle(lookalikeCycleId)
+          yield* repairSamePlanSourceRearmCycle
+          const after = yield* readCycle(failureRearmIncidentCycleId)
+          const lookalikeAfter = yield* readCycle(lookalikeCycleId)
+          return { after, before, lookalikeAfter, lookalikeBefore }
+        }),
+      )
+
+      expect(result.before).toMatchObject({
+        state: 'BLOCKED',
+        state_version: 2,
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
+      })
+      expect(result.before?.terminal_at).toBeInstanceOf(Date)
+      expect(result.after).toEqual({
+        state: 'ACTIVE',
+        state_version: 3,
+        terminal_at: null,
+        terminal_reason: null,
+      })
+      expect(result.lookalikeBefore).toMatchObject({
+        state: 'BLOCKED',
+        state_version: 2,
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
+      })
+      expect(result.lookalikeAfter).toEqual(result.lookalikeBefore)
     } finally {
       await runtime.dispose()
     }
@@ -3460,6 +3648,19 @@ describePostgres('paper accounting persistence', () => {
           Effect.gen(function* () {
             const store = yield* ExecutionStore
             const blockedIntents = yield* BlockedCycleIntentStore
+            let preserveCyclePlanHash: string | undefined
+            const observingBlockedIntents = {
+              ...blockedIntents,
+              settleCurrentTerminalGeneration: (input) =>
+                blockedIntents.settleCurrentTerminalGeneration(input).pipe(
+                  Effect.tap((receipt) =>
+                    Effect.sync(() => {
+                      preserveCyclePlanHash =
+                        receipt._tag === 'TerminalGenerationSettled' ? receipt.preserveCyclePlanHash : undefined
+                    }),
+                  ),
+                ),
+            } satisfies BlockedCycleIntentStoreShape
             const sql = yield* PgClient.PgClient
             const writerFence = yield* WriterFence
             const activateResearch = store.activateResearchCapitalGrant
@@ -3558,7 +3759,7 @@ describePostgres('paper accounting persistence', () => {
 
             const beforeTerminal = yield* recoverTerminalGenerationToObserve({
               accountId,
-              blockedIntents,
+              blockedIntents: observingBlockedIntents,
               authorityStore: store,
               writerFence,
               reconcileAfterSettlement,
@@ -3568,18 +3769,19 @@ describePostgres('paper accounting persistence', () => {
 
             const afterTerminal = yield* recoverTerminalGenerationToObserve({
               accountId,
-              blockedIntents,
+              blockedIntents: observingBlockedIntents,
               authorityStore: store,
               writerFence,
               reconcileAfterSettlement,
             })
             const authority = yield* readAuthorityState
-            return { afterTerminal, authority, beforeTerminal, paper, reconciliations }
+            return { afterTerminal, authority, beforeTerminal, paper, preserveCyclePlanHash, reconciliations }
           }),
         )
 
         expect(result.beforeTerminal).toEqual({ _tag: 'NotRequired' })
         expect(result.reconciliations).toBe(1)
+        expect(result.preserveCyclePlanHash).toBe(activation.grant.planHash)
         expect(result.afterTerminal).toMatchObject({
           _tag: 'RolledOver',
           previousGenerationHash: result.paper.generationHash,
