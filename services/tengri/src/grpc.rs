@@ -92,7 +92,7 @@ impl ControlPlane {
         self.tickets.clone()
     }
 
-    fn authorize<T>(&self, request: &Request<T>) -> Result<Principal, Status> {
+    fn authorize<T: prost::Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
         self.auth.authorize(request)
     }
 

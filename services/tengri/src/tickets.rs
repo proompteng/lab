@@ -89,7 +89,7 @@ impl TicketStore {
         agent_id: &str,
         terminal_id: &str,
     ) -> Result<IssuedTicket, Status> {
-        self.issue(
+        let mut issued = self.issue(
             owner_hash,
             agent_id,
             TicketScope::Terminal {
@@ -97,7 +97,9 @@ impl TicketStore {
             },
             "/v1/terminal/ws",
             None,
-        )
+        )?;
+        issued.url = websocket_url(&issued.url)?;
+        Ok(issued)
     }
 
     pub fn issue_preview(
@@ -301,6 +303,16 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
+fn websocket_url(public_url: &str) -> Result<String, Status> {
+    if let Some(rest) = public_url.strip_prefix("https://") {
+        return Ok(format!("wss://{rest}"));
+    }
+    if let Some(rest) = public_url.strip_prefix("http://localhost") {
+        return Ok(format!("ws://localhost{rest}"));
+    }
+    Err(Status::internal("terminal WebSocket URL is invalid"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +332,18 @@ mod tests {
         assert!(store.consume(&issued.token).is_err());
         assert_eq!(issued.token.split('.').count(), 2);
         assert!(!issued.url.contains(&issued.token));
+        assert_eq!(issued.url, "wss://tengri.example/v1/terminal/ws");
+    }
+
+    #[test]
+    fn localhost_terminal_tickets_use_plain_websockets() {
+        let store =
+            TicketStore::new("http://localhost:8080".to_owned(), "s".repeat(32)).expect("store");
+        let issued = store
+            .issue_terminal("owner", "agent", "terminal")
+            .expect("ticket");
+
+        assert_eq!(issued.url, "ws://localhost:8080/v1/terminal/ws");
     }
 
     #[test]

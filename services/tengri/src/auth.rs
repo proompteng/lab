@@ -5,8 +5,9 @@ use std::{
 };
 
 use hmac::{Hmac, Mac};
+use prost::Message;
 use sha2::{Digest, Sha256};
-use tonic::{Request, Status};
+use tonic::{GrpcMethod, Request, Status};
 
 const SUBJECT_HEADER: &str = "x-tengri-subject";
 const TIMESTAMP_HEADER: &str = "x-tengri-timestamp";
@@ -39,7 +40,7 @@ impl Authenticator {
         })
     }
 
-    pub fn authorize<T>(&self, request: &Request<T>) -> Result<Principal, Status> {
+    pub fn authorize<T: Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
         let subject = metadata(request, SUBJECT_HEADER)?;
         let timestamp = metadata(request, TIMESTAMP_HEADER)?;
         let nonce = metadata(request, NONCE_HEADER)?;
@@ -60,9 +61,15 @@ impl Authenticator {
 
         let signature = decode_hex(&signature)
             .ok_or_else(|| Status::unauthenticated("invalid request signature"))?;
+        let grpc_method = request
+            .extensions()
+            .get::<GrpcMethod<'static>>()
+            .ok_or_else(|| Status::unauthenticated("missing authenticated RPC identity"))?;
+        let rpc_path = format!("/{}/{}", grpc_method.service(), grpc_method.method());
         let mut mac = HmacSha256::new_from_slice(&self.secret)
             .map_err(|_| Status::internal("invalid authentication configuration"))?;
-        mac.update(signing_payload(&subject, &timestamp, &nonce).as_bytes());
+        let body_hash = encode_hex(&Sha256::digest(request.get_ref().encode_to_vec()));
+        mac.update(signing_payload(&subject, &timestamp, &nonce, &rpc_path, &body_hash).as_bytes());
         mac.verify_slice(&signature)
             .map_err(|_| Status::unauthenticated("invalid request signature"))?;
 
@@ -126,8 +133,14 @@ fn validate_nonce(nonce: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn signing_payload(subject: &str, timestamp: &str, nonce: &str) -> String {
-    format!("{subject}\n{timestamp}\n{nonce}")
+fn signing_payload(
+    subject: &str,
+    timestamp: &str,
+    nonce: &str,
+    rpc_path: &str,
+    body_hash: &str,
+) -> String {
+    format!("{subject}\n{timestamp}\n{nonce}\n{rpc_path}\n{body_hash}")
 }
 
 fn encode_hex(value: &[u8]) -> String {
@@ -159,6 +172,12 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    #[derive(Clone, PartialEq, Message)]
+    struct TestRequest {
+        #[prost(string, tag = "1")]
+        id: String,
+    }
+
     #[test]
     fn identity_produces_stable_dns_safe_agent_name() {
         let owner = owner_hash("github:123456");
@@ -181,11 +200,20 @@ mod tests {
             .to_string();
         let nonce = "nonce-1234567890";
         let subject = "github:42";
+        let rpc_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
+        let body = TestRequest {
+            id: "agent-1".to_owned(),
+        };
+        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
-        mac.update(signing_payload(subject, &timestamp, nonce).as_bytes());
+        mac.update(signing_payload(subject, &timestamp, nonce, rpc_path, &body_hash).as_bytes());
         let signature = encode_hex(&mac.finalize().into_bytes());
         let request = || {
-            let mut request = Request::new(());
+            let mut request = Request::new(body.clone());
+            request.extensions_mut().insert(GrpcMethod::new(
+                "proompteng.runtime.v1.MicroVMControlPlane",
+                "GetAgent",
+            ));
             request
                 .metadata_mut()
                 .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
@@ -205,6 +233,66 @@ mod tests {
             auth.authorize(&request()).expect_err("replay").code(),
             tonic::Code::Unauthenticated
         );
+    }
+
+    #[test]
+    fn rejects_signatures_replayed_for_another_rpc_or_body() {
+        let secret = "s".repeat(32);
+        let auth = Authenticator::new(secret.clone()).expect("authenticator");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
+            .to_string();
+        let nonce = "nonce-1234567890";
+        let subject = "github:42";
+        let signed_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
+        let body = TestRequest {
+            id: "agent-1".to_owned(),
+        };
+        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
+        mac.update(signing_payload(subject, &timestamp, nonce, signed_path, &body_hash).as_bytes());
+        let signature = encode_hex(&mac.finalize().into_bytes());
+        let request = |body: TestRequest, method: &'static str| {
+            let mut request = Request::new(body);
+            request.extensions_mut().insert(GrpcMethod::new(
+                "proompteng.runtime.v1.MicroVMControlPlane",
+                method,
+            ));
+            request
+                .metadata_mut()
+                .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
+            request
+                .metadata_mut()
+                .insert(TIMESTAMP_HEADER, timestamp.parse().expect("timestamp"));
+            request
+                .metadata_mut()
+                .insert(NONCE_HEADER, nonce.parse().expect("nonce"));
+            request
+                .metadata_mut()
+                .insert(SIGNATURE_HEADER, signature.parse().expect("signature"));
+            request
+        };
+
+        assert_eq!(
+            auth.authorize(&request(body.clone(), "DeleteAgent"))
+                .expect_err("method substitution")
+                .code(),
+            tonic::Code::Unauthenticated,
+        );
+        assert_eq!(
+            auth.authorize(&request(
+                TestRequest {
+                    id: "agent-2".to_owned(),
+                },
+                "GetAgent",
+            ))
+            .expect_err("body substitution")
+            .code(),
+            tonic::Code::Unauthenticated,
+        );
+        assert!(auth.authorize(&request(body, "GetAgent")).is_ok());
     }
 
     #[test]

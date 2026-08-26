@@ -15,8 +15,9 @@ use futures::{SinkExt, StreamExt};
 use kube::{Api, Client, api::ListParams};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
+use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    connect_async_with_config,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
         Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
     },
@@ -39,6 +40,7 @@ const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
 const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
+type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
   const token = decodeURIComponent(window.location.hash.slice(1));
   const target = window.location.pathname + window.location.search;
@@ -500,13 +502,24 @@ async fn preview_host_proxy(
         let token = guest.token().to_owned();
         let activity = state.activity;
         let agent_id = session.agent_id;
-        return websocket
+        let (upstream, selected_protocol) =
+            match connect_upstream_websocket(&websocket_target, &token, Some(request.headers()))
+                .await
+            {
+                Ok(connection) => connection,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+        let websocket = websocket
             .max_frame_size(MAX_WEBSOCKET_FRAME)
             .max_message_size(MAX_WEBSOCKET_MESSAGE)
-            .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER)
-            .on_upgrade(move |socket| {
-                bridge_websocket(socket, websocket_target, token, activity, agent_id)
-            })
+            .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
+        let websocket = if let Some(protocol) = selected_protocol {
+            websocket.protocols([protocol])
+        } else {
+            websocket
+        };
+        return websocket
+            .on_upgrade(move |socket| bridge_open_websocket(socket, upstream, activity, agent_id))
             .into_response();
     }
     proxy_http(state, session, guest, target, request).await
@@ -659,18 +672,37 @@ async fn bridge_websocket(
     agent_id: String,
 ) {
     activity.touch(&agent_id);
-    let request = match upstream_websocket_request(&target, &token) {
-        Ok(request) => request,
-        Err(_) => return,
+    let Ok((upstream, _)) = connect_upstream_websocket(&target, &token, None).await else {
+        let _ = browser.send(AxumMessage::Close(None)).await;
+        return;
     };
+    bridge_open_websocket(browser, upstream, activity, agent_id).await;
+}
+
+async fn connect_upstream_websocket(
+    target: &str,
+    token: &str,
+    forwarded_headers: Option<&HeaderMap>,
+) -> Result<(UpstreamWebSocket, Option<String>), ()> {
+    let request = upstream_websocket_request(target, token, forwarded_headers)?;
+    let requested_protocols = websocket_protocols(request.headers())?;
     let config = WebSocketConfig::default()
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
-    let Ok((upstream, _)) = connect_async_with_config(request, Some(config), false).await else {
-        let _ = browser.send(AxumMessage::Close(None)).await;
-        return;
-    };
+    let (upstream, response) = connect_async_with_config(request, Some(config), false)
+        .await
+        .map_err(|_| ())?;
+    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)?;
+    Ok((upstream, selected_protocol))
+}
+
+async fn bridge_open_websocket(
+    mut browser: axum::extract::ws::WebSocket,
+    upstream: UpstreamWebSocket,
+    activity: ActivityTracker,
+    agent_id: String,
+) {
     let (mut upstream_write, mut upstream_read) = upstream.split();
     loop {
         tokio::select! {
@@ -703,13 +735,75 @@ async fn bridge_websocket(
     }
 }
 
-fn upstream_websocket_request(target: &str, token: &str) -> Result<http::Request<()>, ()> {
+fn upstream_websocket_request(
+    target: &str,
+    token: &str,
+    forwarded_headers: Option<&HeaderMap>,
+) -> Result<http::Request<()>, ()> {
     let mut request = target.into_client_request().map_err(|_| ())?;
     let authorization = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| ())?;
     request
         .headers_mut()
         .insert(header::AUTHORIZATION, authorization);
+    if let Some(headers) = forwarded_headers {
+        if let Some(origin) = headers.get(header::ORIGIN) {
+            request.headers_mut().insert(header::ORIGIN, origin.clone());
+        }
+        if let Some(cookies) = headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+        {
+            let cookies = strip_cookie(cookies, PREVIEW_COOKIE);
+            if !cookies.is_empty() {
+                request.headers_mut().insert(
+                    header::COOKIE,
+                    HeaderValue::from_str(&cookies).map_err(|_| ())?,
+                );
+            }
+        }
+        let protocols = websocket_protocols(headers)?;
+        if !protocols.is_empty() {
+            request.headers_mut().insert(
+                header::SEC_WEBSOCKET_PROTOCOL,
+                HeaderValue::from_str(&protocols.join(", ")).map_err(|_| ())?,
+            );
+        }
+    }
     Ok(request)
+}
+
+fn websocket_protocols(headers: &HeaderMap) -> Result<Vec<String>, ()> {
+    let mut protocols = Vec::new();
+    for value in headers.get_all(header::SEC_WEBSOCKET_PROTOCOL) {
+        for protocol in value.to_str().map_err(|_| ())?.split(',').map(str::trim) {
+            if protocol.is_empty()
+                || protocol.len() > 128
+                || !protocol
+                    .bytes()
+                    .all(|byte| byte.is_ascii_graphic() && byte != b',')
+            {
+                return Err(());
+            }
+            protocols.push(protocol.to_owned());
+        }
+    }
+    Ok(protocols)
+}
+
+fn selected_websocket_protocol(
+    headers: &HeaderMap,
+    requested_protocols: &[String],
+) -> Result<Option<String>, ()> {
+    let Some(selected) = headers.get(header::SEC_WEBSOCKET_PROTOCOL) else {
+        return Ok(None);
+    };
+    let selected = selected.to_str().map_err(|_| ())?.trim();
+    requested_protocols
+        .iter()
+        .any(|protocol| protocol == selected)
+        .then(|| selected.to_owned())
+        .map(Some)
+        .ok_or(())
 }
 
 fn status_response(code: tonic::Code, message: &str) -> axum::response::Response {
@@ -867,8 +961,9 @@ mod tests {
 
     #[test]
     fn guest_websocket_request_contains_a_complete_client_handshake() {
-        let request = upstream_websocket_request("ws://127.0.0.1:8080/terminal", "guest-token")
-            .expect("websocket request");
+        let request =
+            upstream_websocket_request("ws://127.0.0.1:8080/terminal", "guest-token", None)
+                .expect("websocket request");
 
         assert_eq!(
             request.headers().get(header::HOST).unwrap(),
@@ -891,6 +986,64 @@ mod tests {
             request.headers().get(header::AUTHORIZATION).unwrap(),
             "Bearer guest-token"
         );
+    }
+
+    #[test]
+    fn preview_websocket_preserves_sanitized_application_handshake_headers() {
+        let mut browser_headers = HeaderMap::new();
+        browser_headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://tengri-session.proompteng.ai"),
+        );
+        browser_headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("app=session; __Host-tengri_preview=secret"),
+        );
+        browser_headers.insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("vite-hmr, app-v1"),
+        );
+
+        let request = upstream_websocket_request(
+            "ws://127.0.0.1:8080/v1/preview/3000/ws",
+            "guest-token",
+            Some(&browser_headers),
+        )
+        .expect("websocket request");
+
+        assert_eq!(
+            request.headers().get(header::ORIGIN).unwrap(),
+            "https://tengri-session.proompteng.ai"
+        );
+        assert_eq!(
+            request.headers().get(header::COOKIE).unwrap(),
+            "app=session"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(header::SEC_WEBSOCKET_PROTOCOL)
+                .unwrap(),
+            "vite-hmr, app-v1"
+        );
+        assert_eq!(
+            request.headers().get(header::AUTHORIZATION).unwrap(),
+            "Bearer guest-token"
+        );
+
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("app-v1"),
+        );
+        assert_eq!(
+            selected_websocket_protocol(
+                &response_headers,
+                &["vite-hmr".to_owned(), "app-v1".to_owned()],
+            ),
+            Ok(Some("app-v1".to_owned()))
+        );
+        assert!(selected_websocket_protocol(&response_headers, &["other".to_owned()]).is_err());
     }
 
     #[test]
