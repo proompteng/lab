@@ -13,6 +13,7 @@ const SUBJECT_HEADER: &str = "x-tengri-subject";
 const TIMESTAMP_HEADER: &str = "x-tengri-timestamp";
 const NONCE_HEADER: &str = "x-tengri-nonce";
 const SIGNATURE_HEADER: &str = "x-tengri-signature";
+const PREVIOUS_SIGNATURE_HEADER: &str = "x-tengri-signature-previous";
 const MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
 
 type HmacSha256 = Hmac<Sha256>;
@@ -24,18 +25,26 @@ pub struct Principal {
 
 #[derive(Clone)]
 pub struct Authenticator {
-    secret: Arc<[u8]>,
+    secrets: Arc<[Vec<u8>]>,
     nonces: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 impl Authenticator {
-    pub fn new(secret: String) -> anyhow::Result<Self> {
+    pub fn new(secret_bundle: String) -> anyhow::Result<Self> {
+        let secrets = secret_bundle
+            .split(',')
+            .map(str::trim)
+            .map(str::as_bytes)
+            .map(Vec::from)
+            .collect::<Vec<_>>();
         anyhow::ensure!(
-            secret.len() >= 32,
-            "TENGRI_INTERNAL_HMAC_SECRET must contain at least 32 bytes"
+            !secrets.is_empty()
+                && secrets.len() <= 2
+                && secrets.iter().all(|secret| secret.len() >= 32),
+            "TENGRI_INTERNAL_HMAC_SECRET must contain one key or a current,previous key pair of at least 32 bytes each"
         );
         Ok(Self {
-            secret: Arc::from(secret.into_bytes()),
+            secrets: Arc::from(secrets),
             nonces: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -44,7 +53,10 @@ impl Authenticator {
         let subject = metadata(request, SUBJECT_HEADER)?;
         let timestamp = metadata(request, TIMESTAMP_HEADER)?;
         let nonce = metadata(request, NONCE_HEADER)?;
-        let signature = metadata(request, SIGNATURE_HEADER)?;
+        let mut signatures = vec![metadata(request, SIGNATURE_HEADER)?];
+        if let Some(previous) = optional_metadata(request, PREVIOUS_SIGNATURE_HEADER) {
+            signatures.push(previous);
+        }
         validate_subject(&subject)?;
         validate_nonce(&nonce)?;
 
@@ -59,19 +71,30 @@ impl Authenticator {
             return Err(Status::unauthenticated("authentication timestamp expired"));
         }
 
-        let signature = decode_hex(&signature)
+        let signatures = signatures
+            .iter()
+            .map(|signature| decode_hex(signature))
+            .collect::<Option<Vec<_>>>()
             .ok_or_else(|| Status::unauthenticated("invalid request signature"))?;
         let grpc_method = request
             .extensions()
             .get::<GrpcMethod<'static>>()
             .ok_or_else(|| Status::unauthenticated("missing authenticated RPC identity"))?;
         let rpc_path = format!("/{}/{}", grpc_method.service(), grpc_method.method());
-        let mut mac = HmacSha256::new_from_slice(&self.secret)
-            .map_err(|_| Status::internal("invalid authentication configuration"))?;
         let body_hash = encode_hex(&Sha256::digest(request.get_ref().encode_to_vec()));
-        mac.update(signing_payload(&subject, &timestamp, &nonce, &rpc_path, &body_hash).as_bytes());
-        mac.verify_slice(&signature)
-            .map_err(|_| Status::unauthenticated("invalid request signature"))?;
+        let payload = signing_payload(&subject, &timestamp, &nonce, &rpc_path, &body_hash);
+        let mut valid = false;
+        for secret in self.secrets.iter() {
+            for signature in &signatures {
+                let mut mac = HmacSha256::new_from_slice(secret)
+                    .map_err(|_| Status::internal("invalid authentication configuration"))?;
+                mac.update(payload.as_bytes());
+                valid |= mac.verify_slice(signature).is_ok();
+            }
+        }
+        if !valid {
+            return Err(Status::unauthenticated("invalid request signature"));
+        }
 
         let replay_key = format!("{subject}:{nonce}");
         let mut nonces = self
@@ -108,6 +131,15 @@ fn metadata<T>(request: &Request<T>, name: &'static str) -> Result<String, Statu
         .map(str::to_owned)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| Status::unauthenticated(format!("missing {name}")))
+}
+
+fn optional_metadata<T>(request: &Request<T>, name: &'static str) -> Option<String> {
+    request
+        .metadata()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
 }
 
 fn validate_subject(subject: &str) -> Result<(), Status> {
@@ -296,6 +328,26 @@ mod tests {
     }
 
     #[test]
+    fn accepts_both_sides_of_a_bounded_key_rotation() {
+        let current = "n".repeat(32);
+        let previous = "o".repeat(32);
+        let old_verifier = Authenticator::new(previous.clone()).expect("old verifier");
+        let rotating_verifier =
+            Authenticator::new(format!("{current},{previous}")).expect("rotating verifier");
+
+        let request_from_new_signer =
+            signed_request(&current, Some(&previous), "nonce-new-1234567");
+        assert!(old_verifier.authorize(&request_from_new_signer).is_ok());
+
+        let request_from_old_signer = signed_request(&previous, None, "nonce-old-1234567");
+        assert!(
+            rotating_verifier
+                .authorize(&request_from_old_signer)
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn rejects_empty_or_non_numeric_github_subjects() {
         for subject in ["github:", "github:user", "email:42", ""] {
             assert_eq!(
@@ -306,5 +358,50 @@ mod tests {
             );
         }
         assert!(validate_subject("github:42").is_ok());
+    }
+
+    fn signed_request(primary: &str, previous: Option<&str>, nonce: &str) -> Request<TestRequest> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
+            .to_string();
+        let subject = "github:42";
+        let rpc_path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
+        let body = TestRequest {
+            id: "agent-1".to_owned(),
+        };
+        let body_hash = encode_hex(&Sha256::digest(body.encode_to_vec()));
+        let payload = signing_payload(subject, &timestamp, nonce, rpc_path, &body_hash);
+        let sign = |secret: &str| {
+            let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
+            mac.update(payload.as_bytes());
+            encode_hex(&mac.finalize().into_bytes())
+        };
+
+        let mut request = Request::new(body);
+        request.extensions_mut().insert(GrpcMethod::new(
+            "proompteng.runtime.v1.MicroVMControlPlane",
+            "GetAgent",
+        ));
+        request
+            .metadata_mut()
+            .insert(SUBJECT_HEADER, subject.parse().expect("subject"));
+        request
+            .metadata_mut()
+            .insert(TIMESTAMP_HEADER, timestamp.parse().expect("timestamp"));
+        request
+            .metadata_mut()
+            .insert(NONCE_HEADER, nonce.parse().expect("nonce"));
+        request
+            .metadata_mut()
+            .insert(SIGNATURE_HEADER, sign(primary).parse().expect("signature"));
+        if let Some(previous) = previous {
+            request.metadata_mut().insert(
+                PREVIOUS_SIGNATURE_HEADER,
+                sign(previous).parse().expect("previous signature"),
+            );
+        }
+        request
     }
 }

@@ -7,6 +7,11 @@ an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
+`TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
+authentication outage by publishing `new,current` in the same 1Password field first: the BFF signs with both keys and
+the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
+bundle, remove the previous key. More than two keys are rejected.
+
 ## Local validation
 
 ```bash
