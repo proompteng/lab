@@ -22,7 +22,8 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: arc-amd64
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -31,10 +32,42 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
 
-      - name: Test
+      - name: Validate guest service
         working-directory: services/nanoagent
         run: |
-          go test ./...
-          go vet ./...
+          set -euo pipefail
+          test -z "$(gofmt -l .)"
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...
+
+  image:
+    needs: test
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build native guest image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
+          platforms: linux/${{ matrix.architecture }}
+          push: false
+          provenance: mode=max
+          sbom: true
