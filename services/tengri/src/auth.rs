@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use hmac::{Hmac, Mac};
@@ -26,7 +26,7 @@ pub struct Principal {
 #[derive(Clone)]
 pub struct Authenticator {
     secrets: Arc<[Vec<u8>]>,
-    nonces: Arc<Mutex<HashMap<String, Instant>>>,
+    nonces: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl Authenticator {
@@ -101,11 +101,9 @@ impl Authenticator {
             .nonces
             .lock()
             .map_err(|_| Status::internal("authentication state is unavailable"))?;
-        let cutoff = Instant::now()
-            .checked_sub(MAX_CLOCK_SKEW)
-            .unwrap_or_else(Instant::now);
-        nonces.retain(|_, inserted_at| *inserted_at >= cutoff);
-        if nonces.insert(replay_key, Instant::now()).is_some() {
+        retain_live_nonces(&mut nonces, now);
+        let expires_at = nonce_expiry(timestamp_seconds);
+        if nonces.insert(replay_key, expires_at).is_some() {
             return Err(Status::unauthenticated("request nonce was already used"));
         }
 
@@ -173,6 +171,14 @@ fn signing_payload(
     body_hash: &str,
 ) -> String {
     format!("{subject}\n{timestamp}\n{nonce}\n{rpc_path}\n{body_hash}")
+}
+
+fn nonce_expiry(timestamp_seconds: u64) -> u64 {
+    timestamp_seconds.saturating_add(MAX_CLOCK_SKEW.as_secs())
+}
+
+fn retain_live_nonces(nonces: &mut HashMap<String, u64>, now: u64) {
+    nonces.retain(|_, expires_at| *expires_at >= now);
 }
 
 fn encode_hex(value: &[u8]) -> String {
@@ -265,6 +271,21 @@ mod tests {
             auth.authorize(&request()).expect_err("replay").code(),
             tonic::Code::Unauthenticated
         );
+    }
+
+    #[test]
+    fn retains_future_dated_nonce_for_its_full_signature_lifetime() {
+        let now = 10_000;
+        let signed_at = now + MAX_CLOCK_SKEW.as_secs();
+        let expires_at = nonce_expiry(signed_at);
+        let mut nonces = HashMap::from([("github:42:nonce".to_owned(), expires_at)]);
+
+        // A receipt-time TTL would incorrectly evict this nonce at now + skew,
+        // while the signed request is still accepted through signed_at + skew.
+        retain_live_nonces(&mut nonces, now + MAX_CLOCK_SKEW.as_secs() + 1);
+        assert!(nonces.contains_key("github:42:nonce"));
+        retain_live_nonces(&mut nonces, expires_at + 1);
+        assert!(nonces.is_empty());
     }
 
     #[test]

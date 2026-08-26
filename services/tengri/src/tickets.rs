@@ -7,6 +7,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
+use http::Uri;
 use rand::distr::{Alphanumeric, SampleString};
 use sha2::Sha256;
 use tonic::Status;
@@ -67,10 +68,7 @@ pub struct TicketStats {
 impl TicketStore {
     pub fn new(public_url: String, signing_secret: String) -> anyhow::Result<Self> {
         let public_url = public_url.trim_end_matches('/');
-        anyhow::ensure!(
-            public_url.starts_with("https://") || public_url.starts_with("http://localhost"),
-            "TENGRI_PUBLIC_URL must use HTTPS outside localhost"
-        );
+        validate_public_url(public_url)?;
         anyhow::ensure!(
             signing_secret.len() >= 32,
             "TENGRI_TICKET_SIGNING_SECRET must contain at least 32 bytes"
@@ -304,13 +302,36 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 }
 
 fn websocket_url(public_url: &str) -> Result<String, Status> {
-    if let Some(rest) = public_url.strip_prefix("https://") {
-        return Ok(format!("wss://{rest}"));
+    let uri = public_url
+        .parse::<Uri>()
+        .map_err(|_| Status::internal("terminal WebSocket URL is invalid"))?;
+    match uri.scheme_str() {
+        Some("https") => Ok(public_url.replacen("https://", "wss://", 1)),
+        Some("http") if uri.host() == Some("localhost") => {
+            Ok(public_url.replacen("http://", "ws://", 1))
+        }
+        _ => Err(Status::internal("terminal WebSocket URL is invalid")),
     }
-    if let Some(rest) = public_url.strip_prefix("http://localhost") {
-        return Ok(format!("ws://localhost{rest}"));
-    }
-    Err(Status::internal("terminal WebSocket URL is invalid"))
+}
+
+fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
+    let uri = public_url
+        .parse::<Uri>()
+        .map_err(|error| anyhow::anyhow!("TENGRI_PUBLIC_URL is invalid: {error}"))?;
+    anyhow::ensure!(
+        uri.authority().is_some() && uri.host().is_some(),
+        "TENGRI_PUBLIC_URL must be an absolute URL"
+    );
+    anyhow::ensure!(
+        uri.path() == "/" && uri.query().is_none(),
+        "TENGRI_PUBLIC_URL must not include a path or query"
+    );
+    anyhow::ensure!(
+        uri.scheme_str() == Some("https")
+            || (uri.scheme_str() == Some("http") && uri.host() == Some("localhost")),
+        "TENGRI_PUBLIC_URL must use HTTPS outside localhost"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -344,6 +365,22 @@ mod tests {
             .expect("ticket");
 
         assert_eq!(issued.url, "ws://localhost:8080/v1/terminal/ws");
+    }
+
+    #[test]
+    fn localhost_http_exception_requires_an_exact_hostname() {
+        for invalid in [
+            "http://localhost.attacker.example",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+            "https://tengri.example/base",
+            "https://tengri.example/?query=1",
+        ] {
+            assert!(
+                TicketStore::new(invalid.to_owned(), "s".repeat(32)).is_err(),
+                "accepted invalid public URL {invalid}",
+            );
+        }
     }
 
     #[test]
