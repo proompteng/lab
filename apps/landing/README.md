@@ -42,6 +42,10 @@ receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap 
 2. Register `http://localhost:3000/api/auth/callback/github` as the local GitHub callback.
 3. Start the Rust Tengri service locally or point at an isolated development endpoint.
 
+For a zero-downtime HMAC rotation, temporarily set `TENGRI_INTERNAL_HMAC_SECRET` to `new,current`. The BFF emits both
+signatures until the controller has refreshed the same bundle; remove the previous key only after both sides have
+observed it.
+
 ## Validation
 
 ```sh
