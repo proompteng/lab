@@ -7,10 +7,13 @@ import {
   codeModelKey,
   codeModelTransition,
   codePanelId,
+  codeParentDirectory,
   disposeCodeModels,
   enqueueCodeOpenRequest,
+  isEditorValuePersisted,
   isCodePath,
   openEditorTab,
+  renameEditorTab,
 } from './code-editor-model'
 
 describe('Code editor model', () => {
@@ -25,7 +28,7 @@ describe('Code editor model', () => {
     const second = openEditorTab(first, '/workspace/b.ts')
     expect(openEditorTab(second, '/workspace/a.ts')).toEqual(second)
     expect(closeEditorTab(second, '/workspace/a.ts', '/workspace/a.ts')).toEqual({
-      tabs: [{ path: '/workspace/b.ts', state: 'loading', error: '' }],
+      tabs: [{ path: '/workspace/b.ts', dirty: false, state: 'loading', error: '' }],
       activePath: '/workspace/b.ts',
     })
     expect(closeEditorTab(second, '/workspace/b.ts', '/workspace/a.ts').activePath).toBe('/workspace/b.ts')
@@ -35,6 +38,22 @@ describe('Code editor model', () => {
     expect(codeFileName('/workspace/src/main.ts')).toBe('main.ts')
     expect(codeLanguage('/workspace/src/main.tsx')).toBe('typescript')
     expect(codeLanguage('/workspace/README')).toBe('plaintext')
+    expect(codeParentDirectory('/workspace/src/main.ts')).toBe('/workspace/src')
+  })
+
+  test('moves an open tab after an external rename without changing its editor state', () => {
+    const tabs = [{ path: '/workspace/a.ts', dirty: true, state: 'error' as const, error: 'conflict' }]
+    expect(renameEditorTab(tabs, '/workspace/a.ts', '/workspace/a.ts', '/workspace/b.ts')).toEqual({
+      tabs: [{ ...tabs[0], path: '/workspace/b.ts' }],
+      activePath: '/workspace/b.ts',
+    })
+  })
+
+  test('does not treat a reverted value as persisted while an earlier save is still pending', () => {
+    expect(isEditorValuePersisted('original', 'original', false)).toBe(true)
+    expect(isEditorValuePersisted('original', 'original', true)).toBe(false)
+    expect(isEditorValuePersisted('changed', 'original', false)).toBe(false)
+    expect(isEditorValuePersisted('', undefined, false)).toBe(false)
   })
 
   test('preserves every open request received before Monaco is ready', () => {
