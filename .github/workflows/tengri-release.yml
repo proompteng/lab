@@ -1,0 +1,169 @@
+name: Tengri release
+
+on:
+  workflow_run:
+    workflows:
+      - Tengri images
+    types:
+      - completed
+
+concurrency:
+  group: tengri-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      }}
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        uses: actions/download-artifact@v5
+        with:
+          name: tengri-release-contract
+          path: .artifacts/tengri
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install script dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Validate release contract and published images
+        id: release
+        env:
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          contract=.artifacts/tengri/release-contract.json
+          source_sha="$(jq -r '.sourceSha' "$contract")"
+          tag="$(jq -r '.tag' "$contract")"
+          tengri_digest="$(jq -r '.images.tengri.digest' "$contract")"
+          nanoagent_digest="$(jq -r '.images.nanoagent.digest' "$contract")"
+          test "$source_sha" = "$WORKFLOW_SHA"
+          test "$tag" = "sha-${source_sha}"
+          test "$(jq -r '.images.tengri.repository' "$contract")" = registry.ide-newton.ts.net/lab/tengri
+          test "$(jq -r '.images.nanoagent.repository' "$contract")" = registry.ide-newton.ts.net/lab/nanoagent
+          test "$(jq -r '.signed' "$contract")" = true
+          [[ "$tengri_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$nanoagent_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          git merge-base --is-ancestor "$source_sha" HEAD
+          git diff --quiet "$source_sha..HEAD" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            argocd/applications/tengri \
+            argocd/applications/kata \
+            argocd/applicationsets/platform.yaml \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml
+
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tengri-images.yml@refs/heads/main"
+          for entry in "tengri:${tengri_digest}" "nanoagent:${nanoagent_digest}"; do
+            service="${entry%%:*}"
+            digest="${entry#*:}"
+            reference="registry.ide-newton.ts.net/lab/${service}@${digest}"
+            docker buildx imagetools inspect --raw "$reference" > "${service}-index.json"
+            jq -e '
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+            ' "${service}-index.json"
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$reference"
+          done
+
+          {
+            echo "source_sha=$source_sha"
+            echo "tag=$tag"
+            echo "tengri_digest=$tengri_digest"
+            echo "nanoagent_digest=$nanoagent_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pin both images and enable Tengri
+        run: |
+          set -euo pipefail
+          bun packages/scripts/src/tengri/update-release.ts \
+            --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
+            --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
+          bun packages/scripts/src/tengri/validate-release.ts
+
+      - name: Create release pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/tengri-release-${{ steps.release.outputs.source_sha }}
+          base: main
+          title: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'
+          commit-message: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'
+          add-paths: |
+            argocd/applications/tengri/kustomization.yaml
+            argocd/applicationsets/platform.yaml
+          labels: |
+            automated-pr
+            tengri
+          body: |
+            ## Summary
+
+            Atomically enable Tengri with the two signed, multi-architecture images built from one source commit.
+
+            - Source: `${{ steps.release.outputs.source_sha }}`
+            - Tengri: `registry.ide-newton.ts.net/lab/tengri@${{ steps.release.outputs.tengri_digest }}`
+            - Nanoagent: `registry.ide-newton.ts.net/lab/nanoagent@${{ steps.release.outputs.nanoagent_digest }}`
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - Release contract matches the completed `main` workflow SHA.
+            - Both OCI indexes contain `linux/amd64` and `linux/arm64`.
+            - Both keyless signatures verify against the Tengri workflow identity.
+            - `bun packages/scripts/src/tengri/validate-release.ts` rejects partial and zero-digest enabled states.
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None. The application remains absent until this promotion is merged and Argo reconciles it.
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed.
+            - [x] Images are immutable, signed, and multi-architecture.
+            - [x] Tengri and Nanoagent are promoted atomically.
+            - [x] No node, Talos, RuntimeClass, cordon, drain, or reboot operation is included.
