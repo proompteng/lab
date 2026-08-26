@@ -313,6 +313,38 @@ export interface MutationObservation {
   readonly latestOccurredAt: string | null
 }
 
+export interface AccountingEconomicsObservation {
+  readonly fillCount: number
+  readonly transactionCount: number
+  readonly receiptCount: number
+  readonly realizedCloseCount: number
+  readonly unaccountedFillCount: number
+  readonly unreceiptedTransactionCount: number
+  readonly grossRealizedPnlMicros: string
+  readonly executionFeesMicros: string
+  readonly netRealizedPnlAfterExecutionFeesMicros: string
+}
+
+export interface ForwardPerformanceObservation {
+  readonly createdAt: string
+  readonly evidenceStatus: 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
+  readonly profitability: 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
+  readonly grossRealizedPnlMicros: string | null
+  readonly brokerExecutionFeesMicros: string | null
+  readonly otherChargedCostsMicros: string | null
+  readonly netRealizedPnlAfterCostsMicros: string | null
+  readonly netRealizedReturnDecimal: string | null
+  readonly completedExecutionCount: number
+  readonly realizedCloseCount: number
+  readonly accountingReceiptsExact: boolean
+  readonly ledgerExact: boolean
+}
+
+export interface CycleEconomicsObservation {
+  readonly accounting: AccountingEconomicsObservation
+  readonly forwardPerformance: ForwardPerformanceObservation | null
+}
+
 export interface CycleOperationsProjection {
   readonly current: CycleOperationsSnapshot | null
   readonly last: CycleOperationsSnapshot | null
@@ -320,6 +352,7 @@ export interface CycleOperationsProjection {
   readonly authority: DurableAuthorityObservation | null
   readonly reconciliation: ReconciliationObservation | null
   readonly mutations: MutationObservation
+  readonly economics?: CycleEconomicsObservation
 }
 
 export enum CycleOperationsCondition {

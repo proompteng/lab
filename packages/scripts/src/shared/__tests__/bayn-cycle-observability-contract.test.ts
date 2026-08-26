@@ -251,6 +251,13 @@ describe('Bayn cycle operations alert contract', () => {
       'Session preflight',
       'Decision',
       'Unresolved mutations',
+      'Economic evidence',
+      'Profitability',
+      'Net realized after all costs',
+      'Net realized return',
+      'Gross realized P&L',
+      'Recorded costs',
+      'Accounting coverage',
       'Current session window',
       'Controller cadence',
       'Condition history',
@@ -270,6 +277,11 @@ describe('Bayn cycle operations alert contract', () => {
         'min(bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (status) (bayn_forward_performance_evidence{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'max by (profitability) (bayn_forward_performance_profitability{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_forward_performance_net_realized_return_ratio{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (state) (bayn_accounting_state{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
         'max(bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
         'max(bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
@@ -287,7 +299,7 @@ describe('Bayn cycle operations alert contract', () => {
       ]),
     )
     const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
-    expect(statPanels).toHaveLength(14)
+    expect(statPanels).toHaveLength(21)
     expect(
       statPanels.every(({ targets = [] }) =>
         targets.every(({ instant, range }) => instant === true && range === false),

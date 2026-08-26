@@ -72,7 +72,7 @@ data:
           },
           "gridPos": {
             "h": 4,
-            "w": 4,
+            "w": 6,
             "x": 0,
             "y": 0
           },
@@ -148,8 +148,8 @@ data:
           },
           "gridPos": {
             "h": 4,
-            "w": 4,
-            "x": 4,
+            "w": 6,
+            "x": 6,
             "y": 0
           },
           "id": 2,
@@ -224,8 +224,8 @@ data:
           },
           "gridPos": {
             "h": 4,
-            "w": 4,
-            "x": 8,
+            "w": 6,
+            "x": 12,
             "y": 0
           },
           "id": 3,
@@ -746,6 +746,388 @@ data:
             "type": "prometheus",
             "uid": "prom"
           },
+          "description": "Status of the latest immutable forward-performance receipt. No receipt means no completed economic proof, not zero profit.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO COMPLETED RECEIPT"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 8
+          },
+          "id": 20,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (status) (bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{status}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Economic evidence",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Profitability classification from the immutable receipt after all recorded costs. It remains unavailable until a closed, reconciled execution exists.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "UNDETERMINED"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 8
+          },
+          "id": 21,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (profitability) (bayn_forward_performance_profitability{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{profitability}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Profitability",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable net realized P&L after broker fees, other charged costs, and recorded cash yield. Running partial accounting is never substituted here.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 8
+          },
+          "id": 22,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "net after all costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Net realized after all costs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Immutable net realized return after all recorded costs. It is unavailable until a closed, reconciled performance receipt exists.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 3,
+              "noValue": "NO COMPLETED RECEIPT",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 8
+          },
+          "id": 26,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_net_realized_return_ratio{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "instant": true,
+              "legendFormat": "net realized return",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Net realized return",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Gross realized P&L. Uses the immutable receipt when present, otherwise the durable running accounting total after at least one transaction.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO ACCOUNTED FILLS",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.000001
+                  }
+                ]
+              },
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 12
+          },
+          "id": 23,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) or (max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on() (max(bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"}) > 0))",
+              "instant": true,
+              "legendFormat": "gross realized",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Gross realized P&L",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Recorded costs. Uses all terminal charged costs when a receipt exists; before completion it shows execution fees only and never claims all-cost completeness.",
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 2,
+              "noValue": "NO RECORDED COSTS",
+              "min": 0,
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 8,
+            "y": 12
+          },
+          "id": 24,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "value",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max(bayn_forward_performance_total_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) or (max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) and on() (max(bayn_accounting_activity_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",kind=\"transactions\"}) > 0))",
+              "instant": true,
+              "legendFormat": "recorded costs",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Recorded costs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "description": "Coverage of durable fills by accounting transactions and TigerBeetle receipts: IDLE before the first fill, EXACT when fully covered, GAP otherwise.",
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "NO DATA"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 16,
+            "y": 12
+          },
+          "id": 25,
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "name",
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "max by (state) (bayn_accounting_state{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1)",
+              "instant": true,
+              "legendFormat": "{{state}}",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Accounting coverage",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
           "description": "The immutable submission and execution boundaries for the current cycle.",
           "fieldConfig": {
             "defaults": {
@@ -759,7 +1141,7 @@ data:
             "h": 5,
             "w": 16,
             "x": 0,
-            "y": 8
+            "y": 16
           },
           "id": 12,
           "options": {
@@ -852,7 +1234,7 @@ data:
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 8
+            "y": 16
           },
           "id": 13,
           "options": {
@@ -910,7 +1292,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 13
+            "y": 21
           },
           "id": 14,
           "options": {
@@ -952,7 +1334,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 13
+            "y": 21
           },
           "id": 15,
           "options": {
@@ -994,7 +1376,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 13
+            "y": 21
           },
           "id": 16,
           "options": {
@@ -1039,7 +1421,7 @@ data:
             "h": 7,
             "w": 16,
             "x": 0,
-            "y": 20
+            "y": 28
           },
           "id": 17,
           "options": {
@@ -1098,7 +1480,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 20
+            "y": 28
           },
           "id": 18,
           "options": {
@@ -1166,7 +1548,7 @@ data:
             "h": 3,
             "w": 24,
             "x": 0,
-            "y": 27
+            "y": 35
           },
           "id": 19,
           "options": {

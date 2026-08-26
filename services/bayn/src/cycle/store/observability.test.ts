@@ -65,6 +65,27 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   unresolved_mutation_count: 0,
   oldest_unresolved_mutation_at: null,
   latest_mutation_at: null,
+  accounting_fill_count: 0,
+  accounting_transaction_count: 0,
+  accounting_receipt_count: 0,
+  accounting_realized_close_count: 0,
+  unaccounted_fill_count: 0,
+  unreceipted_transaction_count: 0,
+  accounting_gross_realized_pnl_micros: '0',
+  accounting_execution_fees_micros: '0',
+  accounting_net_realized_pnl_after_execution_fees_micros: '0',
+  performance_receipt_created_at: null,
+  performance_evidence_status: null,
+  performance_profitability: null,
+  performance_gross_realized_pnl_micros: null,
+  performance_broker_execution_fees_micros: null,
+  performance_other_charged_costs_micros: null,
+  performance_net_realized_pnl_after_costs_micros: null,
+  performance_net_realized_return_decimal: null,
+  performance_completed_execution_count: null,
+  performance_realized_close_count: null,
+  performance_accounting_receipts_exact: null,
+  performance_ledger_exact: null,
 })
 
 const currentCycleRow = (): CycleObservabilityProjectionRow => ({
@@ -109,6 +130,20 @@ describe('cycle observability projection', () => {
           unresolvedCount: 0,
           oldestUnresolvedAt: null,
           latestOccurredAt: null,
+        },
+        economics: {
+          accounting: {
+            fillCount: 0,
+            transactionCount: 0,
+            receiptCount: 0,
+            realizedCloseCount: 0,
+            unaccountedFillCount: 0,
+            unreceiptedTransactionCount: 0,
+            grossRealizedPnlMicros: '0',
+            executionFeesMicros: '0',
+            netRealizedPnlAfterExecutionFeesMicros: '0',
+          },
+          forwardPerformance: null,
         },
       }),
     )
@@ -192,6 +227,10 @@ describe('cycle observability projection', () => {
         row: { ...emptyRow(), reconciliation_id: '3'.repeat(64) },
         message: 'reconciliation projection is incomplete',
       },
+      {
+        row: { ...emptyRow(), performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z') },
+        message: 'forward-performance economics projection is incomplete',
+      },
     ] as const
 
     for (const testCase of cases) {
@@ -206,6 +245,62 @@ describe('cycle observability projection', () => {
         message: testCase.message,
       })
     }
+  })
+
+  test('projects running accounting and immutable all-cost performance separately', () => {
+    const row: CycleObservabilityProjectionRow = {
+      ...emptyRow(),
+      accounting_fill_count: 4,
+      accounting_transaction_count: 4,
+      accounting_receipt_count: 4,
+      accounting_realized_close_count: 2,
+      accounting_gross_realized_pnl_micros: '12500000',
+      accounting_execution_fees_micros: '500000',
+      accounting_net_realized_pnl_after_execution_fees_micros: '12000000',
+      performance_receipt_created_at: sqlTimestamp('2026-07-24T21:06:00.000Z'),
+      performance_evidence_status: 'SUFFICIENT',
+      performance_profitability: 'PROFITABLE',
+      performance_gross_realized_pnl_micros: '12500000',
+      performance_broker_execution_fees_micros: '500000',
+      performance_other_charged_costs_micros: '250000',
+      performance_net_realized_pnl_after_costs_micros: '11750000',
+      performance_net_realized_return_decimal: '0.011750',
+      performance_completed_execution_count: 4,
+      performance_realized_close_count: 2,
+      performance_accounting_receipts_exact: true,
+      performance_ledger_exact: true,
+    }
+
+    const projected = projectCycleObservabilityRow(row)
+    expect(Result.isSuccess(projected)).toBe(true)
+    if (Result.isFailure(projected)) return expect.unreachable(projected.failure.message)
+    expect(projected.success.economics).toEqual({
+      accounting: {
+        fillCount: 4,
+        transactionCount: 4,
+        receiptCount: 4,
+        realizedCloseCount: 2,
+        unaccountedFillCount: 0,
+        unreceiptedTransactionCount: 0,
+        grossRealizedPnlMicros: '12500000',
+        executionFeesMicros: '500000',
+        netRealizedPnlAfterExecutionFeesMicros: '12000000',
+      },
+      forwardPerformance: {
+        createdAt: '2026-07-24T21:06:00.000Z',
+        evidenceStatus: 'SUFFICIENT',
+        profitability: 'PROFITABLE',
+        grossRealizedPnlMicros: '12500000',
+        brokerExecutionFeesMicros: '500000',
+        otherChargedCostsMicros: '250000',
+        netRealizedPnlAfterCostsMicros: '11750000',
+        netRealizedReturnDecimal: '0.011750',
+        completedExecutionCount: 4,
+        realizedCloseCount: 2,
+        accountingReceiptsExact: true,
+        ledgerExact: true,
+      },
+    })
   })
 
   test('keeps explicit account mismatch ahead of other incomplete row failures', () => {

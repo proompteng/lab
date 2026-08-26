@@ -806,6 +806,20 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       current: null,
       last: null,
       reconciliation: { accountId, reconciliationId, status: 'EXACT', discrepancyCount: 0 },
+      economics: {
+        accounting: {
+          fillCount: 0,
+          transactionCount: 0,
+          receiptCount: 0,
+          realizedCloseCount: 0,
+          unaccountedFillCount: 0,
+          unreceiptedTransactionCount: 0,
+          grossRealizedPnlMicros: '0',
+          executionFeesMicros: '0',
+          netRealizedPnlAfterExecutionFeesMicros: '0',
+        },
+        forwardPerformance: null,
+      },
     })
     expect(result.current).toMatchObject({
       current: {
