@@ -969,8 +969,8 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
     if !approval_id.is_empty() {
         return CodexEventKind::Approval;
     }
-    if raw.pointer("/params/item/type").and_then(Value::as_str) == Some("userMessage") {
-        CodexEventKind::UserMessage
+    if let Some(kind) = raw.pointer("/params/item").and_then(codex_thread_item_kind) {
+        kind
     } else if normalized_method == "error" || normalized_method.contains("error") {
         CodexEventKind::Error
     } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
@@ -999,6 +999,49 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
     }
 }
 
+fn codex_thread_item_kind(item: &Value) -> Option<CodexEventKind> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    Some(match item_type {
+        "userMessage" => CodexEventKind::UserMessage,
+        "agentMessage" => CodexEventKind::AssistantText,
+        "reasoning" => CodexEventKind::ReasoningSummary,
+        "plan" => CodexEventKind::Plan,
+        "fileChange" => CodexEventKind::FileDiff,
+        "commandExecution" => {
+            if item
+                .get("aggregatedOutput")
+                .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed" | "declined")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "mcpToolCall" | "dynamicToolCall" => {
+            if item.get("result").is_some_and(|value| !value.is_null())
+                || item.get("error").is_some_and(|value| !value.is_null())
+                || item
+                    .get("contentItems")
+                    .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "collabAgentToolCall" | "subAgentActivity" | "webSearch" => CodexEventKind::ToolCall,
+        _ => return None,
+    })
+}
+
 fn codex_event_text(value: &Value) -> String {
     let direct = json_string(
         value,
@@ -1006,9 +1049,11 @@ fn codex_event_text(value: &Value) -> String {
             "/params/delta",
             "/params/text",
             "/params/message",
+            "/params/reason",
             "/params/summary",
             "/params/details",
             "/params/diff",
+            "/params/command",
             "/params/item/text",
             "/params/item/aggregatedOutput",
             "/params/item/command",
@@ -1028,6 +1073,28 @@ fn codex_event_text(value: &Value) -> String {
             .filter_map(|item| {
                 item.as_str()
                     .or_else(|| item.get("text").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    for pointer in [
+        "/params/item/contentItems",
+        "/params/item/result/content",
+        "/params/item/changes",
+    ] {
+        let text = value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+                    .or_else(|| item.get("diff").and_then(Value::as_str))
+                    .or_else(|| item.get("path").and_then(Value::as_str))
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1387,10 +1454,45 @@ mod tests {
             CodexEventKind::UserMessage
         );
         assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "agentMessage", "text": "done"}}}),
+            ),
+            CodexEventKind::AssistantText
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({
+                    "params": {
+                        "item": {
+                            "type": "commandExecution",
+                            "status": "completed",
+                            "aggregatedOutput": "12 pass"
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
             codex_event_text(&json!({
                 "params": {"item": {"content": [{"type": "text", "text": "actual input"}]}}
             })),
             "actual input"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "fileChange",
+                        "changes": [{"path": "/workspace/main.rs", "diff": "+fn main() {}"}]
+                    }
+                }
+            })),
+            "+fn main() {}"
         );
         assert_eq!(
             codex_event_kind("configWarning", "", &json!({})),
