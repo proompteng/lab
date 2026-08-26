@@ -17,7 +17,9 @@ use reqwest::redirect::Policy;
 use serde::Deserialize;
 use tokio_tungstenite::{
     connect_async_with_config,
-    tungstenite::{Message as TungsteniteMessage, protocol::WebSocketConfig},
+    tungstenite::{
+        Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
+    },
 };
 
 use crate::{
@@ -657,11 +659,7 @@ async fn bridge_websocket(
     agent_id: String,
 ) {
     activity.touch(&agent_id);
-    let request = match http::Request::builder()
-        .uri(target)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(())
-    {
+    let request = match upstream_websocket_request(&target, &token) {
         Ok(request) => request,
         Err(_) => return,
     };
@@ -703,6 +701,15 @@ async fn bridge_websocket(
             }
         }
     }
+}
+
+fn upstream_websocket_request(target: &str, token: &str) -> Result<http::Request<()>, ()> {
+    let mut request = target.into_client_request().map_err(|_| ())?;
+    let authorization = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| ())?;
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, authorization);
+    Ok(request)
 }
 
 fn status_response(code: tonic::Code, message: &str) -> axum::response::Response {
@@ -855,6 +862,34 @@ mod tests {
                 "tengri.ticket.nonce.signature".to_owned(),
                 "nonce.signature".to_owned(),
             ))
+        );
+    }
+
+    #[test]
+    fn guest_websocket_request_contains_a_complete_client_handshake() {
+        let request = upstream_websocket_request("ws://127.0.0.1:8080/terminal", "guest-token")
+            .expect("websocket request");
+
+        assert_eq!(
+            request.headers().get(header::HOST).unwrap(),
+            "127.0.0.1:8080"
+        );
+        assert_eq!(request.headers().get(header::UPGRADE).unwrap(), "websocket");
+        assert_eq!(
+            request.headers().get(header::CONNECTION).unwrap(),
+            "Upgrade"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(header::SEC_WEBSOCKET_VERSION)
+                .unwrap(),
+            "13"
+        );
+        assert!(request.headers().contains_key(header::SEC_WEBSOCKET_KEY));
+        assert_eq!(
+            request.headers().get(header::AUTHORIZATION).unwrap(),
+            "Bearer guest-token"
         );
     }
 

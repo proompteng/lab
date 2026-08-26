@@ -8,6 +8,7 @@ use kube::{
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 
@@ -56,6 +57,7 @@ pub struct ControlPlane {
     auth: Authenticator,
     tickets: TicketStore,
     activity: ActivityTracker,
+    create_lock: Arc<Mutex<()>>,
 }
 
 pub struct ControlPlaneConfig {
@@ -82,6 +84,7 @@ impl ControlPlane {
             auth: Authenticator::new(config.internal_hmac_secret)?,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
+            create_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -215,6 +218,10 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request)?;
         let display_name = validate_display_name(&request.get_ref().display_name)?;
         let id = deterministic_agent_id(&principal.owner_hash);
+        // Serialize the optimistic count-and-create path within the singleton control plane.
+        // The namespace ResourceQuota remains the atomic Kubernetes admission backstop if the
+        // Deployment is ever scaled or another writer creates MicroVM resources directly.
+        let _create_guard = self.create_lock.lock().await;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         if let Some(existing) = api.get_opt(&id).await.map_err(map_kube_error)? {
             ensure_owner(&principal, &existing)?;

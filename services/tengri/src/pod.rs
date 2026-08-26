@@ -251,7 +251,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             },
             EnvVar {
                 name: "NANOAGENT_WORKSPACE".to_owned(),
-                value: Some("/home/nanoagent".to_owned()),
+                value: Some("/workspace".to_owned()),
                 ..EnvVar::default()
             },
         ]),
@@ -293,13 +293,18 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
             VolumeMount {
+                name: "home".to_owned(),
+                mount_path: "/workspace".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
                 name: "tmp".to_owned(),
                 mount_path: "/tmp".to_owned(),
                 ..VolumeMount::default()
             },
         ]),
-        // The home PVC is empty on first boot. Start from its mount root so
-        // Nanoagent can create /home/nanoagent/workspace before /workspace is used.
+        // The home PVC is empty on first boot. Start from its mount root while exposing the
+        // same persistent volume at /workspace for Codex, Finder, Code, and terminal sessions.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
@@ -415,9 +420,14 @@ mod tests {
                 .as_ref()
                 .is_some_and(|env| env.iter().any(|value| {
                     value.name == "NANOAGENT_WORKSPACE"
-                        && value.value.as_deref() == Some("/home/nanoagent")
+                        && value.value.as_deref() == Some("/workspace")
                 }))
         );
+        assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
+            mounts
+                .iter()
+                .any(|mount| mount.name == "home" && mount.mount_path == "/workspace")
+        }));
     }
 
     #[test]
