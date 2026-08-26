@@ -36,6 +36,11 @@ jobs:
           toolchain: 1.90.0
           components: clippy,rustfmt
 
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
+
       - name: Validate controller
         working-directory: services/tengri
         run: |
