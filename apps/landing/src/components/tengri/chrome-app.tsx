@@ -100,7 +100,7 @@ export function ChromeApp({ agentId }: { agentId: string }) {
       <div
         aria-label="Browser tabs"
         className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-white/8 bg-white/[0.025] px-2 pt-1"
-        role="tablist"
+        role="toolbar"
       >
         {state.tabs.map((tab) => {
           const page = currentChromePage(tab)
@@ -114,11 +114,10 @@ export function ChromeApp({ agentId }: { agentId: string }) {
             >
               <button
                 aria-controls={`chrome-panel-${tab.id}`}
-                aria-selected={selected}
+                aria-pressed={selected}
                 className="flex min-w-0 flex-1 items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-white/50"
                 id={`chrome-tab-${tab.id}`}
                 onClick={() => dispatch({ type: 'activate', id: tab.id })}
-                role="tab"
                 type="button"
               >
                 {page.kind === 'agent' ? (

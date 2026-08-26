@@ -189,8 +189,9 @@ export function MenuBar({
             {agent.displayName}
           </span>
         ) : null}
-        <span aria-label="Connected">
+        <span title="Connected">
           <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
+          <span className="sr-only">Connected</span>
         </span>
         {userName ? <span className="max-w-32 truncate">{userName}</span> : null}
         <time dateTime={clock?.toISOString()}>
