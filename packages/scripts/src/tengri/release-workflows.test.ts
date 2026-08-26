@@ -43,4 +43,20 @@ describe('Tengri release workflows', () => {
     expect(source).toContain('bun packages/scripts/src/tengri/update-release.ts')
     expect(source).toContain('bun packages/scripts/src/tengri/validate-release.ts')
   })
+
+  it('reuses a verified image when only deployment manifests changed', () => {
+    const release = YAML.parse(readFileSync(releasePath, 'utf8')) as {
+      jobs?: { promote?: { steps?: Array<{ name?: string; run?: string }> } }
+    }
+    const validation = release.jobs?.promote?.steps?.find(
+      (step) => step.name === 'Validate release contract and published images',
+    )?.run
+
+    expect(validation).toContain('services/tengri')
+    expect(validation).toContain('services/nanoagent')
+    expect(validation).toContain('packages/scripts/src/tengri')
+    expect(validation).not.toContain('argocd/applications/tengri')
+    expect(validation).not.toContain('argocd/applications/kata')
+    expect(validation).not.toContain('argocd/applicationsets/platform.yaml')
+  })
 })

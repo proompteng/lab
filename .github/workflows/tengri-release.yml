@@ -82,9 +82,6 @@ jobs:
             services/tengri \
             services/nanoagent \
             packages/scripts/src/tengri \
-            argocd/applications/tengri \
-            argocd/applications/kata \
-            argocd/applicationsets/platform.yaml \
             .github/workflows/tengri-images.yml \
             .github/workflows/tengri-release.yml
 
