@@ -1,21 +1,55 @@
 'use client'
 
-import { ArrowLeft, ArrowRight, File, FileCode2, Folder, Grid2X2, List, LoaderCircle, Search } from 'lucide-react'
+import * as Dialog from '@radix-ui/react-dialog'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  File,
+  FileCode2,
+  Folder,
+  Grid2X2,
+  List,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react'
 
 import type { TengriFileEntry } from '@/lib/tengri/types'
 
 import { runTengriAction } from './client'
+import { ConfirmationDialog } from './confirmation-dialog'
 import {
   FINDER_WORKSPACE_PATH,
-  finderSearchRefreshInterval,
+  finderCanPreviewText,
+  finderChildPath,
+  finderDeletionDescription,
+  finderDeletionTargets,
   finderFileKind,
+  finderRenamePath,
+  finderSearchRefreshInterval,
   formatFinderBytes,
   formatFinderDate,
   normalizeFinderPath,
+  updateFinderSelection,
 } from './finder-model'
 
 type FinderView = 'grid' | 'list'
+type QuickLookState = {
+  entry: TengriFileEntry
+  content: string
+  error: string
+  loading: boolean
+}
 
 const toolbarButtonClass =
   'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/8 hover:text-white disabled:pointer-events-none disabled:opacity-25'
@@ -34,16 +68,41 @@ export function FinderApp({
   const [history, setHistory] = useState<string[]>([FINDER_WORKSPACE_PATH])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [entries, setEntries] = useState<TengriFileEntry[]>([])
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [view, setView] = useState<FinderView>('list')
   const [query, setQuery] = useState('')
+  const [newFolder, setNewFolder] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState<TengriFileEntry | null>(null)
+  const [quickLook, setQuickLook] = useState<QuickLookState | null>(null)
+  const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(
+    null,
+  )
   const [loading, setLoading] = useState(true)
   const [watchState, setWatchState] = useState<'connected' | 'paused' | 'reconnecting'>('paused')
   const [error, setError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
+  const [actionBusy, setActionBusy] = useState(false)
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const entryRefs = useRef(new Map<string, HTMLElement>())
   const loadSequence = useRef(0)
   const latestLoad = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
+  const quickLookAbort = useRef<AbortController | null>(null)
+  const selectionAnchor = useRef<string | null>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    additive: Set<string>
+    frame: number
+  } | null>(null)
 
-  const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null
+  const selectedEntries = entries.filter((entry) => selected.has(entry.path))
+  const primarySelection = selectedEntries.length === 1 ? selectedEntries[0] : null
+  const deletionTargets = finderDeletionTargets(selectedEntries)
   let watchLabel = 'Reconnecting…'
   if (watchState === 'connected') watchLabel = 'Live'
   else if (watchState === 'paused') watchLabel = 'Paused'
@@ -67,7 +126,13 @@ export function FinderApp({
             )
         if (sequence !== loadSequence.current || signal?.aborted) return
         setEntries(result.entries)
-        setSelectedPath((current) => (result.entries.some((entry) => entry.path === current) ? current : null))
+        if (selectionAnchor.current && !result.entries.some((entry) => entry.path === selectionAnchor.current)) {
+          selectionAnchor.current = null
+        }
+        setSelected(
+          (current) =>
+            new Set([...current].filter((entryPath) => result.entries.some((entry) => entry.path === entryPath))),
+        )
       } catch (cause) {
         if (sequence !== loadSequence.current || signal?.aborted) return
         setError(cause instanceof Error ? cause.message : 'Finder could not load this folder')
@@ -120,6 +185,14 @@ export function FinderApp({
     return () => window.clearInterval(timer)
   }, [active, query])
 
+  useEffect(
+    () => () => {
+      quickLookAbort.current?.abort()
+      if (dragRef.current) window.cancelAnimationFrame(dragRef.current.frame)
+    },
+    [],
+  )
+
   const navigate = useCallback(
     (nextPath: string) => {
       const normalized = normalizeFinderPath(nextPath)
@@ -129,7 +202,11 @@ export function FinderApp({
       }
       setPathDraft(normalized)
       setQuery('')
-      setSelectedPath(null)
+      setSelected(new Set())
+      selectionAnchor.current = null
+      setRenaming(null)
+      setShowCreate(false)
+      setFormError('')
       setError('')
       if (normalized === path) {
         void latestLoad.current(false)
@@ -150,7 +227,11 @@ export function FinderApp({
       setPath(nextPath)
       setPathDraft(nextPath)
       setQuery('')
-      setSelectedPath(null)
+      setSelected(new Set())
+      selectionAnchor.current = null
+      setRenaming(null)
+      setShowCreate(false)
+      setFormError('')
       setError('')
     },
     [history],
@@ -163,6 +244,220 @@ export function FinderApp({
     },
     [navigate, onOpenFile],
   )
+
+  async function createFolder() {
+    const destination = finderChildPath(path, newFolder)
+    if (!destination) {
+      setFormError('Folder names cannot be empty or contain “/”')
+      return
+    }
+    setActionBusy(true)
+    setFormError('')
+    try {
+      await runTengriAction({ action: 'create-directory', agentId, path: destination })
+      setNewFolder('')
+      setShowCreate(false)
+      await latestLoad.current(true)
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Finder could not create this folder')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function deleteSelected() {
+    if (!deletionTargets.length) {
+      setDeleteError('The workspace root cannot be deleted.')
+      return
+    }
+    setActionBusy(true)
+    setDeleteError('')
+    try {
+      for (const entry of deletionTargets) {
+        await runTengriAction({ action: 'delete-file', agentId, path: entry.path, recursive: entry.directory })
+      }
+      setSelected(new Set())
+      selectionAnchor.current = null
+      setDeleteConfirmationOpen(false)
+      await latestLoad.current(true)
+    } catch (cause) {
+      setDeleteError(cause instanceof Error ? cause.message : 'Finder could not delete the selected items')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  function beginRename(entry = primarySelection) {
+    if (!entry || entry.path === FINDER_WORKSPACE_PATH) return
+    setFormError('')
+    setRenaming(entry)
+    setRenameValue(entry.name)
+  }
+
+  async function renameSelected() {
+    if (!renaming) return
+    const destinationPath = finderRenamePath(renaming.path, renameValue)
+    if (!destinationPath) {
+      setFormError('Names cannot be empty or contain “/”, and the workspace root cannot be renamed.')
+      return
+    }
+    if (destinationPath === renaming.path) {
+      setRenaming(null)
+      return
+    }
+    setActionBusy(true)
+    setFormError('')
+    try {
+      await runTengriAction({ action: 'move-file', agentId, sourcePath: renaming.path, destinationPath })
+      setSelected(new Set([destinationPath]))
+      selectionAnchor.current = destinationPath
+      setRenaming(null)
+      await latestLoad.current(true)
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Finder could not rename this item')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  function closeQuickLook() {
+    quickLookAbort.current?.abort()
+    quickLookAbort.current = null
+    setQuickLook(null)
+  }
+
+  async function openQuickLook(entry = primarySelection) {
+    if (!entry) return
+    quickLookAbort.current?.abort()
+    if (entry.directory) {
+      setQuickLook({ entry, content: '', error: '', loading: false })
+      return
+    }
+    const controller = new AbortController()
+    quickLookAbort.current = controller
+    setQuickLook({ entry, content: '', error: '', loading: true })
+    try {
+      const result = await runTengriAction<{ content: string; contentType: string }>(
+        { action: 'read-file', agentId, path: entry.path },
+        controller.signal,
+      )
+      if (controller.signal.aborted) return
+      if (!finderCanPreviewText(result.contentType)) {
+        setQuickLook({
+          entry,
+          content: '',
+          error: `Quick Look cannot display ${result.contentType || 'this binary file'}.`,
+          loading: false,
+        })
+        return
+      }
+      setQuickLook({ entry, content: result.content, error: '', loading: false })
+    } catch (cause) {
+      if (controller.signal.aborted) return
+      setQuickLook({
+        entry,
+        content: '',
+        error: cause instanceof Error ? cause.message : 'Quick Look could not read this file',
+        loading: false,
+      })
+    }
+  }
+
+  function selectEntry(entry: TengriFileEntry, event: ReactMouseEvent) {
+    setSelected((current) => {
+      const next = updateFinderSelection(current, entries, entry.path, selectionAnchor.current, {
+        additive: event.metaKey || event.ctrlKey,
+        range: event.shiftKey,
+      })
+      selectionAnchor.current = next.anchorPath
+      return next.selected
+    })
+  }
+
+  function focusEntry(entry: TengriFileEntry) {
+    setSelected(new Set([entry.path]))
+    selectionAnchor.current = entry.path
+  }
+
+  function beginDragSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || (event.target as HTMLElement).closest('[data-file-entry], button, input')) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const additive = event.metaKey || event.ctrlKey ? new Set(selected) : new Set<string>()
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      additive,
+      frame: 0,
+    }
+    if (!additive.size) {
+      setSelected(new Set())
+      selectionAnchor.current = null
+    }
+  }
+
+  function applyDragSelection(
+    drag: NonNullable<typeof dragRef.current>,
+    host: HTMLDivElement,
+    clientX: number,
+    clientY: number,
+  ) {
+    const hostRect = host.getBoundingClientRect()
+    const leftClient = Math.min(drag.startX, clientX)
+    const topClient = Math.min(drag.startY, clientY)
+    const rightClient = Math.max(drag.startX, clientX)
+    const bottomClient = Math.max(drag.startY, clientY)
+    setSelectionBox({
+      left: leftClient - hostRect.left + host.scrollLeft,
+      top: topClient - hostRect.top + host.scrollTop,
+      width: rightClient - leftClient,
+      height: bottomClient - topClient,
+    })
+    const next = new Set(drag.additive)
+    for (const [entryPath, element] of entryRefs.current) {
+      const bounds = element.getBoundingClientRect()
+      if (
+        bounds.right >= leftClient &&
+        bounds.left <= rightClient &&
+        bounds.bottom >= topClient &&
+        bounds.top <= bottomClient
+      ) {
+        next.add(entryPath)
+      }
+    }
+    setSelected(next)
+    selectionAnchor.current = next.values().next().value ?? null
+  }
+
+  function updateDragSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    const host = contentRef.current
+    if (!drag || !host || drag.pointerId !== event.pointerId) return
+    window.cancelAnimationFrame(drag.frame)
+    const clientX = event.clientX
+    const clientY = event.clientY
+    drag.frame = window.requestAnimationFrame(() => applyDragSelection(drag, host, clientX, clientY))
+  }
+
+  function finishDragSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    const host = contentRef.current
+    if (!drag || !host || drag.pointerId !== event.pointerId) return
+    window.cancelAnimationFrame(drag.frame)
+    applyDragSelection(drag, host, event.clientX, event.clientY)
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    dragRef.current = null
+    setSelectionBox(null)
+  }
+
+  function cancelDragSelection(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    window.cancelAnimationFrame(drag.frame)
+    dragRef.current = null
+    setSelectionBox(null)
+  }
 
   return (
     <div className="@container/finder relative flex h-full min-h-0 bg-[#17191f] text-white/85">
@@ -211,13 +506,56 @@ export function FinderApp({
               className="w-full bg-transparent text-white/70 outline-none"
             />
           </label>
+          <button
+            type="button"
+            className={toolbarButtonClass}
+            aria-label="New folder"
+            disabled={actionBusy}
+            onClick={() => {
+              setRenaming(null)
+              setFormError('')
+              setShowCreate(true)
+            }}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className={toolbarButtonClass}
+            aria-label="Delete selected item"
+            disabled={!deletionTargets.length || actionBusy}
+            onClick={() => {
+              setDeleteError('')
+              setDeleteConfirmationOpen(true)
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className={toolbarButtonClass}
+            aria-label="Rename selected item"
+            disabled={!primarySelection || primarySelection.path === FINDER_WORKSPACE_PATH || actionBusy}
+            onClick={() => beginRename()}
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className={toolbarButtonClass}
+            aria-label="Quick Look"
+            disabled={!primarySelection}
+            onClick={() => void openQuickLook()}
+          >
+            <Eye className="h-4 w-4" />
+          </button>
           {onOpenFile ? (
             <button
               type="button"
               className={toolbarButtonClass}
               aria-label="Open selected file in Code"
-              disabled={!selectedEntry || selectedEntry.directory}
-              onClick={() => selectedEntry && onOpenFile(selectedEntry.path)}
+              disabled={!primarySelection || primarySelection.directory}
+              onClick={() => primarySelection && onOpenFile(primarySelection.path)}
             >
               <FileCode2 className="h-4 w-4" />
             </button>
@@ -254,7 +592,112 @@ export function FinderApp({
           </label>
         </div>
 
-        <div className="relative min-h-0 flex-1 overflow-auto p-3">
+        {showCreate ? (
+          <form
+            className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void createFolder()
+            }}
+          >
+            <Folder className="h-4 w-4 text-[#79b8ff]" />
+            <input
+              autoFocus
+              aria-label="New folder name"
+              value={newFolder}
+              disabled={actionBusy}
+              onChange={(event) => setNewFolder(event.target.value)}
+              placeholder="New folder name"
+              className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+            />
+            <button
+              type="submit"
+              disabled={actionBusy}
+              className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+              onClick={() => {
+                setShowCreate(false)
+                setFormError('')
+              }}
+            >
+              Cancel
+            </button>
+            {formError ? (
+              <span role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
+                {formError}
+              </span>
+            ) : null}
+          </form>
+        ) : null}
+
+        {renaming ? (
+          <form
+            className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void renameSelected()
+            }}
+          >
+            <Pencil className="h-4 w-4 text-[#79b8ff]" />
+            <input
+              autoFocus
+              aria-label="Rename item"
+              value={renameValue}
+              disabled={actionBusy}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onFocus={(event) => {
+                const extension = renaming.directory ? -1 : event.currentTarget.value.lastIndexOf('.')
+                event.currentTarget.setSelectionRange(0, extension > 0 ? extension : event.currentTarget.value.length)
+              }}
+              className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+            />
+            <button
+              type="submit"
+              disabled={actionBusy}
+              className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy}
+              className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+              onClick={() => {
+                setRenaming(null)
+                setFormError('')
+              }}
+            >
+              Cancel
+            </button>
+            {formError ? (
+              <span role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
+                {formError}
+              </span>
+            ) : null}
+          </form>
+        ) : null}
+
+        <div
+          ref={contentRef}
+          className="relative min-h-0 flex-1 overflow-auto p-3"
+          onPointerDown={beginDragSelection}
+          onPointerMove={updateDragSelection}
+          onPointerUp={finishDragSelection}
+          onPointerCancel={cancelDragSelection}
+        >
+          {selectionBox ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute z-20 border border-[#79b8ff]/70 bg-[#2574e8]/18"
+              style={selectionBox}
+            />
+          ) : null}
           {loading ? (
             <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-white/45">
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -287,12 +730,25 @@ export function FinderApp({
               </div>
               {entries.map((entry) => (
                 <FinderEntry
+                  elementRef={(element) => {
+                    if (element) entryRefs.current.set(entry.path, element)
+                    else entryRefs.current.delete(entry.path)
+                  }}
                   entry={entry}
                   key={entry.path}
-                  selected={selectedPath === entry.path}
+                  selected={selected.has(entry.path)}
+                  showPath={Boolean(query.trim())}
                   view="list"
                   onActivate={() => activate(entry)}
-                  onSelect={() => setSelectedPath(entry.path)}
+                  onQuickLook={() => {
+                    focusEntry(entry)
+                    void openQuickLook(entry)
+                  }}
+                  onRename={() => {
+                    focusEntry(entry)
+                    beginRename(entry)
+                  }}
+                  onSelect={(event) => selectEntry(entry, event)}
                 />
               ))}
             </div>
@@ -301,12 +757,25 @@ export function FinderApp({
             <div role="group" aria-label="Files" className="grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-2">
               {entries.map((entry) => (
                 <FinderEntry
+                  elementRef={(element) => {
+                    if (element) entryRefs.current.set(entry.path, element)
+                    else entryRefs.current.delete(entry.path)
+                  }}
                   entry={entry}
                   key={entry.path}
-                  selected={selectedPath === entry.path}
+                  selected={selected.has(entry.path)}
+                  showPath={Boolean(query.trim())}
                   view="grid"
                   onActivate={() => activate(entry)}
-                  onSelect={() => setSelectedPath(entry.path)}
+                  onQuickLook={() => {
+                    focusEntry(entry)
+                    void openQuickLook(entry)
+                  }}
+                  onRename={() => {
+                    focusEntry(entry)
+                    beginRename(entry)
+                  }}
+                  onSelect={(event) => selectEntry(entry, event)}
                 />
               ))}
             </div>
@@ -318,56 +787,164 @@ export function FinderApp({
           className="flex h-7 shrink-0 items-center justify-between border-t border-white/7 px-3 py-1 text-[10px] text-white/35"
         >
           <span>
-            {entries.length} items{selectedEntry ? ' · 1 selected' : ''}
+            {entries.length} items{selected.size ? ` · ${selected.size} selected` : ''}
           </span>
           <span className={watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}>{watchLabel}</span>
         </div>
       </div>
+
+      <Dialog.Root open={Boolean(quickLook)} onOpenChange={(open) => !open && closeQuickLook()}>
+        {quickLook ? (
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[6800] bg-black/34 backdrop-blur-sm" />
+            <Dialog.Content className="fixed top-1/2 left-1/2 z-[6801] flex h-[min(620px,calc(100vh-64px))] w-[min(820px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/18 bg-[#181b21]/96 shadow-2xl outline-none">
+              <header className="flex h-11 shrink-0 items-center border-b border-white/9 px-4">
+                <FinderFileIcon entry={quickLook.entry} />
+                <Dialog.Title className="ml-2 min-w-0 flex-1 truncate text-xs font-semibold text-white/82">
+                  {quickLook.entry.name}
+                </Dialog.Title>
+                <Dialog.Description className="sr-only">
+                  Preview of {quickLook.entry.path}. Press Escape to close.
+                </Dialog.Description>
+                {!quickLook.entry.directory && onOpenFile ? (
+                  <button
+                    type="button"
+                    className="mr-2 rounded-lg px-2 py-1 text-xs text-[#79b8ff] hover:bg-white/7"
+                    onClick={() => {
+                      onOpenFile(quickLook.entry.path)
+                      closeQuickLook()
+                    }}
+                  >
+                    Open in Code
+                  </button>
+                ) : null}
+                <Dialog.Close asChild>
+                  <button type="button" className={toolbarButtonClass} aria-label="Close Quick Look">
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </header>
+              <div className="min-h-0 flex-1 overflow-auto p-5">
+                {quickLook.entry.directory ? (
+                  <div className="grid h-full place-items-center text-center text-white/45">
+                    <div>
+                      <FinderFileIcon entry={quickLook.entry} large />
+                      <p className="mt-3 text-sm">{quickLook.entry.path}</p>
+                    </div>
+                  </div>
+                ) : quickLook.loading ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-sm text-white/42">
+                    <LoaderCircle className="h-4 w-4 animate-spin" /> Loading preview…
+                  </div>
+                ) : quickLook.error ? (
+                  <p role="alert" className="rounded-xl bg-red-500/10 p-4 text-sm text-red-200">
+                    {quickLook.error}
+                  </p>
+                ) : quickLook.content ? (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-white/72">
+                    {quickLook.content}
+                  </pre>
+                ) : (
+                  <p className="text-center text-sm text-white/35">Empty file</p>
+                )}
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        ) : null}
+      </Dialog.Root>
+
+      <ConfirmationDialog
+        busy={actionBusy}
+        confirmLabel="Delete"
+        description={finderDeletionDescription(deletionTargets)}
+        error={deleteError}
+        onCancel={() => {
+          if (actionBusy) return
+          setDeleteConfirmationOpen(false)
+          setDeleteError('')
+        }}
+        onConfirm={() => void deleteSelected()}
+        open={deleteConfirmationOpen}
+        title={deletionTargets.length === 1 ? 'Delete this item?' : 'Delete selected items?'}
+      />
     </div>
   )
 }
 
 function FinderEntry({
+  elementRef,
   entry,
   onActivate,
+  onQuickLook,
+  onRename,
   onSelect,
   selected,
+  showPath,
   view,
 }: {
+  elementRef: (element: HTMLButtonElement | null) => void
   entry: TengriFileEntry
   onActivate: () => void
-  onSelect: () => void
+  onQuickLook: () => void
+  onRename: () => void
+  onSelect: (event: ReactMouseEvent<HTMLButtonElement>) => void
   selected: boolean
+  showPath: boolean
   view: FinderView
 }) {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      onActivate()
+      return
+    }
+    if (event.key === ' ' && !event.repeat) {
+      event.preventDefault()
+      onQuickLook()
+      return
+    }
+    if (event.key === 'F2') {
+      event.preventDefault()
+      onRename()
+    }
+  }
+
   if (view === 'grid') {
     return (
       <button
+        ref={elementRef}
+        data-file-entry
         type="button"
         aria-pressed={selected}
         onClick={onSelect}
         onDoubleClick={onActivate}
-        onKeyDown={(event) => event.key === 'Enter' && onActivate()}
+        onKeyDown={handleKeyDown}
         className={`flex min-h-28 flex-col items-center justify-center gap-2 rounded-xl p-3 text-center text-xs ${selected ? 'bg-[#2574e8]/42' : 'hover:bg-white/6'}`}
       >
         <FinderFileIcon entry={entry} large />
         <span className="line-clamp-2 break-all">{entry.name}</span>
+        {showPath ? <span className="line-clamp-2 break-all text-[10px] text-white/38">{entry.path}</span> : null}
       </button>
     )
   }
 
   return (
     <button
+      ref={elementRef}
+      data-file-entry
       type="button"
       aria-pressed={selected}
       onClick={onSelect}
       onDoubleClick={onActivate}
-      onKeyDown={(event) => event.key === 'Enter' && onActivate()}
+      onKeyDown={handleKeyDown}
       className={`grid w-full grid-cols-[minmax(220px,1fr)_100px_170px] items-center border-t border-white/6 px-3 py-2 text-left text-xs ${selected ? 'bg-[#2574e8]/42' : 'hover:bg-white/[0.045]'}`}
     >
       <span className="flex min-w-0 items-center gap-2">
         <FinderFileIcon entry={entry} />
-        <span className="truncate">{entry.name}</span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate">{entry.name}</span>
+          {showPath ? <span className="truncate text-[10px] text-white/38">{entry.path}</span> : null}
+        </span>
       </span>
       <span className="text-white/42">{entry.directory ? '—' : formatFinderBytes(entry.size)}</span>
       <span className="text-white/42">{formatFinderDate(entry.modifiedAt)}</span>

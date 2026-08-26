@@ -13,7 +13,7 @@ function hasInvalidPathCharacter(value: string): boolean {
 }
 
 export function normalizeFinderPath(value: string): string | null {
-  const candidate = value.trim()
+  const candidate = value
   if (!candidate.startsWith('/') || hasInvalidPathCharacter(candidate)) return null
 
   const segments: string[] = []
@@ -32,6 +32,93 @@ export function normalizeFinderPath(value: string): string | null {
 
 export function finderSearchRefreshInterval(active: boolean, query: string): number | null {
   return active && query.trim() ? FINDER_SEARCH_REFRESH_MS : null
+}
+
+export function finderChildPath(parentPath: string, name: string): string | null {
+  const parent = normalizeFinderPath(parentPath)
+  const child = name
+  if (
+    !parent ||
+    !child.trim() ||
+    child === '.' ||
+    child === '..' ||
+    child.includes('/') ||
+    hasInvalidPathCharacter(child)
+  )
+    return null
+
+  return parent === FINDER_WORKSPACE_PATH ? `/${child}` : `${parent}/${child}`
+}
+
+export function finderRenamePath(sourcePath: string, name: string): string | null {
+  const source = normalizeFinderPath(sourcePath)
+  if (!source || source === FINDER_WORKSPACE_PATH) return null
+  const separator = source.lastIndexOf('/')
+  const parent = separator > 0 ? source.slice(0, separator) : FINDER_WORKSPACE_PATH
+  return finderChildPath(parent, name)
+}
+
+export function updateFinderSelection(
+  current: ReadonlySet<string>,
+  orderedEntries: readonly Pick<TengriFileEntry, 'path'>[],
+  targetPath: string,
+  anchorPath: string | null,
+  options: { additive: boolean; range: boolean },
+): { anchorPath: string; selected: Set<string> } {
+  if (options.range && current.size) {
+    const effectiveAnchor = orderedEntries.some((entry) => entry.path === anchorPath) ? anchorPath : targetPath
+    const anchorIndex = orderedEntries.findIndex((entry) => entry.path === effectiveAnchor)
+    const targetIndex = orderedEntries.findIndex((entry) => entry.path === targetPath)
+    if (anchorIndex >= 0 && targetIndex >= 0) {
+      const [start, end] = anchorIndex < targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex]
+      const range = orderedEntries.slice(start, end + 1).map((entry) => entry.path)
+      return {
+        anchorPath: effectiveAnchor || targetPath,
+        selected: new Set(options.additive ? [...current, ...range] : range),
+      }
+    }
+  }
+
+  if (options.additive) {
+    const next = new Set(current)
+    if (next.has(targetPath)) next.delete(targetPath)
+    else next.add(targetPath)
+    return { anchorPath: targetPath, selected: next }
+  }
+
+  return { anchorPath: targetPath, selected: new Set([targetPath]) }
+}
+
+export function finderDeletionTargets(
+  entries: readonly Pick<TengriFileEntry, 'directory' | 'path'>[],
+): Pick<TengriFileEntry, 'directory' | 'path'>[] {
+  const candidates = entries.filter((entry) => entry.path !== FINDER_WORKSPACE_PATH)
+  const selectedDirectories = candidates.filter((entry) => entry.directory).map((entry) => entry.path)
+  return candidates.filter(
+    (entry) =>
+      !selectedDirectories.some(
+        (directory) =>
+          entry.path !== directory && entry.path.startsWith(directory.endsWith('/') ? directory : `${directory}/`),
+      ),
+  )
+}
+
+export function finderDeletionDescription(entries: readonly Pick<TengriFileEntry, 'path'>[]): string {
+  if (entries.length === 1) return `“${entries[0]?.path}” will be permanently removed from this agent’s workspace.`
+  const visiblePaths = entries.slice(0, 3).map((entry) => entry.path)
+  const remainder = entries.length - visiblePaths.length
+  const suffix = remainder > 0 ? ` and ${remainder} more` : ''
+  return `${entries.length} items will be permanently removed: ${visiblePaths.join(', ')}${suffix}.`
+}
+
+export function finderCanPreviewText(contentType: string): boolean {
+  const mediaType = contentType.split(';', 1)[0]?.trim().toLowerCase() || ''
+  return (
+    mediaType.startsWith('text/') ||
+    ['application/javascript', 'application/json', 'application/toml', 'application/xml', 'application/yaml'].includes(
+      mediaType,
+    )
+  )
 }
 
 export function formatFinderBytes(size: number): string {
