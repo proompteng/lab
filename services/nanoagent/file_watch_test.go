@@ -101,6 +101,21 @@ func TestFileWatcherSignalsExpiredCursorAndDisconnectsSlowSubscriber(t *testing.
 	}
 }
 
+func TestFileWatcherSignalsCursorFromPreviousProcess(t *testing.T) {
+	t.Parallel()
+	files := &fileWatcher{subscriptions: make(map[uint64]fileSubscription)}
+	id, events, err := files.subscribe(42, "/workspace", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer files.unsubscribe(id)
+
+	reset := <-events
+	if reset.Kind != "reset" || reset.Sequence != 0 || reset.Path != "/workspace" {
+		t.Fatalf("replay reset = %#v", reset)
+	}
+}
+
 func TestFileWatcherSubscriberLimit(t *testing.T) {
 	t.Parallel()
 	files := &fileWatcher{subscriptions: make(map[uint64]fileSubscription)}

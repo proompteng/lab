@@ -172,7 +172,7 @@ func (files *fileWatcher) subscribe(after uint64, prefix string, directory strin
 		bufferStart = files.buffer[0].Sequence
 	}
 	replayStart := sequenceBefore(bufferStart)
-	if len(files.buffer) > 0 && (after > files.sequence || (after > 0 && after < replayStart)) {
+	if after > files.sequence || (len(files.buffer) > 0 && after > 0 && after < replayStart) {
 		replay = append(replay, fileEvent{Sequence: replayStart, Kind: "reset", Path: prefix})
 		after = 0
 	} else {

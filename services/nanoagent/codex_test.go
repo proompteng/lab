@@ -171,6 +171,21 @@ func TestCodexReplaySignalsExpiredCursorAndDisconnectsSlowSubscriber(t *testing.
 	}
 }
 
+func TestCodexReplaySignalsCursorFromPreviousProcess(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	id, events, err := supervisor.subscribe(42)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer supervisor.unsubscribe(id)
+
+	warning := <-events
+	if warning.Method != "tengri/replayWarning" || warning.Sequence != 0 {
+		t.Fatalf("replay warning = %#v", warning)
+	}
+}
+
 func TestCodexReplayIsBoundedByBytesAndSubscribers(t *testing.T) {
 	t.Parallel()
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
@@ -207,6 +222,9 @@ func TestCodexOversizedEventIsReplacedWithTruthfulWarning(t *testing.T) {
 	}
 	if !strings.Contains(string(supervisor.buffer[0].Raw), "item/tool/output") {
 		t.Fatalf("warning does not identify omitted method: %s", supervisor.buffer[0].Raw)
+	}
+	if supervisor.buffer[0].ApprovalID != "approval" {
+		t.Fatalf("oversized approval ID = %q, want preserved approval", supervisor.buffer[0].ApprovalID)
 	}
 }
 

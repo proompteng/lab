@@ -482,7 +482,6 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 	if len(raw) > codexEventMaxBytes {
 		raw = codexOversizedEvent(method, len(raw))
 		method = "tengri/eventOmitted"
-		approvalID = ""
 	}
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
@@ -516,14 +515,16 @@ func (supervisor *codexSupervisor) subscribe(after uint64) (uint64, <-chan codex
 	supervisor.nextSubscriber++
 	id := supervisor.nextSubscriber
 	replay := make([]codexEvent, 0, len(supervisor.buffer)+1)
+	bufferStart := uint64(0)
+	bufferEnd := supervisor.sequence
 	if len(supervisor.buffer) > 0 {
-		bufferStart := supervisor.buffer[0].Sequence
-		bufferEnd := supervisor.buffer[len(supervisor.buffer)-1].Sequence
-		replayStart := sequenceBefore(bufferStart)
-		if after > bufferEnd || (after > 0 && after < replayStart) {
-			replay = append(replay, codexReplayWarning(bufferStart, bufferEnd))
-			after = 0
-		}
+		bufferStart = supervisor.buffer[0].Sequence
+		bufferEnd = supervisor.buffer[len(supervisor.buffer)-1].Sequence
+	}
+	replayStart := sequenceBefore(bufferStart)
+	if after > supervisor.sequence || (len(supervisor.buffer) > 0 && after > 0 && after < replayStart) {
+		replay = append(replay, codexReplayWarning(bufferStart, bufferEnd))
+		after = 0
 	}
 	for _, event := range supervisor.buffer {
 		if event.Sequence > after {
