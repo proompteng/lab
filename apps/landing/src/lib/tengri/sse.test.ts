@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
-const { createTengriEventStream } = await import('./sse')
+const { acquireTengriEventStreamSlot, createTengriEventStream } = await import('./sse')
 
 function fakeSource() {
   let cancellations = 0
@@ -28,6 +28,7 @@ function fakeSource() {
 describe('Tengri SSE bridge', () => {
   test('serializes event IDs and removes upstream listeners when the client disconnects', async () => {
     const upstream = fakeSource()
+    let releases = 0
     const stream = createTengriEventStream(
       upstream.source,
       new AbortController().signal,
@@ -35,6 +36,9 @@ describe('Tengri SSE bridge', () => {
         id: value.sequence,
         data: value,
       }),
+      () => {
+        releases += 1
+      },
     )
     const reader = stream.getReader()
 
@@ -47,6 +51,7 @@ describe('Tengri SSE bridge', () => {
     expect(upstream.source.listenerCount('data')).toBe(0)
     expect(upstream.source.listenerCount('end')).toBe(0)
     expect(upstream.source.listenerCount('error')).toBe(0)
+    expect(releases).toBe(1)
   })
 
   test('cancels and closes the upstream stream when the request is aborted', async () => {
@@ -57,5 +62,22 @@ describe('Tengri SSE bridge', () => {
     controller.abort()
     expect(await reader.read()).toEqual({ done: true, value: undefined })
     expect(upstream.stats().cancellations).toBe(1)
+  })
+
+  test('caps combined file and Codex streams per subject and releases slots idempotently', () => {
+    const releases = Array.from({ length: 4 }, () => acquireTengriEventStreamSlot('github:stream-test'))
+    expect(releases.every(Boolean)).toBe(true)
+    expect(acquireTengriEventStreamSlot('github:stream-test')).toBeNull()
+    const otherRelease = acquireTengriEventStreamSlot('github:other-user')
+    expect(otherRelease).not.toBeNull()
+
+    releases[0]?.()
+    releases[0]?.()
+    const replacement = acquireTengriEventStreamSlot('github:stream-test')
+    expect(replacement).not.toBeNull()
+
+    for (const release of releases.slice(1)) release?.()
+    replacement?.()
+    otherRelease?.()
   })
 })

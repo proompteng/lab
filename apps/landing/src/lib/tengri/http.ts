@@ -7,7 +7,6 @@ type RateWindow = { count: number; resetsAt: number }
 
 const RATE_WINDOW_MS = 60_000
 const SUBJECT_LIMIT = 120
-const IP_LIMIT = 240
 const RATE_WINDOW_CAP = 20_000
 export const MAX_TENGRI_ACTION_BODY_BYTES = 5 * 1024 * 1024
 
@@ -34,7 +33,7 @@ export function requireSameOrigin(request: Request) {
 export async function getRateLimitedTengriIdentity(request: Request) {
   const identity = await getTengriIdentity(request.headers)
   if (!identity) return null
-  const blocked = rateLimit(identity.subject, clientIp(request))
+  const blocked = isTengriRateLimited(identity.subject)
   if (blocked) throw new TengriUnavailableError('Request rate limit exceeded', 429)
   return identity
 }
@@ -104,7 +103,7 @@ export function noStoreHeaders(): Record<string, string> {
   }
 }
 
-function rateLimit(subject: string, ip: string) {
+export function isTengriRateLimited(subject: string) {
   const state = globalThis as typeof globalThis & {
     tengriRateSweepAt?: number
     tengriRateWindows?: Map<string, RateWindow>
@@ -117,9 +116,7 @@ function rateLimit(subject: string, ip: string) {
     }
     state.tengriRateSweepAt = now + RATE_WINDOW_MS
   }
-  const subjectExceeded = exceeds(windows, `subject:${subject}`, SUBJECT_LIMIT, now)
-  const ipExceeded = exceeds(windows, `ip:${ip}`, IP_LIMIT, now)
-  return subjectExceeded || ipExceeded
+  return exceeds(windows, `subject:${subject}`, SUBJECT_LIMIT, now)
 }
 
 function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, now: number) {
@@ -131,16 +128,4 @@ function exceeds(windows: Map<string, RateWindow>, key: string, limit: number, n
   }
   current.count += 1
   return current.count > limit
-}
-
-function clientIp(request: Request) {
-  return (
-    (
-      request.headers.get('cf-connecting-ip') ||
-      request.headers.get('x-real-ip') ||
-      request.headers.get('x-forwarded-for')
-    )
-      ?.split(',')[0]
-      ?.trim() || 'unknown'
-  )
 }

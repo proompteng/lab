@@ -15,11 +15,30 @@ type StreamSource<Value> = {
 type ServerSentEvent = { data: unknown; id?: number | string; event?: string }
 
 const HEARTBEAT_INTERVAL_MS = 15_000
+const ACTIVE_STREAM_LIMIT_PER_SUBJECT = 4
+
+export function acquireTengriEventStreamSlot(subject: string): (() => void) | null {
+  const state = globalThis as typeof globalThis & { tengriActiveStreams?: Map<string, number> }
+  const activeStreams = (state.tengriActiveStreams ??= new Map())
+  const active = activeStreams.get(subject) ?? 0
+  if (active >= ACTIVE_STREAM_LIMIT_PER_SUBJECT) return null
+  activeStreams.set(subject, active + 1)
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const remaining = (activeStreams.get(subject) ?? 1) - 1
+    if (remaining > 0) activeStreams.set(subject, remaining)
+    else activeStreams.delete(subject)
+  }
+}
 
 export function createTengriEventStream<Value>(
   source: StreamSource<Value>,
   signal: AbortSignal,
   normalize: (value: Value) => ServerSentEvent,
+  onDispose?: () => void,
 ) {
   const encoder = new TextEncoder()
   let paused = false
@@ -32,12 +51,16 @@ export function createTengriEventStream<Value>(
       const disposeSource = (cancelSource: boolean) => {
         if (disposed) return false
         disposed = true
-        if (heartbeat) clearInterval(heartbeat)
-        signal.removeEventListener('abort', onAbort)
-        source.off('data', onData)
-        source.off('end', onEnd)
-        source.off('error', onError)
-        if (cancelSource) source.cancel()
+        try {
+          if (heartbeat) clearInterval(heartbeat)
+          signal.removeEventListener('abort', onAbort)
+          source.off('data', onData)
+          source.off('end', onEnd)
+          source.off('error', onError)
+          if (cancelSource) source.cancel()
+        } finally {
+          onDispose?.()
+        }
         return true
       }
       dispose = disposeSource
