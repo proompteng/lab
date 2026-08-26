@@ -109,6 +109,26 @@ jobs:
             echo "nanoagent_digest=$nanoagent_digest"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Refresh promotion manifests from current main
+        id: promotion-base
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          main_head="$(git rev-parse origin/main)"
+          source_sha='${{ steps.release.outputs.source_sha }}'
+          git merge-base --is-ancestor "$source_sha" "$main_head"
+          git diff --quiet "$source_sha..$main_head" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml
+          git checkout "$main_head" -- \
+            argocd/applications/tengri/kustomization.yaml \
+            argocd/applicationsets/platform.yaml \
+            argocd/applications/proompteng/deployment.yaml
+          echo "main_head=$main_head" >> "$GITHUB_OUTPUT"
+
       - name: Pin both images and enable Tengri
         run: |
           set -euo pipefail
@@ -116,6 +136,24 @@ jobs:
             --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
             --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
           bun packages/scripts/src/tengri/validate-release.ts
+
+      - name: Revalidate current main before opening promotion
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          latest_main="$(git rev-parse origin/main)"
+          source_sha='${{ steps.release.outputs.source_sha }}'
+          git merge-base --is-ancestor "$source_sha" "$latest_main"
+          git diff --quiet "$source_sha..$latest_main" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml
+          git diff --quiet '${{ steps.promotion-base.outputs.main_head }}..'"$latest_main" -- \
+            argocd/applications/tengri/kustomization.yaml \
+            argocd/applicationsets/platform.yaml \
+            argocd/applications/proompteng/deployment.yaml
 
       - name: Create release pull request
         uses: peter-evans/create-pull-request@v7
@@ -128,6 +166,7 @@ jobs:
           add-paths: |
             argocd/applications/tengri/kustomization.yaml
             argocd/applicationsets/platform.yaml
+            argocd/applications/proompteng/deployment.yaml
           labels: |
             automated-pr
             tengri

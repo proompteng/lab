@@ -7,21 +7,25 @@ import { repoRoot } from '../shared/cli'
 
 export const TENGRI_IMAGE = 'registry.ide-newton.ts.net/lab/tengri'
 export const NANOAGENT_IMAGE = 'registry.ide-newton.ts.net/lab/nanoagent'
+export const TENGRI_GRPC_ENDPOINT = 'tengri-grpc.tengri.svc.cluster.local:50051'
 export const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const defaultKustomizationPath = 'argocd/applications/tengri/kustomization.yaml'
 const defaultApplicationSetPath = 'argocd/applicationsets/platform.yaml'
+const defaultBffDeploymentPath = 'argocd/applications/proompteng/deployment.yaml'
 
 export type TengriRelease = {
   tengriDigest: string
   nanoagentDigest: string
   enabled: boolean
+  bffEnabled: boolean
 }
 
 export type TengriReleasePaths = {
   kustomizationPath?: string
   applicationSetPath?: string
+  bffDeploymentPath?: string
 }
 
 const absolutePath = (path: string) => (path.startsWith('/') ? path : resolve(repoRoot, path))
@@ -90,12 +94,32 @@ function findTengriApplicationBlock(contents: string) {
   return { start, end, block, enabled: enabledMatches[0][1] === 'true' }
 }
 
+function parseBffEndpoint(contents: string) {
+  const parsed = YAML.parse(contents) as {
+    spec?: { template?: { spec?: { containers?: Array<{ env?: Array<{ name?: string; value?: string }> }> } } }
+  }
+  const endpoints =
+    parsed.spec?.template?.spec?.containers
+      ?.flatMap((container) => container.env ?? [])
+      .filter((entry) => entry.name === 'TENGRI_GRPC_ENDPOINT') ?? []
+  if (endpoints.length !== 1 || typeof endpoints[0]?.value !== 'string') {
+    throw new Error(`Proompteng deployment must contain one literal TENGRI_GRPC_ENDPOINT, found ${endpoints.length}`)
+  }
+  const endpoint = endpoints[0].value
+  if (endpoint !== '' && endpoint !== TENGRI_GRPC_ENDPOINT) {
+    throw new Error(`Proompteng deployment contains an unexpected Tengri endpoint: ${endpoint}`)
+  }
+  return endpoint
+}
+
 export function readTengriRelease(paths: TengriReleasePaths = {}): TengriRelease {
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
+  const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
   const images = parseKustomization(readFileSync(kustomizationPath, 'utf8'))
   const application = findTengriApplicationBlock(readFileSync(applicationSetPath, 'utf8'))
-  return { ...images, enabled: application.enabled }
+  const bffEndpoint = parseBffEndpoint(readFileSync(bffDeploymentPath, 'utf8'))
+  return { ...images, enabled: application.enabled, bffEnabled: bffEndpoint === TENGRI_GRPC_ENDPOINT }
 }
 
 export function validateTengriRelease(paths: TengriReleasePaths = {}): TengriRelease {
@@ -110,6 +134,9 @@ export function validateTengriRelease(paths: TengriReleasePaths = {}): TengriRel
   }
   if (release.enabled && oneBootstrapDigest) {
     throw new Error('Enabled Tengri application cannot reference a bootstrap zero digest')
+  }
+  if (release.bffEnabled !== release.enabled) {
+    throw new Error('Tengri BFF endpoint and ApplicationSet entry must be enabled or disabled together')
   }
   return release
 }
@@ -137,8 +164,10 @@ export function updateTengriRelease(
 
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
+  const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
   const originalKustomization = readFileSync(kustomizationPath, 'utf8')
   const originalApplicationSet = readFileSync(applicationSetPath, 'utf8')
+  const originalBffDeployment = readFileSync(bffDeploymentPath, 'utf8')
 
   let nextKustomization = replaceExactlyOnce(
     originalKustomization,
@@ -161,19 +190,28 @@ export function updateTengriRelease(
     'Tengri enabled flag',
   )
   const nextApplicationSet = `${originalApplicationSet.slice(0, application.start)}${nextBlock}${originalApplicationSet.slice(application.end)}`
+  const nextBffDeployment = replaceExactlyOnce(
+    originalBffDeployment,
+    /(^\s*- name: TENGRI_GRPC_ENDPOINT\s*\n(?:^\s*#.*\n)*^\s*value:)\s*(?:"[^"]*"|'[^']*'|[^\s#]+)\s*$/m,
+    `$1 ${TENGRI_GRPC_ENDPOINT}`,
+    'Tengri BFF endpoint',
+  )
 
-  // Validate all mutations in memory before writing either file.
+  // Validate all mutations in memory before writing any file.
   const parsed = parseKustomization(nextKustomization)
   const nextApplication = findTengriApplicationBlock(nextApplicationSet)
+  const nextBffEndpoint = parseBffEndpoint(nextBffDeployment)
   if (
     parsed.tengriDigest !== release.tengriDigest ||
     parsed.nanoagentDigest !== release.nanoagentDigest ||
-    !nextApplication.enabled
+    !nextApplication.enabled ||
+    nextBffEndpoint !== TENGRI_GRPC_ENDPOINT
   ) {
     throw new Error('Tengri release mutation did not produce the requested atomic release state')
   }
 
   writeFileSync(kustomizationPath, nextKustomization)
   writeFileSync(applicationSetPath, nextApplicationSet)
+  writeFileSync(bffDeploymentPath, nextBffDeployment)
   return validateTengriRelease(paths)
 }

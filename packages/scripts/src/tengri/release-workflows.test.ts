@@ -61,4 +61,25 @@ describe('Tengri release workflows', () => {
     expect(validation).not.toContain('argocd/applications/kata')
     expect(validation).not.toContain('argocd/applicationsets/platform.yaml')
   })
+
+  it('refreshes release manifests and revalidates main immediately before creating the promotion PR', () => {
+    const release = YAML.parse(readFileSync(releasePath, 'utf8')) as {
+      jobs?: {
+        promote?: { steps?: Array<{ name?: string; run?: string; uses?: string; with?: { 'add-paths'?: string } }> }
+      }
+    }
+    const steps = release.jobs?.promote?.steps ?? []
+    const refreshIndex = steps.findIndex((step) => step.name === 'Refresh promotion manifests from current main')
+    const pinIndex = steps.findIndex((step) => step.name === 'Pin both images and enable Tengri')
+    const revalidateIndex = steps.findIndex((step) => step.name === 'Revalidate current main before opening promotion')
+    const createIndex = steps.findIndex((step) => step.uses?.startsWith('peter-evans/create-pull-request@'))
+
+    expect(refreshIndex).toBeGreaterThan(-1)
+    expect(refreshIndex).toBeLessThan(pinIndex)
+    expect(pinIndex).toBeLessThan(revalidateIndex)
+    expect(revalidateIndex).toBe(createIndex - 1)
+    expect(steps[revalidateIndex]?.run).toContain('git fetch origin main')
+    expect(steps[revalidateIndex]?.run).toContain('services/tengri')
+    expect(steps[createIndex]?.with?.['add-paths']).toContain('argocd/applications/proompteng/deployment.yaml')
+  })
 })

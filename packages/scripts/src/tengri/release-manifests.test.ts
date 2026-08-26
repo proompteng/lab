@@ -3,15 +3,22 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { readTengriRelease, updateTengriRelease, validateTengriRelease, ZERO_DIGEST } from './release-manifests'
+import {
+  readTengriRelease,
+  TENGRI_GRPC_ENDPOINT,
+  updateTengriRelease,
+  validateTengriRelease,
+  ZERO_DIGEST,
+} from './release-manifests'
 
 const tengriDigest = `sha256:${'a'.repeat(64)}`
 const nanoagentDigest = `sha256:${'b'.repeat(64)}`
 
-function fixture(tengri = ZERO_DIGEST, nanoagent = ZERO_DIGEST, enabled = false) {
+function fixture(tengri = ZERO_DIGEST, nanoagent = ZERO_DIGEST, enabled = false, bffEnabled = enabled) {
   const directory = mkdtempSync(join(tmpdir(), 'tengri-release-'))
   const kustomizationPath = join(directory, 'kustomization.yaml')
   const applicationSetPath = join(directory, 'platform.yaml')
+  const bffDeploymentPath = join(directory, 'deployment.yaml')
   writeFileSync(
     kustomizationPath,
     `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -48,7 +55,21 @@ images:
                 enabled: "true"
 `,
   )
-  return { directory, kustomizationPath, applicationSetPath }
+  writeFileSync(
+    bffDeploymentPath,
+    `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: proompteng
+          env:
+            - name: TENGRI_GRPC_ENDPOINT
+              value: ${bffEnabled ? TENGRI_GRPC_ENDPOINT : '""'}
+`,
+  )
+  return { directory, kustomizationPath, applicationSetPath, bffDeploymentPath }
 }
 
 describe('Tengri release manifests', () => {
@@ -58,6 +79,7 @@ describe('Tengri release manifests', () => {
       tengriDigest: ZERO_DIGEST,
       nanoagentDigest: ZERO_DIGEST,
       enabled: false,
+      bffEnabled: false,
     })
     rmSync(paths.directory, { recursive: true, force: true })
   })
@@ -68,8 +90,10 @@ describe('Tengri release manifests', () => {
       tengriDigest,
       nanoagentDigest,
       enabled: true,
+      bffEnabled: true,
     })
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toContain(TENGRI_GRPC_ENDPOINT)
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
@@ -87,16 +111,26 @@ describe('Tengri release manifests', () => {
       'must keep both images at the bootstrap zero digest',
     )
     rmSync(disabledPublishedRelease.directory, { recursive: true, force: true })
+
+    const enabledWithoutBff = fixture(tengriDigest, nanoagentDigest, true, false)
+    expect(() => validateTengriRelease(enabledWithoutBff)).toThrow('must be enabled or disabled together')
+    rmSync(enabledWithoutBff.directory, { recursive: true, force: true })
+
+    const disabledWithBff = fixture(ZERO_DIGEST, ZERO_DIGEST, false, true)
+    expect(() => validateTengriRelease(disabledWithBff)).toThrow('must be enabled or disabled together')
+    rmSync(disabledWithBff.directory, { recursive: true, force: true })
   })
 
   it('rejects malformed and zero release inputs without mutating files', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
     const beforeApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
     expect(() => updateTengriRelease({ tengriDigest: 'sha256:bad', nanoagentDigest }, paths)).toThrow('must match')
     expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest: ZERO_DIGEST }, paths)).toThrow('cannot be')
     expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(beforeApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
