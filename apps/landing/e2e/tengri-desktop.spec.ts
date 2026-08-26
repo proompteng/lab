@@ -346,7 +346,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   const editor = code.locator('.monaco-editor')
   await expect(editor).toHaveCount(1)
   await editor.click()
-  await page.keyboard.press('Meta+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('# Edited in Tengri')
   await expect
     .poll(() =>
