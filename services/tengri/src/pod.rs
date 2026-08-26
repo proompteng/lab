@@ -1,0 +1,435 @@
+use std::collections::BTreeMap;
+
+use k8s_openapi::{
+    api::core::v1::{
+        Capabilities, Container, ContainerPort, EmptyDirVolumeSource, EnvVar, EnvVarSource,
+        HTTPGetAction, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+        PersistentVolumeClaimVolumeSource, Pod, PodSecurityContext, PodSpec, Probe,
+        ResourceRequirements, SeccompProfile, Secret, SecretKeySelector, SecurityContext,
+        Toleration, TopologySpreadConstraint, Volume, VolumeMount, VolumeResourceRequirements,
+    },
+    apimachinery::pkg::{api::resource::Quantity, apis::meta::v1::LabelSelector},
+};
+use kube::{
+    Api, Client, Error as KubeError, Resource, ResourceExt,
+    api::{ObjectMeta, Patch, PatchParams},
+};
+use rand::distr::{Alphanumeric, SampleString};
+
+use crate::crd::MicroVM;
+
+pub const MANAGER_NAME: &str = "tengri.runtime.proompteng.ai";
+pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
+pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
+pub const STORAGE_CLASS: &str = "rook-ceph-block";
+const GUEST_UID: i64 = 1_000;
+
+pub fn bootstrap_secret_name(microvm: &MicroVM) -> String {
+    format!("{}-bootstrap", microvm.name_any())
+}
+
+pub fn pvc_name(microvm: &MicroVM) -> String {
+    format!("{}-home", microvm.name_any())
+}
+
+pub async fn ensure_bootstrap_secret(
+    client: Client,
+    namespace: &str,
+    microvm: &MicroVM,
+) -> Result<String, KubeError> {
+    let name = bootstrap_secret_name(microvm);
+    let secrets: Api<Secret> = Api::namespaced(client, namespace);
+    if secrets.get_opt(&name).await?.is_some() {
+        return Ok(name);
+    }
+
+    let token = Alphanumeric.sample_string(&mut rand::rng(), 64);
+    let secret = Secret {
+        metadata: managed_metadata(microvm, namespace, &name),
+        immutable: Some(true),
+        string_data: Some(BTreeMap::from([(BOOTSTRAP_TOKEN_KEY.to_owned(), token)])),
+        type_: Some("Opaque".to_owned()),
+        ..Secret::default()
+    };
+    let params = PatchParams::apply(MANAGER_NAME).force();
+    secrets
+        .patch(&name, &params, &Patch::Apply(&secret))
+        .await?;
+    Ok(name)
+}
+
+pub async fn ensure_pvc(
+    client: Client,
+    namespace: &str,
+    microvm: &MicroVM,
+) -> Result<String, KubeError> {
+    let name = pvc_name(microvm);
+    let claims: Api<PersistentVolumeClaim> = Api::namespaced(client, namespace);
+    let claim = build_pvc(microvm, namespace);
+    let params = PatchParams::apply(MANAGER_NAME).force();
+    claims.patch(&name, &params, &Patch::Apply(&claim)).await?;
+    Ok(name)
+}
+
+pub fn build_pvc(microvm: &MicroVM, namespace: &str) -> PersistentVolumeClaim {
+    PersistentVolumeClaim {
+        metadata: managed_metadata(microvm, namespace, &pvc_name(microvm)),
+        spec: Some(PersistentVolumeClaimSpec {
+            access_modes: Some(vec!["ReadWriteOnce".to_owned()]),
+            resources: Some(VolumeResourceRequirements {
+                requests: Some(BTreeMap::from([(
+                    "storage".to_owned(),
+                    Quantity(format!("{}Gi", microvm.spec.resources.workspace_gib)),
+                )])),
+                ..VolumeResourceRequirements::default()
+            }),
+            storage_class_name: Some(STORAGE_CLASS.to_owned()),
+            ..PersistentVolumeClaimSpec::default()
+        }),
+        ..PersistentVolumeClaim::default()
+    }
+}
+
+pub fn build_pod(
+    microvm: &MicroVM,
+    namespace: &str,
+    bootstrap_secret: &str,
+    home_claim: &str,
+) -> Pod {
+    let name = microvm.name_any();
+    let mut node_selector = BTreeMap::from([(
+        "runtime.proompteng.ai/kata-fc".to_owned(),
+        "ready".to_owned(),
+    )]);
+    node_selector.insert(
+        "kubernetes.io/arch".to_owned(),
+        microvm.spec.architecture.kubernetes_label().to_owned(),
+    );
+
+    Pod {
+        metadata: ObjectMeta {
+            annotations: Some(BTreeMap::from([(
+                "runtime.proompteng.ai/isolation".to_owned(),
+                "firecracker".to_owned(),
+            )])),
+            ..managed_metadata(microvm, namespace, &name)
+        },
+        spec: Some(PodSpec {
+            automount_service_account_token: Some(false),
+            containers: vec![build_container(microvm, bootstrap_secret)],
+            enable_service_links: Some(false),
+            node_selector: Some(node_selector),
+            restart_policy: Some("Always".to_owned()),
+            runtime_class_name: Some("kata-fc".to_owned()),
+            security_context: Some(PodSecurityContext {
+                fs_group: Some(GUEST_UID),
+                fs_group_change_policy: Some("OnRootMismatch".to_owned()),
+                run_as_group: Some(GUEST_UID),
+                run_as_non_root: Some(true),
+                run_as_user: Some(GUEST_UID),
+                seccomp_profile: Some(SeccompProfile {
+                    type_: "RuntimeDefault".to_owned(),
+                    ..SeccompProfile::default()
+                }),
+                ..PodSecurityContext::default()
+            }),
+            termination_grace_period_seconds: Some(30),
+            tolerations: Some(control_plane_tolerations()),
+            topology_spread_constraints: Some(vec![TopologySpreadConstraint {
+                label_selector: Some(LabelSelector {
+                    match_labels: Some(BTreeMap::from([(
+                        "app.kubernetes.io/name".to_owned(),
+                        "nanoagent".to_owned(),
+                    )])),
+                    ..LabelSelector::default()
+                }),
+                max_skew: 1,
+                topology_key: "kubernetes.io/hostname".to_owned(),
+                when_unsatisfiable: "ScheduleAnyway".to_owned(),
+                ..TopologySpreadConstraint::default()
+            }]),
+            volumes: Some(vec![
+                Volume {
+                    name: "home".to_owned(),
+                    persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                        claim_name: home_claim.to_owned(),
+                        read_only: Some(false),
+                    }),
+                    ..Volume::default()
+                },
+                Volume {
+                    name: "tmp".to_owned(),
+                    empty_dir: Some(EmptyDirVolumeSource {
+                        size_limit: Some(Quantity("2Gi".to_owned())),
+                        ..EmptyDirVolumeSource::default()
+                    }),
+                    ..Volume::default()
+                },
+            ]),
+            ..PodSpec::default()
+        }),
+        ..Pod::default()
+    }
+}
+
+pub fn managed_labels(microvm_name: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("app.kubernetes.io/name".to_owned(), "nanoagent".to_owned()),
+        (
+            "app.kubernetes.io/component".to_owned(),
+            "microvm".to_owned(),
+        ),
+        (
+            "app.kubernetes.io/managed-by".to_owned(),
+            "tengri".to_owned(),
+        ),
+        ("app.kubernetes.io/part-of".to_owned(), "tengri".to_owned()),
+        (
+            "runtime.proompteng.ai/microvm".to_owned(),
+            microvm_name.to_owned(),
+        ),
+        (
+            "runtime.proompteng.ai/vmm".to_owned(),
+            "firecracker".to_owned(),
+        ),
+    ])
+}
+
+fn managed_metadata(microvm: &MicroVM, namespace: &str, name: &str) -> ObjectMeta {
+    ObjectMeta {
+        name: Some(name.to_owned()),
+        namespace: Some(namespace.to_owned()),
+        owner_references: Some(microvm.controller_owner_ref(&()).into_iter().collect()),
+        labels: Some(managed_labels(&microvm.name_any())),
+        ..ObjectMeta::default()
+    }
+}
+
+fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
+    let resources = &microvm.spec.resources;
+    let fixed = BTreeMap::from([
+        (
+            "cpu".to_owned(),
+            Quantity(format!("{}m", resources.cpu_millis)),
+        ),
+        (
+            "memory".to_owned(),
+            Quantity(format!("{}Mi", resources.memory_mib)),
+        ),
+    ]);
+
+    Container {
+        name: "nanoagent".to_owned(),
+        image: Some(microvm.spec.image.clone()),
+        image_pull_policy: Some("IfNotPresent".to_owned()),
+        env: Some(vec![
+            EnvVar {
+                name: "MICROVM_ID".to_owned(),
+                value_from: Some(EnvVarSource {
+                    field_ref: Some(k8s_openapi::api::core::v1::ObjectFieldSelector {
+                        field_path: "metadata.uid".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..EnvVarSource::default()
+                }),
+                ..EnvVar::default()
+            },
+            secret_env(
+                "MICROVM_BOOTSTRAP_TOKEN",
+                bootstrap_secret,
+                BOOTSTRAP_TOKEN_KEY,
+            ),
+            EnvVar {
+                name: "CODEX_HOME".to_owned(),
+                value: Some("/home/nanoagent/.codex".to_owned()),
+                ..EnvVar::default()
+            },
+            EnvVar {
+                name: "NANOAGENT_HOME".to_owned(),
+                value: Some("/home/nanoagent".to_owned()),
+                ..EnvVar::default()
+            },
+            EnvVar {
+                name: "NANOAGENT_WORKSPACE".to_owned(),
+                value: Some("/home/nanoagent".to_owned()),
+                ..EnvVar::default()
+            },
+        ]),
+        ports: Some(vec![ContainerPort {
+            name: Some("guest-api".to_owned()),
+            container_port: 8080,
+            protocol: Some("TCP".to_owned()),
+            ..ContainerPort::default()
+        }]),
+        readiness_probe: Some(http_probe("/readyz", 5, 3)),
+        startup_probe: Some(http_probe("/readyz", 2, 90)),
+        liveness_probe: Some(http_probe("/livez", 15, 3)),
+        resources: Some(ResourceRequirements {
+            limits: Some(fixed.clone()),
+            requests: Some(fixed),
+            ..ResourceRequirements::default()
+        }),
+        security_context: Some(SecurityContext {
+            allow_privilege_escalation: Some(false),
+            capabilities: Some(Capabilities {
+                drop: Some(vec!["ALL".to_owned()]),
+                ..Capabilities::default()
+            }),
+            privileged: Some(false),
+            read_only_root_filesystem: Some(true),
+            run_as_non_root: Some(true),
+            run_as_group: Some(GUEST_UID),
+            run_as_user: Some(GUEST_UID),
+            seccomp_profile: Some(SeccompProfile {
+                type_: "RuntimeDefault".to_owned(),
+                ..SeccompProfile::default()
+            }),
+            ..SecurityContext::default()
+        }),
+        volume_mounts: Some(vec![
+            VolumeMount {
+                name: "home".to_owned(),
+                mount_path: "/home/nanoagent".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
+                name: "tmp".to_owned(),
+                mount_path: "/tmp".to_owned(),
+                ..VolumeMount::default()
+            },
+        ]),
+        // The home PVC is empty on first boot. Start from its mount root so
+        // Nanoagent can create /home/nanoagent/workspace before /workspace is used.
+        working_dir: Some("/home/nanoagent".to_owned()),
+        ..Container::default()
+    }
+}
+
+fn secret_env(name: &str, secret_name: &str, key: &str) -> EnvVar {
+    EnvVar {
+        name: name.to_owned(),
+        value_from: Some(EnvVarSource {
+            secret_key_ref: Some(SecretKeySelector {
+                name: secret_name.to_owned(),
+                key: key.to_owned(),
+                optional: Some(false),
+            }),
+            ..EnvVarSource::default()
+        }),
+        ..EnvVar::default()
+    }
+}
+
+fn control_plane_tolerations() -> Vec<Toleration> {
+    [
+        "node-role.kubernetes.io/control-plane",
+        "node-role.kubernetes.io/master",
+    ]
+    .into_iter()
+    .map(|key| Toleration {
+        effect: Some("NoSchedule".to_owned()),
+        key: Some(key.to_owned()),
+        operator: Some("Exists".to_owned()),
+        ..Toleration::default()
+    })
+    .collect()
+}
+
+fn http_probe(path: &str, period_seconds: i32, failure_threshold: i32) -> Probe {
+    Probe {
+        http_get: Some(HTTPGetAction {
+            path: Some(path.to_owned()),
+            port: k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(
+                "guest-api".to_owned(),
+            ),
+            scheme: Some("HTTP".to_owned()),
+            ..HTTPGetAction::default()
+        }),
+        period_seconds: Some(period_seconds),
+        failure_threshold: Some(failure_threshold),
+        timeout_seconds: Some(2),
+        ..Probe::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crd::{MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec};
+
+    fn test_microvm() -> MicroVM {
+        MicroVM::new(
+            "agent-1234",
+            MicroVMSpec {
+                display_name: "Tengri".to_owned(),
+                owner_hash: "owner".to_owned(),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
+                architecture: MicroVMArchitecture::Arm64,
+                resources: MicroVMResources::default(),
+                created_at: "2026-08-26T00:00:00Z".to_owned(),
+                idle_deadline: "2026-08-26T01:00:00Z".to_owned(),
+                expires_at: "2026-08-26T04:00:00Z".to_owned(),
+            },
+        )
+    }
+
+    #[test]
+    fn pod_is_guaranteed_unprivileged_and_firecracker_backed() {
+        let pod = build_pod(&test_microvm(), "tengri", "agent-bootstrap", "agent-home");
+        let spec = pod.spec.expect("pod spec");
+        assert_eq!(spec.runtime_class_name.as_deref(), Some("kata-fc"));
+        assert_eq!(spec.automount_service_account_token, Some(false));
+        assert_eq!(
+            spec.node_selector
+                .as_ref()
+                .and_then(|labels| labels.get("kubernetes.io/arch"))
+                .map(String::as_str),
+            Some("arm64")
+        );
+        assert!(
+            spec.volumes
+                .as_ref()
+                .is_some_and(|volumes| volumes.iter().any(|volume| volume
+                    .persistent_volume_claim
+                    .as_ref()
+                    .is_some_and(|claim| claim.claim_name == "agent-home")))
+        );
+        let container = &spec.containers[0];
+        assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
+        let resources = container.resources.as_ref().expect("resources");
+        assert_eq!(resources.requests, resources.limits);
+        let security = container.security_context.as_ref().expect("security");
+        assert_eq!(security.allow_privilege_escalation, Some(false));
+        assert_eq!(security.privileged, Some(false));
+        assert_eq!(security.read_only_root_filesystem, Some(true));
+        assert!(
+            container
+                .env
+                .as_ref()
+                .is_some_and(|env| env.iter().all(|value| value.name != "OPENAI_API_KEY"))
+        );
+        assert!(
+            container
+                .env
+                .as_ref()
+                .is_some_and(|env| env.iter().any(|value| {
+                    value.name == "NANOAGENT_WORKSPACE"
+                        && value.value.as_deref() == Some("/home/nanoagent")
+                }))
+        );
+    }
+
+    #[test]
+    fn pvc_uses_rook_ceph_block_and_fixed_capacity() {
+        let claim = build_pvc(&test_microvm(), "tengri");
+        let spec = claim.spec.expect("pvc spec");
+        assert_eq!(spec.storage_class_name.as_deref(), Some(STORAGE_CLASS));
+        assert_eq!(
+            spec.resources
+                .and_then(|value| value.requests)
+                .and_then(|values| values.get("storage").cloned()),
+            Some(Quantity("16Gi".to_owned()))
+        );
+    }
+}

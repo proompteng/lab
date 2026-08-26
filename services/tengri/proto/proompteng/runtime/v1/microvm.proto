@@ -1,0 +1,222 @@
+syntax = "proto3";
+
+package proompteng.runtime.v1;
+
+service MicroVMControlPlane {
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
+  rpc SleepAgent(SleepAgentRequest) returns (Agent);
+  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
+  rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
+
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
+  rpc CreateDirectory(CreateDirectoryRequest) returns (FileEntry);
+  rpc MoveFile(MoveFileRequest) returns (FileEntry);
+  rpc DeleteFile(DeleteFileRequest) returns (Empty);
+  rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse);
+  rpc WatchFiles(WatchFilesRequest) returns (stream FileEvent);
+
+  rpc CreateTerminal(CreateTerminalRequest) returns (TerminalSession);
+  rpc ListTerminals(ListTerminalsRequest) returns (ListTerminalsResponse);
+  rpc TerminateTerminal(TerminateTerminalRequest) returns (Empty);
+  rpc IssueTerminalTicket(IssueTerminalTicketRequest) returns (TerminalTicket);
+
+  rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
+  rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
+  rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
+  rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (CodexThread);
+  rpc SendCodexTurn(SendCodexTurnRequest) returns (CodexTurn);
+  rpc SteerCodexTurn(SteerCodexTurnRequest) returns (CodexTurn);
+  rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
+  rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
+  rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
+
+  rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
+}
+
+message Empty {}
+
+enum Architecture {
+  ARCHITECTURE_UNSPECIFIED = 0;
+  ARCHITECTURE_AMD64 = 1;
+  ARCHITECTURE_ARM64 = 2;
+}
+
+enum AgentPhase {
+  AGENT_PHASE_UNSPECIFIED = 0;
+  AGENT_PHASE_PENDING = 1;
+  AGENT_PHASE_BOOTING = 2;
+  AGENT_PHASE_READY = 3;
+  AGENT_PHASE_SLEEPING = 4;
+  AGENT_PHASE_FAILED = 5;
+  AGENT_PHASE_TERMINATING = 6;
+}
+
+message AgentCondition {
+  string type = 1;
+  string status = 2;
+  string reason = 3;
+  string message = 4;
+  string last_transition_at = 5;
+}
+
+message Agent {
+  string id = 1;
+  string display_name = 2;
+  AgentPhase phase = 3;
+  Architecture architecture = 4;
+  uint32 cpu_millis = 5;
+  uint32 memory_mib = 6;
+  uint32 workspace_gib = 7;
+  string node_name = 8;
+  string message = 9;
+  string created_at = 10;
+  string ready_at = 11;
+  string last_activity_at = 12;
+  string idle_deadline = 13;
+  string expires_at = 14;
+  repeated AgentCondition conditions = 15;
+}
+
+message CreateAgentRequest { string display_name = 1; }
+message ListAgentsRequest {}
+message ListAgentsResponse { repeated Agent agents = 1; }
+message GetAgentRequest { string id = 1; }
+message WatchAgentRequest { string id = 1; }
+message SleepAgentRequest { string id = 1; }
+message ResumeAgentRequest { string id = 1; }
+message DeleteAgentRequest { string id = 1; }
+
+message FileEntry {
+  string name = 1;
+  string path = 2;
+  bool directory = 3;
+  int64 size = 4;
+  string modified_at = 5;
+}
+
+message ListFilesRequest { string agent_id = 1; string path = 2; }
+message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
+message ReadFileRequest { string agent_id = 1; string path = 2; }
+message ReadFileResponse { string path = 1; bytes content = 2; string content_type = 3; }
+message WriteFileRequest { string agent_id = 1; string path = 2; bytes content = 3; }
+message WriteFileResponse { string path = 1; int64 size = 2; }
+message CreateDirectoryRequest { string agent_id = 1; string path = 2; }
+message MoveFileRequest { string agent_id = 1; string source_path = 2; string destination_path = 3; }
+message DeleteFileRequest { string agent_id = 1; string path = 2; bool recursive = 3; }
+message SearchFilesRequest { string agent_id = 1; string query = 2; string path = 3; uint32 limit = 4; }
+message SearchFilesResponse { repeated FileEntry entries = 1; }
+// Watches direct children of path. Clients open additional watches for nested directories they display or edit.
+message WatchFilesRequest { string agent_id = 1; string path = 2; uint64 after_sequence = 3; }
+
+enum FileEventKind {
+  FILE_EVENT_KIND_UNSPECIFIED = 0;
+  FILE_EVENT_KIND_CREATED = 1;
+  FILE_EVENT_KIND_CHANGED = 2;
+  FILE_EVENT_KIND_REMOVED = 3;
+  FILE_EVENT_KIND_RENAMED = 4;
+  FILE_EVENT_KIND_RESET = 5;
+}
+
+message FileEvent {
+  uint64 sequence = 1;
+  FileEventKind kind = 2;
+  string path = 3;
+  string previous_path = 4;
+  FileEntry entry = 5;
+}
+
+message CreateTerminalRequest { string agent_id = 1; string cwd = 2; uint32 columns = 3; uint32 rows = 4; }
+message ListTerminalsRequest { string agent_id = 1; }
+message ListTerminalsResponse { repeated TerminalSession sessions = 1; }
+message TerminateTerminalRequest { string agent_id = 1; string terminal_id = 2; }
+message IssueTerminalTicketRequest { string agent_id = 1; string terminal_id = 2; }
+
+message TerminalSession {
+  string id = 1;
+  string cwd = 2;
+  string created_at = 3;
+  string last_activity_at = 4;
+  bool attached = 5;
+}
+
+message TerminalTicket {
+  string websocket_url = 1;
+  string ticket = 2;
+  string expires_at = 3;
+}
+
+message GetCodexAccountRequest { string agent_id = 1; }
+message StartCodexLoginRequest { string agent_id = 1; }
+message CreateCodexThreadRequest { string agent_id = 1; }
+message ResumeCodexThreadRequest { string agent_id = 1; string thread_id = 2; }
+message SendCodexTurnRequest { string agent_id = 1; string thread_id = 2; string text = 3; }
+message SteerCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; }
+message InterruptCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; }
+message WatchCodexEventsRequest { string agent_id = 1; uint64 after_sequence = 2; }
+
+enum CodexApprovalDecision {
+  CODEX_APPROVAL_DECISION_UNSPECIFIED = 0;
+  CODEX_APPROVAL_DECISION_APPROVE_ONCE = 1;
+  CODEX_APPROVAL_DECISION_APPROVE_SESSION = 2;
+  CODEX_APPROVAL_DECISION_DENY = 3;
+}
+
+message ResolveCodexApprovalRequest {
+  string agent_id = 1;
+  string approval_id = 2;
+  CodexApprovalDecision decision = 3;
+}
+
+message CodexAccount {
+  bool authenticated = 1;
+  string email = 2;
+  string plan = 3;
+  string raw_json = 4;
+}
+
+message CodexLogin {
+  string login_id = 1;
+  string verification_url = 2;
+  string user_code = 3;
+  string expires_at = 4;
+  string raw_json = 5;
+}
+
+message CodexThread { string id = 1; string raw_json = 2; }
+message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
+
+enum CodexEventKind {
+  CODEX_EVENT_KIND_UNSPECIFIED = 0;
+  CODEX_EVENT_KIND_THREAD_STATE = 1;
+  CODEX_EVENT_KIND_ASSISTANT_TEXT = 2;
+  CODEX_EVENT_KIND_REASONING_SUMMARY = 3;
+  CODEX_EVENT_KIND_PLAN = 4;
+  CODEX_EVENT_KIND_TOOL_CALL = 5;
+  CODEX_EVENT_KIND_TOOL_OUTPUT = 6;
+  CODEX_EVENT_KIND_FILE_DIFF = 7;
+  CODEX_EVENT_KIND_APPROVAL = 8;
+  CODEX_EVENT_KIND_USAGE = 9;
+  CODEX_EVENT_KIND_WARNING = 10;
+  CODEX_EVENT_KIND_ERROR = 11;
+  CODEX_EVENT_KIND_USER_MESSAGE = 12;
+}
+
+message CodexEvent {
+  uint64 sequence = 1;
+  CodexEventKind kind = 2;
+  string method = 3;
+  string thread_id = 4;
+  string turn_id = 5;
+  string item_id = 6;
+  string text = 7;
+  string approval_id = 8;
+  string raw_json = 9;
+}
+
+message IssuePreviewSessionRequest { string agent_id = 1; uint32 port = 2; string path = 3; }
+message PreviewSession { string id = 1; string launch_url = 2; string expires_at = 3; }
