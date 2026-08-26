@@ -8,6 +8,9 @@ on:
       - '.github/workflows/tengri-images.yml'
       - '.github/workflows/tengri-release.yml'
       - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
   push:
     branches:
       - main
@@ -17,6 +20,12 @@ on:
       - '.github/workflows/tengri-images.yml'
       - '.github/workflows/tengri-release.yml'
       - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
+      - 'argocd/applications/tengri/kustomization.yaml'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'argocd/applications/proompteng/deployment.yaml'
   workflow_dispatch:
 
 concurrency:

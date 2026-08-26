@@ -4,11 +4,13 @@ on:
   workflow_run:
     workflows:
       - Tengri images
+    branches:
+      - main
     types:
       - completed
 
 concurrency:
-  group: tengri-release-${{ github.event.workflow_run.head_sha }}
+  group: tengri-release-promotion
   cancel-in-progress: true
 
 permissions:
@@ -82,6 +84,9 @@ jobs:
             services/tengri \
             services/nanoagent \
             packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
             .github/workflows/tengri-images.yml \
             .github/workflows/tengri-release.yml
 
@@ -121,6 +126,9 @@ jobs:
             services/tengri \
             services/nanoagent \
             packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
             .github/workflows/tengri-images.yml \
             .github/workflows/tengri-release.yml
           git checkout "$main_head" -- \
@@ -148,6 +156,9 @@ jobs:
             services/tengri \
             services/nanoagent \
             packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
             .github/workflows/tengri-images.yml \
             .github/workflows/tengri-release.yml
           git diff --quiet '${{ steps.promotion-base.outputs.main_head }}..'"$latest_main" -- \
@@ -159,7 +170,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/tengri-release-${{ steps.release.outputs.source_sha }}
+          branch: codex/tengri-release
           base: main
           title: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'
           commit-message: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'

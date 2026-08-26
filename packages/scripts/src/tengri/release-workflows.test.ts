@@ -14,11 +14,12 @@ describe('Tengri release workflows', () => {
     const releaseSource = readFileSync(releasePath, 'utf8')
     const images = YAML.parse(imagesSource) as { name?: string }
     const release = YAML.parse(releaseSource) as {
-      on?: { workflow_run?: { workflows?: string[] } }
+      on?: { workflow_run?: { workflows?: string[]; branches?: string[] } }
     }
 
     expect(images.name).toBe('Tengri images')
     expect(release.on?.workflow_run?.workflows).toEqual([images.name])
+    expect(release.on?.workflow_run?.branches).toEqual(['main'])
     expect(imagesSource).toContain('name: tengri-release-contract')
     expect(releaseSource).toContain('name: tengri-release-contract')
   })
@@ -60,6 +61,45 @@ describe('Tengri release workflows', () => {
     expect(validation).not.toContain('argocd/applications/tengri')
     expect(validation).not.toContain('argocd/applications/kata')
     expect(validation).not.toContain('argocd/applicationsets/platform.yaml')
+  })
+
+  it('reschedules manifest drift and guards every release-tool dependency', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } }
+    }
+    const release = YAML.parse(readFileSync(releasePath, 'utf8')) as {
+      concurrency?: { group?: string }
+      jobs?: {
+        promote?: { steps?: Array<{ name?: string; run?: string; uses?: string; with?: { branch?: string } }> }
+      }
+    }
+    const pullRequestPaths = images.on?.pull_request?.paths ?? []
+    const pushPaths = images.on?.push?.paths ?? []
+    const dependencies = ['packages/scripts/src/shared/cli.ts', 'packages/scripts/package.json', 'bun.lock']
+    for (const dependency of dependencies) {
+      expect(pullRequestPaths).toContain(dependency)
+      expect(pushPaths).toContain(dependency)
+    }
+    for (const manifest of [
+      'argocd/applications/tengri/kustomization.yaml',
+      'argocd/applicationsets/platform.yaml',
+      'argocd/applications/proompteng/deployment.yaml',
+    ]) {
+      expect(pushPaths).toContain(manifest)
+    }
+
+    const validationSteps = (release.jobs?.promote?.steps ?? []).filter((step) =>
+      step.run?.includes('git diff --quiet'),
+    )
+    expect(validationSteps.length).toBe(3)
+    for (const step of validationSteps) {
+      for (const dependency of dependencies) expect(step.run).toContain(dependency)
+    }
+    const create = release.jobs?.promote?.steps?.find((step) =>
+      step.uses?.startsWith('peter-evans/create-pull-request@'),
+    )
+    expect(release.concurrency?.group).toBe('tengri-release-promotion')
+    expect(create?.with?.branch).toBe('codex/tengri-release')
   })
 
   it('refreshes release manifests and revalidates main immediately before creating the promotion PR', () => {
