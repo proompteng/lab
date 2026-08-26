@@ -6,6 +6,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriDesktopSnapshot, TengriUser } from '@/lib/tengri/types'
 import { getDesktopSnapshot } from './client'
+import type { CodeOpenRequest } from './code-editor-model'
 import { DesktopGate } from './desktop-gates'
 import { DesktopWindowFrame } from './desktop-window'
 import { Dock } from './dock'
@@ -18,7 +19,7 @@ export type TengriDesktopApplicationProps = {
   app: TengriApp
   onAgentChanged: () => Promise<void>
   onOpenFile: (path: string) => void
-  selectedFile: string | null
+  selectedFile: CodeOpenRequest | null
   user: TengriUser
 }
 
@@ -32,7 +33,8 @@ export default function TengriDesktop({ Application }: { Application: ComponentT
     { x: 0, y: 0, width: 1280, height: 760 },
     initialWindowState,
   )
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<CodeOpenRequest | null>(null)
+  const fileRequestId = useRef(0)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [clock, setClock] = useState<Date | null>(null)
@@ -154,7 +156,8 @@ export default function TengriDesktop({ Application }: { Application: ComponentT
 
   const openFile = useCallback(
     (path: string) => {
-      setSelectedFile(path)
+      fileRequestId.current += 1
+      setSelectedFile({ path, requestId: fileRequestId.current })
       openApp('code')
     },
     [openApp],
