@@ -220,6 +220,12 @@ describe('Bayn cycle operations alert contract', () => {
       readonly uid: string
       readonly panels: readonly {
         readonly description?: string
+        readonly gridPos: {
+          readonly h: number
+          readonly w: number
+          readonly x: number
+          readonly y: number
+        }
         readonly title: string
         readonly type: string
         readonly targets?: readonly {
@@ -251,6 +257,13 @@ describe('Bayn cycle operations alert contract', () => {
       'Session preflight',
       'Decision',
       'Unresolved mutations',
+      'Economic evidence',
+      'Profitability',
+      'Net realized after all costs',
+      'Net realized return',
+      'Gross realized P&L',
+      'Recorded costs',
+      'Accounting coverage',
       'Current session window',
       'Controller cadence',
       'Condition history',
@@ -260,6 +273,16 @@ describe('Bayn cycle operations alert contract', () => {
       'Workload capacity',
       'Running build',
     ])
+    const overlappingPanels = dashboard.panels.flatMap((left, leftIndex) =>
+      dashboard.panels.slice(leftIndex + 1).flatMap((right) => {
+        const overlapsHorizontally =
+          left.gridPos.x < right.gridPos.x + right.gridPos.w && right.gridPos.x < left.gridPos.x + left.gridPos.w
+        const overlapsVertically =
+          left.gridPos.y < right.gridPos.y + right.gridPos.h && right.gridPos.y < left.gridPos.y + left.gridPos.h
+        return overlapsHorizontally && overlapsVertically ? [`${left.title} / ${right.title}`] : []
+      }),
+    )
+    expect(overlappingPanels).toEqual([])
     expect(dashboardExpressions).toEqual(
       expect.arrayContaining([
         'min(bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"})',
@@ -286,8 +309,37 @@ describe('Bayn cycle operations alert contract', () => {
         'max by (source_revision, verification) (bayn_build_info{job="bayn",namespace="bayn",service="bayn"})',
       ]),
     )
+    const receiptPanels = dashboard.panels.filter(({ title }) =>
+      [
+        'Economic evidence',
+        'Profitability',
+        'Net realized after all costs',
+        'Net realized return',
+        'Gross realized P&L',
+        'Recorded costs',
+      ].includes(title),
+    )
+    expect(receiptPanels).toHaveLength(6)
+    expect(
+      receiptPanels.every(({ targets = [] }) =>
+        targets.every(({ expr = '' }) =>
+          expr.includes(
+            'and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})',
+          ),
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      dashboard.panels
+        .find(({ title }) => title === 'Accounting coverage')
+        ?.targets?.every(({ expr = '' }) =>
+          expr.includes(
+            'topk(1, timestamp(bayn_accounting_activity_count{job="bayn",namespace="bayn",service="bayn",kind="transactions"}))',
+          ),
+        ),
+    ).toBe(true)
     const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
-    expect(statPanels).toHaveLength(14)
+    expect(statPanels).toHaveLength(21)
     expect(
       statPanels.every(({ targets = [] }) =>
         targets.every(({ instant, range }) => instant === true && range === false),

@@ -603,6 +603,14 @@ const prometheusLabel = (value: string): string =>
 
 const prometheusNumber = (value: number): string => (Number.isFinite(value) ? String(value) : '0')
 
+const microsToPrometheusDollars = (micros: string): string => {
+  const value = BigInt(micros)
+  const absolute = value < 0n ? -value : value
+  const whole = absolute / 1_000_000n
+  const fraction = (absolute % 1_000_000n).toString().padStart(6, '0')
+  return `${value < 0n ? '-' : ''}${whole}.${fraction}`
+}
+
 const epochSeconds = (instant: string | null | undefined): number =>
   instant === null || instant === undefined ? 0 : Date.parse(instant) / 1_000
 
@@ -704,6 +712,27 @@ const renderPrometheusMetricsDataFirst = (
     state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Observe &&
     state.cycle.alerts.killActive
+  const economics = state.cycle.economics
+  const accounting = economics?.accounting
+  const forwardPerformance = economics?.forwardPerformance ?? null
+  const accountingState =
+    accounting === undefined
+      ? undefined
+      : accounting.fillCount === 0 && accounting.transactionCount === 0
+        ? 'idle'
+        : accounting.unaccountedFillCount === 0 && accounting.unreceiptedTransactionCount === 0
+          ? 'exact'
+          : 'gap'
+  const forwardPerformanceEvidenceStatuses = ['sufficient', 'insufficient_evidence'] as const
+  const forwardPerformanceProfitabilities = ['profitable', 'not_profitable', 'undetermined'] as const
+  const forwardPerformanceTotalCostsMicros =
+    forwardPerformance?.brokerExecutionFeesMicros === null ||
+    forwardPerformance?.brokerExecutionFeesMicros === undefined ||
+    forwardPerformance.otherChargedCostsMicros === null
+      ? null
+      : (
+          BigInt(forwardPerformance.brokerExecutionFeesMicros) + BigInt(forwardPerformance.otherChargedCostsMicros)
+        ).toString()
   const lines = [
     '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
     '# TYPE bayn_runtime_ready gauge',
@@ -891,6 +920,93 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_reconciliation_stale_threshold_seconds Configured reconciliation staleness threshold.',
     '# TYPE bayn_reconciliation_stale_threshold_seconds gauge',
     `bayn_reconciliation_stale_threshold_seconds ${prometheusNumber(config.reconciliationStaleThresholdMs / 1_000)}`,
+    ...(economics === undefined || accounting === undefined
+      ? []
+      : [
+          '# HELP bayn_accounting_activity_count Current durable broker and accounting activity count by kind.',
+          '# TYPE bayn_accounting_activity_count gauge',
+          `bayn_accounting_activity_count{kind="fills"} ${accounting.fillCount}`,
+          `bayn_accounting_activity_count{kind="transactions"} ${accounting.transactionCount}`,
+          `bayn_accounting_activity_count{kind="receipts"} ${accounting.receiptCount}`,
+          `bayn_accounting_activity_count{kind="realized_closes"} ${accounting.realizedCloseCount}`,
+          '# HELP bayn_accounting_uncovered Durable activity not yet covered by accounting persistence.',
+          '# TYPE bayn_accounting_uncovered gauge',
+          `bayn_accounting_uncovered{kind="fills"} ${accounting.unaccountedFillCount}`,
+          `bayn_accounting_uncovered{kind="transactions"} ${accounting.unreceiptedTransactionCount}`,
+          '# HELP bayn_accounting_state Current accounting activity coverage state.',
+          '# TYPE bayn_accounting_state gauge',
+          ...(['idle', 'exact', 'gap'] as const).map(
+            (state) => `bayn_accounting_state{state="${state}"} ${accountingState === state ? 1 : 0}`,
+          ),
+          '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
+          '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
+          `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
+          '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
+          '# TYPE bayn_accounting_execution_fees_dollars gauge',
+          `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
+          '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
+          '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
+          `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+          '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal all-cost performance receipt exists.',
+          '# TYPE bayn_forward_performance_receipt_available gauge',
+          `bayn_forward_performance_receipt_available ${forwardPerformance === null ? 0 : 1}`,
+          ...(forwardPerformance === null
+            ? []
+            : [
+                '# HELP bayn_forward_performance_evidence Terminal performance evidence status.',
+                '# TYPE bayn_forward_performance_evidence gauge',
+                ...forwardPerformanceEvidenceStatuses.map(
+                  (status) =>
+                    `bayn_forward_performance_evidence{status="${status}"} ${forwardPerformance.evidenceStatus.toLowerCase() === status ? 1 : 0}`,
+                ),
+                '# HELP bayn_forward_performance_profitability Terminal profitability after all recorded costs.',
+                '# TYPE bayn_forward_performance_profitability gauge',
+                ...forwardPerformanceProfitabilities.map(
+                  (profitability) =>
+                    `bayn_forward_performance_profitability{profitability="${profitability}"} ${forwardPerformance.profitability.toLowerCase() === profitability ? 1 : 0}`,
+                ),
+                '# HELP bayn_forward_performance_accounting_exact Whether the terminal receipt proves exact accounting receipts and ledger replay.',
+                '# TYPE bayn_forward_performance_accounting_exact gauge',
+                `bayn_forward_performance_accounting_exact ${forwardPerformance.accountingReceiptsExact && forwardPerformance.ledgerExact ? 1 : 0}`,
+                '# HELP bayn_forward_performance_completed_execution_count Completed executions in the terminal performance receipt.',
+                '# TYPE bayn_forward_performance_completed_execution_count gauge',
+                `bayn_forward_performance_completed_execution_count ${forwardPerformance.completedExecutionCount}`,
+                '# HELP bayn_forward_performance_realized_close_count Realized closes in the terminal performance receipt.',
+                '# TYPE bayn_forward_performance_realized_close_count gauge',
+                `bayn_forward_performance_realized_close_count ${forwardPerformance.realizedCloseCount}`,
+                '# HELP bayn_forward_performance_receipt_timestamp_seconds Terminal performance receipt creation time.',
+                '# TYPE bayn_forward_performance_receipt_timestamp_seconds gauge',
+                `bayn_forward_performance_receipt_timestamp_seconds ${prometheusNumber(epochSeconds(forwardPerformance.createdAt))}`,
+                ...(forwardPerformance.grossRealizedPnlMicros === null
+                  ? []
+                  : [
+                      '# HELP bayn_forward_performance_gross_realized_pnl_dollars Terminal gross realized PnL.',
+                      '# TYPE bayn_forward_performance_gross_realized_pnl_dollars gauge',
+                      `bayn_forward_performance_gross_realized_pnl_dollars ${microsToPrometheusDollars(forwardPerformance.grossRealizedPnlMicros)}`,
+                    ]),
+                ...(forwardPerformanceTotalCostsMicros === null
+                  ? []
+                  : [
+                      '# HELP bayn_forward_performance_total_costs_dollars Terminal broker fees plus other charged costs.',
+                      '# TYPE bayn_forward_performance_total_costs_dollars gauge',
+                      `bayn_forward_performance_total_costs_dollars ${microsToPrometheusDollars(forwardPerformanceTotalCostsMicros)}`,
+                    ]),
+                ...(forwardPerformance.netRealizedPnlAfterCostsMicros === null
+                  ? []
+                  : [
+                      '# HELP bayn_forward_performance_net_realized_pnl_after_costs_dollars Terminal net realized PnL after broker fees, other charged costs, and recorded cash yield.',
+                      '# TYPE bayn_forward_performance_net_realized_pnl_after_costs_dollars gauge',
+                      `bayn_forward_performance_net_realized_pnl_after_costs_dollars ${microsToPrometheusDollars(forwardPerformance.netRealizedPnlAfterCostsMicros)}`,
+                    ]),
+                ...(forwardPerformance.netRealizedReturnDecimal === null
+                  ? []
+                  : [
+                      '# HELP bayn_forward_performance_net_realized_return_ratio Terminal net realized return after all recorded costs.',
+                      '# TYPE bayn_forward_performance_net_realized_return_ratio gauge',
+                      `bayn_forward_performance_net_realized_return_ratio ${forwardPerformance.netRealizedReturnDecimal}`,
+                    ]),
+              ]),
+        ]),
     '# HELP bayn_broker_access Configured broker access capability.',
     '# TYPE bayn_broker_access gauge',
     `bayn_broker_access{access="read-only"} ${effectiveBrokerMutation ? 0 : 1}`,
