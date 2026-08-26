@@ -8,6 +8,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "test": "bun test src/lib/tengri src/components/tengri",
+    "test:e2e": "playwright test --config playwright.config.ts",
     "lint": "bunx oxfmt --check",
     "format": "bunx oxfmt",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
@@ -81,6 +82,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "25.6.0",
     "@types/react": "19.2.15",
