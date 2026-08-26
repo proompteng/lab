@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
-import { signTengriMetadata, signingPayload } from './internal-auth'
+import { parseTengriSigningSecrets, signTengriMetadata, signingPayload } from './internal-auth'
 
 describe('Tengri internal request authentication', () => {
   test('signs the exact subject, timestamp, and nonce accepted by the Rust control plane', () => {
@@ -76,5 +76,22 @@ describe('Tengri internal request authentication', () => {
 
     expect(changedMethod.signature).not.toBe(original.signature)
     expect(changedBody.signature).not.toBe(original.signature)
+  })
+
+  test('signs with both keys during a bounded HMAC rotation', () => {
+    const current = 'n'.repeat(32)
+    const previous = 'o'.repeat(32)
+    const options = {
+      rpcPath: '/proompteng.runtime.v1.MicroVMControlPlane/GetAgent',
+      body: new Uint8Array([10, 1, 97]),
+      timestamp: 1_700_000_000,
+      nonce: 'nonce-1234567890',
+    }
+    const dual = signTengriMetadata('github:42', [current, previous], options)
+
+    expect(dual.signature).toBe(signTengriMetadata('github:42', current, options).signature)
+    expect(dual.previousSignature).toBe(signTengriMetadata('github:42', previous, options).signature)
+    expect(parseTengriSigningSecrets(`${current},${previous}`)).toEqual([current, previous])
+    expect(parseTengriSigningSecrets(`${current},${previous},${'x'.repeat(32)}`)).toBeNull()
   })
 })

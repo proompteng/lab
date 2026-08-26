@@ -22,7 +22,7 @@ import type {
   TengriTerminalSession,
   TengriTerminalTicket,
 } from '@/lib/tengri/types'
-import { signTengriMetadata } from './internal-auth'
+import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -88,7 +88,7 @@ export class TengriUnavailableError extends Error {
 }
 
 export function isTengriControlPlaneConfigured() {
-  return Boolean(process.env.TENGRI_GRPC_ENDPOINT?.trim() && signingSecret())
+  return Boolean(process.env.TENGRI_GRPC_ENDPOINT?.trim() && signingSecrets())
 }
 
 export async function listAgents(subject: string): Promise<TengriAgent[]> {
@@ -135,7 +135,7 @@ export async function readFile(subject: string, agentId: string, filePath: strin
   )
   return {
     path: stringValue(response.path, filePath),
-    content: Buffer.from(response.content ?? []).toString('utf8'),
+    content: decodeUtf8File(response.content ?? new Uint8Array()),
     contentType: stringValue(response.contentType, 'application/octet-stream'),
   }
 }
@@ -328,7 +328,7 @@ function getClient(): TengriGrpcClient {
   if (globalState.tengriGrpcClient && globalState.tengriGrpcService) return globalState.tengriGrpcClient
   globalState.tengriGrpcClient?.close()
   const target = process.env.TENGRI_GRPC_ENDPOINT?.trim()
-  if (!target || !signingSecret()) throw new TengriUnavailableError('Tengri control plane is not configured')
+  if (!target || !signingSecrets()) throw new TengriUnavailableError('Tengri control plane is not configured')
   const definition = protoLoader.loadSync(resolveProtoPath(), {
     defaults: true,
     enums: String,
@@ -361,23 +361,24 @@ function resolveProtoPath() {
 }
 
 function metadata(subject: string, methodName: string, request: RawRecord) {
-  const secret = signingSecret()
-  if (!secret) throw new TengriUnavailableError('Tengri signing secret is not configured')
+  const secrets = signingSecrets()
+  if (!secrets) throw new TengriUnavailableError('Tengri signing secret is not configured')
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {
-    signed = signTengriMetadata(subject, secret, {
+    signed = signTengriMetadata(subject, secrets, {
       rpcPath: method.path,
       body: method.requestSerialize(request),
     })
   } catch (cause) {
-    throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri identity is invalid', 401)
+    throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri signing failed', 503)
   }
   const value = new grpc.Metadata()
   value.set('x-tengri-subject', signed.subject)
   value.set('x-tengri-timestamp', signed.timestamp)
   value.set('x-tengri-nonce', signed.nonce)
   value.set('x-tengri-signature', signed.signature)
+  if (signed.previousSignature) value.set('x-tengri-signature-previous', signed.previousSignature)
   return value
 }
 
@@ -391,9 +392,8 @@ function grpcMethod(methodName: string) {
   return method
 }
 
-function signingSecret() {
-  const secret = process.env.TENGRI_INTERNAL_HMAC_SECRET?.trim()
-  return secret && secret.length >= 32 ? secret : null
+function signingSecrets() {
+  return parseTengriSigningSecrets(process.env.TENGRI_INTERNAL_HMAC_SECRET?.trim() ?? '')
 }
 
 function callOptions(deadlineMs: number): grpc.CallOptions {
@@ -401,25 +401,34 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
 }
 
 function mapGrpcError(error: grpc.ServiceError) {
-  const status =
-    error.code === grpc.status.INVALID_ARGUMENT
-      ? 400
-      : error.code === grpc.status.UNAUTHENTICATED
-        ? 401
-        : error.code === grpc.status.PERMISSION_DENIED
-          ? 403
-          : error.code === grpc.status.NOT_FOUND
-            ? 404
-            : error.code === grpc.status.ALREADY_EXISTS
-              ? 409
-              : error.code === grpc.status.FAILED_PRECONDITION
-                ? 412
-                : error.code === grpc.status.RESOURCE_EXHAUSTED
-                  ? 429
-                  : error.code === grpc.status.DEADLINE_EXCEEDED
-                    ? 504
-                    : 503
-  return new TengriUnavailableError(error.details || 'Tengri request failed', status)
+  switch (error.code) {
+    case grpc.status.INVALID_ARGUMENT:
+      return new TengriUnavailableError('Tengri request is invalid', 400)
+    case grpc.status.UNAUTHENTICATED:
+      return new TengriUnavailableError('Tengri control-plane authentication is unavailable', 503)
+    case grpc.status.PERMISSION_DENIED:
+      return new TengriUnavailableError('Tengri request is not permitted', 403)
+    case grpc.status.NOT_FOUND:
+      return new TengriUnavailableError('Tengri resource was not found', 404)
+    case grpc.status.ALREADY_EXISTS:
+      return new TengriUnavailableError('Tengri resource already exists', 409)
+    case grpc.status.FAILED_PRECONDITION:
+      return new TengriUnavailableError('Tengri request cannot be completed in the current state', 412)
+    case grpc.status.RESOURCE_EXHAUSTED:
+      return new TengriUnavailableError('Tengri capacity is exhausted', 429)
+    case grpc.status.DEADLINE_EXCEEDED:
+      return new TengriUnavailableError('Tengri request timed out', 504)
+    default:
+      return new TengriUnavailableError('Tengri control plane is unavailable', 503)
+  }
+}
+
+function decodeUtf8File(content: Uint8Array) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(content)
+  } catch {
+    throw new TengriUnavailableError('This file is not valid UTF-8 text', 415)
+  }
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {

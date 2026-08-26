@@ -51,6 +51,27 @@ beforeAll(async () => {
         workspaceGib: 16,
       })
     },
+    getAgent(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      const id = String(call.request.id)
+      if (id === 'authentication-failure') {
+        callback(serviceError(grpc.status.UNAUTHENTICATED, 'internal verifier rejected tengri-runtime secret'), null)
+        return
+      }
+      callback(serviceError(grpc.status.INTERNAL, 'pod 10.244.1.42 failed at an internal URL'), null)
+    },
+    readFile(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, {
+        path: String(call.request.path),
+        content: Buffer.from([0xff, 0xfe, 0x00]),
+        contentType: 'application/octet-stream',
+      })
+    },
   })
   const port = await new Promise<number>((resolve, reject) => {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
@@ -105,10 +126,77 @@ describe('Tengri gRPC BFF transport', () => {
         .digest('hex'),
     )
   })
+
+  test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
+    const { readFile } = await import('./grpc')
+    const error = await rejection(readFile('github:42', 'agent-test', '/workspace/binary'))
+
+    expect(error).toMatchObject({
+      message: 'This file is not valid UTF-8 text',
+      status: 415,
+    })
+  })
+
+  test('sends current and previous signatures during HMAC rotation', async () => {
+    const { createAgent } = await import('./grpc')
+    const current = 'n'.repeat(32)
+    process.env.TENGRI_INTERNAL_HMAC_SECRET = `${current},${secret}`
+
+    try {
+      await createAgent('github:42', 'Rotating Tengri')
+      const subject = metadataValue('x-tengri-subject')
+      const timestamp = metadataValue('x-tengri-timestamp')
+      const nonce = metadataValue('x-tengri-nonce')
+      const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.CreateAgent
+      const bodyHash = createHash('sha256')
+        .update(method.requestSerialize({ displayName: 'Rotating Tengri' }))
+        .digest('hex')
+      const payload = `${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`
+
+      expect(metadataValue('x-tengri-signature')).toBe(createHmac('sha256', current).update(payload).digest('hex'))
+      expect(metadataValue('x-tengri-signature-previous')).toBe(
+        createHmac('sha256', secret).update(payload).digest('hex'),
+      )
+    } finally {
+      process.env.TENGRI_INTERNAL_HMAC_SECRET = secret
+    }
+  })
+
+  test('sanitizes upstream failures and treats verifier failures as service errors', async () => {
+    const { getAgent } = await import('./grpc')
+    const authenticationError = await rejection(getAgent('github:42', 'authentication-failure'))
+    const internalError = await rejection(getAgent('github:42', 'internal-failure'))
+
+    expect(authenticationError).toMatchObject({
+      message: 'Tengri control-plane authentication is unavailable',
+      status: 503,
+    })
+    expect(internalError).toMatchObject({
+      message: 'Tengri control plane is unavailable',
+      status: 503,
+    })
+  })
 })
 
 function metadataValue(name: string) {
   const value = receivedMetadata?.get(name)[0]
   if (typeof value !== 'string') throw new Error(`missing ${name}`)
   return value
+}
+
+function serviceError(code: grpc.status, details: string): grpc.ServiceError {
+  const error = new Error(details) as grpc.ServiceError
+  error.code = code
+  error.details = details
+  error.metadata = new grpc.Metadata()
+  return error
+}
+
+async function rejection(promise: Promise<unknown>) {
+  try {
+    await promise
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected request to fail')
 }
