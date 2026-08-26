@@ -30,6 +30,50 @@ export function normalizeFinderPath(value: string): string | null {
   return segments.length ? `/${segments.join('/')}` : FINDER_HOME_PATH
 }
 
+export function finderChildPath(parentPath: string, name: string): string | null {
+  const parent = normalizeFinderPath(parentPath)
+  const child = name.trim()
+  if (!parent || !child || child === '.' || child === '..' || child.includes('/') || hasInvalidPathCharacter(child))
+    return null
+
+  return parent === FINDER_HOME_PATH ? `/${child}` : `${parent}/${child}`
+}
+
+export function finderRenamePath(sourcePath: string, name: string): string | null {
+  const source = normalizeFinderPath(sourcePath)
+  if (!source || source === FINDER_HOME_PATH) return null
+  const separator = source.lastIndexOf('/')
+  const parent = separator > 0 ? source.slice(0, separator) : FINDER_HOME_PATH
+  return finderChildPath(parent, name)
+}
+
+export function updateFinderSelection(
+  current: ReadonlySet<string>,
+  orderedEntries: readonly Pick<TengriFileEntry, 'path'>[],
+  targetPath: string,
+  options: { additive: boolean; range: boolean },
+): Set<string> {
+  if (options.range && current.size) {
+    const anchorPath = [...current].at(-1)
+    const anchorIndex = orderedEntries.findIndex((entry) => entry.path === anchorPath)
+    const targetIndex = orderedEntries.findIndex((entry) => entry.path === targetPath)
+    if (anchorIndex >= 0 && targetIndex >= 0) {
+      const [start, end] = anchorIndex < targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex]
+      const range = orderedEntries.slice(start, end + 1).map((entry) => entry.path)
+      return new Set(options.additive ? [...current, ...range] : range)
+    }
+  }
+
+  if (options.additive) {
+    const next = new Set(current)
+    if (next.has(targetPath)) next.delete(targetPath)
+    else next.add(targetPath)
+    return next
+  }
+
+  return new Set([targetPath])
+}
+
 export function formatFinderBytes(size: number): string {
   if (!Number.isFinite(size) || size < 0) return '—'
   if (size < 1024) return `${size} B`
