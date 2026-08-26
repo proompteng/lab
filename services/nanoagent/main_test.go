@@ -156,6 +156,55 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 	}
 }
 
+func TestBeginShutdownClosesStreamingSubscriptions(t *testing.T) {
+	server := testAPIServer(t)
+	_, fileEvents, err := server.fileWatcher.subscribe(0, "/", "")
+	if err != nil {
+		t.Fatalf("subscribe to file events: %v", err)
+	}
+	server.codex = newCodexSupervisor("/usr/bin/false", server.workspace.realRoot)
+	_, codexEvents, err := server.codex.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex events: %v", err)
+	}
+
+	server.beginShutdown()
+
+	if _, open := <-fileEvents; open {
+		t.Fatal("file event stream remained open during shutdown")
+	}
+	if _, open := <-codexEvents; open {
+		t.Fatal("Codex event stream remained open during shutdown")
+	}
+	if _, _, err := server.fileWatcher.subscribe(0, "/", ""); err == nil {
+		t.Fatal("file watcher accepted a subscription after shutdown")
+	}
+	if _, _, err := server.codex.subscribe(0); err == nil {
+		t.Fatal("Codex supervisor accepted a subscription after shutdown")
+	}
+}
+
+func TestNewAPIServerStartsCodexInConfiguredWorkspace(t *testing.T) {
+	root := t.TempDir()
+	server, err := newAPIServer(apiConfig{
+		bootstrapToken: "test-bootstrap-token",
+		codexBinary:    "/usr/bin/false",
+		startCodex:     true,
+		workspaceRoot:  root,
+	})
+	if err != nil {
+		t.Fatalf("newAPIServer() error = %v", err)
+	}
+	t.Cleanup(server.close)
+
+	if server.codex == nil {
+		t.Fatal("Codex supervisor was not configured")
+	}
+	if server.codex.cwd != server.workspace.realRoot {
+		t.Fatalf("Codex cwd = %q, want %q", server.codex.cwd, server.workspace.realRoot)
+	}
+}
+
 func testAPIServer(t *testing.T) *apiServer {
 	t.Helper()
 	server, err := newAPIServer(apiConfig{

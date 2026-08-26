@@ -13,8 +13,8 @@ import (
 
 const (
 	maxDirectoryEntries = 10_000
-	maxJSONBodyBytes    = 5 << 20
 	maxFileBytes        = 4 << 20
+	maxJSONBodyBytes    = ((maxFileBytes + 2) / 3 * 4) + (64 << 10)
 )
 
 type apiConfig struct {
@@ -68,19 +68,23 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		workspace:        workspace,
 	}
 	if config.startCodex {
-		server.codex = newCodexSupervisor(config.codexBinary, "/workspace")
+		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
 		server.codex.start()
 	}
 	return server, nil
 }
 
 func (server *apiServer) close() {
+	server.beginShutdown()
+	_ = server.workspace.close()
+}
+
+func (server *apiServer) beginShutdown() {
 	server.terminals.close()
 	_ = server.fileWatcher.close()
 	if server.codex != nil {
 		server.codex.close()
 	}
-	_ = server.workspace.close()
 }
 
 func (server *apiServer) authenticatedRoutes() http.Handler {

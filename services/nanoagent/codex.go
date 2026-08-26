@@ -218,7 +218,18 @@ func (supervisor *codexSupervisor) close() {
 	close(supervisor.shutdown)
 	supervisor.mu.Lock()
 	command := supervisor.command
+	pending := supervisor.pending
+	supervisor.pending = make(map[string]chan codexPendingResult)
+	for id, subscription := range supervisor.subscriptions {
+		delete(supervisor.subscriptions, id)
+		close(subscription.channel)
+	}
+	supervisor.approvals = make(map[string]codexApproval)
 	supervisor.mu.Unlock()
+	shutdownError, _ := json.Marshal(map[string]string{"message": "Codex app-server is shutting down"})
+	for _, response := range pending {
+		response <- codexPendingResult{err: shutdownError}
+	}
 	if command != nil && command.Process != nil {
 		killProcessGroup(command)
 	}
@@ -496,6 +507,9 @@ func (supervisor *codexSupervisor) publish(method, approvalID string, value any)
 func (supervisor *codexSupervisor) subscribe(after uint64) (uint64, <-chan codexEvent, error) {
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
+	if supervisor.closed.Load() {
+		return 0, nil, errors.New("Codex event service is shutting down")
+	}
 	if len(supervisor.subscriptions) >= codexSubscriberLimit {
 		return 0, nil, errors.New("too many Codex event subscribers")
 	}

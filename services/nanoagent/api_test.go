@@ -69,6 +69,26 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	}
 }
 
+func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	body, err := json.Marshal(writeFileRequest{
+		Path:    "/large.bin",
+		Content: base64.StdEncoding.EncodeToString(make([]byte, maxFileBytes)),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if len(body) > maxJSONBodyBytes {
+		t.Fatalf("encoded request = %d bytes, limit = %d", len(body), maxJSONBodyBytes)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestDirectoryListingIsBounded(t *testing.T) {
 	t.Parallel()
 	directoryPath := t.TempDir()

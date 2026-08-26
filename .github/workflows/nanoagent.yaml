@@ -20,6 +20,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  IMAGE: registry.ide-newton.ts.net/lab/nanoagent
+
 jobs:
   test:
     runs-on: arc-amd64
@@ -75,6 +78,50 @@ jobs:
         with:
           context: services/nanoagent
           platforms: linux/${{ matrix.architecture }}
-          push: false
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Publish and sign multi-architecture guest image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="sha-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${tag}" \
+            "${IMAGE}:${tag}-amd64" \
+            "${IMAGE}:${tag}-arm64"
+          docker buildx imagetools inspect --raw "${IMAGE}:${tag}" > nanoagent-index.json
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' nanoagent-index.json
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${tag}" --format "{{.Manifest.Digest}}")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="${IMAGE}@${digest}"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/nanoagent.yaml@refs/heads/main"
+          cosign sign --yes "${reference}"
+          cosign verify \
+            --certificate-identity "${identity}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${reference}"
+          printf "### Nanoagent\n\n\`%s\`\n" "${reference}" >> "${GITHUB_STEP_SUMMARY}"

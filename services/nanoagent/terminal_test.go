@@ -74,6 +74,28 @@ func TestTerminalManagerRunsInteractiveShell(t *testing.T) {
 	t.Fatal("interactive PTY did not return shell output")
 }
 
+func TestTerminalManagerDefaultsToConfiguredWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh")
+	t.Cleanup(manager.close)
+
+	view, err := manager.create("", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+	if session.command.Dir != workspace.realRoot || view.Cwd != "/" {
+		t.Fatalf("default terminal cwd = physical %q virtual %q", session.command.Dir, view.Cwd)
+	}
+}
+
 func TestTerminalManagerCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 	workspace, err := newWorkspace(t.TempDir())

@@ -220,7 +220,7 @@ func (manager *terminalManager) create(cwd string, columns, rows uint16) (termin
 		return terminalSessionView{}, errors.New("at most four terminal sessions are allowed")
 	}
 	if strings.TrimSpace(cwd) == "" {
-		cwd = "/workspace"
+		cwd = "/"
 	}
 	resolved, err := manager.workspace.resolveExisting(cwd)
 	if err != nil {

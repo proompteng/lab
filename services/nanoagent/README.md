@@ -51,5 +51,6 @@ MICROVM_ID=local \
   go run .
 ```
 
-The release workflow builds `linux/amd64` and `linux/arm64`, publishes to
-`registry.ide-newton.ts.net/lab/nanoagent`, records the manifest digest, and updates GitOps to an immutable digest.
+The Nanoagent workflow builds `linux/amd64` and `linux/arm64`, publishes and keylessly signs
+`registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. Tengri's delivery workflow consumes the same native
+build contract and updates the controller and guest GitOps digests atomically.

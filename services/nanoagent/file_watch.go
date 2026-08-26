@@ -42,6 +42,9 @@ type fileWatcher struct {
 	subscriptions  map[uint64]fileSubscription
 	nextSubscriber uint64
 	watched        map[string]uint32
+	closed         bool
+	closeErr       error
+	closeOnce      sync.Once
 }
 
 func newFileWatcher(workspace workspace) (*fileWatcher, error) {
@@ -60,10 +63,20 @@ func newFileWatcher(workspace workspace) (*fileWatcher, error) {
 }
 
 func (files *fileWatcher) close() error {
-	if files.watcher == nil {
-		return nil
-	}
-	return files.watcher.Close()
+	files.closeOnce.Do(func() {
+		files.mu.Lock()
+		files.closed = true
+		for id, subscription := range files.subscriptions {
+			delete(files.subscriptions, id)
+			close(subscription.channel)
+		}
+		files.watched = make(map[string]uint32)
+		files.mu.Unlock()
+		if files.watcher != nil {
+			files.closeErr = files.watcher.Close()
+		}
+	})
+	return files.closeErr
 }
 
 func (files *fileWatcher) run() {
@@ -142,6 +155,9 @@ func (files *fileWatcher) publish(event fileEvent) {
 func (files *fileWatcher) subscribe(after uint64, prefix string, directory string) (uint64, <-chan fileEvent, error) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
+	if files.closed {
+		return 0, nil, errors.New("filesystem event service is shutting down")
+	}
 	if len(files.subscriptions) >= fileSubscriberLimit {
 		return 0, nil, errors.New("too many filesystem event subscribers")
 	}
