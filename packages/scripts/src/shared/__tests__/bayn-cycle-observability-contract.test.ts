@@ -329,6 +329,15 @@ describe('Bayn cycle operations alert contract', () => {
         ),
       ),
     ).toBe(true)
+    const economicEvidenceExpression = dashboard.panels.find(({ title }) => title === 'Economic evidence')?.targets?.[0]
+      ?.expr
+    const profitabilityExpression = dashboard.panels.find(({ title }) => title === 'Profitability')?.targets?.[0]?.expr
+    expect(economicEvidenceExpression).toContain(
+      'label_replace(max(bayn_forward_performance_receipt_available{job="bayn",namespace="bayn",service="bayn"}) == 0, "status", "NO COMPLETED RECEIPT", "", "")',
+    )
+    expect(profitabilityExpression).toContain(
+      'label_replace(max(bayn_forward_performance_receipt_available{job="bayn",namespace="bayn",service="bayn"}) == 0, "profitability", "UNDETERMINED", "", "")',
+    )
     expect(
       dashboard.panels
         .find(({ title }) => title === 'Accounting coverage')

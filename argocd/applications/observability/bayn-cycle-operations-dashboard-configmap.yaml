@@ -777,7 +777,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (status) ((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max by (status) (((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or label_replace(max(bayn_forward_performance_receipt_available{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) == 0, \"status\", \"NO COMPLETED RECEIPT\", \"\", \"\"))",
               "instant": true,
               "legendFormat": "{{status}}",
               "range": false,
@@ -823,7 +823,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (profitability) ((bayn_forward_performance_profitability{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max by (profitability) (((bayn_forward_performance_profitability{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or label_replace(max(bayn_forward_performance_receipt_available{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}) == 0, \"profitability\", \"UNDETERMINED\", \"\", \"\"))",
               "instant": true,
               "legendFormat": "{{profitability}}",
               "range": false,
