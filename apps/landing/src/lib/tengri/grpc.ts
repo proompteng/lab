@@ -23,6 +23,7 @@ import type {
   TengriTerminalTicket,
 } from '@/lib/tengri/types'
 import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
+import { readTengriBffSecret } from './runtime-secrets'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -412,7 +413,7 @@ function grpcMethod(methodName: string) {
 }
 
 function signingSecrets() {
-  return parseTengriSigningSecrets(process.env.TENGRI_INTERNAL_HMAC_SECRET?.trim() ?? '')
+  return parseTengriSigningSecrets(readTengriBffSecret('TENGRI_INTERNAL_HMAC_SECRET'))
 }
 
 function callOptions(deadlineMs: number): grpc.CallOptions {

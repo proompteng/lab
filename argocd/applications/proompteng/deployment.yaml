@@ -53,12 +53,8 @@ spec:
               value: tengri-grpc.tengri.svc.cluster.local:50051
             - name: TENGRI_GRPC_TLS
               value: "false"
-          envFrom:
-            - secretRef:
-                name: tengri-bff
-                # Keep the public desktop available while External Secrets reports a missing
-                # prerequisite. The BFF rejects auth/control-plane calls until all values exist.
-                optional: true
+            - name: TENGRI_BFF_SECRET_DIR
+              value: /var/run/secrets/tengri-bff
           startupProbe:
             httpGet:
               path: /
@@ -86,7 +82,13 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: tengri-bff
+              mountPath: /var/run/secrets/tengri-bff
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi
+        - name: tengri-bff
+          secret:
+            secretName: tengri-bff
