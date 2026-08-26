@@ -7,7 +7,7 @@
     "prebuild": "bash -lc 'if [ -n \"${CONVEX_DEPLOYMENT:-}\" ]; then bun run --filter @proompteng/backend codegen; elif [ -d ../../packages/backend/convex/_generated ]; then echo \"Skipping Convex codegen (CONVEX_DEPLOYMENT not set; using committed _generated).\"; else echo \"Missing packages/backend/convex/_generated and CONVEX_DEPLOYMENT is not set.\" >&2; exit 1; fi'",
     "build": "next build --webpack",
     "start": "next start",
-    "test": "bun test src/lib/tengri src/components/tengri/window-manager.test.ts",
+    "test": "bun test src/lib/tengri src/components/tengri/window-manager.test.ts src/components/tengri/spotlight.test.ts",
     "lint": "bunx oxfmt --check",
     "format": "bunx oxfmt",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
