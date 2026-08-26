@@ -1,6 +1,6 @@
 import { normalizeFileEvent, watchFiles } from '@/lib/tengri/grpc'
 import { noStoreHeaders, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
-import { createTengriEventStream, tengriEventStreamHeaders } from '@/lib/tengri/sse'
+import { acquireTengriEventStreamSlot, createTengriEventStream, tengriEventStreamHeaders } from '@/lib/tengri/sse'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,11 +22,26 @@ export async function GET(request: Request) {
     ) {
       return Response.json({ error: 'Invalid file event stream request' }, { status: 400, headers: noStoreHeaders() })
     }
-    const source = watchFiles(identity.subject, agentId, path, after)
-    const body = createTengriEventStream(source, request.signal, (value) => {
-      const event = normalizeFileEvent(value)
-      return { id: event.sequence, data: event }
-    })
+    const release = acquireTengriEventStreamSlot(identity.subject)
+    if (!release) {
+      return Response.json({ error: 'Too many active event streams' }, { status: 429, headers: noStoreHeaders() })
+    }
+    let body: ReadableStream<Uint8Array>
+    try {
+      const source = watchFiles(identity.subject, agentId, path, after)
+      body = createTengriEventStream(
+        source,
+        request.signal,
+        (value) => {
+          const event = normalizeFileEvent(value)
+          return { id: event.sequence, data: event }
+        },
+        release,
+      )
+    } catch (error) {
+      release()
+      throw error
+    }
     return new Response(body, {
       headers: { ...noStoreHeaders(), ...tengriEventStreamHeaders() },
     })

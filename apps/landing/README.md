@@ -37,6 +37,8 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 The server-only BFF uses stateless Better Auth GitHub OAuth and signed internal gRPC metadata. The browser never
 receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap token.
+The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
+Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, and HMAC variables from `.env.example`.
 2. Register `http://localhost:3000/api/auth/callback/github` as the local GitHub callback.

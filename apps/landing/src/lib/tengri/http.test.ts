@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
-const { MAX_TENGRI_ACTION_BODY_BYTES, readTengriJsonBody, requireSameOrigin, tengriRouteError } = await import('./http')
+const { MAX_TENGRI_ACTION_BODY_BYTES, isTengriRateLimited, readTengriJsonBody, requireSameOrigin, tengriRouteError } =
+  await import('./http')
 
 describe('Tengri BFF request bodies', () => {
   test('parses a bounded UTF-8 JSON body', async () => {
@@ -81,5 +82,26 @@ describe('Tengri BFF request bodies', () => {
       })()
       expect(tengriRouteError(error).status).toBe(403)
     }
+  })
+})
+
+describe('Tengri BFF request throttling', () => {
+  test('enforces the authenticated subject bucket without trusting caller IP headers', () => {
+    const state = globalThis as typeof globalThis & {
+      tengriRateSweepAt?: number
+      tengriRateWindows?: Map<string, { count: number; resetsAt: number }>
+    }
+    delete state.tengriRateSweepAt
+    delete state.tengriRateWindows
+    for (let index = 0; index < 120; index += 1) {
+      expect(isTengriRateLimited('github:rate-test')).toBe(false)
+    }
+    expect(isTengriRateLimited('github:rate-test')).toBe(true)
+    const windows = Reflect.get(state, 'tengriRateWindows') as
+      | Map<string, { count: number; resetsAt: number }>
+      | undefined
+    expect([...(windows?.keys() ?? [])]).toEqual(['subject:github:rate-test'])
+    delete state.tengriRateSweepAt
+    delete state.tengriRateWindows
   })
 })
