@@ -416,6 +416,79 @@ describe('Bayn HTTP pure decisions', () => {
     expect(restrictedMetrics).toContain('bayn_authority_effective{authority="observe"} 1')
   })
 
+  test('separates running accounting from immutable all-cost performance evidence', () => {
+    const base = readyState()
+    const idle: RuntimeState = {
+      ...base,
+      cycle: {
+        ...base.cycle,
+        economics: {
+          accounting: {
+            fillCount: 0,
+            transactionCount: 0,
+            receiptCount: 0,
+            realizedCloseCount: 0,
+            unaccountedFillCount: 0,
+            unreceiptedTransactionCount: 0,
+            grossRealizedPnlMicros: '0',
+            executionFeesMicros: '0',
+            netRealizedPnlAfterExecutionFeesMicros: '0',
+          },
+          forwardPerformance: null,
+        },
+      },
+    }
+    const idleMetrics = renderPrometheusMetrics(idle, config, provenance, 'embedded')
+    expect(idleMetrics).toContain('bayn_accounting_state{state="idle"} 1')
+    expect(idleMetrics).toContain('bayn_accounting_activity_count{kind="fills"} 0')
+    expect(idleMetrics).toContain('bayn_forward_performance_receipt_available 0')
+    expect(idleMetrics).not.toContain('bayn_forward_performance_net_realized_pnl_after_costs_dollars ')
+
+    const completed: RuntimeState = {
+      ...idle,
+      cycle: {
+        ...idle.cycle,
+        economics: {
+          accounting: {
+            fillCount: 4,
+            transactionCount: 4,
+            receiptCount: 4,
+            realizedCloseCount: 2,
+            unaccountedFillCount: 0,
+            unreceiptedTransactionCount: 0,
+            grossRealizedPnlMicros: '12500000',
+            executionFeesMicros: '500000',
+            netRealizedPnlAfterExecutionFeesMicros: '12000000',
+          },
+          forwardPerformance: {
+            createdAt: '2026-08-19T20:05:00.000Z',
+            evidenceStatus: 'SUFFICIENT',
+            profitability: 'PROFITABLE',
+            grossRealizedPnlMicros: '12500000',
+            brokerExecutionFeesMicros: '500000',
+            otherChargedCostsMicros: '250000',
+            netRealizedPnlAfterCostsMicros: '11750000',
+            netRealizedReturnDecimal: '0.011750',
+            completedExecutionCount: 4,
+            realizedCloseCount: 2,
+            accountingReceiptsExact: true,
+            ledgerExact: true,
+          },
+        },
+      },
+    }
+    const completedMetrics = renderPrometheusMetrics(completed, config, provenance, 'embedded')
+    expect(completedMetrics).toContain('bayn_accounting_state{state="exact"} 1')
+    expect(completedMetrics).toContain('bayn_accounting_gross_realized_pnl_dollars 12.500000')
+    expect(completedMetrics).toContain('bayn_accounting_execution_fees_dollars 0.500000')
+    expect(completedMetrics).toContain('bayn_forward_performance_receipt_available 1')
+    expect(completedMetrics).toContain('bayn_forward_performance_evidence{status="sufficient"} 1')
+    expect(completedMetrics).toContain('bayn_forward_performance_profitability{profitability="profitable"} 1')
+    expect(completedMetrics).toContain('bayn_forward_performance_total_costs_dollars 0.750000')
+    expect(completedMetrics).toContain('bayn_forward_performance_net_realized_pnl_after_costs_dollars 11.750000')
+    expect(completedMetrics).toContain('bayn_forward_performance_net_realized_return_ratio 0.011750')
+  })
+
   test('publishes only bounded Restate controller identity, freshness, outcome, and timing', () => {
     const controllerKey = 'f'.repeat(64)
     const planHash = 'd'.repeat(64)

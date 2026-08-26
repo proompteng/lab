@@ -3,6 +3,7 @@ import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
+  type CycleEconomicsObservation,
   type CycleOperationsProjection,
   type CycleOperationsSnapshot,
   type DurableAuthorityObservation,
@@ -14,6 +15,7 @@ import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
   Sha256Schema,
+  SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   strictParseOptions,
 } from '../../schemas'
@@ -42,6 +44,12 @@ const NullableSha256 = Schema.NullOr(Sha256Schema)
 const NullableInstant = Schema.NullOr(Schema.Date)
 const NullableCycleState = Schema.NullOr(Schema.Enum(CycleState))
 const NullableTerminalReason = Schema.NullOr(Schema.Enum(CycleTerminalReason))
+const NullableSignedMicros = Schema.NullOr(SignedMicrosSchema)
+const NullableForwardPerformanceEvidenceStatus = Schema.NullOr(Schema.Literals(['SUFFICIENT', 'INSUFFICIENT_EVIDENCE']))
+const NullableForwardPerformanceProfitability = Schema.NullOr(
+  Schema.Literals(['PROFITABLE', 'NOT_PROFITABLE', 'UNDETERMINED']),
+)
+const NullableReturnDecimal = Schema.NullOr(Schema.String.check(Schema.isPattern(/^-?(?:0|[1-9][0-9]*)\.[0-9]+$/)))
 
 const ProjectionRowSchema = Schema.Struct({
   current_cycle_id: NullableSha256,
@@ -96,6 +104,27 @@ const ProjectionRowSchema = Schema.Struct({
   unresolved_mutation_count: NonNegativeIntegerSchema,
   oldest_unresolved_mutation_at: NullableDate,
   latest_mutation_at: NullableDate,
+  accounting_fill_count: NonNegativeIntegerSchema,
+  accounting_transaction_count: NonNegativeIntegerSchema,
+  accounting_receipt_count: NonNegativeIntegerSchema,
+  accounting_realized_close_count: NonNegativeIntegerSchema,
+  unaccounted_fill_count: NonNegativeIntegerSchema,
+  unreceipted_transaction_count: NonNegativeIntegerSchema,
+  accounting_gross_realized_pnl_micros: SignedMicrosSchema,
+  accounting_execution_fees_micros: SignedMicrosSchema,
+  accounting_net_realized_pnl_after_execution_fees_micros: SignedMicrosSchema,
+  performance_receipt_created_at: NullableDate,
+  performance_evidence_status: NullableForwardPerformanceEvidenceStatus,
+  performance_profitability: NullableForwardPerformanceProfitability,
+  performance_gross_realized_pnl_micros: NullableSignedMicros,
+  performance_broker_execution_fees_micros: NullableSignedMicros,
+  performance_other_charged_costs_micros: NullableSignedMicros,
+  performance_net_realized_pnl_after_costs_micros: NullableSignedMicros,
+  performance_net_realized_return_decimal: NullableReturnDecimal,
+  performance_completed_execution_count: Schema.NullOr(NonNegativeIntegerSchema),
+  performance_realized_close_count: Schema.NullOr(NonNegativeIntegerSchema),
+  performance_accounting_receipts_exact: Schema.NullOr(Schema.Boolean),
+  performance_ledger_exact: Schema.NullOr(Schema.Boolean),
 })
 type ProjectionRow = typeof ProjectionRowSchema.Type
 export type CycleObservabilityProjectionRow = ProjectionRow
@@ -222,6 +251,71 @@ const reconciliationFromRow = (
   })
 }
 
+const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObservation, CycleObservabilityError> => {
+  const receiptCreatedAt = row.performance_receipt_created_at
+  const evidenceStatus = row.performance_evidence_status
+  const profitability = row.performance_profitability
+  const completedExecutionCount = row.performance_completed_execution_count
+  const realizedCloseCount = row.performance_realized_close_count
+  const accountingReceiptsExact = row.performance_accounting_receipts_exact
+  const ledgerExact = row.performance_ledger_exact
+  const receiptRequiredFields = [
+    evidenceStatus,
+    profitability,
+    completedExecutionCount,
+    realizedCloseCount,
+    accountingReceiptsExact,
+    ledgerExact,
+  ] as const
+  const hasReceiptFields = receiptRequiredFields.some((field) => field !== null)
+  if (receiptCreatedAt === null && hasReceiptFields) {
+    return Result.fail(readError('invariant', 'forward-performance economics projection is incomplete'))
+  }
+
+  let forwardPerformance: CycleEconomicsObservation['forwardPerformance'] = null
+  if (receiptCreatedAt !== null) {
+    if (
+      evidenceStatus === null ||
+      profitability === null ||
+      completedExecutionCount === null ||
+      realizedCloseCount === null ||
+      accountingReceiptsExact === null ||
+      ledgerExact === null
+    ) {
+      return Result.fail(readError('invariant', 'forward-performance economics projection is incomplete'))
+    }
+    forwardPerformance = {
+      createdAt: receiptCreatedAt.toISOString(),
+      evidenceStatus,
+      profitability,
+      grossRealizedPnlMicros: row.performance_gross_realized_pnl_micros,
+      brokerExecutionFeesMicros: row.performance_broker_execution_fees_micros,
+      otherChargedCostsMicros: row.performance_other_charged_costs_micros,
+      netRealizedPnlAfterCostsMicros: row.performance_net_realized_pnl_after_costs_micros,
+      netRealizedReturnDecimal: row.performance_net_realized_return_decimal,
+      completedExecutionCount,
+      realizedCloseCount,
+      accountingReceiptsExact,
+      ledgerExact,
+    }
+  }
+
+  return Result.succeed({
+    accounting: {
+      fillCount: row.accounting_fill_count,
+      transactionCount: row.accounting_transaction_count,
+      receiptCount: row.accounting_receipt_count,
+      realizedCloseCount: row.accounting_realized_close_count,
+      unaccountedFillCount: row.unaccounted_fill_count,
+      unreceiptedTransactionCount: row.unreceipted_transaction_count,
+      grossRealizedPnlMicros: row.accounting_gross_realized_pnl_micros,
+      executionFeesMicros: row.accounting_execution_fees_micros,
+      netRealizedPnlAfterExecutionFeesMicros: row.accounting_net_realized_pnl_after_execution_fees_micros,
+    },
+    forwardPerformance,
+  })
+}
+
 export const projectCycleObservabilityRow = (
   row: CycleObservabilityProjectionRow,
 ): Result.Result<CycleOperationsProjection, CycleObservabilityError> => {
@@ -239,8 +333,9 @@ export const projectCycleObservabilityRow = (
       last: snapshotFromRow(row, 'last'),
       authority: authorityFromRow(row),
       reconciliation: reconciliationFromRow(row),
+      economics: economicsFromRow(row),
     }),
-    Result.map(({ current, last, authority, reconciliation }) => ({
+    Result.map(({ current, last, authority, reconciliation, economics }) => ({
       current,
       last,
       unfinishedCycleCount: row.unfinished_cycle_count,
@@ -255,6 +350,7 @@ export const projectCycleObservabilityRow = (
         oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
         latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
       },
+      economics,
     })),
   )
 }
@@ -306,6 +402,31 @@ const makeCycleObservability = Effect.gen(function* () {
               (SELECT account_id FROM current_cycle),
               (SELECT account_id FROM last_cycle)
             ) AS account_id
+          ),
+          selected_fills AS (
+            SELECT fill.*
+            FROM fills AS fill
+            WHERE fill.account_id = (SELECT account_id FROM selected_account)
+          ),
+          selected_accounting_transactions AS (
+            SELECT transaction.*
+            FROM accounting_transactions AS transaction
+            WHERE transaction.account_id = (SELECT account_id FROM selected_account)
+          ),
+          selected_accounting_receipts AS (
+            SELECT receipt.*
+            FROM accounting_receipts AS receipt
+            JOIN selected_accounting_transactions AS transaction
+              ON transaction.broker_event_id = receipt.broker_event_id
+          ),
+          latest_performance_receipt AS (
+            SELECT receipt.created_at, receipt.document -> 'receipt' AS document
+            FROM autonomous_forward_performance_receipts AS receipt
+            JOIN authority_generations AS generation
+              ON generation.generation_hash = receipt.authority_generation_hash
+            WHERE generation.account_id = (SELECT account_id FROM selected_account)
+            ORDER BY receipt.created_at DESC, receipt.authority_generation_hash COLLATE "C" DESC
+            LIMIT 1
           ),
           latest_reconciliation AS (
             SELECT *
@@ -465,7 +586,58 @@ const makeCycleObservability = Effect.gen(function* () {
             ) AS acknowledged_intent_count,
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,
             (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at,
-            (SELECT max(occurred_at) FROM account_mutation_events) AS latest_mutation_at
+            (SELECT max(occurred_at) FROM account_mutation_events) AS latest_mutation_at,
+            (SELECT count(*)::integer FROM selected_fills) AS accounting_fill_count,
+            (SELECT count(*)::integer FROM selected_accounting_transactions) AS accounting_transaction_count,
+            (SELECT count(*)::integer FROM selected_accounting_receipts) AS accounting_receipt_count,
+            (
+              SELECT count(*)::integer
+              FROM selected_accounting_transactions
+              WHERE side = 'SELL'
+            ) AS accounting_realized_close_count,
+            (
+              SELECT count(*)::integer
+              FROM selected_fills AS fill
+              LEFT JOIN selected_accounting_transactions AS transaction
+                ON transaction.broker_event_id = fill.event_id
+              WHERE transaction.transaction_id IS NULL
+            ) AS unaccounted_fill_count,
+            (
+              SELECT count(*)::integer
+              FROM selected_accounting_transactions AS transaction
+              LEFT JOIN selected_accounting_receipts AS receipt
+                ON receipt.broker_event_id = transaction.broker_event_id
+              WHERE receipt.receipt_id IS NULL
+            ) AS unreceipted_transaction_count,
+            coalesce((SELECT sum(realized_pnl_micros) FROM selected_accounting_transactions), 0)::text
+              AS accounting_gross_realized_pnl_micros,
+            coalesce((SELECT sum(fee_micros) FROM selected_accounting_transactions), 0)::text
+              AS accounting_execution_fees_micros,
+            coalesce((SELECT sum(realized_pnl_micros - fee_micros) FROM selected_accounting_transactions), 0)::text
+              AS accounting_net_realized_pnl_after_execution_fees_micros,
+            (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
+            (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)
+              AS performance_evidence_status,
+            (SELECT document ->> 'profitability' FROM latest_performance_receipt)
+              AS performance_profitability,
+            (SELECT document -> 'totals' ->> 'grossRealizedPnlMicros' FROM latest_performance_receipt)
+              AS performance_gross_realized_pnl_micros,
+            (SELECT document -> 'totals' ->> 'brokerExecutionFeesMicros' FROM latest_performance_receipt)
+              AS performance_broker_execution_fees_micros,
+            (SELECT document -> 'totals' ->> 'otherChargedCostsMicros' FROM latest_performance_receipt)
+              AS performance_other_charged_costs_micros,
+            (SELECT document -> 'totals' ->> 'netRealizedPnlAfterCostsMicros' FROM latest_performance_receipt)
+              AS performance_net_realized_pnl_after_costs_micros,
+            (SELECT document -> 'totals' -> 'netRealizedReturn' ->> 'decimal' FROM latest_performance_receipt)
+              AS performance_net_realized_return_decimal,
+            (SELECT (document -> 'counts' ->> 'completedExecutionCount')::integer FROM latest_performance_receipt)
+              AS performance_completed_execution_count,
+            (SELECT (document -> 'counts' ->> 'realizedCloseCount')::integer FROM latest_performance_receipt)
+              AS performance_realized_close_count,
+            (SELECT (document -> 'reconciliationProof' ->> 'accountingReceiptsExact')::boolean FROM latest_performance_receipt)
+              AS performance_accounting_receipts_exact,
+            (SELECT (document -> 'reconciliationProof' ->> 'ledgerExact')::boolean FROM latest_performance_receipt)
+              AS performance_ledger_exact
           FROM (VALUES (true)) AS singleton(seed)
           LEFT JOIN current_cycle AS current ON true
           LEFT JOIN last_cycle AS last ON true
