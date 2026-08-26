@@ -124,7 +124,7 @@ jobs:
             ' "${index_path}" >&2
 
             local digest
-            digest="$(docker buildx imagetools inspect "${image}:${tag}" --format '{{.Manifest.Digest}}')"
+            digest="sha256:$(sha256sum "${index_path}" | cut -d ' ' -f1)"
             [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
             local reference="${image}@${digest}"
             cosign sign --yes "${reference}" >&2

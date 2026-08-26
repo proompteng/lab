@@ -91,6 +91,7 @@ jobs:
             digest="${entry#*:}"
             reference="registry.ide-newton.ts.net/lab/${service}@${digest}"
             docker buildx imagetools inspect --raw "$reference" > "${service}-index.json"
+            test "sha256:$(sha256sum "${service}-index.json" | cut -d ' ' -f1)" = "$digest"
             jq -e '
               any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
               any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")

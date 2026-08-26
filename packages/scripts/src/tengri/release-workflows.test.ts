@@ -31,7 +31,8 @@ describe('Tengri release workflows', () => {
     expect(source).toContain('architecture: amd64')
     expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
-    expect(source).toContain("--format '{{.Manifest.Digest}}'")
+    expect(source).toContain('digest="sha256:$(sha256sum "${index_path}"')
+    expect(source).not.toContain('.Manifest.Digest')
     expect(source).toContain('sourceSha: $sourceSha')
   })
 
@@ -40,6 +41,7 @@ describe('Tengri release workflows', () => {
 
     expect(source).toContain('.github/workflows/tengri-images.yml@refs/heads/main')
     expect(source).toContain('test "$(jq -r \'.signed\' "$contract")" = true')
+    expect(source).toContain('test "sha256:$(sha256sum "${service}-index.json"')
     expect(source).toContain('bun packages/scripts/src/tengri/update-release.ts')
     expect(source).toContain('bun packages/scripts/src/tengri/validate-release.ts')
   })
