@@ -53,20 +53,10 @@ let
 
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
 
-  hasPathSegment = segment: rel: lib.elem segment (lib.splitString "/" rel);
-
-  isDependencyArtifact = rel: hasPathSegment "node_modules" rel;
-
-  isRuntimeArtifact = rel:
-    isDependencyArtifact rel || hasPathSegment ".next" rel || hasPathSegment ".output" rel;
-
   depsSource = lib.cleanSourceWith {
     src = repoRoot;
     filter = path: type:
-      let
-        rel = relativePath path;
-      in
-      !isRuntimeArtifact rel && (type == "directory" || isPackageManifest rel || isUnder "patches" rel);
+      type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
   };
 
   runtimeSource = lib.cleanSourceWith {
@@ -75,16 +65,13 @@ let
       let
         rel = relativePath path;
       in
-      !isRuntimeArtifact rel
-      && (
-        type == "directory"
-        || rel == "package.json"
-        || rel == "bun.lock"
-        || rel == "bunfig.toml"
-        || rel == ".npmrc"
-        || rel == "tsconfig.base.json"
-        || (lib.any (prefix: isUnder prefix rel) sourcePaths && runtimeSourceFilter rel type)
-      );
+      type == "directory"
+      || rel == "package.json"
+      || rel == "bun.lock"
+      || rel == "bunfig.toml"
+      || rel == ".npmrc"
+      || rel == "tsconfig.base.json"
+      || (lib.any (prefix: isUnder prefix rel) sourcePaths && runtimeSourceFilter rel type);
   };
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;

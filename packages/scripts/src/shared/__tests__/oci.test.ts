@@ -1290,12 +1290,6 @@ describe('native OCI build workflows', () => {
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
     }
-    const depsSourceDefinition = bunWorkspaceServiceModule.slice(
-      bunWorkspaceServiceModule.indexOf('depsSource ='),
-      bunWorkspaceServiceModule.indexOf('runtimeSource ='),
-    )
-    expect(depsSourceDefinition).toContain('!isRuntimeArtifact rel')
-    expect(depsSourceDefinition).not.toContain('!isDependencyArtifact rel')
     expect(bunWorkspaceServiceModule).toContain('cp -R ${depsSource}/. "$TMPDIR/work/"')
     expect(bunWorkspaceServiceModule).toContain('--cache-dir "$BUN_INSTALL_CACHE_DIR"')
     expect(bunWorkspaceServiceModule).toContain('for attempt in 1 2 3')
