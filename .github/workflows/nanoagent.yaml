@@ -34,8 +34,15 @@ jobs:
           go-version-file: services/nanoagent/go.mod
           cache-dependency-path: services/nanoagent/go.sum
 
+      - name: Install race detector build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential
+
       - name: Validate guest service
         working-directory: services/nanoagent
+        env:
+          CGO_ENABLED: "1"
         run: |
           set -euo pipefail
           test -z "$(gofmt -l .)"
