@@ -1,18 +1,24 @@
 'use client'
 
-import { CircleAlert, FileCode2, LoaderCircle, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Check, CircleAlert, FileCode2, LoaderCircle, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+
+import type { TengriFileEvent } from '@/lib/tengri/types'
 
 import { runTengriAction } from './client'
 import {
   closeEditorTab,
   codeFileName,
   codeLanguage,
+  codeParentDirectory,
+  isEditorValuePersisted,
   isCodePath,
   openEditorTab,
+  renameEditorTab,
   type CodeOpenRequest,
   type EditorTab,
 } from './code-editor-model'
+import { ConfirmationDialog } from './confirmation-dialog'
 
 type Monaco = typeof import('monaco-editor')
 type Editor = import('monaco-editor').editor.IStandaloneCodeEditor
@@ -61,21 +67,46 @@ function configureMonacoWorkers() {
   }
 }
 
-export function CodeEditor({ agentId, request }: { agentId: string; request: CodeOpenRequest | null }) {
+export function CodeEditor({
+  agentId,
+  onDirtyChange,
+  request,
+}: {
+  agentId: string
+  onDirtyChange?: (dirty: boolean) => void
+  request: CodeOpenRequest | null
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<Editor | null>(null)
   const monacoRef = useRef<Monaco | null>(null)
   const editorInstanceId = useId().replaceAll(/[^a-zA-Z0-9_-]/g, '')
+  const panelId = `tengri-code-panel-${editorInstanceId}`
   const activePathRef = useRef('')
   const tabsRef = useRef<EditorTab[]>([])
   const modelsRef = useRef(new Map<string, TextModel>())
   const requestsRef = useRef(new Map<string, AbortController>())
+  const loadingPathsRef = useRef(new Set<string>())
+  const saveTimersRef = useRef(new Map<string, number>())
+  const saveQueuesRef = useRef(new Map<string, Promise<boolean>>())
+  const lastSavedRef = useRef(new Map<string, string>())
+  const localWritesRef = useRef(new Set<string>())
+  const recentWritesRef = useRef(new Map<string, string>())
+  const recentWriteTimersRef = useRef(new Map<string, number>())
+  const onDirtyChangeRef = useRef(onDirtyChange)
   const disposedRef = useRef(false)
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activePath, setActivePath] = useState('')
   const [cursor, setCursor] = useState({ line: 1, column: 1 })
   const [editorReady, setEditorReady] = useState(false)
   const [editorError, setEditorError] = useState('')
+  const [watchState, setWatchState] = useState<'connected' | 'reconnecting'>('connected')
+  const [pendingClose, setPendingClose] = useState<EditorTab | null>(null)
+  const [closeBusy, setCloseBusy] = useState(false)
+  const [closeError, setCloseError] = useState('')
+  const watchDirectoryKey = useMemo(
+    () => [...new Set(tabs.map((tab) => codeParentDirectory(tab.path)))].sort().join('\0'),
+    [tabs],
+  )
 
   const updateTabs = useCallback((update: (current: EditorTab[]) => EditorTab[]) => {
     setTabs((current) => {
@@ -94,6 +125,99 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
     [updateTabs],
   )
 
+  const savePath = useCallback(
+    (targetPath: string, content: string, versionId: number) => {
+      localWritesRef.current.add(targetPath)
+      patchTab(targetPath, { dirty: true, state: 'saving', error: '' })
+      const previous = saveQueuesRef.current.get(targetPath) ?? Promise.resolve(true)
+      const operation = previous.then(async () => {
+        try {
+          await runTengriAction({ action: 'write-file', agentId, path: targetPath, content })
+          lastSavedRef.current.set(targetPath, content)
+          if (disposedRef.current) return true
+          recentWritesRef.current.set(targetPath, content)
+          const previousTimer = recentWriteTimersRef.current.get(targetPath)
+          if (previousTimer) window.clearTimeout(previousTimer)
+          recentWriteTimersRef.current.set(
+            targetPath,
+            window.setTimeout(() => {
+              if (recentWritesRef.current.get(targetPath) === content) recentWritesRef.current.delete(targetPath)
+              recentWriteTimersRef.current.delete(targetPath)
+            }, 5_000),
+          )
+          const model = modelsRef.current.get(targetPath)
+          const unchanged = model?.getVersionId() === versionId && model.getValue() === content
+          patchTab(targetPath, {
+            dirty: !unchanged,
+            state: unchanged ? 'ready' : 'saving',
+            error: '',
+          })
+          return true
+        } catch (cause) {
+          if (!disposedRef.current) {
+            patchTab(targetPath, {
+              dirty: true,
+              state: 'error',
+              error: cause instanceof Error ? cause.message : 'Save failed',
+            })
+          }
+          return false
+        }
+      })
+      const tracked = operation.finally(() => {
+        if (saveQueuesRef.current.get(targetPath) !== tracked) return
+        saveQueuesRef.current.delete(targetPath)
+        localWritesRef.current.delete(targetPath)
+      })
+      saveQueuesRef.current.set(targetPath, tracked)
+      return tracked
+    },
+    [agentId, patchTab],
+  )
+
+  const scheduleSave = useCallback(
+    (targetPath: string, model: TextModel) => {
+      const currentTimer = saveTimersRef.current.get(targetPath)
+      if (currentTimer) window.clearTimeout(currentTimer)
+      patchTab(targetPath, { dirty: true, state: 'saving', error: '' })
+      saveTimersRef.current.set(
+        targetPath,
+        window.setTimeout(() => {
+          saveTimersRef.current.delete(targetPath)
+          void savePath(targetPath, model.getValue(), model.getVersionId())
+        }, 650),
+      )
+    },
+    [patchTab, savePath],
+  )
+
+  const flushPath = useCallback(
+    async (targetPath: string) => {
+      const model = modelsRef.current.get(targetPath)
+      if (!model) return false
+      let timer = saveTimersRef.current.get(targetPath)
+      if (timer) window.clearTimeout(timer)
+      saveTimersRef.current.delete(targetPath)
+      const queued = saveQueuesRef.current.get(targetPath)
+      if (queued && !(await queued)) return false
+      if (disposedRef.current || model.isDisposed()) return false
+      timer = saveTimersRef.current.get(targetPath)
+      if (timer) window.clearTimeout(timer)
+      saveTimersRef.current.delete(targetPath)
+      if (isEditorValuePersisted(model.getValue(), lastSavedRef.current.get(targetPath), false)) {
+        patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
+        return true
+      }
+      return savePath(targetPath, model.getValue(), model.getVersionId())
+    },
+    [patchTab, savePath],
+  )
+
+  const flushActive = useCallback(() => {
+    const targetPath = activePathRef.current
+    if (targetPath) void flushPath(targetPath)
+  }, [flushPath])
+
   const showPath = useCallback((targetPath: string) => {
     const editor = editorRef.current
     if (!editor) return false
@@ -106,14 +230,12 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
   }, [])
 
   const loadPath = useCallback(
-    async (targetPath: string) => {
+    async (targetPath: string, force = false) => {
       const monaco = monacoRef.current
       const editor = editorRef.current
       if (!monaco || !editor || !isCodePath(targetPath)) return
-      if (showPath(targetPath)) {
-        patchTab(targetPath, { state: 'ready', error: '' })
-        return
-      }
+      if (!force && showPath(targetPath)) return
+      if (force && tabsRef.current.find((tab) => tab.path === targetPath)?.dirty) return
 
       requestsRef.current.get(targetPath)?.abort()
       const controller = new AbortController()
@@ -125,15 +247,23 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
           controller.signal,
         )
         if (disposedRef.current || controller.signal.aborted) return
-        const uri = monaco.Uri.from({
-          scheme: 'tengri',
-          authority: 'code',
-          path: targetPath,
-          query: `editor=${editorInstanceId}`,
-        })
-        const model = monaco.editor.createModel(result.content, codeLanguage(targetPath), uri)
-        modelsRef.current.set(targetPath, model)
-        patchTab(targetPath, { state: 'ready', error: '' })
+        let model = modelsRef.current.get(targetPath)
+        if (!model) {
+          const uri = monaco.Uri.from({
+            scheme: 'tengri',
+            authority: 'code',
+            path: targetPath,
+            query: `editor=${editorInstanceId}`,
+          })
+          model = monaco.editor.createModel(result.content, codeLanguage(targetPath), uri)
+          modelsRef.current.set(targetPath, model)
+        } else if (model.getValue() !== result.content) {
+          loadingPathsRef.current.add(targetPath)
+          model.setValue(result.content)
+          loadingPathsRef.current.delete(targetPath)
+        }
+        lastSavedRef.current.set(targetPath, result.content)
+        patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
         if (activePathRef.current === targetPath) editor.setModel(model)
       } catch (cause) {
         if (controller.signal.aborted) return
@@ -150,6 +280,8 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
 
   useEffect(() => {
     disposedRef.current = false
+    setEditorReady(false)
+    setEditorError('')
     let cancelled = false
     let editor: Editor | null = null
 
@@ -164,15 +296,12 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
           accessibilitySupport: 'auto',
           ariaLabel: 'Tengri Code editor',
           automaticLayout: true,
-          domReadOnly: true,
           fontFamily: 'JetBrains Mono, SFMono-Regular, Menlo, monospace',
           fontLigatures: true,
           fontSize: 13,
           lineHeight: 21,
           minimap: { enabled: false },
           padding: { top: 14, bottom: 14 },
-          readOnly: true,
-          readOnlyMessage: { value: 'Editing will be enabled when Tengri persistence is connected.' },
           renderLineHighlight: 'gutter',
           roundedSelection: true,
           scrollBeyondLastLine: false,
@@ -184,6 +313,26 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
         editor.onDidChangeCursorPosition(({ position }) =>
           setCursor({ line: position.lineNumber, column: position.column }),
         )
+        editor.onDidChangeModelContent(() => {
+          const targetPath = activePathRef.current
+          const model = targetPath ? modelsRef.current.get(targetPath) : null
+          if (!targetPath || !model || loadingPathsRef.current.has(targetPath)) return
+          if (
+            isEditorValuePersisted(
+              model.getValue(),
+              lastSavedRef.current.get(targetPath),
+              saveQueuesRef.current.has(targetPath),
+            )
+          ) {
+            const timer = saveTimersRef.current.get(targetPath)
+            if (timer) window.clearTimeout(timer)
+            saveTimersRef.current.delete(targetPath)
+            patchTab(targetPath, { dirty: false, state: 'ready', error: '' })
+            return
+          }
+          scheduleSave(targetPath, model)
+        })
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, flushActive)
         setEditorReady(true)
       } catch (cause) {
         if (!cancelled) setEditorError(cause instanceof Error ? cause.message : 'Code editor could not start')
@@ -196,13 +345,18 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
       disposedRef.current = true
       for (const controller of requestsRef.current.values()) controller.abort()
       requestsRef.current.clear()
+      for (const timer of saveTimersRef.current.values()) window.clearTimeout(timer)
+      saveTimersRef.current.clear()
+      for (const timer of recentWriteTimersRef.current.values()) window.clearTimeout(timer)
+      recentWriteTimersRef.current.clear()
+      recentWritesRef.current.clear()
       editor?.dispose()
       editorRef.current = null
       for (const model of modelsRef.current.values()) model.dispose()
       modelsRef.current.clear()
       monacoRef.current = null
     }
-  }, [])
+  }, [flushActive, patchTab, scheduleSave])
 
   const requestPath = request?.path ?? ''
   const requestId = request?.requestId ?? -1
@@ -214,15 +368,219 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
     void loadPath(requestPath)
   }, [editorReady, loadPath, requestId, requestPath, updateTabs])
 
+  const migratePath = useCallback(
+    async (previousPath: string, path: string) => {
+      if (!isCodePath(path) || previousPath === path) return
+      const pendingSave = saveQueuesRef.current.get(previousPath)
+      if (pendingSave) await pendingSave
+      if (disposedRef.current) return
+      if (tabsRef.current.some((tab) => tab.path === path)) {
+        patchTab(previousPath, {
+          state: 'error',
+          error: 'File was renamed to a path that is already open in Code.',
+        })
+        return
+      }
+
+      const timer = saveTimersRef.current.get(previousPath)
+      if (timer) window.clearTimeout(timer)
+      saveTimersRef.current.delete(previousPath)
+      const recentWriteTimer = recentWriteTimersRef.current.get(previousPath)
+      if (recentWriteTimer) window.clearTimeout(recentWriteTimer)
+      recentWriteTimersRef.current.delete(previousPath)
+      recentWritesRef.current.delete(previousPath)
+      requestsRef.current.get(previousPath)?.abort()
+      requestsRef.current.delete(previousPath)
+
+      const previousTab = tabsRef.current.find((tab) => tab.path === previousPath)
+      const previousModel = modelsRef.current.get(previousPath)
+      const monaco = monacoRef.current
+      let nextModel: TextModel | null = null
+      if (previousModel && monaco) {
+        const uri = monaco.Uri.from({
+          scheme: 'tengri',
+          authority: 'code',
+          path,
+          query: `editor=${editorInstanceId}`,
+        })
+        nextModel = monaco.editor.createModel(previousModel.getValue(), codeLanguage(path), uri)
+        modelsRef.current.delete(previousPath)
+        modelsRef.current.set(path, nextModel)
+        previousModel.dispose()
+      }
+
+      const lastSaved = lastSavedRef.current.get(previousPath)
+      lastSavedRef.current.delete(previousPath)
+      if (lastSaved !== undefined) lastSavedRef.current.set(path, lastSaved)
+      const renamed = renameEditorTab(tabsRef.current, activePathRef.current, previousPath, path)
+      const nextTabs = renamed.tabs.map((tab) =>
+        tab.path === path
+          ? {
+              ...tab,
+              dirty: previousTab?.dirty ?? false,
+              state: previousTab?.dirty ? ('error' as const) : ('loading' as const),
+              error: previousTab?.dirty ? 'File was renamed outside Code while local edits were pending.' : '',
+            }
+          : tab,
+      )
+      updateTabs(() => nextTabs)
+      activePathRef.current = renamed.activePath
+      setActivePath(renamed.activePath)
+      if (renamed.activePath === path && nextModel) editorRef.current?.setModel(nextModel)
+      if (!previousTab?.dirty) void loadPath(path, true)
+    },
+    [editorInstanceId, loadPath, patchTab, updateTabs],
+  )
+
+  useEffect(() => {
+    const directories = watchDirectoryKey ? watchDirectoryKey.split('\0') : []
+    if (!directories.length) {
+      setWatchState('connected')
+      return
+    }
+
+    setWatchState('reconnecting')
+    const connected = new Set<number>()
+    const handleMessage = (message: MessageEvent<string>) => {
+      let event: TengriFileEvent
+      try {
+        event = JSON.parse(message.data) as TengriFileEvent
+      } catch {
+        return
+      }
+
+      if (event.kind === 'reset') {
+        for (const tab of tabsRef.current) {
+          if (tab.dirty) {
+            const timer = saveTimersRef.current.get(tab.path)
+            if (timer) window.clearTimeout(timer)
+            saveTimersRef.current.delete(tab.path)
+            patchTab(tab.path, { state: 'error', error: 'Filesystem state changed while local edits were pending.' })
+          } else {
+            void loadPath(tab.path, true)
+          }
+        }
+        return
+      }
+
+      const affected = tabsRef.current.find(
+        (tab) => tab.path === event.path || (event.previousPath && tab.path === event.previousPath),
+      )
+      if (!affected) return
+      if (event.kind === 'renamed' && event.path && event.previousPath) {
+        void migratePath(event.previousPath, event.path)
+        return
+      }
+      if (event.kind === 'changed' && localWritesRef.current.has(affected.path)) return
+      if (event.kind === 'changed') {
+        const recentWrite = recentWritesRef.current.get(affected.path)
+        if (recentWrite !== undefined) {
+          recentWritesRef.current.delete(affected.path)
+          const recentWriteTimer = recentWriteTimersRef.current.get(affected.path)
+          if (recentWriteTimer) window.clearTimeout(recentWriteTimer)
+          recentWriteTimersRef.current.delete(affected.path)
+          void runTengriAction<{ content: string }>({
+            action: 'read-file',
+            agentId,
+            path: affected.path,
+          })
+            .then((result) => {
+              if (result.content === recentWrite) return
+              const current = tabsRef.current.find((tab) => tab.path === affected.path)
+              if (!current) return
+              if (current.dirty) {
+                const timer = saveTimersRef.current.get(current.path)
+                if (timer) window.clearTimeout(timer)
+                saveTimersRef.current.delete(current.path)
+                patchTab(current.path, {
+                  state: 'error',
+                  error: 'File changed outside Code while local edits were pending.',
+                })
+              } else {
+                void loadPath(current.path, true)
+              }
+            })
+            .catch((cause: unknown) =>
+              patchTab(affected.path, {
+                state: 'error',
+                error: cause instanceof Error ? cause.message : 'File change could not be verified',
+              }),
+            )
+          return
+        }
+      }
+      if (event.kind === 'removed') {
+        const timer = saveTimersRef.current.get(affected.path)
+        if (timer) window.clearTimeout(timer)
+        saveTimersRef.current.delete(affected.path)
+        patchTab(affected.path, { state: 'error', error: 'File was removed outside Code.' })
+        return
+      }
+      if (affected.dirty) {
+        const timer = saveTimersRef.current.get(affected.path)
+        if (timer) window.clearTimeout(timer)
+        saveTimersRef.current.delete(affected.path)
+        patchTab(affected.path, {
+          state: 'error',
+          error: 'File changed outside Code while local edits were pending.',
+        })
+        return
+      }
+      if (event.kind === 'changed' || event.kind === 'created') void loadPath(affected.path, true)
+    }
+
+    const sources = directories.map((directory, index) => {
+      const source = new EventSource(
+        `/api/tengri/files/events?agentId=${encodeURIComponent(agentId)}&path=${encodeURIComponent(directory)}`,
+      )
+      source.onopen = () => {
+        connected.add(index)
+        if (connected.size === directories.length) setWatchState('connected')
+      }
+      source.onerror = () => {
+        connected.delete(index)
+        setWatchState('reconnecting')
+      }
+      source.onmessage = handleMessage
+      return source
+    })
+    return () => {
+      for (const source of sources) source.close()
+    }
+  }, [agentId, loadPath, migratePath, patchTab, watchDirectoryKey])
+
+  const hasDirtyTabs = tabs.some((tab) => tab.dirty)
+  useEffect(() => {
+    onDirtyChangeRef.current = onDirtyChange
+  }, [onDirtyChange])
+  useEffect(() => onDirtyChange?.(hasDirtyTabs), [hasDirtyTabs, onDirtyChange])
+  useEffect(() => () => onDirtyChangeRef.current?.(false), [])
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!tabsRef.current.some((tab) => tab.dirty)) return
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [])
+
   function activateTab(targetPath: string) {
     activePathRef.current = targetPath
     setActivePath(targetPath)
     if (!showPath(targetPath)) void loadPath(targetPath)
   }
 
-  function closeTab(targetPath: string) {
+  function closeTabNow(targetPath: string) {
     requestsRef.current.get(targetPath)?.abort()
     requestsRef.current.delete(targetPath)
+    const timer = saveTimersRef.current.get(targetPath)
+    if (timer) window.clearTimeout(timer)
+    saveTimersRef.current.delete(targetPath)
+    const recentWriteTimer = recentWriteTimersRef.current.get(targetPath)
+    if (recentWriteTimer) window.clearTimeout(recentWriteTimer)
+    recentWriteTimersRef.current.delete(targetPath)
+    recentWritesRef.current.delete(targetPath)
     const model = modelsRef.current.get(targetPath)
     if (model) {
       modelsRef.current.delete(targetPath)
@@ -237,6 +595,34 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
       editorRef.current?.setModel(null)
       void loadPath(next.activePath)
     }
+    if (next.activePath) {
+      requestAnimationFrame(() => document.getElementById(tabId(editorInstanceId, next.activePath))?.focus())
+    }
+  }
+
+  function closeTab(targetPath: string) {
+    const tab = tabsRef.current.find((candidate) => candidate.path === targetPath)
+    if (!tab) return
+    if (tab.dirty) {
+      setCloseError('')
+      setPendingClose(tab)
+      return
+    }
+    closeTabNow(targetPath)
+  }
+
+  async function saveAndClose() {
+    if (!pendingClose) return
+    setCloseBusy(true)
+    setCloseError('')
+    const saved = await flushPath(pendingClose.path)
+    if (saved) {
+      closeTabNow(pendingClose.path)
+      setPendingClose(null)
+    } else {
+      setCloseError('Tengri could not save this file. The tab remains open so your changes are preserved.')
+    }
+    setCloseBusy(false)
   }
 
   function moveTabFocus(targetPath: string, direction: 'end' | 'home' | 'next' | 'previous') {
@@ -277,7 +663,7 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
                 type="button"
                 id={tabId(editorInstanceId, tab.path)}
                 role="tab"
-                aria-controls="tengri-code-panel"
+                aria-controls={panelId}
                 aria-selected={tab.path === activePath}
                 tabIndex={tab.path === activePath ? 0 : -1}
                 onClick={() => activateTab(tab.path)}
@@ -293,8 +679,17 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
               >
                 <FileCode2 className="h-3.5 w-3.5 shrink-0 text-[#79b8ff]" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-left">{codeFileName(tab.path)}</span>
-                {tab.state === 'loading' ? (
-                  <LoaderCircle className="h-3 w-3 animate-spin" aria-label="Loading" />
+                {tab.dirty ? (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-white/65" aria-hidden="true" />
+                    <span className="sr-only">Unsaved changes</span>
+                  </>
+                ) : null}
+                {tab.state === 'loading' || tab.state === 'saving' ? (
+                  <LoaderCircle
+                    className="h-3 w-3 animate-spin"
+                    aria-label={tab.state === 'saving' ? 'Saving' : 'Loading'}
+                  />
                 ) : null}
                 {tab.state === 'error' ? <CircleAlert className="h-3 w-3 text-red-300" aria-label="Error" /> : null}
               </button>
@@ -316,7 +711,7 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
       </div>
 
       <div
-        id="tengri-code-panel"
+        id={panelId}
         role="tabpanel"
         aria-labelledby={activePath ? tabId(editorInstanceId, activePath) : undefined}
         className="relative min-h-0 flex-1"
@@ -348,19 +743,41 @@ export function CodeEditor({ agentId, request }: { agentId: string; request: Cod
         </span>
         <span className="ml-4">{codeLanguage(activePath)}</span>
         <span className="ml-4 flex items-center gap-1" role="status" aria-live="polite">
-          {activeTab?.state === 'loading' ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
+          {activeTab?.state === 'loading' || activeTab?.state === 'saving' ? (
+            <LoaderCircle className="h-3 w-3 animate-spin" />
+          ) : null}
+          {activeTab?.state === 'ready' ? <Check className="h-3 w-3 text-emerald-400" /> : null}
           {activeTab?.state === 'error' ? <CircleAlert className="h-3 w-3 text-red-300" /> : null}
           <span className={activeTab?.state === 'error' ? 'max-w-64 truncate text-red-300' : ''}>
-            {activeTab?.error || activeTab?.state || 'idle'}
+            {activeTab?.error || (activeTab?.state === 'ready' ? 'saved' : activeTab?.state) || 'idle'}
           </span>
-          {activeTab?.state === 'error' ? (
-            <button type="button" className="ml-1 text-[#79b8ff]" onClick={() => void loadPath(activeTab.path)}>
+          {activeTab?.state === 'error' && !activeTab.dirty ? (
+            <button type="button" className="ml-1 text-[#79b8ff]" onClick={() => void loadPath(activeTab.path, true)}>
               Retry
             </button>
           ) : null}
+          {activeTab?.state === 'error' && activeTab.dirty ? (
+            <button type="button" className="ml-1 text-[#79b8ff]" onClick={() => void flushPath(activeTab.path)}>
+              Save mine
+            </button>
+          ) : null}
         </span>
-        <span className="ml-4">Read only</span>
+        <span className={`ml-4 ${watchState === 'connected' ? 'text-emerald-400' : 'text-amber-300'}`}>
+          {watchState === 'connected' ? 'Watching' : 'Reconnecting'}
+        </span>
       </div>
+
+      <ConfirmationDialog
+        busy={closeBusy}
+        confirmLabel="Save and Close"
+        destructive={false}
+        description={`Tengri will save the pending changes in “${pendingClose ? codeFileName(pendingClose.path) : ''}” before closing the tab.`}
+        error={closeError}
+        onConfirm={() => void saveAndClose()}
+        onOpenChange={(open) => !open && setPendingClose(null)}
+        open={Boolean(pendingClose)}
+        title="Finish saving this file?"
+      />
     </div>
   )
 }
