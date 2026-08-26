@@ -61,8 +61,20 @@ type StreamMethod = (
 ) => grpc.ClientReadableStream<RawRecord>
 
 type TengriGrpcClient = grpc.Client & Record<string, UnaryMethod | StreamMethod>
+type RuntimeMethodDefinition = {
+  path: string
+  originalName?: string
+  requestSerialize: (request: RawRecord) => Buffer
+}
+type RuntimeServiceDefinition = Record<string, RuntimeMethodDefinition>
 type RuntimeDescriptor = {
-  proompteng: { runtime: { v1: { MicroVMControlPlane: grpc.ServiceClientConstructor } } }
+  proompteng: {
+    runtime: {
+      v1: {
+        MicroVMControlPlane: grpc.ServiceClientConstructor & { service: RuntimeServiceDefinition }
+      }
+    }
+  }
 }
 
 export class TengriUnavailableError extends Error {
@@ -294,7 +306,7 @@ async function unary<Response = RawRecord>(
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   return new Promise((resolve, reject) => {
-    method.call(client, request, metadata(subject), callOptions(deadlineMs), (error, response) => {
+    method.call(client, request, metadata(subject, methodName, request), callOptions(deadlineMs), (error, response) => {
       if (error) reject(mapGrpcError(error))
       else resolve(response as Response)
     })
@@ -305,12 +317,16 @@ function stream(methodName: string, request: RawRecord, subject: string) {
   const client = getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  return method.call(client, request, metadata(subject), callOptions(0))
+  return method.call(client, request, metadata(subject, methodName, request), callOptions(0))
 }
 
 function getClient(): TengriGrpcClient {
-  const globalState = globalThis as typeof globalThis & { tengriGrpcClient?: TengriGrpcClient }
-  if (globalState.tengriGrpcClient) return globalState.tengriGrpcClient
+  const globalState = globalThis as typeof globalThis & {
+    tengriGrpcClient?: TengriGrpcClient
+    tengriGrpcService?: RuntimeServiceDefinition
+  }
+  if (globalState.tengriGrpcClient && globalState.tengriGrpcService) return globalState.tengriGrpcClient
+  globalState.tengriGrpcClient?.close()
   const target = process.env.TENGRI_GRPC_ENDPOINT?.trim()
   if (!target || !signingSecret()) throw new TengriUnavailableError('Tengri control plane is not configured')
   const definition = protoLoader.loadSync(resolveProtoPath(), {
@@ -329,6 +345,7 @@ function getClient(): TengriGrpcClient {
     'grpc.max_send_message_length': MAX_GRPC_MESSAGE_BYTES,
   }) as TengriGrpcClient
   globalState.tengriGrpcClient = client
+  globalState.tengriGrpcService = Constructor.service
   return client
 }
 
@@ -343,12 +360,16 @@ function resolveProtoPath() {
   return existing
 }
 
-function metadata(subject: string) {
+function metadata(subject: string, methodName: string, request: RawRecord) {
   const secret = signingSecret()
   if (!secret) throw new TengriUnavailableError('Tengri signing secret is not configured')
+  const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {
-    signed = signTengriMetadata(subject, secret)
+    signed = signTengriMetadata(subject, secret, {
+      rpcPath: method.path,
+      body: method.requestSerialize(request),
+    })
   } catch (cause) {
     throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri identity is invalid', 401)
   }
@@ -358,6 +379,16 @@ function metadata(subject: string) {
   value.set('x-tengri-nonce', signed.nonce)
   value.set('x-tengri-signature', signed.signature)
   return value
+}
+
+function grpcMethod(methodName: string) {
+  getClient()
+  const globalState = globalThis as typeof globalThis & { tengriGrpcService?: RuntimeServiceDefinition }
+  const method = Object.values(globalState.tengriGrpcService ?? {}).find(
+    (candidate) => candidate.originalName === methodName,
+  )
+  if (!method) throw new TengriUnavailableError(`Tengri method ${methodName} has no protocol definition`)
+  return method
 }
 
 function signingSecret() {

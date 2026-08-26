@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
@@ -65,9 +65,10 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client }
+  const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriGrpcService?: unknown }
   state.tengriGrpcClient?.close()
   delete state.tengriGrpcClient
+  delete state.tengriGrpcService
   await new Promise<void>((resolve) => server.tryShutdown(() => resolve()))
 })
 
@@ -91,10 +92,18 @@ describe('Tengri gRPC BFF transport', () => {
     const timestamp = metadataValue('x-tengri-timestamp')
     const nonce = metadataValue('x-tengri-nonce')
     const signature = metadataValue('x-tengri-signature')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.CreateAgent
+    const bodyHash = createHash('sha256')
+      .update(method.requestSerialize({ displayName: 'Tengri' }))
+      .digest('hex')
     expect(subject).toBe('github:42')
     expect(nonce).toMatch(/^[A-Za-z0-9_-]{16,128}$/)
     expect(Number(timestamp)).toBeGreaterThan(0)
-    expect(signature).toBe(createHmac('sha256', secret).update(`${subject}\n${timestamp}\n${nonce}`).digest('hex'))
+    expect(signature).toBe(
+      createHmac('sha256', secret)
+        .update(`${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`)
+        .digest('hex'),
+    )
   })
 })
 
