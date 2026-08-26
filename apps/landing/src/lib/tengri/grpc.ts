@@ -1,0 +1,508 @@
+import 'server-only'
+
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import * as grpc from '@grpc/grpc-js'
+import * as protoLoader from '@grpc/proto-loader'
+import type {
+  AgentArchitecture,
+  AgentPhase,
+  TengriAgent,
+  TengriCodexAccount,
+  TengriCodexEvent,
+  TengriCodexEventKind,
+  TengriCodexLogin,
+  TengriCodexThread,
+  TengriCodexTurn,
+  TengriCondition,
+  TengriFileEntry,
+  TengriFileEvent,
+  TengriFileEventKind,
+  TengriPreviewSession,
+  TengriTerminalSession,
+  TengriTerminalTicket,
+} from '@/lib/tengri/types'
+import { signTengriMetadata } from './internal-auth'
+
+const DEFAULT_GRPC_DEADLINE_MS = 15_000
+const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
+const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
+
+type RawRecord = Record<string, unknown>
+type RawAgent = RawRecord & {
+  id?: string
+  displayName?: string
+  phase?: string
+  architecture?: string
+  cpuMillis?: number
+  memoryMib?: number
+  workspaceGib?: number
+  nodeName?: string
+  message?: string
+  createdAt?: string
+  readyAt?: string
+  lastActivityAt?: string
+  idleDeadline?: string
+  expiresAt?: string
+  conditions?: RawRecord[]
+}
+
+type UnaryMethod = (
+  request: RawRecord,
+  metadata: grpc.Metadata,
+  options: grpc.CallOptions,
+  callback: (error: grpc.ServiceError | null, response: unknown) => void,
+) => grpc.ClientUnaryCall
+
+type StreamMethod = (
+  request: RawRecord,
+  metadata: grpc.Metadata,
+  options: grpc.CallOptions,
+) => grpc.ClientReadableStream<RawRecord>
+
+type TengriGrpcClient = grpc.Client & Record<string, UnaryMethod | StreamMethod>
+type RuntimeDescriptor = {
+  proompteng: { runtime: { v1: { MicroVMControlPlane: grpc.ServiceClientConstructor } } }
+}
+
+export class TengriUnavailableError extends Error {
+  readonly status: number
+
+  constructor(message: string, status = 503) {
+    super(message)
+    this.name = 'TengriUnavailableError'
+    this.status = status
+  }
+}
+
+export function isTengriControlPlaneConfigured() {
+  return Boolean(process.env.TENGRI_GRPC_ENDPOINT?.trim() && signingSecret())
+}
+
+export async function listAgents(subject: string): Promise<TengriAgent[]> {
+  const response = await unary<{ agents?: RawAgent[] }>('listAgents', {}, subject)
+  return (response.agents ?? []).map(normalizeAgent)
+}
+
+export async function createAgent(subject: string, displayName: string) {
+  return normalizeAgent(await unary<RawAgent>('createAgent', { displayName }, subject))
+}
+
+export async function getAgent(subject: string, id: string) {
+  return normalizeAgent(await unary<RawAgent>('getAgent', { id }, subject))
+}
+
+export async function sleepAgent(subject: string, id: string) {
+  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject))
+}
+
+export async function resumeAgent(subject: string, id: string) {
+  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, 130_000))
+}
+
+export async function deleteAgent(subject: string, id: string) {
+  await unary('deleteAgent', { id }, subject)
+}
+
+export async function listFiles(subject: string, agentId: string, filePath: string) {
+  const response = await unary<{ path?: string; entries?: RawRecord[] }>(
+    'listFiles',
+    { agentId, path: filePath },
+    subject,
+    130_000,
+  )
+  return { path: stringValue(response.path, '/'), entries: (response.entries ?? []).map(normalizeFileEntry) }
+}
+
+export async function readFile(subject: string, agentId: string, filePath: string) {
+  const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string }>(
+    'readFile',
+    { agentId, path: filePath },
+    subject,
+    130_000,
+  )
+  return {
+    path: stringValue(response.path, filePath),
+    content: Buffer.from(response.content ?? []).toString('utf8'),
+    contentType: stringValue(response.contentType, 'application/octet-stream'),
+  }
+}
+
+export async function writeFile(subject: string, agentId: string, filePath: string, content: string) {
+  return unary('writeFile', { agentId, path: filePath, content: Buffer.from(content) }, subject, 130_000)
+}
+
+export async function createDirectory(subject: string, agentId: string, filePath: string) {
+  return normalizeFileEntry(await unary<RawRecord>('createDirectory', { agentId, path: filePath }, subject, 130_000))
+}
+
+export async function moveFile(subject: string, agentId: string, sourcePath: string, destinationPath: string) {
+  return normalizeFileEntry(
+    await unary<RawRecord>('moveFile', { agentId, sourcePath, destinationPath }, subject, 130_000),
+  )
+}
+
+export async function deleteFile(subject: string, agentId: string, filePath: string, recursive: boolean) {
+  await unary('deleteFile', { agentId, path: filePath, recursive }, subject, 130_000)
+}
+
+export async function searchFiles(subject: string, agentId: string, filePath: string, query: string) {
+  const response = await unary<{ entries?: RawRecord[] }>(
+    'searchFiles',
+    { agentId, path: filePath, query, limit: 100 },
+    subject,
+    130_000,
+  )
+  return (response.entries ?? []).map(normalizeFileEntry)
+}
+
+export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence: number) {
+  return stream('watchFiles', { agentId, path: filePath, afterSequence }, subject)
+}
+
+export function normalizeFileEvent(event: RawRecord): TengriFileEvent {
+  const entry = event.entry && typeof event.entry === 'object' ? normalizeFileEntry(event.entry as RawRecord) : null
+  return {
+    sequence: numberValue(event.sequence),
+    kind: normalizeFileEventKind(stringValue(event.kind)),
+    path: stringValue(event.path),
+    previousPath: stringValue(event.previousPath),
+    entry,
+  }
+}
+
+export async function listTerminals(subject: string, agentId: string) {
+  const response = await unary<{ sessions?: RawRecord[] }>('listTerminals', { agentId }, subject, 130_000)
+  return (response.sessions ?? []).map(normalizeTerminal)
+}
+
+export async function createTerminal(subject: string, agentId: string, cwd: string, columns: number, rows: number) {
+  return normalizeTerminal(await unary<RawRecord>('createTerminal', { agentId, cwd, columns, rows }, subject, 130_000))
+}
+
+export async function terminateTerminal(subject: string, agentId: string, terminalId: string) {
+  await unary('terminateTerminal', { agentId, terminalId }, subject)
+}
+
+export async function issueTerminalTicket(
+  subject: string,
+  agentId: string,
+  terminalId: string,
+): Promise<TengriTerminalTicket> {
+  const response = await unary<RawRecord>('issueTerminalTicket', { agentId, terminalId }, subject)
+  return {
+    websocketUrl: stringValue(response.websocketUrl),
+    ticket: stringValue(response.ticket),
+    expiresAt: stringValue(response.expiresAt),
+  }
+}
+
+export async function getCodexAccount(subject: string, agentId: string): Promise<TengriCodexAccount> {
+  const response = await unary<RawRecord>('getCodexAccount', { agentId }, subject, 130_000)
+  return {
+    authenticated: Boolean(response.authenticated),
+    email: stringValue(response.email),
+    plan: stringValue(response.plan),
+  }
+}
+
+export async function startCodexLogin(subject: string, agentId: string): Promise<TengriCodexLogin> {
+  const response = await unary<RawRecord>('startCodexLogin', { agentId }, subject, 130_000)
+  return {
+    loginId: stringValue(response.loginId),
+    verificationUrl: stringValue(response.verificationUrl),
+    userCode: stringValue(response.userCode),
+    expiresAt: stringValue(response.expiresAt),
+  }
+}
+
+export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
+  const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
+  return { id: stringValue(response.id), rawJson: stringValue(response.rawJson) }
+}
+
+export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
+  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+  return { id: stringValue(response.id), rawJson: stringValue(response.rawJson) } satisfies TengriCodexThread
+}
+
+export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
+  return normalizeTurn(await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text }, subject, 130_000))
+}
+
+export async function steerCodexTurn(subject: string, agentId: string, threadId: string, turnId: string, text: string) {
+  return normalizeTurn(await unary<RawRecord>('steerCodexTurn', { agentId, threadId, turnId, text }, subject, 130_000))
+}
+
+export async function interruptCodexTurn(subject: string, agentId: string, threadId: string, turnId: string) {
+  await unary('interruptCodexTurn', { agentId, threadId, turnId }, subject)
+}
+
+export async function resolveCodexApproval(
+  subject: string,
+  agentId: string,
+  approvalId: string,
+  decision: 'approve-once' | 'approve-session' | 'deny',
+) {
+  const wireDecision = {
+    'approve-once': 'CODEX_APPROVAL_DECISION_APPROVE_ONCE',
+    'approve-session': 'CODEX_APPROVAL_DECISION_APPROVE_SESSION',
+    deny: 'CODEX_APPROVAL_DECISION_DENY',
+  }[decision]
+  await unary('resolveCodexApproval', { agentId, approvalId, decision: wireDecision }, subject)
+}
+
+export async function issuePreviewSession(
+  subject: string,
+  agentId: string,
+  port: number,
+  path: string,
+): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path }, subject, 130_000)
+  return {
+    id: stringValue(response.id),
+    launchUrl: stringValue(response.launchUrl),
+    expiresAt: stringValue(response.expiresAt),
+  }
+}
+
+export function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
+  return stream('watchCodexEvents', { agentId, afterSequence }, subject)
+}
+
+export function normalizeCodexEvent(event: RawRecord): TengriCodexEvent {
+  return {
+    sequence: numberValue(event.sequence),
+    kind: normalizeCodexEventKind(stringValue(event.kind)),
+    method: stringValue(event.method),
+    threadId: stringValue(event.threadId),
+    turnId: stringValue(event.turnId),
+    itemId: stringValue(event.itemId),
+    text: stringValue(event.text),
+    approvalId: stringValue(event.approvalId),
+    rawJson: stringValue(event.rawJson),
+  }
+}
+
+async function unary<Response = RawRecord>(
+  methodName: string,
+  request: RawRecord,
+  subject: string,
+  deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
+): Promise<Response> {
+  const client = getClient()
+  const method = client[methodName] as UnaryMethod
+  if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
+  return new Promise((resolve, reject) => {
+    method.call(client, request, metadata(subject), callOptions(deadlineMs), (error, response) => {
+      if (error) reject(mapGrpcError(error))
+      else resolve(response as Response)
+    })
+  })
+}
+
+function stream(methodName: string, request: RawRecord, subject: string) {
+  const client = getClient()
+  const method = client[methodName] as StreamMethod
+  if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
+  return method.call(client, request, metadata(subject), callOptions(0))
+}
+
+function getClient(): TengriGrpcClient {
+  const globalState = globalThis as typeof globalThis & { tengriGrpcClient?: TengriGrpcClient }
+  if (globalState.tengriGrpcClient) return globalState.tengriGrpcClient
+  const target = process.env.TENGRI_GRPC_ENDPOINT?.trim()
+  if (!target || !signingSecret()) throw new TengriUnavailableError('Tengri control plane is not configured')
+  const definition = protoLoader.loadSync(resolveProtoPath(), {
+    defaults: true,
+    enums: String,
+    keepCase: false,
+    longs: String,
+    oneofs: true,
+  })
+  const descriptor = grpc.loadPackageDefinition(definition) as unknown as RuntimeDescriptor
+  const Constructor = descriptor.proompteng.runtime.v1.MicroVMControlPlane
+  const credentials =
+    process.env.TENGRI_GRPC_TLS === 'true' ? grpc.credentials.createSsl() : grpc.credentials.createInsecure()
+  const client = new Constructor(target, credentials, {
+    'grpc.max_receive_message_length': MAX_GRPC_MESSAGE_BYTES,
+    'grpc.max_send_message_length': MAX_GRPC_MESSAGE_BYTES,
+  }) as TengriGrpcClient
+  globalState.tengriGrpcClient = client
+  return client
+}
+
+function resolveProtoPath() {
+  const candidates = [
+    process.env.TENGRI_PROTO_PATH?.trim(),
+    path.resolve(process.cwd(), 'proto', PROTO_RELATIVE_PATH),
+    path.resolve(process.cwd(), '..', '..', 'services', 'tengri', 'proto', PROTO_RELATIVE_PATH),
+  ].filter((candidate): candidate is string => Boolean(candidate))
+  const existing = candidates.find(existsSync)
+  if (!existing) throw new TengriUnavailableError('Tengri protocol definition is missing')
+  return existing
+}
+
+function metadata(subject: string) {
+  const secret = signingSecret()
+  if (!secret) throw new TengriUnavailableError('Tengri signing secret is not configured')
+  let signed: ReturnType<typeof signTengriMetadata>
+  try {
+    signed = signTengriMetadata(subject, secret)
+  } catch (cause) {
+    throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri identity is invalid', 401)
+  }
+  const value = new grpc.Metadata()
+  value.set('x-tengri-subject', signed.subject)
+  value.set('x-tengri-timestamp', signed.timestamp)
+  value.set('x-tengri-nonce', signed.nonce)
+  value.set('x-tengri-signature', signed.signature)
+  return value
+}
+
+function signingSecret() {
+  const secret = process.env.TENGRI_INTERNAL_HMAC_SECRET?.trim()
+  return secret && secret.length >= 32 ? secret : null
+}
+
+function callOptions(deadlineMs: number): grpc.CallOptions {
+  return deadlineMs > 0 ? { deadline: Date.now() + deadlineMs } : {}
+}
+
+function mapGrpcError(error: grpc.ServiceError) {
+  const status =
+    error.code === grpc.status.INVALID_ARGUMENT
+      ? 400
+      : error.code === grpc.status.UNAUTHENTICATED
+        ? 401
+        : error.code === grpc.status.PERMISSION_DENIED
+          ? 403
+          : error.code === grpc.status.NOT_FOUND
+            ? 404
+            : error.code === grpc.status.ALREADY_EXISTS
+              ? 409
+              : error.code === grpc.status.FAILED_PRECONDITION
+                ? 412
+                : error.code === grpc.status.RESOURCE_EXHAUSTED
+                  ? 429
+                  : error.code === grpc.status.DEADLINE_EXCEEDED
+                    ? 504
+                    : 503
+  return new TengriUnavailableError(error.details || 'Tengri request failed', status)
+}
+
+function normalizeAgent(agent: RawAgent): TengriAgent {
+  return {
+    id: stringValue(agent.id),
+    displayName: stringValue(agent.displayName, 'Unnamed agent'),
+    phase: normalizePhase(stringValue(agent.phase)),
+    architecture: normalizeArchitecture(stringValue(agent.architecture)),
+    cpuMillis: numberValue(agent.cpuMillis),
+    memoryMib: numberValue(agent.memoryMib),
+    workspaceGib: numberValue(agent.workspaceGib),
+    nodeName: stringValue(agent.nodeName),
+    message: stringValue(agent.message),
+    createdAt: stringValue(agent.createdAt),
+    readyAt: stringValue(agent.readyAt),
+    lastActivityAt: stringValue(agent.lastActivityAt),
+    idleDeadline: stringValue(agent.idleDeadline),
+    expiresAt: stringValue(agent.expiresAt),
+    conditions: (agent.conditions ?? []).map(normalizeCondition),
+  }
+}
+
+function normalizeCondition(condition: RawRecord): TengriCondition {
+  return {
+    type: stringValue(condition.type),
+    status: stringValue(condition.status),
+    reason: stringValue(condition.reason),
+    message: stringValue(condition.message),
+    lastTransitionAt: stringValue(condition.lastTransitionAt),
+  }
+}
+
+function normalizeFileEntry(entry: RawRecord): TengriFileEntry {
+  return {
+    name: stringValue(entry.name),
+    path: stringValue(entry.path),
+    directory: Boolean(entry.directory),
+    size: numberValue(entry.size),
+    modifiedAt: stringValue(entry.modifiedAt),
+  }
+}
+
+function normalizeFileEventKind(value: string): TengriFileEventKind {
+  return (
+    ({
+      FILE_EVENT_KIND_CREATED: 'created',
+      FILE_EVENT_KIND_CHANGED: 'changed',
+      FILE_EVENT_KIND_REMOVED: 'removed',
+      FILE_EVENT_KIND_RENAMED: 'renamed',
+      FILE_EVENT_KIND_RESET: 'reset',
+    }[value] as TengriFileEventKind | undefined) ?? 'unknown'
+  )
+}
+
+function normalizeTerminal(session: RawRecord): TengriTerminalSession {
+  return {
+    id: stringValue(session.id),
+    cwd: stringValue(session.cwd),
+    createdAt: stringValue(session.createdAt),
+    lastActivityAt: stringValue(session.lastActivityAt),
+    attached: Boolean(session.attached),
+  }
+}
+
+function normalizeTurn(turn: RawRecord): TengriCodexTurn {
+  return { id: stringValue(turn.id), threadId: stringValue(turn.threadId) }
+}
+
+function normalizePhase(value: string): AgentPhase {
+  return (
+    ({
+      AGENT_PHASE_PENDING: 'pending',
+      AGENT_PHASE_BOOTING: 'booting',
+      AGENT_PHASE_READY: 'ready',
+      AGENT_PHASE_SLEEPING: 'sleeping',
+      AGENT_PHASE_FAILED: 'failed',
+      AGENT_PHASE_TERMINATING: 'terminating',
+    }[value] as AgentPhase | undefined) ?? 'unknown'
+  )
+}
+
+function normalizeArchitecture(value: string): AgentArchitecture {
+  return (
+    ({
+      ARCHITECTURE_AMD64: 'amd64',
+      ARCHITECTURE_ARM64: 'arm64',
+    }[value] as AgentArchitecture | undefined) ?? 'unknown'
+  )
+}
+
+function normalizeCodexEventKind(value: string): TengriCodexEventKind {
+  return (
+    ({
+      CODEX_EVENT_KIND_THREAD_STATE: 'thread-state',
+      CODEX_EVENT_KIND_ASSISTANT_TEXT: 'assistant-text',
+      CODEX_EVENT_KIND_REASONING_SUMMARY: 'reasoning-summary',
+      CODEX_EVENT_KIND_PLAN: 'plan',
+      CODEX_EVENT_KIND_TOOL_CALL: 'tool-call',
+      CODEX_EVENT_KIND_TOOL_OUTPUT: 'tool-output',
+      CODEX_EVENT_KIND_FILE_DIFF: 'file-diff',
+      CODEX_EVENT_KIND_APPROVAL: 'approval',
+      CODEX_EVENT_KIND_USAGE: 'usage',
+      CODEX_EVENT_KIND_USER_MESSAGE: 'user-message',
+      CODEX_EVENT_KIND_WARNING: 'warning',
+      CODEX_EVENT_KIND_ERROR: 'error',
+    }[value] as TengriCodexEventKind | undefined) ?? 'unknown'
+  )
+}
+
+function stringValue(value: unknown, fallback = '') {
+  return typeof value === 'string' ? value : fallback
+}
+
+function numberValue(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}

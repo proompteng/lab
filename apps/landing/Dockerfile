@@ -35,6 +35,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/standalone /app
 COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/.next/static /app/apps/landing/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/landing/public /app/apps/landing/public
+COPY --from=builder --chown=nextjs:nodejs /app/services/tengri/proto /app/services/tengri/proto
 
 USER nextjs
 
@@ -42,6 +43,7 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV TENGRI_PROTO_PATH="/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"
 
 WORKDIR /app/apps/landing
 CMD ["node", "server.js"]
