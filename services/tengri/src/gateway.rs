@@ -1295,7 +1295,6 @@ mod tests {
                     .expect("Kubernetes response"),
             );
         }
-
         readiness.await.expect("readiness task")
     }
 
