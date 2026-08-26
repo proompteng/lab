@@ -3,3 +3,15 @@ kind: Kustomization
 namespace: tengri
 resources:
   - crd.yaml
+  - service-account.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - services.yaml
+configMapGenerator:
+  - name: tengri-release
+    literals:
+      - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:0000000000000000000000000000000000000000000000000000000000000000
+images:
+  - name: registry.ide-newton.ts.net/lab/tengri
+    newName: registry.ide-newton.ts.net/lab/tengri
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
