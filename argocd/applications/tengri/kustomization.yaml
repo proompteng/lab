@@ -9,6 +9,7 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - services.yaml
+  - ingressroute.yaml
   - resource-quota.yaml
   - pod-disruption-budget.yaml
   - network-policies.yaml

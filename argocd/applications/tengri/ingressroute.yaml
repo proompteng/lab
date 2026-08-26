@@ -1,0 +1,28 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tengri-rate-limit
+spec:
+  rateLimit:
+    average: 120
+    burst: 180
+    period: 1m
+    sourceCriterion:
+      requestHeaderName: CF-Connecting-IP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tengri-gateway
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      syntax: v3
+      match: (Host(`tengri.proompteng.ai`) && (Path(`/v1/terminal/ws`) || Path(`/v1/preview/open`) || Path(`/_tengri/open-preview.js`))) || HostRegexp(`^tengri-[a-z0-9]{24}\.proompteng\.ai$`)
+      middlewares:
+        - name: tengri-rate-limit
+      services:
+        - name: tengri-gateway
+          port: 8080
+  tls: {}
