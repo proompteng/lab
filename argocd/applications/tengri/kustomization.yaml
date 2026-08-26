@@ -8,6 +8,8 @@ resources:
   - rbac.yaml
   - deployment.yaml
   - services.yaml
+  - resource-quota.yaml
+  - pod-disruption-budget.yaml
 configMapGenerator:
   - name: tengri-release
     literals:
