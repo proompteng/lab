@@ -216,11 +216,19 @@ describe('Bayn cycle operations alert contract', () => {
       readRepoFile('argocd/applications/observability/bayn-cycle-operations-dashboard-configmap.yaml'),
     ) as Record<string, any>
     const dashboard = JSON.parse(dashboardConfigMap.data['bayn-cycle-operations-dashboard.json']) as {
+      readonly title: string
       readonly uid: string
       readonly panels: readonly {
+        readonly description?: string
         readonly title: string
-        readonly targets?: readonly { readonly expr?: string }[]
+        readonly type: string
+        readonly targets?: readonly {
+          readonly expr?: string
+          readonly instant?: boolean
+          readonly range?: boolean
+        }[]
         readonly fieldConfig?: Record<string, any>
+        readonly options?: Record<string, any>
       }[]
     }
     const dashboardExpressions = dashboard.panels.flatMap(({ targets = [] }) =>
@@ -230,66 +238,85 @@ describe('Bayn cycle operations alert contract', () => {
     const grafanaValues = readRepoFile('argocd/applications/observability/grafana-values.yaml')
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
-    expect(dashboard.panels.map(({ title }) => title)).toEqual(
-      expect.arrayContaining([
-        'Runtime readiness',
-        'Autonomous loop',
-        'Workload replica availability',
-        'Execution session readiness',
-        'Execution window deadlines',
-        'Broker read binding',
-        'Verified build',
-        'Latest terminal reason',
-      ]),
-    )
+    expect(dashboard.title).toBe('Bayn Trading Operations')
+    expect(dashboard.panels.map(({ title }) => title)).toEqual([
+      'Runtime',
+      'Execution controller',
+      'Broker binding',
+      'Ledger safety',
+      'Execution authority',
+      'Cycle condition',
+      'Current reason',
+      'Cycle phase',
+      'Session preflight',
+      'Decision',
+      'Unresolved mutations',
+      'Current session window',
+      'Controller cadence',
+      'Condition history',
+      'Phase history',
+      'Reason history',
+      'Safety freshness',
+      'Workload capacity',
+      'Running build',
+    ])
     expect(dashboardExpressions).toEqual(
       expect.arrayContaining([
-        'bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_autonomous_cycle_loop_configured{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_autonomous_cycle_loop_health_available{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_autonomous_cycle_not_due_reason{job="bayn",namespace="bayn",service="bayn",reason="stale_capital_bootstrap"}',
-        'bayn_broker_configured{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_broker_read_available{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_broker_account_bound{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_build_info{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_cycle_terminal_reason{job="bayn",namespace="bayn",service="bayn"} == 1',
-        'bayn_authority_kill_active{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_authority_coherent{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_reconciliation_exact{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_reconciliation_covers_latest_mutation{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
-        'bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"}',
-        'max by (job, namespace, service) (bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
-        'max by (job, namespace, service) (bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
-        'max by (job, namespace, service) (bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
-        'max by (job, namespace, service) (bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
-        'max by (job, namespace, service) (bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
-        'max by (job, namespace, service) (bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000',
-        'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn"}',
-        'kube_deployment_spec_replicas{namespace="bayn",deployment="bayn"}',
-        'kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn-egress-proxy"}',
-        'kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-egress-proxy"}',
+        'min(bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (authority) (bayn_authority_effective{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'max by (condition) (bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'max by (reason) (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'max by (phase) (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn"} == 1)',
+        'min(bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
+        'max(bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
+        'max(bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
+        'max(bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
+        'max(bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
+        'max(kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn"})',
+        'max(kube_deployment_spec_replicas{namespace="bayn",deployment="bayn"})',
+        'max(kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn-egress-proxy"})',
+        'max(kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-egress-proxy"})',
         'sum(kube_replicaset_status_ready_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
         'sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
+        'max by (source_revision, verification) (bayn_build_info{job="bayn",namespace="bayn",service="bayn"})',
       ]),
     )
-    const autonomousLoopPanel = dashboard.panels.find(({ title }) => title === 'Autonomous loop')
-    expect(autonomousLoopPanel?.fieldConfig?.overrides).toContainEqual({
-      matcher: { id: 'byFrameRefID', options: 'C' },
-      properties: [
-        {
-          id: 'thresholds',
-          value: {
-            mode: 'absolute',
-            steps: [
-              { color: 'green', value: null },
-              { color: 'red', value: 1 },
-            ],
-          },
-        },
-      ],
-    })
+    const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
+    expect(statPanels).toHaveLength(14)
+    expect(
+      statPanels.every(({ targets = [] }) =>
+        targets.every(({ instant, range }) => instant === true && range === false),
+      ),
+    ).toBe(true)
+    expect(
+      dashboard.panels
+        .filter(({ type }) => type === 'state-timeline')
+        .every(({ options }) => options?.showValue === 'never'),
+    ).toBe(true)
+    expect(
+      dashboard.panels
+        .filter(({ title }) =>
+          [
+            'Runtime',
+            'Execution controller',
+            'Broker binding',
+            'Ledger safety',
+            'Session preflight',
+            'Decision',
+            'Unresolved mutations',
+          ].includes(title),
+        )
+        .every(({ fieldConfig }) => (fieldConfig?.defaults?.mappings?.length ?? 0) > 0),
+    ).toBe(true)
+    expect(dashboard.panels.every(({ description }) => description !== undefined && description.length > 0)).toBe(true)
+    expect(dashboard.panels.map(({ title }) => title)).not.toEqual(
+      expect.arrayContaining(['Metrics scrape', 'Cycle projection', 'Authority and mutation facts', 'Autonomous loop']),
+    )
     expect(kustomization).toContain('bayn-cycle-operations-dashboard-configmap.yaml')
     expect(grafanaValues).toContain('bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard')
     expect([...rules.map(({ expr }) => expr), ...dashboardExpressions].join('\n')).not.toMatch(

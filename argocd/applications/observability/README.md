@@ -88,8 +88,8 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   manager, and Bayn's bounded service metrics; it applies metric allowlists, including logical-slot WAL retention and
   pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `bayn-cycle-operations-dashboard`: Grafana dashboard for canonical cycle condition/reason, phase, attempt age, and
-  OBSERVE safety facts.
+- `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
+  reason and phase, session timing, safety freshness, and replica-reduced lifecycle history.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, missing telemetry, low PVC capacity, WAL archive backlog, logical-slot WAL retention,
   forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
