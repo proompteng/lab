@@ -23,9 +23,6 @@ jobs:
     name: Deploy functions
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
-      CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -39,6 +36,9 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/backend
 
       - name: Validate deployment credentials
+        env:
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -48,4 +48,7 @@ jobs:
           fi
 
       - name: Deploy Convex functions
+        env:
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
         run: bun run --cwd packages/backend deploy --message "GitHub ${GITHUB_SHA}"

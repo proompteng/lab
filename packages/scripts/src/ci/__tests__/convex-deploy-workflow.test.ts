@@ -12,6 +12,11 @@ describe('Convex production deployment workflow', () => {
     expect(workflow).not.toContain('pull_request:')
     expect(workflow).toContain('CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}')
     expect(workflow).toContain('CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}')
+    expect(workflow.match(/CONVEX_SELF_HOSTED_URL: \$\{\{ secrets\.CONVEX_SELF_HOSTED_URL \}\}/g)).toHaveLength(2)
+    expect(
+      workflow.match(/CONVEX_SELF_HOSTED_ADMIN_KEY: \$\{\{ secrets\.CONVEX_SELF_HOSTED_ADMIN_KEY \}\}/g),
+    ).toHaveLength(2)
+    expect(workflow).not.toMatch(/timeout-minutes: 10\n\s+env:/)
     expect(workflow).toContain('bun install --frozen-lockfile --ignore-scripts --filter @proompteng/backend')
     expect(workflow).toContain('bun run --cwd packages/backend deploy --message "GitHub ${GITHUB_SHA}"')
   })
