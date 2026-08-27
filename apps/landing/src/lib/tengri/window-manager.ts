@@ -49,17 +49,25 @@ export const APP_TITLES: Record<TengriApp, string> = {
   settings: 'Settings',
 }
 
-export function initialWindowState(viewport: Bounds): WindowManagerState {
-  const finder = newWindow('finder', APP_TITLES.finder, viewport, 1, 1)
-  const chrome = newWindow('chrome', APP_TITLES.chrome, viewport, 2, 2)
-  chrome.bounds = offsetBounds(chrome.bounds, 64, 28, viewport)
-  chrome.restoredBounds = chrome.bounds
+export function initialWindowState(
+  viewport: Bounds,
+  initialApps: readonly TengriApp[] = ['finder', 'chrome'],
+): WindowManagerState {
+  const apps = initialApps.slice(0, MAX_DESKTOP_WINDOWS)
+  const windows = apps.map((app, index) => {
+    const created = newWindow(app, APP_TITLES[app], viewport, index + 1, index + 1)
+    if (index === 0) return created
+    created.bounds = offsetBounds(created.bounds, index * 42 + 22, index * 16 + 12, viewport)
+    created.restoredBounds = created.bounds
+    return created
+  })
+  const active = windows.at(-1)
   return {
-    activeApp: 'chrome',
-    activeWindowId: chrome.id,
-    nextWindowId: 3,
-    nextZ: 3,
-    windows: [finder, chrome],
+    activeApp: active?.app || 'finder',
+    activeWindowId: active?.id || '',
+    nextWindowId: windows.length + 1,
+    nextZ: windows.length + 1,
+    windows,
   }
 }
 
