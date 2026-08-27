@@ -3,8 +3,10 @@
 Nanoagent is the unprivileged guest process inside every Tengri `kata-fc` microVM. It is not a Kubernetes controller,
 AgentRun runtime, privileged launcher, or node daemon. The Rust Tengri control plane is its only caller.
 
-The process requires `MICROVM_ID` and `MICROVM_BOOTSTRAP_TOKEN`. It authenticates every `/v1/` request with the
-bootstrap token but never returns, hashes into public metadata, or logs that credential. Public health probes remain
+The process requires `MICROVM_ID` and a bootstrap-only `MICROVM_BOOTSTRAP_TOKEN`. Before starting any API or terminal,
+the short-lived container entry process passes that credential through a one-use anonymous pipe and replaces itself
+with a clean-environment Nanoagent process. The long-lived process disables Linux dumpability, closes the pipe after
+reading it, and never returns, hashes into public metadata, or logs the credential. Public health probes remain
 unauthenticated.
 
 ## Current API
