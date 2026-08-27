@@ -161,15 +161,10 @@ impl ControlPlane {
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
             let agent = self.owned_agent(principal, id).await?;
+            if agent_ready_for_guest(&agent) {
+                return Ok(agent);
+            }
             match agent.status.as_ref().map(|status| status.phase) {
-                Some(MicroVMPhase::Ready)
-                    if agent
-                        .status
-                        .as_ref()
-                        .is_some_and(|status| status.guest_ready) =>
-                {
-                    return Ok(agent);
-                }
                 Some(MicroVMPhase::Failed) => {
                     let status = agent.status.as_ref().expect("checked status");
                     return Err(Status::failed_precondition(format!(

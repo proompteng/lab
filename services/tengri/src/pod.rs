@@ -261,9 +261,9 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             protocol: Some("TCP".to_owned()),
             ..ContainerPort::default()
         }]),
-        readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 2, 90)),
-        liveness_probe: Some(http_probe("/livez", 15, 3)),
+        readiness_probe: Some(http_probe("/healthz", 5, 3)),
+        startup_probe: Some(http_probe("/healthz", 2, 90)),
+        liveness_probe: Some(http_probe("/healthz", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
             requests: Some(fixed),
@@ -428,6 +428,26 @@ mod tests {
                 .iter()
                 .any(|mount| mount.name == "home" && mount.mount_path == "/workspace")
         }));
+    }
+
+    #[test]
+    fn pod_probes_match_the_published_nanoagent_health_api() {
+        let pod = build_pod(&test_microvm(), "tengri", "agent-bootstrap", "agent-home");
+        let container = &pod.spec.expect("pod spec").containers[0];
+
+        for probe in [
+            container.readiness_probe.as_ref().expect("readiness probe"),
+            container.startup_probe.as_ref().expect("startup probe"),
+            container.liveness_probe.as_ref().expect("liveness probe"),
+        ] {
+            assert_eq!(
+                probe
+                    .http_get
+                    .as_ref()
+                    .and_then(|request| request.path.as_deref()),
+                Some("/healthz"),
+            );
+        }
     }
 
     #[test]
