@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::{Stream, StreamExt};
@@ -17,6 +17,8 @@ const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
 const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
 const MAX_GUEST_JSON_BYTES: usize = 10 << 20;
 const MAX_GUEST_STREAM_LINE_BYTES: usize = 3 << 20;
+const GUEST_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
@@ -153,7 +155,9 @@ impl GuestClient {
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
         Ok(Self {
-            http: reqwest::Client::builder().build()?,
+            http: reqwest::Client::builder()
+                .connect_timeout(GUEST_CONNECT_TIMEOUT)
+                .build()?,
             base_url: format!("http://{guest_ip}:{GUEST_API_PORT}"),
             token,
         })
@@ -177,10 +181,11 @@ impl GuestClient {
 
     pub async fn read_file(&self, path: &str) -> Result<FileContent, GuestError> {
         let response = checked_response(
-            self.request(Method::GET, "/v1/files/content")
-                .query(&[("path", path)])
-                .send()
-                .await?,
+            self.send_unary(
+                self.request(Method::GET, "/v1/files/content")
+                    .query(&[("path", path)]),
+            )
+            .await?,
         )
         .await?;
         let content_type = response
@@ -230,10 +235,11 @@ impl GuestClient {
 
     pub async fn delete_file(&self, path: &str, recursive: bool) -> Result<(), GuestError> {
         checked_response(
-            self.request(Method::DELETE, "/v1/files")
-                .json(&serde_json::json!({"path": path, "recursive": recursive}))
-                .send()
-                .await?,
+            self.send_unary(
+                self.request(Method::DELETE, "/v1/files")
+                    .json(&serde_json::json!({"path": path, "recursive": recursive})),
+            )
+            .await?,
         )
         .await?;
         Ok(())
@@ -293,8 +299,7 @@ impl GuestClient {
 
     pub async fn terminate_terminal(&self, id: &str) -> Result<(), GuestError> {
         checked_response(
-            self.request(Method::DELETE, &format!("/v1/terminals/{id}"))
-                .send()
+            self.send_unary(self.request(Method::DELETE, &format!("/v1/terminals/{id}")))
                 .await?,
         )
         .await?;
@@ -317,10 +322,11 @@ impl GuestClient {
         decision: &str,
     ) -> Result<(), GuestError> {
         checked_response(
-            self.request(Method::POST, &format!("/v1/codex/approvals/{approval_id}"))
-                .json(&serde_json::json!({"decision": decision}))
-                .send()
-                .await?,
+            self.send_unary(
+                self.request(Method::POST, &format!("/v1/codex/approvals/{approval_id}"))
+                    .json(&serde_json::json!({"decision": decision})),
+            )
+            .await?,
         )
         .await?;
         Ok(())
@@ -344,11 +350,22 @@ impl GuestClient {
             .bearer_auth(&self.token)
     }
 
+    async fn send_unary(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, GuestError> {
+        Ok(self.unary_request(request).send().await?)
+    }
+
+    fn unary_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request.timeout(GUEST_UNARY_TIMEOUT)
+    }
+
     async fn json<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T, GuestError> {
-        let response = checked_response(request.send().await?).await?;
+        let response = checked_response(self.send_unary(request).await?).await?;
         let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
         Ok(serde_json::from_slice(&body)?)
     }
@@ -469,5 +486,25 @@ mod tests {
             drain_ndjson_lines(&mut buffer, 4),
             Err(GuestError::ResponseTooLarge(4))
         ));
+    }
+
+    #[test]
+    fn unary_guest_requests_have_a_deadline_while_streams_remain_long_lived() {
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            token: "token".to_owned(),
+        };
+        let unary = client
+            .unary_request(client.request(Method::GET, "/v1/files"))
+            .build()
+            .expect("unary request");
+        let stream = client
+            .request(Method::GET, "/v1/files/watch")
+            .build()
+            .expect("stream request");
+
+        assert_eq!(unary.timeout(), Some(&GUEST_UNARY_TIMEOUT));
+        assert_eq!(stream.timeout(), None);
     }
 }
