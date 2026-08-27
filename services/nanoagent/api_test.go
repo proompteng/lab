@@ -302,6 +302,57 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	}
 }
 
+func TestBeginShutdownCancelsActivePreviewRequests(t *testing.T) {
+	server := testAPIServer(t)
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	server.previewTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		close(started)
+		<-request.Context().Done()
+		close(canceled)
+		return nil, request.Context().Err()
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/preview/43210/events", nil)
+	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	response := httptest.NewRecorder()
+	handled := make(chan struct{})
+	go func() {
+		server.authenticatedRoutes().ServeHTTP(response, request)
+		close(handled)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("preview request did not reach the upstream transport")
+	}
+	server.beginShutdown()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("preview request context remained active during shutdown")
+	}
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("preview handler remained blocked during shutdown")
+	}
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("canceled preview status = %d body = %s", response.Code, response.Body.String())
+	}
+
+	rejected := performAuthorizedRequest(
+		server.authenticatedRoutes(),
+		http.MethodGet,
+		"/v1/preview/43210/events",
+		nil,
+	)
+	if rejected.Code != http.StatusServiceUnavailable {
+		t.Fatalf("post-shutdown preview status = %d body = %s", rejected.Code, rejected.Body.String())
+	}
+}
+
 func TestPreviewApplicationCannotSpoofNanoagentAuthenticationFailure(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)

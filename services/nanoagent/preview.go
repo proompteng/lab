@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var dangerousForwardHeaders = []string{
@@ -17,6 +19,56 @@ var dangerousForwardHeaders = []string{
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
 	"X-Forwarded-Proto",
+}
+
+type previewRequestTracker struct {
+	mu     sync.Mutex
+	closed bool
+	nextID uint64
+	active map[uint64]context.CancelFunc
+}
+
+func newPreviewRequestTracker() *previewRequestTracker {
+	return &previewRequestTracker{active: make(map[uint64]context.CancelFunc)}
+}
+
+func (tracker *previewRequestTracker) track(parent context.Context) (context.Context, func(), bool) {
+	ctx, cancel := context.WithCancel(parent)
+	tracker.mu.Lock()
+	if tracker.closed {
+		tracker.mu.Unlock()
+		cancel()
+		return ctx, func() {}, false
+	}
+	tracker.nextID++
+	id := tracker.nextID
+	tracker.active[id] = cancel
+	tracker.mu.Unlock()
+
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			tracker.mu.Lock()
+			delete(tracker.active, id)
+			tracker.mu.Unlock()
+			cancel()
+		})
+	}
+	return ctx, release, true
+}
+
+func (tracker *previewRequestTracker) close() {
+	tracker.mu.Lock()
+	tracker.closed = true
+	cancellations := make([]context.CancelFunc, 0, len(tracker.active))
+	for id, cancel := range tracker.active {
+		cancellations = append(cancellations, cancel)
+		delete(tracker.active, id)
+	}
+	tracker.mu.Unlock()
+	for _, cancel := range cancellations {
+		cancel()
+	}
 }
 
 func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http.Request) {
@@ -35,6 +87,13 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		writeAPIError(writer, http.StatusBadRequest, "invalid preview path")
 		return
 	}
+	previewContext, release, tracked := server.previewRequests.track(request.Context())
+	if !tracked {
+		writeAPIError(writer, http.StatusServiceUnavailable, "Nanoagent is shutting down")
+		return
+	}
+	defer release()
+	request = request.WithContext(previewContext)
 	target, _ := url.Parse(fmt.Sprintf("http://%s", loopbackAddress(port)))
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = server.previewTransport
