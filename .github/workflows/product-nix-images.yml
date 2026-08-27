@@ -2,8 +2,34 @@ name: product-nix-images
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/synthesis/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'services/tengri/proto/**'
+      - 'nix/images/app.nix'
+      - 'nix/images/docs.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/images/synthesis.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
   push:
     branches:
       - main
@@ -26,6 +52,7 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
+      - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
   workflow_dispatch:
@@ -59,6 +86,7 @@ jobs:
     runs-on: arc-amd64
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
@@ -87,6 +115,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             app:
@@ -100,6 +129,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             synthesis:
@@ -113,6 +143,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             docs:
@@ -126,6 +157,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
       - name: Manual build selection
@@ -147,7 +179,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: proompteng-release-contract
     secrets: inherit
@@ -160,7 +192,7 @@ jobs:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-app', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: app-release-contract
     secrets: inherit
@@ -173,7 +205,7 @@ jobs:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-synthesis', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: synthesis-release-contract
     secrets: inherit
@@ -186,7 +218,7 @@ jobs:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-docs', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: docs-release-contract
     secrets: inherit
