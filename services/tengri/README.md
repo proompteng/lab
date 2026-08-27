@@ -29,11 +29,15 @@ MicroVM Pods and PVCs continue running; this rollout does not modify a `MicroVM`
 Clients reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a
 truthful service-unavailable response and must be retried.
 
-Roll out only through the normal image workflow and Argo reconciliation:
+Roll out only through the `Tengri controller` workflow and Argo reconciliation. On `main`, the workflow builds native
+`linux/amd64` and `linux/arm64` images, publishes a signed multi-architecture index at
+`registry.ide-newton.ts.net/lab/tengri:sha-<commit>`, and writes the immutable digest to its job summary:
 
-1. Merge the reviewed manifest and digest update after focused controller, Kustomize, and schema validation passes.
-2. Confirm Argo starts one `tengri` Deployment replacement and does not reconcile guest Pods, PVCs, or nodes.
-3. From a configured `galactic-lan` client, verify the replacement and its control path:
+1. Merge the controller source and wait for both native image builds, index verification, and keyless signature
+   verification to pass.
+2. Pin the published digest in a reviewed GitOps follow-up; never deploy a mutable tag.
+3. Confirm Argo starts one `tengri` Deployment replacement and does not reconcile guest Pods, PVCs, or nodes.
+4. From a configured `galactic-lan` client, verify the replacement and its control path:
 
    ```bash
    set -euo pipefail
@@ -57,7 +61,7 @@ Roll out only through the normal image workflow and Argo reconciliation:
    trap - EXIT INT TERM
    ```
 
-4. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
+5. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
    plane request. Do not create a canary DaemonSet or mutate node scheduling to verify this rollout.
 
 If the replacement cannot become ready, revert the manifest or image-digest commit through a follow-up PR and let Argo
@@ -76,5 +80,5 @@ cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdg
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
 ```
 
-Runtime configuration is documented in `docs/tengri/operations.md`. The protobuf contract is
-`proto/proompteng/runtime/v1/microvm.proto`.
+Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
+protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).

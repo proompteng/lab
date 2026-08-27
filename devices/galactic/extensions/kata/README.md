@@ -97,23 +97,22 @@ Ordinary Pods require no image prefetch, host-socket debug container, or per-ima
 treats the legacy `/etc/cri/conf.d/20-customization.part` machine-file update as reboot-requiring, so Omni must roll
 this configuration across one node at a time.
 
-Argo CD application `kata` owns the RuntimeClasses and, after publishing Nanoagent, the long-running
-canary DaemonSets. Each RuntimeClass has an independent node selector, so installing a handler does not make a node
-eligible by itself.
+Argo CD application `kata` owns only the RuntimeClasses. Runtime acceptance uses a bounded, on-demand Nanoagent Pod;
+there are no permanent canary workloads. Each RuntimeClass has an independent node selector, so installing a handler
+does not make a node eligible by itself.
 
 The Kubernetes package is deliberately separate from this node extension under `argocd/applications/kata`. The Argo
-application and its canaries use namespace `kata`; the installed Talos extension identity remains `kata-runtimes`.
+application uses namespace `kata`; the installed Talos extension identity remains `kata-runtimes`.
 
-The Nanoagent rename changes the four DaemonSet resource identities. Its first sync must enable pruning so Argo CD
-deletes the superseded `microvm-agent-{qemu,clh,fc,dragonball}` DaemonSets instead of running both generations:
+The first RuntimeClass-only sync must enable pruning so Argo CD deletes both generations of permanent canary
+DaemonSets:
 
 ```bash
 argocd app sync kata --prune
-kubectl --context galactic-lan -n kata get daemonsets
+test -z "$(kubectl --context galactic-lan -n kata get daemonset -o name)"
 ```
 
-Only `nanoagent-qemu`, `nanoagent-clh`, `nanoagent-fc`, and `nanoagent-dragonball` may remain. The runtime verifier
-rejects the rollout if any legacy DaemonSet is still present.
+The runtime verifier rejects the rollout while any `microvm-agent-*` or `nanoagent-*` canary DaemonSet remains.
 
 Omni normally uncordons a node when its reboot lifecycle finalizes. Immediately cordon the returned node again for
 runtime validation and require `Ready,SchedulingDisabled` before applying any runtime label:
@@ -123,13 +122,15 @@ kubectl --context galactic-lan cordon <node>
 kubectl --context galactic-lan get node <node>
 ```
 
-The DaemonSet controller tolerates the built-in unschedulable taint, so these canaries still run on the validation-
-cordoned target. Keep this cordon until all four runtime proofs pass. It is an acceptance barrier, separate from Omni's
-temporary transport cordon.
+The bounded verifier Pod explicitly tolerates the built-in unschedulable taint, so it can run on an already
+validation-cordoned target. The verifier never cordons or uncordons a node. Keep this cordon until all four runtime
+proofs pass. It is an acceptance barrier, separate from Omni's temporary transport cordon.
 
 For each node and runtime, first verify the extension, containerd service, and handler configuration. Then add only
-that runtime's activation label, let its canary boot, and collect guest plus host-side VMM evidence. Remove the label
-immediately if the canary fails; retain it only after the proof passes:
+that runtime's activation label and run the verifier. It creates one unique bootstrap Secret and one digest-pinned,
+unprivileged Pod for the requested node/runtime pair, waits for readiness, collects guest plus host-side VMM evidence,
+and deletes both resources on success or failure. Remove the label immediately if the proof fails; retain it only after
+the proof passes:
 
 ```bash
 kubectl --context galactic-lan label node <node> runtime.proompteng.ai/kata-qemu=ready --overwrite
@@ -138,10 +139,9 @@ kubectl --context galactic-lan label node <node> runtime.proompteng.ai/kata-fc=r
 kubectl --context galactic-lan label node <node> runtime.proompteng.ai/kata-dragonball=ready --overwrite
 ```
 
-The four canaries remain running for inspection. `verify-runtimes.sh` captures their guest boot IDs and kernel
-releases, proves `/bin/sh`, Nanoagent PID 1, and writable `/workspace` behavior inside each guest, maps each Pod to its
-Talos CRI sandbox, and verifies the requested host VMM. Dragonball is built into the Kata shim, so it deliberately has
-no separate VMM process.
+`verify-runtimes.sh` retains the Pod manifest, description, logs, guest boot ID, kernel release, shell proof, Talos CRI
+sandbox mapping, CRI log, and host VMM process snapshot under the requested evidence directory. It leaves no Pod or
+Secret running. Dragonball is built into the Kata shim, so it deliberately has no separate VMM process.
 
 Only after QEMU, Cloud Hypervisor, Firecracker, and Dragonball have each passed on the target may the node be accepted
 and uncordoned:

@@ -16,6 +16,14 @@ const argoCdApplicationSetCrdOverlay = readFileSync(
 const argoCdLovelyPluginOverlay = readFileSync('argocd/applications/argocd/overlays/argocd-lovely-plugin.yaml', 'utf8')
 const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
 const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
+const kataKustomization = YAML.parse(readFileSync('argocd/applications/kata/kustomization.yaml', 'utf8')) as {
+  resources?: string[]
+}
+const kataReadme = readFileSync('argocd/applications/kata/README.md', 'utf8')
+const kataRuntimeVerifier = readFileSync('devices/galactic/extensions/kata/verify-runtimes.sh', 'utf8')
+const talosUpgradeRunbook = readFileSync('docs/runbooks/talos-latest-upgrade-plan.md', 'utf8')
+const tengriOperations = readFileSync('docs/tengri/operations.md', 'utf8')
+const tengriWorkflow = readFileSync('.github/workflows/tengri-controller.yaml', 'utf8')
 const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
 const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
 const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
@@ -227,6 +235,41 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('automation: manual')
     expect(metallbEntry).not.toContain('automation: auto')
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
+  })
+
+  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
+    const tengriEntry = platformApplicationSet.match(
+      /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(tengriEntry).toContain('argocd.argoproj.io/sync-options: Prune=false,Delete=false')
+    expect(kataKustomization.resources).toEqual(['runtime-class.yaml'])
+    expect(kataReadme).toContain('must not render a `Namespace` object or permanent runtime canary workloads')
+    expect(kataReadme).toContain('bounded acceptance operation')
+    expect(kataRuntimeVerifier).toMatch(/readonly NANOAGENT_IMAGE='[^']+@sha256:[a-f0-9]{64}'/)
+    expect(kataRuntimeVerifier).toContain('kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create -f -')
+    expect(kataRuntimeVerifier).toContain('runtimeClassName: ${runtime_class}')
+    expect(kataRuntimeVerifier).toContain('activeDeadlineSeconds: 900')
+    expect(kataRuntimeVerifier).toContain('kubernetes.io/hostname: ${node}')
+    expect(kataRuntimeVerifier).toContain('trap cleanup_active_resources EXIT')
+    expect(kataRuntimeVerifier).toContain('delete_active_resources >"$node_dir/$vmm-cleanup.txt"')
+    expect(kataRuntimeVerifier).not.toContain('daemonset_for_vmm')
+    expect(talosUpgradeRunbook).toContain(
+      'The bounded verifier Pod supplies the built-in unschedulable-taint toleration',
+    )
+    expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
+    expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
+    expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
+    expect(tengriOperations).toContain('enabled: "true"')
+    expect(tengriOperations).toContain('argocd app sync kata --prune')
+    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
+    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
+    expect(tengriOperations).toContain('target_repository=nanoagent')
+    expect(tengriWorkflow).toContain('IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/tengri')
+    expect(tengriWorkflow).toContain('runner: arc-amd64')
+    expect(tengriWorkflow).toContain('runner: arc-arm64')
+    expect(tengriWorkflow).toContain('docker buildx imagetools create')
+    expect(tengriWorkflow).toContain('cosign sign --yes "$image_ref"')
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {

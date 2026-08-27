@@ -5,6 +5,7 @@ on:
     paths:
       - 'services/tengri/**'
       - 'services/tengri/crd.yaml'
+      - 'argocd/applications/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'services/tengri/**'
       - 'services/tengri/crd.yaml'
+      - 'argocd/applications/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   workflow_dispatch:
 
@@ -21,6 +23,9 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/tengri
 
 jobs:
   validate:
@@ -55,3 +60,98 @@ jobs:
           set -euo pipefail
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
+
+  build-image:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build and optionally publish native image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          file: services/tengri/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=gha,scope=tengri-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=tengri-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+  publish-index:
+    if: github.ref == 'refs/heads/main'
+    needs: build-image
+    runs-on: arc-arm64
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Publish and verify multi-architecture index
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "$tag" \
+            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-amd64" \
+            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-arm64"
+          docker buildx imagetools inspect --raw "$tag" > "$RUNNER_TEMP/tengri-index.json"
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' "$RUNNER_TEMP/tengri-index.json"
+
+          digest="$(docker buildx imagetools inspect "$tag" | awk '$1 == "Digest:" { print $2; exit }')"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "invalid published digest: $digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Sign, verify, and summarize image
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_REPOSITORY}@${DIGEST}"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tengri-controller.yaml@refs/heads/main"
+
+          cosign sign --yes "$image_ref"
+          cosign verify \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$image_ref"
+          {
+            echo '### Tengri controller image'
+            echo
+            echo "- Image: \`${image_ref}\`"
+            echo '- Platforms: linux/amd64, linux/arm64'
+          } >> "$GITHUB_STEP_SUMMARY"
