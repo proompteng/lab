@@ -294,15 +294,30 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
   if (!state || !Array.isArray(state.windows)) return initialWindowState(viewport)
   let generatedId = 1
   const usedIds = new Set<string>()
-  const windows = state.windows.slice(0, MAX_DESKTOP_WINDOWS).flatMap((window) => {
+  const persistedWindows = state.windows.slice(0, MAX_DESKTOP_WINDOWS)
+  const reservedIds = new Set(
+    persistedWindows.flatMap((window) =>
+      window &&
+      isTengriApp(window.app) &&
+      validBounds(window.bounds) &&
+      validBounds(window.restoredBounds) &&
+      validWindowId(window.id, window.app)
+        ? [window.id]
+        : [],
+    ),
+  )
+  const windows = persistedWindows.flatMap((window) => {
     if (!window || !isTengriApp(window.app) || !validBounds(window.bounds) || !validBounds(window.restoredBounds)) {
       return []
     }
     const z = Number.isFinite(window.z) ? Math.min(1_000_000, Math.max(1, Math.trunc(window.z))) : 1
-    let id = validWindowId(window.id, window.app) ? window.id : `${window.app}-${generatedId}`
-    while (usedIds.has(id)) id = `${window.app}-${++generatedId}`
+    let id = window.id
+    if (!validWindowId(id, window.app) || usedIds.has(id)) {
+      do {
+        id = `${window.app}-${generatedId++}`
+      } while (usedIds.has(id) || reservedIds.has(id))
+    }
     usedIds.add(id)
-    generatedId += 1
     const mode = isWindowMode(window.mode) ? window.mode : ('normal' as const)
     const restoredBounds = clampToViewport(window.restoredBounds, viewport)
     return [

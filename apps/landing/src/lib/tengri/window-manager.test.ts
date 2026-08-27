@@ -54,6 +54,36 @@ describe('Tengri desktop window manager', () => {
     expect(state.nextZ).toBe(1_000_001)
   })
 
+  test('reserves valid persisted ids before replacing malformed ids', () => {
+    const base = initialWindowState(viewport)
+    const malformedBounds = { x: 40, y: 40, width: 400, height: 300 }
+    const validBounds = { x: 240, y: 120, width: 500, height: 400 }
+    const persisted = {
+      ...base,
+      activeWindowId: 'finder-1',
+      windows: [
+        {
+          ...base.windows[0]!,
+          id: 'bad',
+          bounds: malformedBounds,
+          restoredBounds: malformedBounds,
+        },
+        {
+          ...base.windows[0]!,
+          id: 'finder-1',
+          bounds: validBounds,
+          restoredBounds: validBounds,
+          z: 10,
+        },
+      ],
+    }
+
+    const state = windowReducer(base, { type: 'hydrate', state: persisted, viewport })
+    expect(state.activeWindowId).toBe('finder-1')
+    expect(state.windows.find((window) => window.id === 'finder-1')?.bounds).toEqual(validBounds)
+    expect(state.windows[0]?.id).not.toBe('finder-1')
+  })
+
   test('clamps windows when the viewport shrinks', () => {
     const state = windowReducer(initialWindowState(viewport), {
       type: 'viewport',
