@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tengri
+spec:
+  hard:
+    count/microvms.runtime.proompteng.ai: "6"
+    persistentvolumeclaims: "6"
+    requests.storage: 96Gi
+    pods: "8"
+    secrets: "8"
+    requests.cpu: "13"
+    limits.cpu: "13"
+    requests.memory: 25Gi
+    limits.memory: 25Gi
