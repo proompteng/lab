@@ -70,7 +70,7 @@ type codexApproval struct {
 	generation  *codexProcessGeneration
 	method      string
 	permissions json.RawMessage
-	decisions   map[string]string
+	decisions   map[string]json.RawMessage
 	rawID       json.RawMessage
 	resolving   bool
 }
@@ -602,20 +602,25 @@ func (supervisor *codexSupervisor) resolveApproval(ctx context.Context, id, deci
 }
 
 func codexApprovalResult(approval codexApproval, decision string) (map[string]any, error) {
-	protocolDecision := approval.decisions[decision]
+	encodedDecision := approval.decisions[decision]
 	if approval.decisions == nil {
-		protocolDecision = defaultCodexApprovalDecisions()[decision]
+		encodedDecision = defaultCodexApprovalDecisions()[decision]
 	}
-	if protocolDecision == "" {
+	if len(encodedDecision) == 0 {
 		return nil, errors.New("approval decision is not available")
 	}
+	var protocolDecision any
+	if err := json.Unmarshal(encodedDecision, &protocolDecision); err != nil {
+		return nil, fmt.Errorf("decode approval decision: %w", err)
+	}
+	protocolName, _ := protocolDecision.(string)
 	if approval.method == "item/permissions/requestApproval" {
 		permissions := json.RawMessage(`{}`)
-		if protocolDecision != "decline" {
+		if protocolName != "decline" {
 			permissions = approval.permissions
 		}
 		scope := "turn"
-		if protocolDecision == "acceptForSession" {
+		if protocolName == "acceptForSession" {
 			scope = "session"
 		}
 		return map[string]any{"permissions": permissions, "scope": scope}, nil
@@ -625,9 +630,9 @@ func codexApprovalResult(approval codexApproval, decision string) (map[string]an
 		result["acceptSettings"] = nil
 	}
 	if approval.method == "execCommandApproval" || approval.method == "applyPatchApproval" {
-		if protocolDecision == "accept" {
+		if protocolName == "accept" {
 			result["decision"] = "approved"
-		} else if protocolDecision == "acceptForSession" {
+		} else if protocolName == "acceptForSession" {
 			result["decision"] = "approved_for_session"
 		} else {
 			result["decision"] = "denied"
@@ -636,15 +641,20 @@ func codexApprovalResult(approval codexApproval, decision string) (map[string]an
 	return result, nil
 }
 
-func defaultCodexApprovalDecisions() map[string]string {
-	return map[string]string{
-		"approveOnce":    "accept",
-		"approveSession": "acceptForSession",
-		"deny":           "decline",
+func defaultCodexApprovalDecisions() map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"approveOnce":    encodedCodexDecision("accept"),
+		"approveSession": encodedCodexDecision("acceptForSession"),
+		"deny":           encodedCodexDecision("decline"),
 	}
 }
 
-func codexApprovalDecisions(method string, params json.RawMessage) map[string]string {
+func encodedCodexDecision(decision string) json.RawMessage {
+	encoded, _ := json.Marshal(decision)
+	return encoded
+}
+
+func codexApprovalDecisions(method string, params json.RawMessage) map[string]json.RawMessage {
 	if method == "execCommandApproval" || method == "applyPatchApproval" {
 		return defaultCodexApprovalDecisions()
 	}
@@ -659,28 +669,52 @@ func codexApprovalDecisions(method string, params json.RawMessage) map[string]st
 	}
 	var available []json.RawMessage
 	if json.Unmarshal(input.AvailableDecisions, &available) != nil {
-		return map[string]string{}
+		return map[string]json.RawMessage{}
 	}
-	decisions := make(map[string]string)
+	decisions := make(map[string]json.RawMessage)
 	for _, encoded := range available {
 		var decision string
-		if json.Unmarshal(encoded, &decision) != nil {
+		if json.Unmarshal(encoded, &decision) == nil {
+			switch decision {
+			case "accept":
+				decisions["approveOnce"] = append(json.RawMessage(nil), encoded...)
+			case "acceptForSession":
+				decisions["approveSession"] = append(json.RawMessage(nil), encoded...)
+			case "decline":
+				decisions["deny"] = append(json.RawMessage(nil), encoded...)
+			case "cancel":
+				if len(decisions["deny"]) == 0 {
+					decisions["deny"] = append(json.RawMessage(nil), encoded...)
+				}
+			}
 			continue
 		}
-		switch decision {
-		case "accept":
-			decisions["approveOnce"] = decision
-		case "acceptForSession":
-			decisions["approveSession"] = decision
-		case "decline":
-			decisions["deny"] = decision
-		case "cancel":
-			if decisions["deny"] == "" {
-				decisions["deny"] = decision
-			}
+
+		var structured map[string]json.RawMessage
+		if json.Unmarshal(encoded, &structured) != nil {
+			continue
+		}
+		if structuredCodexDecisionHasField(structured, "acceptWithExecpolicyAmendment", "execpolicy_amendment") {
+			decisions["approveExecPolicyAmendment"] = append(json.RawMessage(nil), encoded...)
+		}
+		if structuredCodexDecisionHasField(structured, "applyNetworkPolicyAmendment", "network_policy_amendment") {
+			decisions["approveNetworkPolicyAmendment"] = append(json.RawMessage(nil), encoded...)
 		}
 	}
 	return decisions
+}
+
+func structuredCodexDecisionHasField(decision map[string]json.RawMessage, variant, field string) bool {
+	encoded, found := decision[variant]
+	if !found {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(encoded, &payload) != nil {
+		return false
+	}
+	value, found := payload[field]
+	return found && string(value) != "null"
 }
 
 func (supervisor *codexSupervisor) resetApproval(id string, approval codexApproval) {
