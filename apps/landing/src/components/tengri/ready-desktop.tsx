@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, LoaderCircle, LogOut, Moon, Settings, Trash2, Wifi } from 'lucide-react'
+import { CheckCircle2, Folder, LoaderCircle, LogOut, Moon, Settings, Trash2, Wifi } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
@@ -12,6 +12,7 @@ import { ChromeApp } from './chrome-app'
 import { runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
+import { FinderApp } from './finder-app'
 
 export function ReadyDesktop({
   agent,
@@ -26,7 +27,7 @@ export function ReadyDesktop({
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
-    initialWindowState(viewport, ['settings', 'chrome']),
+    initialWindowState(viewport, ['finder', 'chrome']),
   )
   const [clock, setClock] = useState<Date | null>(null)
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
@@ -92,6 +93,23 @@ export function ReadyDesktop({
     dispatch({ type: 'open', app: 'chrome', title: APP_TITLES.chrome, viewport: viewport() })
   }, [viewport])
 
+  const openFinder = useCallback(() => {
+    dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
+  }, [viewport])
+
+  const openActiveApp = useCallback(() => {
+    const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
+    if (active?.app === 'chrome') {
+      openChrome()
+      return
+    }
+    if (active?.app === 'finder') {
+      openFinder()
+      return
+    }
+    openSettings()
+  }, [openChrome, openFinder, openSettings, windowState.activeWindowId, windowState.windows])
+
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
     setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
     setError('')
@@ -121,6 +139,7 @@ export function ReadyDesktop({
   }
 
   const chromeRunning = windowState.windows.some((candidate) => candidate.app === 'chrome')
+  const finderRunning = windowState.windows.some((candidate) => candidate.app === 'finder')
   const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeAppTitle = activeWindow ? APP_TITLES[activeWindow.app] : 'Tengri'
@@ -146,7 +165,7 @@ export function ReadyDesktop({
             <button
               type="button"
               className="flex h-6 items-center rounded-md px-2 font-semibold text-white/88 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
-              onClick={activeWindow?.app === 'chrome' ? openChrome : openSettings}
+              onClick={openActiveApp}
             >
               {activeAppTitle}
             </button>
@@ -191,7 +210,9 @@ export function ReadyDesktop({
               stageRef={stageRef}
               window={desktopWindow}
             >
-              {desktopWindow.app === 'chrome' ? (
+              {desktopWindow.app === 'finder' ? (
+                <FinderApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
+              ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : (
                 <AgentSettings
@@ -215,6 +236,21 @@ export function ReadyDesktop({
               aria-label="Dock"
               className="pointer-events-auto flex h-[72px] items-end gap-2 rounded-[24px] border border-white/20 bg-[rgba(28,33,45,0.5)] px-3 pb-2 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-3xl"
             >
+              <motion.button
+                type="button"
+                aria-label="Open Finder"
+                className="group relative flex flex-col items-center outline-none"
+                onClick={openFinder}
+                whileHover={reducedMotion ? undefined : dockHoverAnimation}
+                whileTap={reducedMotion ? undefined : dockTapAnimation}
+                transition={dockTransition}
+              >
+                <DockTooltip label="Finder" />
+                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#69b8ff] to-[#1266ce] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
+                  <Folder aria-hidden="true" className="h-7 w-7 fill-white/18 text-white" />
+                </span>
+                <DockIndicator running={finderRunning} />
+              </motion.button>
               <motion.button
                 type="button"
                 aria-label="Open Chrome"

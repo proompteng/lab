@@ -31,7 +31,7 @@ const user: TengriUser = {
 }
 
 describe('Tengri ready desktop', () => {
-  test('renders real Chrome chat and Settings surfaces without placeholder applications', () => {
+  test('renders real Finder and Chrome surfaces without placeholder applications', () => {
     const html = renderToString(
       createElement(ReadyDesktop, {
         agent,
@@ -42,16 +42,16 @@ describe('Tengri ready desktop', () => {
     )
 
     expect(html).toContain('aria-label="Dock"')
-    expect(html).toContain('Firecracker via kata-fc')
-    expect(html).toContain('Sleep Agent')
-    expect(html).toContain('Delete Agent')
     expect(html).toContain('Using the last confirmed agent state')
     expect(html).toContain('Chrome window')
-    expect(html).toContain('Settings window')
+    expect(html).toContain('Finder window')
+    expect(html).toContain('Workspace')
+    expect(html).toContain('value="/"')
     expect(html).toContain('tengri://agent')
     expect(html).toContain('Checking Codex login')
     expect(html).toContain('Open Chrome')
-    expect(html).not.toContain('Open Finder')
+    expect(html).toContain('Open Finder')
+    expect(html).toContain('Open Settings')
     expect(html).not.toContain('Open Terminal')
     expect(html).not.toContain('agentrun/')
   })
