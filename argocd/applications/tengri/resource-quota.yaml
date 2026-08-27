@@ -9,7 +9,9 @@ spec:
     requests.storage: 96Gi
     pods: "8"
     secrets: "8"
-    requests.cpu: "13"
-    limits.cpu: "13"
-    requests.memory: 25Gi
-    limits.memory: 25Gi
+    # Six 2 CPU/4 GiB guests, kata-fc's 250m/130Mi fixed overhead per guest,
+    # and the Tengri control plane must all fit before Kubernetes admits a Pod.
+    requests.cpu: "14"
+    limits.cpu: "15"
+    requests.memory: 26Gi
+    limits.memory: 26Gi
