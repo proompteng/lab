@@ -76,8 +76,13 @@ async fn reconcile(
     let pods: Api<Pod> = Api::namespaced(context.client.clone(), &namespace);
 
     if microvm.meta().deletion_timestamp.is_some() {
+        let status = terminating_status(&microvm, Utc::now());
+        if microvm.status.as_ref() != Some(&status) {
+            patch_status(&microvms, &microvm, status).await?;
+        }
         cleanup(&context.client, &namespace, &microvm).await?;
-        remove_finalizer(&microvms, &microvm).await?;
+        let current = microvms.get(&name).await?;
+        remove_finalizer(&microvms, &current).await?;
         return Ok(Action::await_change());
     }
 
@@ -328,6 +333,25 @@ fn sleeping_status(microvm: &MicroVM, idle: bool, now: DateTime<Utc>) -> MicroVM
         observed_generation: microvm.meta().generation.unwrap_or_default(),
         ..MicroVMStatus::default()
     }
+}
+
+fn terminating_status(microvm: &MicroVM, now: DateTime<Utc>) -> MicroVMStatus {
+    let message = "Agent is terminating; owned runtime and persistent state are being deleted";
+    let mut status = microvm.status.clone().unwrap_or_default();
+    status.phase = MicroVMPhase::Terminating;
+    status.guest_ready = false;
+    status.failure_reason = None;
+    status.message = Some(message.to_owned());
+    status.conditions = vec![condition(
+        microvm,
+        "Ready",
+        "False",
+        "Terminating",
+        message,
+        now,
+    )];
+    status.observed_generation = microvm.meta().generation.unwrap_or_default();
+    status
 }
 
 async fn report_provisioning_failure(
@@ -741,6 +765,30 @@ mod tests {
             ..MicroVMStatus::default()
         });
         assert!(deadline_passed(&microvm.spec.expires_at, now));
+    }
+
+    #[test]
+    fn deletion_publishes_terminating_without_discarding_resource_identity() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.generation = Some(9);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent-1234".to_owned()),
+            pvc_name: Some("agent-1234-home".to_owned()),
+            guest_ready: true,
+            failure_reason: Some("OldFailure".to_owned()),
+            ..MicroVMStatus::default()
+        });
+
+        let status = terminating_status(&microvm, now);
+        assert_eq!(status.phase, MicroVMPhase::Terminating);
+        assert!(!status.guest_ready);
+        assert_eq!(status.pod_name.as_deref(), Some("agent-1234"));
+        assert_eq!(status.pvc_name.as_deref(), Some("agent-1234-home"));
+        assert_eq!(status.failure_reason, None);
+        assert_eq!(status.conditions[0].reason, "Terminating");
+        assert_eq!(status.observed_generation, 9);
     }
 
     #[test]

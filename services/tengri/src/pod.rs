@@ -15,6 +15,7 @@ use kube::{
     api::{ObjectMeta, Patch, PatchParams},
 };
 use rand::distr::{Alphanumeric, SampleString};
+use sha2::{Digest, Sha256};
 
 use crate::crd::MicroVM;
 
@@ -23,13 +24,49 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 const GUEST_UID: i64 = 1_000;
+const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
+const MAX_LABEL_VALUE_LENGTH: usize = 63;
+const HASH_SUFFIX_LENGTH: usize = 16;
 
 pub fn bootstrap_secret_name(microvm: &MicroVM) -> String {
-    format!("{}-bootstrap", microvm.name_any())
+    bounded_child_name(&microvm.name_any(), "bootstrap")
 }
 
 pub fn pvc_name(microvm: &MicroVM) -> String {
-    format!("{}-home", microvm.name_any())
+    bounded_child_name(&microvm.name_any(), "home")
+}
+
+fn bounded_child_name(parent: &str, suffix: &str) -> String {
+    let candidate = format!("{parent}-{suffix}");
+    if candidate.len() <= MAX_DNS_SUBDOMAIN_LENGTH {
+        return candidate;
+    }
+
+    let digest = stable_digest(parent);
+    let prefix_length = MAX_DNS_SUBDOMAIN_LENGTH - suffix.len() - HASH_SUFFIX_LENGTH - 2;
+    format!(
+        "{}-{}-{suffix}",
+        &parent[..prefix_length],
+        &digest[..HASH_SUFFIX_LENGTH]
+    )
+}
+
+fn bounded_label_value(value: &str) -> String {
+    if value.len() <= MAX_LABEL_VALUE_LENGTH {
+        return value.to_owned();
+    }
+
+    let digest = stable_digest(value);
+    let prefix_length = MAX_LABEL_VALUE_LENGTH - HASH_SUFFIX_LENGTH - 1;
+    format!(
+        "{}-{}",
+        &value[..prefix_length],
+        &digest[..HASH_SUFFIX_LENGTH]
+    )
+}
+
+fn stable_digest(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
 pub async fn ensure_bootstrap_secret(
@@ -186,7 +223,7 @@ pub fn managed_labels(microvm_name: &str) -> BTreeMap<String, String> {
         ("app.kubernetes.io/part-of".to_owned(), "tengri".to_owned()),
         (
             "runtime.proompteng.ai/microvm".to_owned(),
-            microvm_name.to_owned(),
+            bounded_label_value(microvm_name),
         ),
         (
             "runtime.proompteng.ai/vmm".to_owned(),
@@ -463,5 +500,33 @@ mod tests {
                 .and_then(|values| values.get("storage").cloned()),
             Some(Quantity("16Gi".to_owned()))
         );
+    }
+
+    #[test]
+    fn derived_names_and_labels_are_bounded_and_collision_resistant() {
+        let long_name_a = format!("agent-{}a", "x".repeat(246));
+        let long_name_b = format!("agent-{}b", "x".repeat(246));
+        assert_eq!(long_name_a.len(), MAX_DNS_SUBDOMAIN_LENGTH);
+
+        let mut microvm_a = test_microvm();
+        microvm_a.metadata.name = Some(long_name_a.clone());
+        let mut microvm_b = test_microvm();
+        microvm_b.metadata.name = Some(long_name_b.clone());
+
+        let secret_a = bootstrap_secret_name(&microvm_a);
+        let secret_b = bootstrap_secret_name(&microvm_b);
+        let pvc_a = pvc_name(&microvm_a);
+        assert_eq!(secret_a.len(), MAX_DNS_SUBDOMAIN_LENGTH);
+        assert_eq!(pvc_a.len(), MAX_DNS_SUBDOMAIN_LENGTH);
+        assert_ne!(secret_a, secret_b);
+
+        let label_a = managed_labels(&long_name_a)
+            .remove("runtime.proompteng.ai/microvm")
+            .expect("microVM label");
+        let label_b = managed_labels(&long_name_b)
+            .remove("runtime.proompteng.ai/microvm")
+            .expect("microVM label");
+        assert_eq!(label_a.len(), MAX_LABEL_VALUE_LENGTH);
+        assert_ne!(label_a, label_b);
     }
 }
