@@ -371,9 +371,9 @@ For each node:
    kubectl --context galactic-lan get node "$NODE"
    ```
 
-   Require `Ready,SchedulingDisabled`. The canaries are DaemonSets, whose controller tolerates the built-in
-   unschedulable taint, so they can still be created on this validation-cordoned node. There is a short interval between
-   Omni's automatic uncordon and this command; do not call the phase complete during that interval.
+   Require `Ready,SchedulingDisabled`. The bounded verifier Pod supplies the built-in unschedulable-taint toleration,
+   so it can be created on this validation-cordoned node without a permanent canary workload. There is a short interval
+   between Omni's automatic uncordon and this command; do not call the phase complete during that interval.
 
 8. Verify the exact expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions, the CRI configuration,
    and the installed schematic. Extension name `kata-runtimes` and version `4.1.0` alone do not identify its digest.
@@ -433,8 +433,9 @@ kubectl --context galactic-lan label node "$NODE" \
   runtime.proompteng.ai/kata-qemu=ready --overwrite
 ```
 
-Repeat for `kata-clh`, `kata-fc`, and `kata-dragonball` only after the preceding canary passes. Each long-running
-canary is a native Kubernetes Pod using `runtimeClassName`; it is not a privileged launcher. Collect the full proof:
+Repeat for `kata-clh`, `kata-fc`, and `kata-dragonball` only after the preceding proof passes. The verifier creates one
+bounded native Kubernetes Pod using `runtimeClassName`; it is not a privileged launcher. It deletes that Pod and its
+unique bootstrap Secret on success or failure while retaining the evidence bundle:
 
 ```bash
 export PROOF_DIR="/tmp/galactic-kata-proof-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -447,7 +448,7 @@ run the verifier without filters for the final twelve-combination evidence bundl
 Acceptance requires, for every runtime on every architecture:
 
 1. the expected RuntimeClass and independent scheduling label;
-2. exactly one Ready canary Pod on the target, using the digest-pinned agent image;
+2. one verifier-created Ready Pod on the target, using the digest-pinned Nanoagent image;
 3. guest evidence with a non-empty boot ID and kernel release matching the node architecture;
 4. a Talos CRI sandbox corresponding to the Pod;
 5. the expected host process: `qemu-system-*`, `cloud-hypervisor`, or `firecracker`;
@@ -455,8 +456,8 @@ Acceptance requires, for every runtime on every architecture:
    VMM process;
 7. no plaintext bootstrap proof nonce in agent logs.
 
-The canaries remain running for inspection. If a runtime fails, remove only its activation label and leave the node
-validation-cordoned:
+The verifier leaves no Pod or Secret running; inspect the retained manifest, description, log, guest, CRI, and VMM
+evidence. If a runtime fails, remove only its activation label and leave the node validation-cordoned:
 
 ```bash
 kubectl --context galactic-lan label node "$NODE" \

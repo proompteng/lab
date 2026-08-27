@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly KUBE_CONTEXT='galactic-lan'
 readonly NAMESPACE='kata'
+readonly NANOAGENT_IMAGE='ghcr.io/proompteng/nanoagent@sha256:78b7b6e52e9b3f6003d2663a5e85fbfb55eabba018a6ee61f6b39a722f71ad7c'
 
 usage() {
   echo "usage: $0 <absolute-evidence-directory> [kubernetes-node] [qemu|clh|fc|dragonball]" >&2
@@ -14,16 +15,6 @@ node_address() {
     talos-192-168-1-194) echo '100.100.244.141' ;;
     turin) echo '100.100.244.190' ;;
     talos-192-168-1-85) echo '100.100.244.142' ;;
-    *) return 1 ;;
-  esac
-}
-
-daemonset_for_vmm() {
-  case "$1" in
-    qemu) echo 'nanoagent-qemu' ;;
-    clh) echo 'nanoagent-clh' ;;
-    fc) echo 'nanoagent-fc' ;;
-    dragonball) echo 'nanoagent-dragonball' ;;
     *) return 1 ;;
   esac
 }
@@ -52,12 +43,12 @@ if [[ -n "$requested_node" ]] && ! node_address "$requested_node" >/dev/null; th
   exit 2
 fi
 
-if [[ -n "$requested_vmm" ]] && ! daemonset_for_vmm "$requested_vmm" >/dev/null; then
+if [[ -n "$requested_vmm" ]] && ! runtime_class_for_vmm "$requested_vmm" >/dev/null; then
   echo "unknown VMM: $requested_vmm" >&2
   exit 2
 fi
 
-for command in jq kubectl rg talosctl; do
+for command in jq kubectl openssl rg talosctl; do
   if ! command -v "$command" >/dev/null; then
     echo "required command is missing: $command" >&2
     exit 1
@@ -67,16 +58,16 @@ done
 install -d "$evidence_dir"
 
 kubectl --context "$KUBE_CONTEXT" get runtimeclass -o yaml >"$evidence_dir/runtimeclasses.yaml"
-kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset,pod -o wide \
-  >"$evidence_dir/canaries.txt"
+kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset -o yaml \
+  >"$evidence_dir/existing-daemonsets.yaml"
 
-legacy_daemonsets="$(
+permanent_canary_daemonsets="$(
   kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonsets -o name \
-    | rg '/microvm-agent-(qemu|clh|fc|dragonball)$' || true
+    | rg '/(microvm-agent|nanoagent)-(qemu|clh|fc|dragonball)$' || true
 )"
-if [[ -n "$legacy_daemonsets" ]]; then
-  echo 'legacy microvm-agent DaemonSets remain; sync kata with pruning enabled:' >&2
-  echo "$legacy_daemonsets" >&2
+if [[ -n "$permanent_canary_daemonsets" ]]; then
+  echo 'permanent Kata canary DaemonSets remain; sync kata with pruning enabled:' >&2
+  echo "$permanent_canary_daemonsets" >&2
   exit 1
 fi
 
@@ -93,6 +84,26 @@ if [[ -n "$requested_vmm" ]]; then
 else
   vmms=('qemu' 'clh' 'fc' 'dragonball')
 fi
+
+run_id="$(date -u +%Y%m%d%H%M%S)-$(openssl rand -hex 4)"
+readonly run_id
+active_pod=''
+active_secret=''
+
+delete_active_resources() {
+  if [[ -z "$active_pod" || -z "$active_secret" ]]; then
+    return 0
+  fi
+
+  kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" delete \
+    "pod/$active_pod" "secret/$active_secret" --ignore-not-found --wait=true --timeout=2m
+}
+
+cleanup_active_resources() {
+  delete_active_resources >/dev/null 2>&1 || true
+}
+
+trap cleanup_active_resources EXIT
 
 for node in "${nodes[@]}"; do
   address="$(node_address "$node")"
@@ -119,33 +130,142 @@ for node in "${nodes[@]}"; do
     rg -Fq "containerd.runtimes.${runtime_class}]" "$node_dir/10-kata-runtimes.part"
   done
 
-  talosctl --nodes "$address" --endpoints "$address" containers --kubernetes \
-    >"$node_dir/kubernetes-containers.txt"
-  talosctl --nodes "$address" --endpoints "$address" processes \
-    | rg '(^|[ /])(PID|containerd-shim-kata-v2|qemu-system-(x86_64|aarch64)|cloud-hypervisor|firecracker|virtiofsd)([ /]|$)' \
-    >"$node_dir/vmm-processes.txt"
-  talosctl --nodes "$address" --endpoints "$address" logs cri --tail 4000 \
-    >"$node_dir/cri.log"
-
   for vmm in "${vmms[@]}"; do
     runtime_class="$(runtime_class_for_vmm "$vmm")"
-    daemonset="$(daemonset_for_vmm "$vmm")"
-    pod="$(
-      kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pods \
-        -l "app.kubernetes.io/name=nanoagent,runtime.proompteng.ai/vmm=${vmm}" \
-        -o json \
-        | jq -er --arg node "$node" '
-            [.items[] | select(.spec.nodeName == $node) | .metadata.name]
-            | if length == 1 then .[0] else error("expected exactly one canary pod on " + $node) end
-          '
-    )"
+    runtime_label="runtime.proompteng.ai/kata-${vmm}"
+    pod="kata-proof-${vmm}-${run_id}"
+    secret="${pod}-bootstrap"
+    bootstrap_token="$(openssl rand -hex 32)"
+    active_pod="$pod"
+    active_secret="$secret"
 
-    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
-      --for=condition=Ready "pod/$pod" --timeout=10m
-    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get daemonset "$daemonset" -o yaml \
-      >"$node_dir/$vmm-daemonset.yaml"
+    if ! kubectl --context "$KUBE_CONTEXT" get node "$node" -o json \
+      | jq -e --arg label "$runtime_label" '.metadata.labels[$label] == "ready"' >/dev/null; then
+      echo "$node is missing required label: $runtime_label=ready" >&2
+      exit 1
+    fi
+    kubectl --context "$KUBE_CONTEXT" get runtimeclass "$runtime_class" -o yaml \
+      >"$node_dir/$vmm-runtimeclass.yaml"
+
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${secret}
+  labels:
+    app.kubernetes.io/name: nanoagent
+    app.kubernetes.io/component: runtime-acceptance
+    runtime.proompteng.ai/acceptance-run: ${run_id}
+type: Opaque
+stringData:
+  token: ${bootstrap_token}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod}
+  labels:
+    app.kubernetes.io/name: nanoagent
+    app.kubernetes.io/component: runtime-acceptance
+    app.kubernetes.io/part-of: kata
+    runtime.proompteng.ai/acceptance-run: ${run_id}
+    runtime.proompteng.ai/target-node: ${node}
+    runtime.proompteng.ai/vmm: ${vmm}
+spec:
+  runtimeClassName: ${runtime_class}
+  restartPolicy: Never
+  activeDeadlineSeconds: 900
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 20
+  nodeSelector:
+    kubernetes.io/hostname: ${node}
+    runtime.proompteng.ai/kata-${vmm}: ready
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable
+      operator: Exists
+      effect: NoSchedule
+  securityContext:
+    fsGroup: 65532
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: nanoagent
+      image: ${NANOAGENT_IMAGE}
+      imagePullPolicy: Always
+      env:
+        - name: MICROVM_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: MICROVM_BOOTSTRAP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ${secret}
+              key: token
+      ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+      startupProbe:
+        httpGet:
+          path: /healthz
+          port: http
+        periodSeconds: 2
+        failureThreshold: 60
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: http
+        periodSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: http
+        periodSeconds: 10
+        failureThreshold: 3
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65532
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+  volumes:
+    - name: workspace
+      emptyDir:
+        sizeLimit: 256Mi
+EOF
+
+    if ! kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" wait \
+      --for=condition=Ready "pod/$pod" --timeout=10m; then
+      kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pod "$pod" -o yaml \
+        >"$node_dir/$vmm-pod-failure.yaml" || true
+      kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" describe pod "$pod" \
+        >"$node_dir/$vmm-pod-failure.describe.txt" || true
+      kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs "$pod" \
+        >"$node_dir/$vmm-nanoagent-failure.log" 2>&1 || true
+      exit 1
+    fi
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" get pod "$pod" -o json \
       >"$node_dir/$vmm-pod.json"
+    kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" describe pod "$pod" \
+      >"$node_dir/$vmm-pod.describe.txt"
     kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" logs "$pod" \
       >"$node_dir/$vmm-nanoagent.log"
     # Expansions in this single-quoted script are intentionally evaluated by the guest shell.
@@ -172,11 +292,16 @@ for node in "${nodes[@]}"; do
       printf "workspace=writable\n"
       printf "pid1=nanoagent\n"
     ' >"$node_dir/$vmm-shell.txt"
-    kubectl --context "$KUBE_CONTEXT" get runtimeclass "$runtime_class" -o yaml \
-      >"$node_dir/$vmm-runtimeclass.yaml"
     kubectl --context "$KUBE_CONTEXT" get --raw \
       "/api/v1/namespaces/${NAMESPACE}/pods/${pod}:8080/proxy/evidence" \
       >"$node_dir/$vmm-guest-evidence.json"
+    talosctl --nodes "$address" --endpoints "$address" containers --kubernetes \
+      >"$node_dir/$vmm-kubernetes-containers.txt"
+    talosctl --nodes "$address" --endpoints "$address" processes \
+      | rg '(^|[ /])(PID|containerd-shim-kata-v2|qemu-system-(x86_64|aarch64)|cloud-hypervisor|firecracker|virtiofsd)([ /]|$)' \
+      >"$node_dir/$vmm-vmm-processes.txt"
+    talosctl --nodes "$address" --endpoints "$address" logs cri --tail 4000 \
+      >"$node_dir/$vmm-cri.log"
 
     jq -e --arg architecture "$architecture" '
       .state == "ready"
@@ -188,7 +313,7 @@ for node in "${nodes[@]}"; do
     ' "$node_dir/$vmm-guest-evidence.json" >/dev/null
     jq -e --arg runtime_class "$runtime_class" '.spec.runtimeClassName == $runtime_class' \
       "$node_dir/$vmm-pod.json" >/dev/null
-    rg -Fq "$NAMESPACE/$pod" "$node_dir/kubernetes-containers.txt"
+    rg -Fq "$NAMESPACE/$pod" "$node_dir/$vmm-kubernetes-containers.txt"
     rg -Fxq 'uid=65532' "$node_dir/$vmm-shell.txt"
     rg -Fxq 'workspace=writable' "$node_dir/$vmm-shell.txt"
     rg -Fxq 'pid1=nanoagent' "$node_dir/$vmm-shell.txt"
@@ -206,27 +331,31 @@ for node in "${nodes[@]}"; do
         ;;
     esac
 
-    if rg -Fq 'kata-canary-proof-v1' "$node_dir/$vmm-nanoagent.log"; then
-      echo "$node/$vmm nanoagent log exposed the canary proof nonce" >&2
+    if rg -Fq "$bootstrap_token" "$node_dir/$vmm-nanoagent.log"; then
+      echo "$node/$vmm nanoagent log exposed the bootstrap token" >&2
       exit 1
     fi
 
     case "$vmm" in
       qemu)
-        rg -q 'qemu-system-(x86_64|aarch64)' "$node_dir/vmm-processes.txt"
+        rg -q 'qemu-system-(x86_64|aarch64)' "$node_dir/$vmm-vmm-processes.txt"
         ;;
       clh)
-        rg -q 'cloud-hypervisor' "$node_dir/vmm-processes.txt"
+        rg -q 'cloud-hypervisor' "$node_dir/$vmm-vmm-processes.txt"
         ;;
       fc)
-        rg -q '(^|[ /])firecracker([ /]|$)' "$node_dir/vmm-processes.txt"
+        rg -q '(^|[ /])firecracker([ /]|$)' "$node_dir/$vmm-vmm-processes.txt"
         ;;
       dragonball)
         # Dragonball is linked into runtime-rs and intentionally has no separate VMM process.
-        rg -q 'containerd-shim-kata-v2' "$node_dir/vmm-processes.txt"
+        rg -q 'containerd-shim-kata-v2' "$node_dir/$vmm-vmm-processes.txt"
         rg -Fq 'configuration-dragonball.toml' "$node_dir/10-kata-runtimes.part"
         ;;
     esac
+
+    delete_active_resources >"$node_dir/$vmm-cleanup.txt"
+    active_pod=''
+    active_secret=''
   done
 done
 

@@ -21,7 +21,10 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         &mut crd,
         "/metadata",
         "annotations",
-        json!({"argocd.argoproj.io/sync-wave": "-5"}),
+        json!({
+            "argocd.argoproj.io/sync-wave": "-5",
+            "argocd.argoproj.io/sync-options": "Prune=false,Delete=false"
+        }),
     )?;
     insert(
         &mut crd,
@@ -129,6 +132,10 @@ mod tests {
         assert_eq!(
             crd.pointer("/metadata/annotations/argocd.argoproj.io~1sync-wave"),
             Some(&json!("-5"))
+        );
+        assert_eq!(
+            crd.pointer("/metadata/annotations/argocd.argoproj.io~1sync-options"),
+            Some(&json!("Prune=false,Delete=false"))
         );
         assert_eq!(
             crd.pointer("/spec/versions/0/additionalPrinterColumns/2/jsonPath"),

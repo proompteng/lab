@@ -153,7 +153,7 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                     external-secrets.proompteng.ai/enabled: "true"
                   annotations:
-                    argocd.argoproj.io/sync-options: Prune=false
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: cdi
                 path: argocd/applications/cdi
                 namespace: cdi
