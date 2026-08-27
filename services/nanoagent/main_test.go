@@ -79,15 +79,21 @@ func TestEvidenceHandler(t *testing.T) {
 	}
 }
 
-func TestHealthHandler(t *testing.T) {
+func TestProbeHandlers(t *testing.T) {
 	t.Parallel()
 
-	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	response := httptest.NewRecorder()
+	for _, path := range []string{"/livez", "/readyz", "/healthz"} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
 
-	newHandler(evidence{}).ServeHTTP(response, request)
+			newHandler(evidence{}).ServeHTTP(response, request)
 
-	if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ok\"}\n" {
-		t.Fatalf("response = status %d body %q", response.Code, response.Body.String())
+			if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ok\"}\n" {
+				t.Fatalf("response = status %d body %q", response.Code, response.Body.String())
+			}
+		})
 	}
 }

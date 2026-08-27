@@ -19,7 +19,7 @@ kubectl --context galactic-lan -n kata exec -it <pod> -- /bin/sh
 
 Endpoints:
 
-- `GET /healthz`: readiness and liveness check;
+- `GET /livez`, `GET /readyz`, and `GET /healthz`: liveness, readiness, and compatibility checks used by Tengri;
 - `GET /evidence`: non-secret guest evidence used by the rollout verifier.
 
 Run locally:
