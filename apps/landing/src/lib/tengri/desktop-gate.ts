@@ -14,8 +14,7 @@ export type DesktopGateState =
   | { kind: 'unknown'; agent: TengriAgent }
 
 export function resolveDesktopGate(snapshot: TengriDesktopSnapshot | null, error: string): DesktopGateState {
-  if (!snapshot && !error) return { kind: 'loading' }
-  if (error) return { kind: 'error', detail: error }
+  if (!snapshot) return error ? { kind: 'error', detail: error } : { kind: 'loading' }
   if (!snapshot?.authConfigured) return { kind: 'auth-unconfigured' }
   if (!snapshot.authenticated) return { kind: 'sign-in' }
   if (!snapshot.controlPlaneConfigured) return { kind: 'control-plane-unconfigured' }

@@ -1,19 +1,7 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
-import {
-  Bot,
-  CheckCircle2,
-  CircleAlert,
-  CircleUserRound,
-  Cloud,
-  LoaderCircle,
-  LogOut,
-  Moon,
-  Play,
-  RotateCw,
-  Trash2,
-} from 'lucide-react'
+import { Bot, CircleAlert, CircleUserRound, Cloud, LoaderCircle, Moon, Play, RotateCw, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -26,6 +14,7 @@ import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/ten
 import { getDesktopSnapshot, runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { useModalFocus } from './modal-focus'
+import { ReadyDesktop } from './ready-desktop'
 
 export default function DesktopOnboarding() {
   const mounted = useRef(false)
@@ -62,6 +51,12 @@ export default function DesktopOnboarding() {
     const timer = window.setTimeout(() => void refresh(), refreshDelay)
     return () => window.clearTimeout(timer)
   }, [gate, refresh])
+
+  if (gate.kind === 'ready' && snapshot?.user) {
+    return (
+      <ReadyDesktop agent={gate.agent} connectionWarning={snapshotError} onChanged={refresh} user={snapshot.user} />
+    )
+  }
 
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
@@ -131,7 +126,17 @@ function DesktopGate({ gate, onRefresh }: { gate: DesktopGateState; onRefresh: (
     )
   }
   if (gate.kind === 'create') return <CreateAgentWindow onCreated={onRefresh} />
-  if (gate.kind === 'ready') return <ReadyAgentWindow agent={gate.agent} onChanged={onRefresh} />
+  if (gate.kind === 'ready') {
+    return (
+      <ActionWindow
+        icon={<CircleAlert className="h-7 w-7 text-red-200" />}
+        title="Session identity is unavailable"
+        detail="Tengri received an agent without an authenticated user. Refresh the session before continuing."
+        actionLabel="Refresh"
+        onAction={() => void onRefresh()}
+      />
+    )
+  }
   if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'failed') return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'unknown') {
@@ -263,87 +268,6 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
         </button>
       </form>
     </LifecycleWindow>
-  )
-}
-
-function ReadyAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [confirmOpen, setConfirmOpen] = useState(false)
-
-  async function mutate(action: 'delete-agent' | 'sleep-agent') {
-    setBusy(true)
-    setError('')
-    try {
-      await runTengriAction<TengriAgent | null>({ action, agentId: agent.id })
-      setConfirmOpen(false)
-      await onChanged()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The agent lifecycle request failed')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function signOut() {
-    setBusy(true)
-    setError('')
-    try {
-      const result = await tengriAuthClient.signOut()
-      if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
-      await onChanged()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Tengri could not sign out')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <div aria-hidden={confirmOpen || undefined} inert={confirmOpen || undefined}>
-        <LifecycleWindow title={agent.displayName} interactive>
-          <WindowHero
-            icon={<CheckCircle2 className="h-7 w-7 text-emerald-300" />}
-            title={agent.displayName}
-            detail="Your Firecracker microVM is ready."
-          />
-          <AgentDetails agent={agent} />
-          {error ? <InlineError message={error} /> : null}
-          {busy && !confirmOpen ? (
-            <p role="status" className="mt-4 inline-flex items-center gap-2 text-xs text-white/62">
-              <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
-              Applying lifecycle change…
-            </p>
-          ) : null}
-          <div className="mt-6 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              className={secondaryButton}
-              onClick={() => void mutate('sleep-agent')}
-            >
-              <Moon aria-hidden="true" className="h-4 w-4" /> Sleep
-            </button>
-            <button type="button" disabled={busy} className={secondaryButton} onClick={() => void signOut()}>
-              <LogOut aria-hidden="true" className="h-4 w-4" /> Sign Out
-            </button>
-            <button type="button" disabled={busy} className={dangerButton} onClick={() => setConfirmOpen(true)}>
-              <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete
-            </button>
-          </div>
-        </LifecycleWindow>
-      </div>
-      <ConfirmationDialog
-        busy={busy}
-        description="This permanently removes the microVM and its persistent workspace, including files and Codex state. This cannot be undone."
-        error={error}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={() => void mutate('delete-agent')}
-        open={confirmOpen}
-        title={`Delete “${agent.displayName}”?`}
-      />
-    </>
   )
 }
 
@@ -529,26 +453,6 @@ function WindowHero({ detail, icon, title }: WindowMessageProps) {
   )
 }
 
-function AgentDetails({ agent }: { agent: TengriAgent }) {
-  return (
-    <dl className="mt-6 divide-y divide-white/8 border-y border-white/8 text-sm">
-      <Detail label="Runtime" value="Firecracker via kata-fc" />
-      <Detail label="Resources" value={`${agent.cpuMillis / 1_000} CPU · ${formatGib(agent.memoryMib)} GiB RAM`} />
-      <Detail label="Workspace" value={`${agent.workspaceGib} GiB persistent`} />
-      <Detail label="Expires" value={formatTimestamp(agent.expiresAt)} />
-    </dl>
-  )
-}
-
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-5 py-3">
-      <dt className="text-white/48">{label}</dt>
-      <dd className="truncate text-right font-medium text-white/78">{value}</dd>
-    </div>
-  )
-}
-
 function Resource({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-black/20 px-2 py-3">
@@ -588,19 +492,4 @@ function TengriMark() {
   )
 }
 
-function formatGib(mebibytes: number) {
-  return Number.isFinite(mebibytes) ? Math.round((mebibytes / 1_024) * 10) / 10 : 0
-}
-
-function formatTimestamp(value: string) {
-  const timestamp = new Date(value)
-  if (!value || Number.isNaN(timestamp.getTime())) return 'Not reported'
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
-}
-
 type WindowMessageProps = { detail: string; icon: ReactNode; title: string }
-
-const secondaryButton =
-  'inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/7 px-3.5 py-2 text-sm font-medium text-white/76 outline-none transition hover:bg-white/11 focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-40'
-const dangerButton =
-  'ml-auto inline-flex items-center gap-2 rounded-xl border border-red-300/12 bg-red-500/8 px-3.5 py-2 text-sm font-medium text-red-100 outline-none transition hover:bg-red-500/14 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40'
