@@ -371,9 +371,9 @@ For each node:
    kubectl --context galactic-lan get node "$NODE"
    ```
 
-   Require `Ready,SchedulingDisabled`. The canaries are DaemonSets, whose controller tolerates the built-in
-   unschedulable taint, so they can still be created on this validation-cordoned node. There is a short interval between
-   Omni's automatic uncordon and this command; do not call the phase complete during that interval.
+   Require `Ready,SchedulingDisabled`. The bounded verifier Pod supplies the built-in unschedulable-taint toleration,
+   so it can be created on this validation-cordoned node without a permanent canary workload. There is a short interval
+   between Omni's automatic uncordon and this command; do not call the phase complete during that interval.
 
 8. Verify the exact expected node-specific AMD/NVIDIA, glibc, Tailscale, and Kata extensions, the CRI configuration,
    and the installed schematic. Extension name `kata-runtimes` and version `4.1.0` alone do not identify its digest.

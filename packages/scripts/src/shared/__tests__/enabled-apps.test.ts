@@ -254,6 +254,10 @@ describe('enabled app inventory', () => {
     expect(kataRuntimeVerifier).toContain('trap cleanup_active_resources EXIT')
     expect(kataRuntimeVerifier).toContain('delete_active_resources >"$node_dir/$vmm-cleanup.txt"')
     expect(kataRuntimeVerifier).not.toContain('daemonset_for_vmm')
+    expect(talosUpgradeRunbook).toContain(
+      'The bounded verifier Pod supplies the built-in unschedulable-taint toleration',
+    )
+    expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
     expect(tengriOperations).toContain('enabled: "true"')
