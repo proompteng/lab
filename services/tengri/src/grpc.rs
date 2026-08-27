@@ -13,7 +13,7 @@ use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 
 use crate::{
-    activity::ActivityTracker,
+    activity::{ActivityTracker, idle_deadline_passed},
     auth::{Authenticator, Principal, deterministic_agent_id},
     crd::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
@@ -76,12 +76,17 @@ impl ControlPlane {
         activity: ActivityTracker,
     ) -> anyhow::Result<Self> {
         validate_digest_pinned_image(&config.default_image)?;
+        let auth = Authenticator::new(
+            client.clone(),
+            config.namespace.clone(),
+            config.internal_hmac_secret,
+        )?;
         Ok(Self {
             client,
             namespace: config.namespace.into(),
             default_image: config.default_image.into(),
             architecture: config.architecture,
-            auth: Authenticator::new(config.internal_hmac_secret)?,
+            auth,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
             create_lock: Arc::new(Mutex::new(())),
@@ -92,8 +97,11 @@ impl ControlPlane {
         self.tickets.clone()
     }
 
-    fn authorize<T: prost::Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
-        self.auth.authorize(request)
+    async fn authorize<T: prost::Message>(
+        &self,
+        request: &Request<T>,
+    ) -> Result<Principal, Status> {
+        self.auth.authorize(request).await
     }
 
     async fn owned_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
@@ -120,7 +128,7 @@ impl ControlPlane {
             }
 
             let needs_wake_patch = agent.spec.desired_state != MicroVMDesiredState::Running
-                || deadline_passed(&agent.spec.idle_deadline, now);
+                || idle_deadline_passed(&agent, now);
             if !needs_wake_patch {
                 self.activity.touch(id);
                 if agent_ready_for_guest(&agent) {
@@ -210,7 +218,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<CreateAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let display_name = validate_display_name(&request.get_ref().display_name)?;
         let id = deterministic_agent_id(&principal.owner_hash);
         // Serialize the optimistic count-and-create path within the singleton control plane.
@@ -275,7 +283,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ListAgentsRequest>,
     ) -> Result<Response<ListAgentsResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         let selector = format!("{OWNER_LABEL}={}", &principal.owner_hash[..32]);
         let mut agents = api
@@ -295,7 +303,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<GetAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let agent = self.owned_agent(&principal, &request.get_ref().id).await?;
         Ok(Response::new(agent_from_microvm(&agent)))
     }
@@ -306,7 +314,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<WatchAgentRequest>,
     ) -> Result<Response<Self::WatchAgentStream>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let id = request.into_inner().id;
         self.owned_agent(&principal, &id).await?;
         let service = self.clone();
@@ -329,7 +337,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<SleepAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let id = request.get_ref().id.clone();
         let agent = self.owned_agent(&principal, &id).await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
@@ -351,7 +359,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ResumeAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let agent = self.wake_agent(&principal, &request.get_ref().id).await?;
         Ok(Response::new(agent_from_microvm(&agent)))
     }
@@ -360,7 +368,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<DeleteAgentRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let id = request.get_ref().id.clone();
         self.owned_agent(&principal, &id).await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
@@ -374,7 +382,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ListFilesRequest>,
     ) -> Result<Response<ListFilesResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let result = self
             .guest(&principal, &request.agent_id)
@@ -392,7 +400,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ReadFileRequest>,
     ) -> Result<Response<ReadFileResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let result = self
             .guest(&principal, &request.agent_id)
@@ -411,7 +419,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<WriteFileRequest>,
     ) -> Result<Response<WriteFileResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let result = self
             .guest(&principal, &request.agent_id)
@@ -429,7 +437,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<CreateDirectoryRequest>,
     ) -> Result<Response<FileEntry>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let entry = self
             .guest(&principal, &request.agent_id)
@@ -444,7 +452,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<MoveFileRequest>,
     ) -> Result<Response<FileEntry>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let entry = self
             .guest(&principal, &request.agent_id)
@@ -459,7 +467,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<DeleteFileRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         self.guest(&principal, &request.agent_id)
             .await?
@@ -473,7 +481,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<SearchFilesRequest>,
     ) -> Result<Response<SearchFilesResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let limit = request.limit.clamp(1, 200);
         let entries = self
@@ -493,7 +501,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<WatchFilesRequest>,
     ) -> Result<Response<Self::WatchFilesStream>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
@@ -524,7 +532,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<CreateTerminalRequest>,
     ) -> Result<Response<TerminalSession>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let terminal = self
             .guest(&principal, &request.agent_id)
@@ -540,7 +548,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ListTerminalsRequest>,
     ) -> Result<Response<ListTerminalsResponse>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let sessions = self
             .guest(&principal, &request.agent_id)
@@ -561,7 +569,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<TerminateTerminalRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         self.guest(&principal, &request.agent_id)
             .await?
@@ -576,7 +584,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<IssueTerminalTicketRequest>,
     ) -> Result<Response<TerminalTicket>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let terminals = self
             .guest(&principal, &request.agent_id)
@@ -610,7 +618,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<GetCodexAccountRequest>,
     ) -> Result<Response<CodexAccount>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let value = self
             .guest(&principal, &request.agent_id)
@@ -633,7 +641,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<StartCodexLoginRequest>,
     ) -> Result<Response<CodexLogin>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let value = self
             .guest(&principal, &request.agent_id)
@@ -654,7 +662,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<CreateCodexThreadRequest>,
     ) -> Result<Response<CodexThread>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let value = self
             .guest(&principal, &request.agent_id)
@@ -683,7 +691,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ResumeCodexThreadRequest>,
     ) -> Result<Response<CodexThread>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let value = self
@@ -711,7 +719,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<SendCodexTurnRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let text = validate_prompt(&request.text)?;
@@ -742,7 +750,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<SteerCodexTurnRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
@@ -771,7 +779,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<InterruptCodexTurnRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
@@ -790,7 +798,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<ResolveCodexApprovalRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.approval_id)?;
         let decision = match CodexApprovalDecision::try_from(request.decision)
@@ -817,7 +825,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<WatchCodexEventsRequest>,
     ) -> Result<Response<Self::WatchCodexEventsStream>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
@@ -840,7 +848,7 @@ impl MicroVmControlPlane for ControlPlane {
         &self,
         request: Request<IssuePreviewSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
-        let principal = self.authorize(&request)?;
+        let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let port = u16::try_from(request.port)
             .ok()

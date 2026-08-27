@@ -1,10 +1,15 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    collections::BTreeMap,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+use std::{collections::HashMap, sync::Mutex};
+
 use hmac::{Hmac, Mac};
+use k8s_openapi::api::core::v1::ConfigMap;
+use kube::{Api, Client, api::PostParams};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use tonic::{GrpcMethod, Request, Status};
@@ -15,6 +20,9 @@ const NONCE_HEADER: &str = "x-tengri-nonce";
 const SIGNATURE_HEADER: &str = "x-tengri-signature";
 const PREVIOUS_SIGNATURE_HEADER: &str = "x-tengri-signature-previous";
 const MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
+pub const AUTH_NONCE_CONFIG_MAP: &str = "tengri-auth-nonces";
+const MAX_ACTIVE_NONCES: usize = 8_192;
+const NONCE_UPDATE_RETRIES: usize = 5;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -26,11 +34,31 @@ pub struct Principal {
 #[derive(Clone)]
 pub struct Authenticator {
     secrets: Arc<[Vec<u8>]>,
-    nonces: Arc<Mutex<HashMap<String, u64>>>,
+    nonces: NonceStore,
+}
+
+#[derive(Clone)]
+enum NonceStore {
+    Kubernetes {
+        client: Client,
+        namespace: Arc<str>,
+    },
+    #[cfg(test)]
+    Memory(Arc<Mutex<HashMap<String, u64>>>),
 }
 
 impl Authenticator {
-    pub fn new(secret_bundle: String) -> anyhow::Result<Self> {
+    pub fn new(client: Client, namespace: String, secret_bundle: String) -> anyhow::Result<Self> {
+        Self::with_store(
+            secret_bundle,
+            NonceStore::Kubernetes {
+                client,
+                namespace: namespace.into(),
+            },
+        )
+    }
+
+    fn with_store(secret_bundle: String, nonces: NonceStore) -> anyhow::Result<Self> {
         let secrets = secret_bundle
             .split(',')
             .map(str::trim)
@@ -45,11 +73,11 @@ impl Authenticator {
         );
         Ok(Self {
             secrets: Arc::from(secrets),
-            nonces: Arc::new(Mutex::new(HashMap::new())),
+            nonces,
         })
     }
 
-    pub fn authorize<T: Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
+    pub async fn authorize<T: Message>(&self, request: &Request<T>) -> Result<Principal, Status> {
         let subject = metadata(request, SUBJECT_HEADER)?;
         let timestamp = metadata(request, TIMESTAMP_HEADER)?;
         let nonce = metadata(request, NONCE_HEADER)?;
@@ -96,21 +124,105 @@ impl Authenticator {
             return Err(Status::unauthenticated("invalid request signature"));
         }
 
-        let replay_key = format!("{subject}:{nonce}");
-        let mut nonces = self
-            .nonces
-            .lock()
-            .map_err(|_| Status::internal("authentication state is unavailable"))?;
-        retain_live_nonces(&mut nonces, now);
+        let replay_key = encode_hex(&Sha256::digest(format!("{subject}:{nonce}").as_bytes()));
         let expires_at = nonce_expiry(timestamp_seconds);
-        if nonces.insert(replay_key, expires_at).is_some() {
-            return Err(Status::unauthenticated("request nonce was already used"));
-        }
+        self.nonces.consume(&replay_key, expires_at, now).await?;
 
         Ok(Principal {
             owner_hash: owner_hash(&subject),
         })
     }
+
+    #[cfg(test)]
+    fn new_for_tests(secret_bundle: String) -> anyhow::Result<Self> {
+        Self::with_store(
+            secret_bundle,
+            NonceStore::Memory(Arc::new(Mutex::new(HashMap::new()))),
+        )
+    }
+}
+
+impl NonceStore {
+    async fn consume(&self, key: &str, expires_at: u64, now: u64) -> Result<(), Status> {
+        match self {
+            Self::Kubernetes { client, namespace } => {
+                consume_kubernetes_nonce(client, namespace, key, expires_at, now).await
+            }
+            #[cfg(test)]
+            Self::Memory(nonces) => {
+                let mut nonces = nonces
+                    .lock()
+                    .map_err(|_| Status::internal("authentication state is unavailable"))?;
+                retain_live_nonces(&mut nonces, now);
+                if nonces.contains_key(key) {
+                    return Err(nonce_replayed());
+                }
+                if nonces.len() >= MAX_ACTIVE_NONCES {
+                    return Err(nonce_store_full());
+                }
+                nonces.insert(key.to_owned(), expires_at);
+                Ok(())
+            }
+        }
+    }
+}
+
+async fn consume_kubernetes_nonce(
+    client: &Client,
+    namespace: &str,
+    key: &str,
+    expires_at: u64,
+    now: u64,
+) -> Result<(), Status> {
+    let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
+    for _ in 0..NONCE_UPDATE_RETRIES {
+        let mut state = config_maps
+            .get(AUTH_NONCE_CONFIG_MAP)
+            .await
+            .map_err(map_nonce_store_error)?;
+        let entries = state.data.get_or_insert_with(BTreeMap::new);
+        entries.retain(|_, value| {
+            value
+                .parse::<u64>()
+                .is_ok_and(|stored_expiry| stored_expiry >= now)
+        });
+        if entries.contains_key(key) {
+            return Err(nonce_replayed());
+        }
+        if entries.len() >= MAX_ACTIVE_NONCES {
+            return Err(nonce_store_full());
+        }
+        entries.insert(key.to_owned(), expires_at.to_string());
+
+        match config_maps
+            .replace(AUTH_NONCE_CONFIG_MAP, &PostParams::default(), &state)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(kube::Error::Api(response)) if response.code == 409 => continue,
+            Err(error) => return Err(map_nonce_store_error(error)),
+        }
+    }
+    Err(Status::unavailable(
+        "authentication replay state changed concurrently; retry the request",
+    ))
+}
+
+fn map_nonce_store_error(error: kube::Error) -> Status {
+    if let kube::Error::Api(response) = &error
+        && response.code == 404
+    {
+        return Status::unavailable("authentication replay state is not provisioned");
+    }
+    Status::unavailable("authentication replay state is unavailable")
+}
+
+fn nonce_replayed() -> Status {
+    Status::unauthenticated("request nonce was already used")
+}
+
+fn nonce_store_full() -> Status {
+    Status::resource_exhausted("authentication replay state capacity is exhausted")
 }
 
 pub fn owner_hash(subject: &str) -> String {
@@ -177,6 +289,7 @@ fn nonce_expiry(timestamp_seconds: u64) -> u64 {
     timestamp_seconds.saturating_add(MAX_CLOCK_SKEW.as_secs())
 }
 
+#[cfg(test)]
 fn retain_live_nonces(nonces: &mut HashMap<String, u64>, now: u64) {
     nonces.retain(|_, expires_at| *expires_at >= now);
 }
@@ -227,10 +340,13 @@ mod tests {
         assert!(deterministic_agent_id(&owner).starts_with("agent-"));
     }
 
-    #[test]
-    fn rejects_replayed_signed_request() {
+    #[tokio::test]
+    async fn rejects_replayed_signed_request_across_authenticator_instances() {
         let secret = "s".repeat(32);
-        let auth = Authenticator::new(secret.clone()).expect("authenticator");
+        let nonces = NonceStore::Memory(Arc::new(Mutex::new(HashMap::new())));
+        let auth =
+            Authenticator::with_store(secret.clone(), nonces.clone()).expect("authenticator");
+        let replacement = Authenticator::with_store(secret.clone(), nonces).expect("replacement");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -266,9 +382,13 @@ mod tests {
                 .insert(SIGNATURE_HEADER, signature.parse().expect("signature"));
             request
         };
-        assert!(auth.authorize(&request()).is_ok());
+        assert!(auth.authorize(&request()).await.is_ok());
         assert_eq!(
-            auth.authorize(&request()).expect_err("replay").code(),
+            replacement
+                .authorize(&request())
+                .await
+                .expect_err("replay")
+                .code(),
             tonic::Code::Unauthenticated
         );
     }
@@ -288,10 +408,10 @@ mod tests {
         assert!(nonces.is_empty());
     }
 
-    #[test]
-    fn rejects_signatures_replayed_for_another_rpc_or_body() {
+    #[tokio::test]
+    async fn rejects_signatures_replayed_for_another_rpc_or_body() {
         let secret = "s".repeat(32);
-        let auth = Authenticator::new(secret.clone()).expect("authenticator");
+        let auth = Authenticator::new_for_tests(secret.clone()).expect("authenticator");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -330,6 +450,7 @@ mod tests {
 
         assert_eq!(
             auth.authorize(&request(body.clone(), "DeleteAgent"))
+                .await
                 .expect_err("method substitution")
                 .code(),
             tonic::Code::Unauthenticated,
@@ -341,29 +462,36 @@ mod tests {
                 },
                 "GetAgent",
             ))
+            .await
             .expect_err("body substitution")
             .code(),
             tonic::Code::Unauthenticated,
         );
-        assert!(auth.authorize(&request(body, "GetAgent")).is_ok());
+        assert!(auth.authorize(&request(body, "GetAgent")).await.is_ok());
     }
 
-    #[test]
-    fn accepts_both_sides_of_a_bounded_key_rotation() {
+    #[tokio::test]
+    async fn accepts_both_sides_of_a_bounded_key_rotation() {
         let current = "n".repeat(32);
         let previous = "o".repeat(32);
-        let old_verifier = Authenticator::new(previous.clone()).expect("old verifier");
-        let rotating_verifier =
-            Authenticator::new(format!("{current},{previous}")).expect("rotating verifier");
+        let old_verifier = Authenticator::new_for_tests(previous.clone()).expect("old verifier");
+        let rotating_verifier = Authenticator::new_for_tests(format!("{current},{previous}"))
+            .expect("rotating verifier");
 
         let request_from_new_signer =
             signed_request(&current, Some(&previous), "nonce-new-1234567");
-        assert!(old_verifier.authorize(&request_from_new_signer).is_ok());
+        assert!(
+            old_verifier
+                .authorize(&request_from_new_signer)
+                .await
+                .is_ok()
+        );
 
         let request_from_old_signer = signed_request(&previous, None, "nonce-old-1234567");
         assert!(
             rotating_verifier
                 .authorize(&request_from_old_signer)
+                .await
                 .is_ok()
         );
     }

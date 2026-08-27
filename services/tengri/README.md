@@ -12,6 +12,11 @@ authentication outage by publishing `new,current` in the same 1Password field fi
 the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
 bundle, remove the previous key. More than two keys are rejected.
 
+Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
+`tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
+controller restarts and overlapping rollout Pods; only live receipts are retained and the bounded store fails closed.
+The deployment RBAC grants only `get` and `update` on that named ConfigMap.
+
 ## Local validation
 
 ```bash

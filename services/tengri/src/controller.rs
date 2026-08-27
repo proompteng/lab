@@ -18,9 +18,8 @@ use thiserror::Error;
 use tracing::{error, info};
 
 use crate::{
-    crd::{
-        IDLE_MINUTES, MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus,
-    },
+    activity::{idle_deadline_passed, last_activity_at},
+    crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
     metrics,
     pod::{
         FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
@@ -104,7 +103,7 @@ async fn reconcile(
         return Ok(Action::await_change());
     }
 
-    let idle = is_idle(&microvm, now);
+    let idle = idle_deadline_passed(&microvm, now);
     if idle && microvm.spec.desired_state != MicroVMDesiredState::Sleeping {
         patch_desired_state(&microvms, &microvm, MicroVMDesiredState::Sleeping).await?;
         return Ok(Action::requeue(Duration::from_secs(1)));
@@ -330,7 +329,7 @@ fn sleeping_status(microvm: &MicroVM, idle: bool, now: DateTime<Utc>) -> MicroVM
         phase: MicroVMPhase::Sleeping,
         pvc_name: Some(pvc_name(microvm)),
         message: Some(message.to_owned()),
-        last_activity_at: activity_at(microvm),
+        last_activity_at: last_activity_at(microvm),
         conditions: vec![condition(microvm, "Ready", "False", reason, message, now)],
         observed_generation: microvm.meta().generation.unwrap_or_default(),
         ..MicroVMStatus::default()
@@ -421,7 +420,7 @@ fn derive_status(
         failure_reason: (phase == MicroVMPhase::Failed).then_some(reason.clone()),
         message: Some(message.clone()),
         ready_at,
-        last_activity_at: activity_at(microvm),
+        last_activity_at: last_activity_at(microvm),
         conditions: vec![condition(
             microvm,
             "Ready",
@@ -457,25 +456,6 @@ fn condition(
         message: message.to_owned(),
         last_transition_at,
     }
-}
-
-fn activity_at(microvm: &MicroVM) -> Option<String> {
-    microvm
-        .status
-        .as_ref()
-        .and_then(|status| status.last_activity_at.clone())
-        .or_else(|| Some(microvm.spec.created_at.clone()))
-}
-
-fn is_idle(microvm: &MicroVM, now: DateTime<Utc>) -> bool {
-    DateTime::parse_from_rfc3339(&microvm.spec.idle_deadline)
-        .map(|deadline| deadline.with_timezone(&Utc) <= now)
-        .unwrap_or_else(|_| {
-            activity_at(microvm)
-                .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
-                .map(|value| value.with_timezone(&Utc))
-                .is_some_and(|value| now.signed_duration_since(value).num_minutes() >= IDLE_MINUTES)
-        })
 }
 
 fn deadline_passed(value: &str, now: DateTime<Utc>) -> bool {
@@ -538,7 +518,7 @@ fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crd::{MicroVMArchitecture, MicroVMResources, MicroVMSpec};
+    use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
     use k8s_openapi::api::core::v1::{
         ContainerState, ContainerStateWaiting, PodCondition, PodStatus,
     };
@@ -660,7 +640,7 @@ mod tests {
     fn idle_timeout_sleeps_after_sixty_minutes() {
         let now = Utc::now();
         let microvm = test_microvm(now - chrono::Duration::minutes(61));
-        assert!(is_idle(&microvm, now));
+        assert!(idle_deadline_passed(&microvm, now));
     }
 
     #[test]
@@ -671,7 +651,7 @@ mod tests {
             last_activity_at: Some((now - chrono::Duration::hours(2)).to_rfc3339()),
             ..MicroVMStatus::default()
         });
-        assert!(!is_idle(&microvm, now));
+        assert!(!idle_deadline_passed(&microvm, now));
     }
 
     #[test]
