@@ -12,6 +12,7 @@ use axum::{
     routing::{get, post},
 };
 use futures::{SinkExt, StreamExt};
+use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
@@ -25,6 +26,7 @@ use tokio_tungstenite::{
 
 use crate::{
     activity::ActivityTracker,
+    auth::AUTH_NONCE_CONFIG_MAP,
     crd::MicroVM,
     guest::GuestClient,
     metrics,
@@ -248,14 +250,16 @@ async fn readiness(State(state): State<GatewayState>) -> StatusCode {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
 
-    let agents: Api<MicroVM> = Api::namespaced(state.client, &state.namespace);
-    match tokio::time::timeout(
-        READINESS_TIMEOUT,
-        agents.list(&ListParams::default().limit(1)),
-    )
-    .await
-    {
-        Ok(Ok(_)) => StatusCode::NO_CONTENT,
+    let agents: Api<MicroVM> = Api::namespaced(state.client.clone(), &state.namespace);
+    let config_maps: Api<ConfigMap> = Api::namespaced(state.client, &state.namespace);
+    let kubernetes_checks = async move {
+        agents.list(&ListParams::default().limit(1)).await?;
+        config_maps.get(AUTH_NONCE_CONFIG_MAP).await?;
+        Ok::<(), kube::Error>(())
+    };
+
+    match tokio::time::timeout(READINESS_TIMEOUT, kubernetes_checks).await {
+        Ok(Ok(())) => StatusCode::NO_CONTENT,
         Ok(Err(_)) | Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
@@ -976,7 +980,10 @@ mod tests {
         .expect("gateway state")
     }
 
-    async fn readiness_for_kubernetes_response(status: StatusCode, body: &str) -> StatusCode {
+    async fn readiness_for_kubernetes_responses(
+        agent_response: (StatusCode, &str),
+        nonce_response: Option<(StatusCode, &str)>,
+    ) -> StatusCode {
         let (service, mut handle) =
             tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
         let state = test_gateway_state(Client::new(service, "tengri"));
@@ -988,26 +995,64 @@ mod tests {
         );
         response.send_response(
             Response::builder()
-                .status(status)
+                .status(agent_response.0)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(KubeBody::from(body.as_bytes().to_vec()))
+                .body(KubeBody::from(agent_response.1.as_bytes().to_vec()))
                 .expect("Kubernetes response"),
         );
+
+        if let Some((status, body)) = nonce_response {
+            let (request, response) = handle.next_request().await.expect("nonce store request");
+            assert_eq!(
+                request.uri().path(),
+                "/api/v1/namespaces/tengri/configmaps/tengri-auth-nonces"
+            );
+            response.send_response(
+                Response::builder()
+                    .status(status)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(KubeBody::from(body.as_bytes().to_vec()))
+                    .expect("Kubernetes response"),
+            );
+        }
+
         readiness.await.expect("readiness task")
     }
 
     #[tokio::test]
     async fn readiness_requires_a_working_kubernetes_control_path() {
-        let ready = readiness_for_kubernetes_response(
-            StatusCode::OK,
-            r#"{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVMList","metadata":{},"items":[]}"#,
+        let ready = readiness_for_kubernetes_responses(
+            (
+                StatusCode::OK,
+                r#"{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVMList","metadata":{},"items":[]}"#,
+            ),
+            Some((
+                StatusCode::OK,
+                r#"{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"tengri-auth-nonces","namespace":"tengri"},"data":{}}"#,
+            )),
         )
         .await;
         assert_eq!(ready, StatusCode::NO_CONTENT);
 
-        let unavailable = readiness_for_kubernetes_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            r#"{"apiVersion":"v1","kind":"Status","status":"Failure","message":"unavailable","reason":"InternalError","code":500}"#,
+        let missing_nonce_store = readiness_for_kubernetes_responses(
+            (
+                StatusCode::OK,
+                r#"{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVMList","metadata":{},"items":[]}"#,
+            ),
+            Some((
+                StatusCode::NOT_FOUND,
+                r#"{"apiVersion":"v1","kind":"Status","status":"Failure","message":"not found","reason":"NotFound","code":404}"#,
+            )),
+        )
+        .await;
+        assert_eq!(missing_nonce_store, StatusCode::SERVICE_UNAVAILABLE);
+
+        let unavailable = readiness_for_kubernetes_responses(
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                r#"{"apiVersion":"v1","kind":"Status","status":"Failure","message":"unavailable","reason":"InternalError","code":500}"#,
+            ),
+            None,
         )
         .await;
         assert_eq!(unavailable, StatusCode::SERVICE_UNAVAILABLE);
