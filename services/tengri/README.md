@@ -7,6 +7,13 @@ an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
+Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
+the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
+superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
+nonce-authorized navigation bridge into uncompressed HTML responses; the desktop accepts navigation and shortcut
+events only from the exact issued preview origin and iframe. This keeps the virtual address bar, history, reload, and
+Chrome shortcuts synchronized without exposing the session token to guest applications.
+
 `/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
 Kubernetes control path and in-process ticket state are usable; deployment probes do not advertise an isolated process
 as ready to accept agent operations.
