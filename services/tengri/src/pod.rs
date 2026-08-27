@@ -24,6 +24,7 @@ pub const FINALIZER_NAME: &str = "runtime.proompteng.ai/finalizer";
 pub const BOOTSTRAP_TOKEN_KEY: &str = "token";
 pub const STORAGE_CLASS: &str = "rook-ceph-block";
 const GUEST_UID: i64 = 1_000;
+const MAX_DNS_LABEL_LENGTH: usize = 63;
 const MAX_DNS_SUBDOMAIN_LENGTH: usize = 253;
 const MAX_LABEL_VALUE_LENGTH: usize = 63;
 const HASH_SUFFIX_LENGTH: usize = 16;
@@ -38,17 +39,19 @@ pub fn pvc_name(microvm: &MicroVM) -> String {
 
 fn bounded_child_name(parent: &str, suffix: &str) -> String {
     let candidate = format!("{parent}-{suffix}");
-    if candidate.len() <= MAX_DNS_SUBDOMAIN_LENGTH {
+    if candidate.len() <= MAX_DNS_SUBDOMAIN_LENGTH
+        && candidate
+            .split('.')
+            .all(|label| label.len() <= MAX_DNS_LABEL_LENGTH)
+    {
         return candidate;
     }
 
     let digest = stable_digest(parent);
-    let prefix_length = MAX_DNS_SUBDOMAIN_LENGTH - suffix.len() - HASH_SUFFIX_LENGTH - 2;
-    format!(
-        "{}-{}-{suffix}",
-        &parent[..prefix_length],
-        &digest[..HASH_SUFFIX_LENGTH]
-    )
+    let normalized = parent.replace('.', "-");
+    let prefix_length = MAX_DNS_LABEL_LENGTH - suffix.len() - HASH_SUFFIX_LENGTH - 2;
+    let prefix = normalized[..prefix_length].trim_end_matches('-');
+    format!("{}-{}-{suffix}", prefix, &digest[..HASH_SUFFIX_LENGTH])
 }
 
 fn bounded_label_value(value: &str) -> String {
@@ -282,13 +285,18 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..EnvVar::default()
             },
             EnvVar {
+                name: "HOME".to_owned(),
+                value: Some("/home/nanoagent".to_owned()),
+                ..EnvVar::default()
+            },
+            EnvVar {
                 name: "NANOAGENT_HOME".to_owned(),
                 value: Some("/home/nanoagent".to_owned()),
                 ..EnvVar::default()
             },
             EnvVar {
                 name: "NANOAGENT_WORKSPACE".to_owned(),
-                value: Some("/home/nanoagent".to_owned()),
+                value: Some("/workspace".to_owned()),
                 ..EnvVar::default()
             },
         ]),
@@ -330,13 +338,18 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..VolumeMount::default()
             },
             VolumeMount {
+                name: "home".to_owned(),
+                mount_path: "/workspace".to_owned(),
+                ..VolumeMount::default()
+            },
+            VolumeMount {
                 name: "tmp".to_owned(),
                 mount_path: "/tmp".to_owned(),
                 ..VolumeMount::default()
             },
         ]),
-        // Nanoagent creates $HOME/workspace on first boot. The image's /workspace symlink
-        // points there, so the project stays inside the persistent home volume.
+        // Home and workspace are two stable paths into the same persistent claim. Mounting
+        // /workspace explicitly keeps older Nanoagent images writable as the guest evolves.
         working_dir: Some("/home/nanoagent".to_owned()),
         ..Container::default()
     }
@@ -452,14 +465,16 @@ mod tests {
                 .as_ref()
                 .is_some_and(|env| env.iter().any(|value| {
                     value.name == "NANOAGENT_WORKSPACE"
-                        && value.value.as_deref() == Some("/home/nanoagent")
+                        && value.value.as_deref() == Some("/workspace")
                 }))
         );
         assert!(container.volume_mounts.as_ref().is_some_and(|mounts| {
             mounts
                 .iter()
                 .any(|mount| mount.name == "home" && mount.mount_path == "/home/nanoagent")
-                && mounts.iter().all(|mount| mount.mount_path != "/workspace")
+                && mounts
+                    .iter()
+                    .any(|mount| mount.name == "home" && mount.mount_path == "/workspace")
         }));
     }
 
@@ -516,8 +531,8 @@ mod tests {
         let secret_a = bootstrap_secret_name(&microvm_a);
         let secret_b = bootstrap_secret_name(&microvm_b);
         let pvc_a = pvc_name(&microvm_a);
-        assert_eq!(secret_a.len(), MAX_DNS_SUBDOMAIN_LENGTH);
-        assert_eq!(pvc_a.len(), MAX_DNS_SUBDOMAIN_LENGTH);
+        assert_eq!(secret_a.len(), MAX_DNS_LABEL_LENGTH);
+        assert_eq!(pvc_a.len(), MAX_DNS_LABEL_LENGTH);
         assert_ne!(secret_a, secret_b);
 
         let label_a = managed_labels(&long_name_a)
@@ -528,5 +543,23 @@ mod tests {
             .expect("microVM label");
         assert_eq!(label_a.len(), MAX_LABEL_VALUE_LENGTH);
         assert_ne!(label_a, label_b);
+
+        let dotted_name = [
+            "a".repeat(50),
+            "b".repeat(50),
+            "c".repeat(63),
+            "d".repeat(63),
+            "e".repeat(14),
+        ]
+        .join(".");
+        let mut dotted_microvm = test_microvm();
+        dotted_microvm.metadata.name = Some(dotted_name);
+        let dotted_secret = bootstrap_secret_name(&dotted_microvm);
+        assert!(dotted_secret.len() <= MAX_DNS_SUBDOMAIN_LENGTH);
+        assert!(
+            dotted_secret
+                .split('.')
+                .all(|label| label.len() <= MAX_DNS_LABEL_LENGTH)
+        );
     }
 }
