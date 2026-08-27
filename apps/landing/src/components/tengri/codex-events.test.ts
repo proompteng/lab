@@ -2,10 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
 import {
   appendCodexEvent,
+  codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexLoginCompletionError,
   codexTranscriptFromThread,
   parseCodexEvent,
 } from './codex-events'
@@ -108,6 +110,25 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, approval.threadId, restoredItemIds)).toBe(true)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
+  })
+
+  test('replaces authoritative plan snapshots for the same turn', () => {
+    const first = {
+      ...event,
+      sequence: 1,
+      kind: 'plan' as const,
+      method: 'turn/plan/updated',
+      itemId: '',
+      text: '- [ ] First plan',
+    }
+    const second = { ...first, sequence: 2, text: '- [x] Updated plan' }
+    const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '- [ ] Other turn' }
+
+    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
+    expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
+      second,
+      otherTurn,
+    ])
   })
 })
 
@@ -228,6 +249,26 @@ describe('Codex event decoding', () => {
     ).toBe('5h window: 12% used · 7d window: 45% used · Credits: 17.50')
   })
 
+  test('extracts a failed device-login completion error', () => {
+    const failedLogin = {
+      ...event,
+      kind: 'error' as const,
+      method: 'account/login/completed',
+      text: 'device code expired',
+      rawJson: JSON.stringify({ params: { loginId: 'login-1', success: false, error: 'device code expired' } }),
+    }
+
+    expect(codexLoginCompletionError(failedLogin)).toBe('device code expired')
+    expect(
+      codexLoginCompletionError({
+        ...failedLogin,
+        kind: 'thread-state',
+        text: '',
+        rawJson: JSON.stringify({ params: { loginId: 'login-1', success: true, error: null } }),
+      }),
+    ).toBe('')
+  })
+
   test('decodes printable base64 command output without corrupting ordinary text', () => {
     expect(
       codexEventDisplayText({
@@ -270,6 +311,20 @@ describe('Codex event decoding', () => {
 })
 
 describe('Codex thread restoration', () => {
+  test('recovers the active turn from the authoritative resumed thread', () => {
+    const thread = JSON.stringify({
+      thread: {
+        turns: [
+          { id: 'turn-complete', status: 'completed', items: [] },
+          { id: 'turn-active', status: 'inProgress', items: [] },
+        ],
+      },
+    })
+
+    expect(codexActiveTurnIdFromThread(thread)).toBe('turn-active')
+    expect(codexActiveTurnIdFromThread('{')).toBe('')
+  })
+
   test('restores persisted typed items in thread order', () => {
     const transcript = codexTranscriptFromThread(
       JSON.stringify({

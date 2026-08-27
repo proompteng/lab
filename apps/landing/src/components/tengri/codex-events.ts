@@ -37,6 +37,21 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
+  const planIndex = isAuthoritativePlanSnapshot(event)
+    ? current.findIndex(
+        (candidate) =>
+          isAuthoritativePlanSnapshot(candidate) &&
+          candidate.threadId === event.threadId &&
+          candidate.turnId === event.turnId,
+      )
+    : -1
+
+  if (planIndex >= 0) {
+    const next = [...current]
+    next[planIndex] = { ...event, text: truncateEventText(eventText) }
+    return next
+  }
+
   const itemIndex = event.itemId
     ? current.findIndex(
         (candidate) =>
@@ -145,6 +160,30 @@ export function codexEventShouldRender(
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
   return !event.itemId || !restoredItemIds.has(event.itemId)
+}
+
+export function codexActiveTurnIdFromThread(rawJson: string) {
+  try {
+    const response = record(JSON.parse(rawJson))
+    const thread = record(response.thread)
+    const turns = Array.isArray(thread.turns) ? thread.turns : []
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+      const turn = record(turns[index])
+      if (string(turn.status) === 'inProgress') return boundedIdentifier(turn.id, 256)
+    }
+  } catch {
+    // A malformed resume response cannot identify an active turn.
+  }
+  return ''
+}
+
+export function codexLoginCompletionError(event: TengriCodexEvent) {
+  if (event.method.toLowerCase() !== 'account/login/completed') return ''
+  const params = record(parseRawEvent(event.rawJson).params)
+  if (params.success !== false) return ''
+  const error = params.error
+  if (typeof error === 'string') return error
+  return string(record(error).message) || event.text || 'Codex device login failed. Start a new login.'
 }
 
 export function codexTranscriptFromThread(rawJson: string): CodexTranscriptItem[] {
@@ -656,6 +695,10 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
+}
+
+function isAuthoritativePlanSnapshot(event: TengriCodexEvent) {
+  return event.kind === 'plan' && Boolean(event.turnId) && event.method.toLowerCase() === 'turn/plan/updated'
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {

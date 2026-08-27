@@ -47,6 +47,7 @@ use proto::{
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
 const MAX_AGENTS: usize = 6;
 const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
+const CODEX_LOGIN_ATTEMPT_TTL_MINUTES: i64 = 15;
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
@@ -673,7 +674,8 @@ impl MicroVmControlPlane for ControlPlane {
             login_id: json_string(&value, &["/loginId"]),
             verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
             user_code: json_string(&value, &["/userCode"]),
-            expires_at: String::new(),
+            // App-server does not publish a device-code expiry, so Tengri bounds the UI attempt.
+            expires_at: codex_login_expires_at(Utc::now()),
             raw_json: value.to_string(),
         }))
     }
@@ -1008,7 +1010,10 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
         kind
     } else if normalized_method == "tengri/eventomitted" {
         CodexEventKind::Warning
-    } else if normalized_method == "error" || normalized_method.contains("error") {
+    } else if codex_event_is_failure(&normalized_method, raw)
+        || normalized_method == "error"
+        || normalized_method.contains("error")
+    {
         CodexEventKind::Error
     } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
         CodexEventKind::Warning
@@ -1034,6 +1039,26 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
     } else {
         CodexEventKind::ThreadState
     }
+}
+
+fn codex_event_is_failure(normalized_method: &str, raw: &Value) -> bool {
+    if normalized_method == "turn/completed" {
+        return matches!(
+            raw.pointer("/params/turn/status").and_then(Value::as_str),
+            Some("failed")
+        ) || raw
+            .pointer("/params/turn/error")
+            .is_some_and(|error| !error.is_null());
+    }
+    normalized_method == "account/login/completed"
+        && (raw.pointer("/params/success").and_then(Value::as_bool) == Some(false)
+            || raw
+                .pointer("/params/error")
+                .is_some_and(|error| !error.is_null()))
+}
+
+fn codex_login_expires_at(now: DateTime<Utc>) -> String {
+    (now + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES)).to_rfc3339()
 }
 
 fn codex_thread_item_kind(normalized_method: &str, item: &Value) -> Option<CodexEventKind> {
@@ -1142,6 +1167,7 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             "/params/item/failure/message",
             "/params/item/prompt",
             "/params/item/agentPath",
+            "/params/error",
             "/params/error/message",
             "/params/turn/error/message",
         ],
@@ -1904,6 +1930,41 @@ mod tests {
         assert_eq!(
             codex_event_text(&json!({"params": {"turn": {"error": {"message": "turn failed"}}}})),
             "turn failed"
+        );
+        assert_eq!(
+            codex_event_kind(
+                "turn/completed",
+                "",
+                &json!({
+                    "params": {
+                        "turn": {
+                            "id": "turn-failed",
+                            "status": "failed",
+                            "error": {"message": "turn failed"}
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_kind(
+                "account/login/completed",
+                "",
+                &json!({"params": {"success": false, "error": "device code expired"}}),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_text(&json!({"params": {"error": "device code expired"}})),
+            "device code expired"
+        );
+        let login_started_at = DateTime::parse_from_rfc3339("2026-08-27T13:00:00Z")
+            .expect("login timestamp")
+            .with_timezone(&Utc);
+        assert_eq!(
+            codex_login_expires_at(login_started_at),
+            "2026-08-27T13:15:00+00:00"
         );
         assert_eq!(
             codex_event_text(&json!({
