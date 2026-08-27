@@ -47,6 +47,8 @@ const MAX_WEBSOCKET_MESSAGE: usize = 8 << 20;
 const MAX_WEBSOCKET_WRITE_BUFFER: usize = 16 << 20;
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
+const NANOAGENT_AUTH_FAILURE_HEADER: &str = "x-tengri-nanoagent-auth-failure";
+const NANOAGENT_AUTH_FAILURE_HEADER_VALUE: &[u8] = b"1";
 const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
@@ -718,7 +720,7 @@ async fn proxy_http(
         }
     };
     let status = upstream.status();
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+    if nanoagent_auth_failed(status, upstream.headers()) {
         state.invalidate_preview_guest(&session.id).await;
     }
     let headers = upstream.headers().clone();
@@ -1025,6 +1027,7 @@ fn forward_response_header(name: &HeaderName) -> bool {
         name.as_str().to_ascii_lowercase().as_str(),
         "connection"
             | "keep-alive"
+            | NANOAGENT_AUTH_FAILURE_HEADER
             | "proxy-authenticate"
             | "proxy-authorization"
             | "te"
@@ -1033,6 +1036,13 @@ fn forward_response_header(name: &HeaderName) -> bool {
             | "upgrade"
             | "x-frame-options"
     )
+}
+
+fn nanoagent_auth_failed(status: StatusCode, headers: &HeaderMap) -> bool {
+    status == StatusCode::UNAUTHORIZED
+        && headers
+            .get(NANOAGENT_AUTH_FAILURE_HEADER)
+            .is_some_and(|value| value.as_bytes() == NANOAGENT_AUTH_FAILURE_HEADER_VALUE)
 }
 
 #[cfg(test)]
@@ -1308,6 +1318,23 @@ mod tests {
         let mut other_port = session.clone();
         other_port.port = 5173;
         assert!(!binding.matches(&other_port));
+    }
+
+    #[test]
+    fn preview_guest_cache_is_invalidated_only_for_nanoagent_authentication_failures() {
+        let mut headers = HeaderMap::new();
+        assert!(!nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
+        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
+
+        headers.insert(
+            HeaderName::from_static(NANOAGENT_AUTH_FAILURE_HEADER),
+            HeaderValue::from_static("1"),
+        );
+        assert!(nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
+        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
+        assert!(!forward_response_header(&HeaderName::from_static(
+            NANOAGENT_AUTH_FAILURE_HEADER,
+        )));
     }
 
     #[test]
