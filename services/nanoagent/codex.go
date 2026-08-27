@@ -208,7 +208,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		return fmt.Errorf("acknowledge Codex app-server initialization: %w", err)
 	}
 	supervisor.mu.Lock()
-	close(supervisor.ready)
+	closeSignal(supervisor.ready)
 	supervisor.mu.Unlock()
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
@@ -226,6 +226,7 @@ func (supervisor *codexSupervisor) close() {
 	close(supervisor.shutdown)
 	supervisor.mu.Lock()
 	command := supervisor.command
+	closeSignal(supervisor.ready)
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	for id, subscription := range supervisor.subscriptions {
@@ -312,6 +313,8 @@ func (supervisor *codexSupervisor) request(
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-supervisor.shutdown:
+			return nil, errors.New("Codex app-server is shutting down")
 		case <-ready:
 		}
 	}
@@ -718,6 +721,7 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	supervisor.mu.Lock()
 	supervisor.command = nil
 	supervisor.stdin = nil
+	closeSignal(supervisor.ready)
 	supervisor.ready = make(chan struct{})
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
@@ -727,6 +731,14 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
 		channel <- codexPendingResult{err: encoded}
+	}
+}
+
+func closeSignal(signal chan struct{}) {
+	select {
+	case <-signal:
+	default:
+		close(signal)
 	}
 }
 

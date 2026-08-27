@@ -73,6 +73,23 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	}
 }
 
+func TestCodexFailedStartupReleasesCurrentGenerationWaiters(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	waitingOn := supervisor.ready
+
+	supervisor.failProcess(errors.New("initialization failed"))
+
+	select {
+	case <-waitingOn:
+	case <-time.After(time.Second):
+		t.Fatal("failed startup abandoned waiters on the previous readiness generation")
+	}
+	if supervisor.isReady() {
+		t.Fatal("replacement process generation was reported ready before initialization")
+	}
+}
+
 func TestApprovalResolutionRejectsUnknownApproval(t *testing.T) {
 	t.Parallel()
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
