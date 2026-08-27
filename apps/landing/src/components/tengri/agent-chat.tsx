@@ -18,6 +18,7 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexInProgressItemIdsFromThread,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -37,6 +38,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [threadReady, setThreadReady] = useState(false)
   const [activeTurnId, setActiveTurnId] = useState('')
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
+  const [restoredInProgressItemIds, setRestoredInProgressItemIds] = useState<ReadonlySet<string>>(() => new Set())
   const [events, setEvents] = useState<TengriCodexEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -114,6 +116,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
+    setRestoredInProgressItemIds(new Set())
     setEvents([])
     setPrompt('')
     setError('')
@@ -162,8 +165,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
-      const activeTurn = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
-      setActiveTurnId(codexReconciledActiveTurnId(activeTurn, completedTurns.current))
+      const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
+      setRestoredInProgressItemIds(restored.inProgressItemIds)
+      setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
     },
     [agentId],
   )
@@ -265,13 +269,26 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const renderedEvents = useMemo(
     () =>
       events
-        .filter((event) => codexEventShouldRender(event, threadId, historyIds))
+        .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredInProgressItemIds))
         .map((event) => ({ event, text: codexEventDisplayText(event) }))
         .filter(
           ({ event, text }) =>
             Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
         ),
-    [events, historyIds, threadId],
+    [events, historyIds, restoredInProgressItemIds, threadId],
+  )
+  const renderedEventItemIds = useMemo(
+    () =>
+      new Set(
+        renderedEvents
+          .map(({ event }) => event.itemId)
+          .filter((itemId) => itemId && restoredInProgressItemIds.has(itemId)),
+      ),
+    [renderedEvents, restoredInProgressItemIds],
+  )
+  const renderedHistoryItems = useMemo(
+    () => historyItems.filter((item) => !renderedEventItemIds.has(item.id)),
+    [historyItems, renderedEventItemIds],
   )
 
   async function send() {
@@ -370,6 +387,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
+    setRestoredInProgressItemIds(new Set())
     setEvents([])
     setError('')
     completedTurns.current.clear()
@@ -428,9 +446,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-[max(20px,8vw)] py-6">
-        {historyItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
+        {renderedHistoryItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
         <div className="mx-auto max-w-3xl space-y-3" role="log" aria-live="polite" aria-relevant="additions text">
-          {historyItems.map((item) => (
+          {renderedHistoryItems.map((item) => (
             <CodexEventCard key={`history-${item.id}`} kind={item.kind} text={item.text} />
           ))}
           {renderedEvents.map(({ event, text }) => (
@@ -640,7 +658,10 @@ function commitThread(
   setThreadId(thread.id)
   writeStoredThread(agentId, thread.id)
   setHistoryItems(codexTranscriptFromThread(thread.rawJson))
-  return codexActiveTurnIdFromThread(thread.rawJson)
+  return {
+    activeTurnId: codexActiveTurnIdFromThread(thread.rawJson),
+    inProgressItemIds: codexInProgressItemIdsFromThread(thread.rawJson),
+  }
 }
 
 function storageKey(agentId: string) {

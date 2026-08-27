@@ -8,6 +8,7 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexInProgressItemIdsFromThread,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -115,6 +116,34 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
+  test('keeps live updates visible for items restored from an in-progress turn', () => {
+    const restoredItemIds = new Set([event.itemId])
+
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, restoredItemIds)).toBe(true)
+  })
+
+  test('removes a replayed approval after its server request resolves', () => {
+    const approval = {
+      ...event,
+      sequence: 1,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '7',
+    }
+    const otherApproval = { ...approval, sequence: 2, approvalId: '8' }
+    const resolved = {
+      ...event,
+      sequence: 3,
+      kind: 'thread-state' as const,
+      method: 'serverRequest/resolved',
+      itemId: '',
+      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
+    }
+
+    expect(appendCodexEvent([approval, otherApproval], resolved)).toEqual([otherApproval])
+  })
+
   test('replaces authoritative plan snapshots for the same turn', () => {
     const first = {
       ...event,
@@ -126,6 +155,25 @@ describe('Codex event replay', () => {
     }
     const second = { ...first, sequence: 2, text: '- [x] Updated plan' }
     const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '- [ ] Other turn' }
+
+    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
+    expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
+      second,
+      otherTurn,
+    ])
+  })
+
+  test('replaces authoritative aggregate diff snapshots for the same turn', () => {
+    const first = {
+      ...event,
+      sequence: 1,
+      kind: 'file-diff' as const,
+      method: 'turn/diff/updated',
+      itemId: '',
+      text: '--- first diff',
+    }
+    const second = { ...first, sequence: 2, text: '--- current diff' }
+    const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '--- other turn' }
 
     expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
     expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
@@ -388,7 +436,22 @@ describe('Codex thread restoration', () => {
     })
 
     expect(codexActiveTurnIdFromThread(thread)).toBe('turn-active')
+    expect([...codexInProgressItemIdsFromThread(thread)]).toEqual([])
     expect(codexActiveTurnIdFromThread('{')).toBe('')
+    expect([...codexInProgressItemIdsFromThread('{')]).toEqual([])
+  })
+
+  test('identifies only items restored from in-progress turns', () => {
+    const thread = JSON.stringify({
+      thread: {
+        turns: [
+          { id: 'turn-complete', status: 'completed', items: [{ id: 'complete-1' }] },
+          { id: 'turn-active', status: 'inProgress', items: [{ id: 'active-1' }, { id: 'active-2' }, { id: '' }] },
+        ],
+      },
+    })
+
+    expect([...codexInProgressItemIdsFromThread(thread)]).toEqual(['active-1', 'active-2'])
   })
 
   test('restores persisted typed items in thread order', () => {

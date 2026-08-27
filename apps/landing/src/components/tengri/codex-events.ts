@@ -39,23 +39,29 @@ export type CodexTranscriptItem = {
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
 
 export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent) {
+  const resolvedApprovalId = codexResolvedApprovalId(event)
+  if (resolvedApprovalId) {
+    const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
+    return next.length === current.length ? current : next
+  }
   if (isRawReasoningDelta(event)) return current
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
-  const planIndex = isAuthoritativePlanSnapshot(event)
+  const snapshotMethod = authoritativeTurnSnapshotMethod(event)
+  const snapshotIndex = snapshotMethod
     ? current.findIndex(
         (candidate) =>
-          isAuthoritativePlanSnapshot(candidate) &&
+          authoritativeTurnSnapshotMethod(candidate) === snapshotMethod &&
           candidate.threadId === event.threadId &&
           candidate.turnId === event.turnId,
       )
     : -1
 
-  if (planIndex >= 0) {
+  if (snapshotIndex >= 0) {
     const next = [...current]
-    next[planIndex] = { ...event, text: truncateEventText(eventText) }
+    next[snapshotIndex] = { ...event, text: truncateEventText(eventText) }
     return next
   }
 
@@ -173,10 +179,11 @@ export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
   restoredItemIds: ReadonlySet<string>,
+  restoredInProgressItemIds: ReadonlySet<string> = new Set(),
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
-  return !event.itemId || !restoredItemIds.has(event.itemId)
+  return !event.itemId || !restoredItemIds.has(event.itemId) || restoredInProgressItemIds.has(event.itemId)
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {
@@ -192,6 +199,27 @@ export function codexActiveTurnIdFromThread(rawJson: string) {
     // A malformed resume response cannot identify an active turn.
   }
   return ''
+}
+
+export function codexInProgressItemIdsFromThread(rawJson: string) {
+  const itemIds = new Set<string>()
+  try {
+    const response = record(JSON.parse(rawJson))
+    const thread = record(response.thread)
+    const turns = Array.isArray(thread.turns) ? thread.turns : []
+    for (const turnValue of turns) {
+      const turn = record(turnValue)
+      if (string(turn.status) !== 'inProgress') continue
+      const items = Array.isArray(turn.items) ? turn.items : []
+      for (const itemValue of items) {
+        const itemId = boundedIdentifier(record(itemValue).id, 256)
+        if (itemId) itemIds.add(itemId)
+      }
+    }
+  } catch {
+    // Malformed resume state cannot identify live transcript items.
+  }
+  return itemIds
 }
 
 export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {
@@ -769,8 +797,12 @@ function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
 }
 
-function isAuthoritativePlanSnapshot(event: TengriCodexEvent) {
-  return event.kind === 'plan' && Boolean(event.turnId) && event.method.toLowerCase() === 'turn/plan/updated'
+function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
+  if (!event.turnId) return ''
+  const method = event.method.toLowerCase()
+  if (event.kind === 'plan' && method === 'turn/plan/updated') return method
+  if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
+  return ''
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {
@@ -779,4 +811,12 @@ function isRawReasoningDelta(event: TengriCodexEvent) {
 
 function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
+}
+
+function codexResolvedApprovalId(event: TengriCodexEvent) {
+  if (event.method.toLowerCase() !== 'serverrequest/resolved') return ''
+  const requestId = record(parseRawEvent(event.rawJson).params).requestId
+  if (typeof requestId === 'string') return boundedIdentifier(requestId, 256)
+  if (typeof requestId === 'number' && Number.isSafeInteger(requestId)) return String(requestId)
+  return ''
 }
