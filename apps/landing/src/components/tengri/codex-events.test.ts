@@ -15,6 +15,7 @@ import {
   codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
+  reconcileCodexEventsWithRestoredHistory,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -145,6 +146,27 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
+  })
+
+  test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
+    const restoredById = new Map([[restored.id, restored]])
+    const delayedIncludedDelta = {
+      ...event,
+      sequence: 42,
+      method: 'item/agentMessage/delta',
+      text: ' delta',
+    }
+    const earlyPostSnapshotDelta = {
+      ...delayedIncludedDelta,
+      sequence: 43,
+      text: ' plus newer output',
+    }
+
+    expect(reconcileCodexEventsWithRestoredHistory([delayedIncludedDelta], restoredById, 42)).toEqual([])
+    expect(reconcileCodexEventsWithRestoredHistory([earlyPostSnapshotDelta], restoredById, 42)[0]?.text).toBe(
+      'snapshot includes delta plus newer output',
+    )
   })
 
   test('removes a replayed approval after its server request resolves', () => {

@@ -36,9 +36,11 @@ sequence-numbered output replay window for reconnects. The bootstrap credential 
 resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
-ready, and restarts failed processes with bounded backoff. Device login and thread state persist under the private
-PVC-backed `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does
-not inject a shared `OPENAI_API_KEY`.
+ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence
+captured atomically when its app-server response is received, so thread snapshots can be reconciled with independently
+delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
+`.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
+a shared `OPENAI_API_KEY`.
 
 The owner-scoped browser-to-guest flow, replay behavior, and live acceptance procedure are documented in
 [`../../docs/tengri/agent-chat.md`](../../docs/tengri/agent-chat.md).

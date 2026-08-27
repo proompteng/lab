@@ -90,6 +90,7 @@ export type TengriCodexLogin = {
 export type TengriCodexThread = {
   id: string
   rawJson: string
+  eventSequence: number
 }
 
 export type TengriCodexTurn = {

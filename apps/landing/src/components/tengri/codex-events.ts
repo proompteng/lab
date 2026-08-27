@@ -205,6 +205,21 @@ export function codexEventContinuesRestoredItem(
   )
 }
 
+export function reconcileCodexEventsWithRestoredHistory(
+  current: TengriCodexEvent[],
+  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
+  snapshotSequence: number,
+) {
+  return current.reduce<TengriCodexEvent[]>((next, event) => {
+    const restoredItem = restoredHistory.get(event.itemId)
+    if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return next
+    const restoredPrefix = codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence)
+      ? restoredItem?.text || ''
+      : ''
+    return appendCodexEvent(next, event, restoredPrefix)
+  }, [])
+}
+
 export function codexResumeCommitIsCurrent(
   requestGeneration: number,
   currentGeneration: number,

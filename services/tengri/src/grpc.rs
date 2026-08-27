@@ -686,10 +686,10 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexThread>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
-        let value = self
+        let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .codex_call(
+            .codex_call_with_sequence(
                 "thread/start",
                 json!({
                     "cwd": "/workspace",
@@ -703,9 +703,11 @@ impl MicroVmControlPlane for ControlPlane {
             )
             .await
             .map_err(map_guest_error)?;
+        let value = snapshot.result;
         Ok(Response::new(CodexThread {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
+            event_sequence: snapshot.event_sequence,
         }))
     }
 
@@ -716,10 +718,10 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        let value = self
+        let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .codex_call(
+            .codex_call_with_sequence(
                 "thread/resume",
                 json!({
                     "threadId": request.thread_id,
@@ -731,9 +733,11 @@ impl MicroVmControlPlane for ControlPlane {
             )
             .await
             .map_err(map_guest_error)?;
+        let value = snapshot.result;
         Ok(Response::new(CodexThread {
             id: json_string(&value, &["/thread/id"]),
             raw_json: value.to_string(),
+            event_sequence: snapshot.event_sequence,
         }))
     }
 

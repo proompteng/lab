@@ -54,8 +54,9 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 ## Event and recovery contract
 
 - Event sequence numbers are monotonic per Nanoagent process. The browser reconnects with its last accepted sequence.
-- Nanoagent retains a bounded replay window. Duplicate replayed events are ignored, while live deltas may replace an
-  in-progress item restored from `thread/resume`.
+- Nanoagent retains a bounded replay window. Each thread snapshot carries the event sequence captured atomically when
+  the app-server response is received. The browser drops snapshot-covered events and merges only events after that
+  cursor into an in-progress restored item, so independent HTTP and SSE delivery cannot duplicate or truncate output.
 - If the requested sequence is older than the replay window, Nanoagent emits `tengri/replayWarning`. The browser then
   resumes the authoritative thread, restores its transcript, and recovers any still-active turn before accepting more
   input.

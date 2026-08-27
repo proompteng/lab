@@ -230,12 +230,20 @@ export async function startCodexLogin(subject: string, agentId: string): Promise
 
 export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
   const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
-  return { id: stringValue(response.id), rawJson: stringValue(response.rawJson) }
+  return {
+    id: stringValue(response.id),
+    rawJson: stringValue(response.rawJson),
+    eventSequence: sequenceValue(response.eventSequence),
+  }
 }
 
 export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
   const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
-  return { id: stringValue(response.id), rawJson: stringValue(response.rawJson) } satisfies TengriCodexThread
+  return {
+    id: stringValue(response.id),
+    rawJson: stringValue(response.rawJson),
+    eventSequence: sequenceValue(response.eventSequence),
+  } satisfies TengriCodexThread
 }
 
 export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
@@ -556,4 +564,12 @@ function stringValue(value: unknown, fallback = '') {
 function numberValue(value: unknown) {
   const number = Number(value)
   return Number.isFinite(number) ? number : 0
+}
+
+function sequenceValue(value: unknown) {
+  const sequence = Number(value)
+  if (!Number.isSafeInteger(sequence) || sequence < 0) {
+    throw new TengriUnavailableError('Tengri control plane returned an invalid Codex event cursor')
+  }
+  return sequence
 }

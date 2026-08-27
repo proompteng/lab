@@ -25,6 +25,7 @@ import {
   codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
+  reconcileCodexEventsWithRestoredHistory,
   type CodexApprovalDecision,
   type CodexTranscriptItem,
 } from './codex-events'
@@ -176,17 +177,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
-      const sequence = lastEventSequence.current
+      const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
       restoredHistoryRef.current = restoredById
       restoredHistorySequenceRef.current = sequence
       setRestoredHistorySequence(sequence)
-      setEvents((current) =>
-        current.filter(
-          (event) =>
-            event.kind === 'approval' || !event.itemId || !restoredById.has(event.itemId) || event.sequence > sequence,
-        ),
-      )
+      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence))
       setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
     },
     [agentId],
