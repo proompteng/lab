@@ -1,25 +1,14 @@
 'use client'
 
-import {
-  ArrowLeft,
-  ArrowRight,
-  File,
-  FileCode2,
-  Folder,
-  Grid2X2,
-  House,
-  List,
-  LoaderCircle,
-  Search,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, File, FileCode2, Folder, Grid2X2, List, LoaderCircle, Search } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { TengriFileEntry } from '@/lib/tengri/types'
 
 import { runTengriAction } from './client'
 import {
-  FINDER_HOME_PATH,
   FINDER_WORKSPACE_PATH,
+  finderSearchRefreshInterval,
   finderFileKind,
   formatFinderBytes,
   formatFinderDate,
@@ -31,7 +20,15 @@ type FinderView = 'grid' | 'list'
 const toolbarButtonClass =
   'grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/8 hover:text-white disabled:pointer-events-none disabled:opacity-25'
 
-export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile: (path: string) => void }) {
+export function FinderApp({
+  active,
+  agentId,
+  onOpenFile,
+}: {
+  active: boolean
+  agentId: string
+  onOpenFile?: (path: string) => void
+}) {
   const [path, setPath] = useState(FINDER_WORKSPACE_PATH)
   const [pathDraft, setPathDraft] = useState(FINDER_WORKSPACE_PATH)
   const [history, setHistory] = useState<string[]>([FINDER_WORKSPACE_PATH])
@@ -41,12 +38,15 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
   const [view, setView] = useState<FinderView>('list')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
-  const [watchState, setWatchState] = useState<'connected' | 'reconnecting'>('reconnecting')
+  const [watchState, setWatchState] = useState<'connected' | 'paused' | 'reconnecting'>('paused')
   const [error, setError] = useState('')
   const loadSequence = useRef(0)
   const latestLoad = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
 
   const selectedEntry = entries.find((entry) => entry.path === selectedPath) ?? null
+  let watchLabel = 'Reconnecting…'
+  if (watchState === 'connected') watchLabel = 'Live'
+  else if (watchState === 'paused') watchLabel = 'Paused'
 
   const load = useCallback(
     async (quiet = false, signal?: AbortSignal) => {
@@ -80,20 +80,28 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
   latestLoad.current = (quiet = false) => load(quiet)
 
   useEffect(() => {
+    if (!active) return
     const controller = new AbortController()
     const timer = window.setTimeout(() => void load(false, controller.signal), query ? 180 : 0)
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [load, query])
+  }, [active, load, query])
 
   useEffect(() => {
+    if (!active) {
+      setWatchState('paused')
+      return
+    }
     let refreshTimer = 0
     const source = new EventSource(
       `/api/tengri/files/events?agentId=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
     )
-    source.onopen = () => setWatchState('connected')
+    source.onopen = () => {
+      setWatchState('connected')
+      void latestLoad.current(true)
+    }
     source.onerror = () => setWatchState('reconnecting')
     source.onmessage = () => {
       window.clearTimeout(refreshTimer)
@@ -103,7 +111,14 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
       window.clearTimeout(refreshTimer)
       source.close()
     }
-  }, [agentId, path])
+  }, [active, agentId, path])
+
+  useEffect(() => {
+    const interval = finderSearchRefreshInterval(active, query)
+    if (!interval) return
+    const timer = window.setInterval(() => void latestLoad.current(true), interval)
+    return () => window.clearInterval(timer)
+  }, [active, query])
 
   const navigate = useCallback(
     (nextPath: string) => {
@@ -144,19 +159,16 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
   const activate = useCallback(
     (entry: TengriFileEntry) => {
       if (entry.directory) navigate(entry.path)
-      else onOpenFile(entry.path)
+      else onOpenFile?.(entry.path)
     },
     [navigate, onOpenFile],
   )
 
   return (
-    <div className="relative flex h-full min-h-0 bg-[#17191f] text-white/85">
-      <aside className="w-44 shrink-0 border-r border-white/8 bg-white/[0.025] p-3 text-[12px]">
+    <div className="@container/finder relative flex h-full min-h-0 bg-[#17191f] text-white/85">
+      <aside className="w-44 shrink-0 border-r border-white/8 bg-white/[0.025] p-3 text-[12px] @max-[640px]/finder:hidden">
         <p className="mb-2 px-2 text-[10px] font-semibold tracking-wider text-white/58 uppercase">Favorites</p>
-        {[
-          { label: 'Home', path: FINDER_HOME_PATH, icon: House },
-          { label: 'Workspace', path: FINDER_WORKSPACE_PATH, icon: Folder },
-        ].map((item) => (
+        {[{ label: 'Workspace', path: FINDER_WORKSPACE_PATH, icon: Folder }].map((item) => (
           <button
             type="button"
             key={item.label}
@@ -170,7 +182,7 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-white/8 px-3">
+        <div className="flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-white/8 px-3 @max-[640px]/finder:h-auto @max-[640px]/finder:flex-wrap @max-[640px]/finder:py-2">
           <button
             type="button"
             aria-label="Back"
@@ -189,7 +201,7 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
           >
             <ArrowRight className="h-4 w-4" />
           </button>
-          <label className="ml-1 flex min-w-40 flex-1 items-center rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5 text-xs">
+          <label className="ml-1 flex min-w-40 flex-1 items-center rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5 text-xs @max-[640px]/finder:min-w-[calc(100%-5rem)]">
             <span className="sr-only">Go to folder</span>
             <input
               value={pathDraft}
@@ -199,15 +211,17 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
               className="w-full bg-transparent text-white/70 outline-none"
             />
           </label>
-          <button
-            type="button"
-            className={toolbarButtonClass}
-            aria-label="Open selected file in Code"
-            disabled={!selectedEntry || selectedEntry.directory}
-            onClick={() => selectedEntry && onOpenFile(selectedEntry.path)}
-          >
-            <FileCode2 className="h-4 w-4" />
-          </button>
+          {onOpenFile ? (
+            <button
+              type="button"
+              className={toolbarButtonClass}
+              aria-label="Open selected file in Code"
+              disabled={!selectedEntry || selectedEntry.directory}
+              onClick={() => selectedEntry && onOpenFile(selectedEntry.path)}
+            >
+              <FileCode2 className="h-4 w-4" />
+            </button>
+          ) : null}
           <div className="flex rounded-lg border border-white/8 bg-black/20 p-0.5">
             <button
               type="button"
@@ -228,7 +242,7 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
               <Grid2X2 className="h-3.5 w-3.5" />
             </button>
           </div>
-          <label className="flex w-44 items-center gap-2 rounded-lg bg-black/25 px-2.5 py-1.5 text-xs">
+          <label className="flex w-44 items-center gap-2 rounded-lg bg-black/25 px-2.5 py-1.5 text-xs @max-[640px]/finder:order-last @max-[640px]/finder:w-full">
             <Search className="h-3.5 w-3.5 text-white/35" />
             <input
               value={query}
@@ -306,9 +320,7 @@ export function FinderApp({ agentId, onOpenFile }: { agentId: string; onOpenFile
           <span>
             {entries.length} items{selectedEntry ? ' · 1 selected' : ''}
           </span>
-          <span className={watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}>
-            {watchState === 'connected' ? 'Live' : 'Reconnecting…'}
-          </span>
+          <span className={watchState === 'connected' ? 'text-emerald-300/60' : 'text-amber-200/65'}>{watchLabel}</span>
         </div>
       </div>
     </div>

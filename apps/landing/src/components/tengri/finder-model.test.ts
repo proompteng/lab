@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 
-import { finderFileKind, formatFinderBytes, formatFinderDate, normalizeFinderPath } from './finder-model'
+import {
+  FINDER_SEARCH_REFRESH_MS,
+  FINDER_WORKSPACE_PATH,
+  finderFileKind,
+  finderSearchRefreshInterval,
+  formatFinderBytes,
+  formatFinderDate,
+  normalizeFinderPath,
+} from './finder-model'
 
 describe('Finder model', () => {
   test('normalizes absolute paths without allowing root escape', () => {
@@ -9,6 +17,16 @@ describe('Finder model', () => {
     expect(normalizeFinderPath('workspace')).toBeNull()
     expect(normalizeFinderPath('/../workspace')).toBeNull()
     expect(normalizeFinderPath('/workspace\nsecret')).toBeNull()
+  })
+
+  test('uses the Nanoagent API root for the workspace', () => {
+    expect(FINDER_WORKSPACE_PATH).toBe('/')
+  })
+
+  test('refreshes recursive search only while Finder is active', () => {
+    expect(finderSearchRefreshInterval(true, 'main')).toBe(FINDER_SEARCH_REFRESH_MS)
+    expect(finderSearchRefreshInterval(true, '   ')).toBeNull()
+    expect(finderSearchRefreshInterval(false, 'main')).toBeNull()
   })
 
   test('formats sizes and dates without exposing invalid values', () => {

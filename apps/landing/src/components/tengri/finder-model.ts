@@ -1,7 +1,7 @@
 import type { TengriFileEntry } from '@/lib/tengri/types'
 
-export const FINDER_HOME_PATH = '/'
-export const FINDER_WORKSPACE_PATH = '/workspace'
+export const FINDER_WORKSPACE_PATH = '/'
+export const FINDER_SEARCH_REFRESH_MS = 2_000
 
 const finderDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
@@ -27,7 +27,11 @@ export function normalizeFinderPath(value: string): string | null {
     segments.push(segment)
   }
 
-  return segments.length ? `/${segments.join('/')}` : FINDER_HOME_PATH
+  return segments.length ? `/${segments.join('/')}` : FINDER_WORKSPACE_PATH
+}
+
+export function finderSearchRefreshInterval(active: boolean, query: string): number | null {
+  return active && query.trim() ? FINDER_SEARCH_REFRESH_MS : null
 }
 
 export function formatFinderBytes(size: number): string {
