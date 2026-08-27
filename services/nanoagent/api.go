@@ -21,14 +21,17 @@ const (
 
 type apiConfig struct {
 	bootstrapToken string
+	codexBinary    string
 	evidence       evidence
 	homeRoot       string
 	shell          string
+	startCodex     bool
 	workspaceRoot  string
 }
 
 type apiServer struct {
 	bootstrapToken   string
+	codex            *codexSupervisor
 	evidence         evidence
 	fileWatcher      *fileWatcher
 	previewTransport http.RoundTripper
@@ -43,6 +46,9 @@ type apiError struct {
 func newAPIServer(config apiConfig) (*apiServer, error) {
 	if config.bootstrapToken == "" {
 		return nil, errors.New("bootstrap token is required")
+	}
+	if config.startCodex && config.codexBinary == "" {
+		return nil, errors.New("Codex binary is required")
 	}
 	workspace, err := newWorkspace(config.workspaceRoot)
 	if err != nil {
@@ -64,6 +70,10 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
+	if config.startCodex {
+		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
+		server.codex.start()
+	}
 	return server, nil
 }
 
@@ -75,6 +85,9 @@ func (server *apiServer) close() {
 func (server *apiServer) beginShutdown() {
 	server.terminals.close()
 	_ = server.fileWatcher.close()
+	if server.codex != nil {
+		server.codex.close()
+	}
 }
 
 func (server *apiServer) authenticatedRoutes() http.Handler {
@@ -92,6 +105,9 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux.HandleFunc("GET /v1/terminals", server.handleListTerminals)
 	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
 	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
+	mux.HandleFunc("POST /v1/codex/call", server.handleCodexCall)
+	mux.HandleFunc("GET /v1/codex/events", server.handleCodexEvents)
+	mux.HandleFunc("POST /v1/codex/approvals/{id}", server.handleCodexApproval)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
