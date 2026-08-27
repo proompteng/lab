@@ -13,6 +13,23 @@ import (
 	"time"
 )
 
+type recordingWriteCloser struct {
+	content []byte
+}
+
+func (writer *recordingWriteCloser) Write(content []byte) (int, error) {
+	writer.content = append(writer.content, content...)
+	return len(content), nil
+}
+
+func (writer *recordingWriteCloser) Close() error {
+	return nil
+}
+
+func (writer *recordingWriteCloser) Len() int {
+	return len(writer.content)
+}
+
 func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	t.Parallel()
 	allowed := []string{
@@ -104,6 +121,51 @@ func TestApprovalResolutionRejectsUnknownApproval(t *testing.T) {
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
 	if err := supervisor.resolveApproval("missing", "approveOnce"); err == nil {
 		t.Fatal("resolveApproval() accepted an unknown request")
+	}
+}
+
+func TestApprovalResponseCannotCrossProcessGenerations(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	failedGeneration := supervisor.generation
+	approval := codexApproval{
+		generation: failedGeneration,
+		method:     "applyPatchApproval",
+		decisions:  defaultCodexApprovalDecisions(),
+		rawID:      json.RawMessage(`7`),
+		resolving:  true,
+	}
+	supervisor.approvals["7"] = approval
+
+	supervisor.failProcess(errors.New("process exited"))
+	replacement := &recordingWriteCloser{}
+	supervisor.mu.Lock()
+	supervisor.stdin = replacement
+	supervisor.approvals["7"] = codexApproval{
+		generation: supervisor.generation,
+		method:     "item/fileChange/requestApproval",
+		resolving:  true,
+	}
+	supervisor.mu.Unlock()
+
+	result, err := codexApprovalResult(approval, "approveOnce")
+	if err != nil {
+		t.Fatalf("approval result: %v", err)
+	}
+	if err := supervisor.respondRawForGeneration(failedGeneration, approval.rawID, result); err == nil {
+		t.Fatal("failed generation approval was written to the replacement process")
+	}
+	if replacement.Len() != 0 {
+		t.Fatalf("replacement process received %d approval response bytes", replacement.Len())
+	}
+
+	supervisor.resetApproval("7", approval)
+	supervisor.finishApproval("7", approval)
+	supervisor.mu.Lock()
+	current := supervisor.approvals["7"]
+	supervisor.mu.Unlock()
+	if current.generation != supervisor.generation || current.method != "item/fileChange/requestApproval" {
+		t.Fatalf("old approval mutated replacement request: %#v", current)
 	}
 }
 

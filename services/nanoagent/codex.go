@@ -64,6 +64,7 @@ type codexSubscription struct {
 }
 
 type codexApproval struct {
+	generation  *codexProcessGeneration
 	method      string
 	permissions json.RawMessage
 	decisions   map[string]string
@@ -192,8 +193,9 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	supervisor.command = command
 	supervisor.stdin = stdin
+	generation := supervisor.generation
 	supervisor.mu.Unlock()
-	go supervisor.readMessages(command, stdout)
+	go supervisor.readMessages(command, generation, stdout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	initialize, err := json.Marshal(map[string]any{
@@ -222,7 +224,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		return fmt.Errorf("acknowledge Codex app-server initialization: %w", err)
 	}
 	supervisor.mu.Lock()
-	closeSignal(supervisor.generation.ready)
+	closeSignal(generation.ready)
 	supervisor.mu.Unlock()
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
@@ -386,7 +388,11 @@ func (supervisor *codexSupervisor) waitForGeneration(
 	}
 }
 
-func (supervisor *codexSupervisor) readMessages(command *exec.Cmd, reader io.Reader) {
+func (supervisor *codexSupervisor) readMessages(
+	command *exec.Cmd,
+	generation *codexProcessGeneration,
+	reader io.Reader,
+) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), 8<<20)
 	for scanner.Scan() {
@@ -400,7 +406,7 @@ func (supervisor *codexSupervisor) readMessages(command *exec.Cmd, reader io.Rea
 			continue
 		}
 		if message.Method != "" {
-			supervisor.handleServerMessage(message, line)
+			supervisor.handleServerMessage(generation, message, line)
 		}
 	}
 	killProcessGroup(command)
@@ -417,14 +423,21 @@ func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
 	}
 }
 
-func (supervisor *codexSupervisor) handleServerMessage(message codexRPCMessage, raw []byte) {
+func (supervisor *codexSupervisor) handleServerMessage(
+	generation *codexProcessGeneration,
+	message codexRPCMessage,
+	raw []byte,
+) {
+	if !supervisor.isCurrentGeneration(generation) {
+		return
+	}
 	if message.Method == "account/login/completed" {
 		var params struct {
 			LoginID string `json:"loginId"`
 		}
 		if json.Unmarshal(message.Params, &params) == nil {
 			supervisor.mu.Lock()
-			if params.LoginID == "" || supervisor.activeLoginID == params.LoginID {
+			if supervisor.generation == generation && (params.LoginID == "" || supervisor.activeLoginID == params.LoginID) {
 				supervisor.activeLoginID = ""
 			}
 			supervisor.mu.Unlock()
@@ -435,14 +448,19 @@ func (supervisor *codexSupervisor) handleServerMessage(message codexRPCMessage, 
 		approvalID = normalizeRequestID(message.ID)
 		switch message.Method {
 		case "currentTime/read":
-			_ = supervisor.respondRaw(message.ID, map[string]any{"currentTimeAt": time.Now().Unix()})
+			_ = supervisor.respondRawForGeneration(generation, message.ID, map[string]any{"currentTimeAt": time.Now().Unix()})
 			return
 		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "execCommandApproval", "applyPatchApproval":
 			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
 			supervisor.approvals[approvalID] = codexApproval{
-				method:    message.Method,
-				decisions: codexApprovalDecisions(message.Method, message.Params),
-				rawID:     append(json.RawMessage(nil), message.ID...),
+				generation: generation,
+				method:     message.Method,
+				decisions:  codexApprovalDecisions(message.Method, message.Params),
+				rawID:      append(json.RawMessage(nil), message.ID...),
 			}
 			supervisor.mu.Unlock()
 		case "item/permissions/requestApproval":
@@ -450,11 +468,20 @@ func (supervisor *codexSupervisor) handleServerMessage(message codexRPCMessage, 
 				Permissions json.RawMessage `json:"permissions"`
 			}
 			if json.Unmarshal(message.Params, &params) != nil || len(params.Permissions) == 0 {
-				supervisor.respondError(message.ID, "permission request did not include a valid permission profile")
+				supervisor.respondErrorForGeneration(
+					generation,
+					message.ID,
+					"permission request did not include a valid permission profile",
+				)
 				return
 			}
 			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
 			supervisor.approvals[approvalID] = codexApproval{
+				generation:  generation,
 				method:      message.Method,
 				permissions: append(json.RawMessage(nil), params.Permissions...),
 				decisions:   defaultCodexApprovalDecisions(),
@@ -462,11 +489,24 @@ func (supervisor *codexSupervisor) handleServerMessage(message codexRPCMessage, 
 			}
 			supervisor.mu.Unlock()
 		default:
-			supervisor.respondError(message.ID, "Tengri does not expose this app-server client request")
+			supervisor.respondErrorForGeneration(
+				generation,
+				message.ID,
+				"Tengri does not expose this app-server client request",
+			)
 			return
 		}
 	}
+	if !supervisor.isCurrentGeneration(generation) {
+		return
+	}
 	supervisor.publish(message.Method, approvalID, json.RawMessage(raw))
+}
+
+func (supervisor *codexSupervisor) isCurrentGeneration(generation *codexProcessGeneration) bool {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	return generation != nil && supervisor.generation == generation && generation.failure == nil
 }
 
 func (supervisor *codexSupervisor) resolveApproval(id, decision string) error {
@@ -489,13 +529,11 @@ func (supervisor *codexSupervisor) resolveApproval(id, decision string) error {
 		supervisor.resetApproval(id, approval)
 		return err
 	}
-	if err := supervisor.respondRaw(approval.rawID, result); err != nil {
+	if err := supervisor.respondRawForGeneration(approval.generation, approval.rawID, result); err != nil {
 		supervisor.resetApproval(id, approval)
 		return err
 	}
-	supervisor.mu.Lock()
-	delete(supervisor.approvals, id)
-	supervisor.mu.Unlock()
+	supervisor.finishApproval(id, approval)
 	return nil
 }
 
@@ -583,22 +621,62 @@ func codexApprovalDecisions(method string, params json.RawMessage) map[string]st
 
 func (supervisor *codexSupervisor) resetApproval(id string, approval codexApproval) {
 	supervisor.mu.Lock()
-	if current, found := supervisor.approvals[id]; found && current.resolving {
+	if current, found := supervisor.approvals[id]; found && current.resolving && current.generation == approval.generation {
 		approval.resolving = false
 		supervisor.approvals[id] = approval
 	}
 	supervisor.mu.Unlock()
 }
 
-func (supervisor *codexSupervisor) respondRaw(id json.RawMessage, result any) error {
-	return supervisor.writeMessage(map[string]any{"id": json.RawMessage(id), "result": result})
+func (supervisor *codexSupervisor) finishApproval(id string, approval codexApproval) {
+	supervisor.mu.Lock()
+	if current, found := supervisor.approvals[id]; found && current.generation == approval.generation {
+		delete(supervisor.approvals, id)
+	}
+	supervisor.mu.Unlock()
 }
 
-func (supervisor *codexSupervisor) respondError(id json.RawMessage, message string) {
-	supervisor.writeMessage(map[string]any{
+func (supervisor *codexSupervisor) respondRawForGeneration(
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	result any,
+) error {
+	return supervisor.writeMessageForGeneration(
+		generation,
+		map[string]any{"id": json.RawMessage(id), "result": result},
+	)
+}
+
+func (supervisor *codexSupervisor) respondErrorForGeneration(
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	message string,
+) {
+	_ = supervisor.writeMessageForGeneration(generation, map[string]any{
 		"id":    json.RawMessage(id),
 		"error": map[string]any{"code": -32_000, "message": message},
 	})
+}
+
+func (supervisor *codexSupervisor) writeMessageForGeneration(
+	generation *codexProcessGeneration,
+	value any,
+) error {
+	message, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	supervisor.mu.Lock()
+	if generation == nil || supervisor.generation != generation || generation.failure != nil {
+		supervisor.mu.Unlock()
+		return errors.New("Codex app-server generation ended before the approval response was sent")
+	}
+	stdin := supervisor.stdin
+	supervisor.mu.Unlock()
+	if stdin == nil {
+		return errors.New("Codex app-server is unavailable")
+	}
+	return supervisor.writeToProcess(context.Background(), stdin, append(message, '\n'))
 }
 
 func (supervisor *codexSupervisor) writeMessage(value any) error {
