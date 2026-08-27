@@ -11,7 +11,7 @@ use axum::{
         Query, State, WebSocketUpgrade,
         ws::{Message as AxumMessage, rejection::WebSocketUpgradeRejection},
     },
-    http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -721,6 +721,7 @@ async fn proxy_http(
     request: Request<Body>,
 ) -> axum::response::Response {
     let (parts, body) = request.into_parts();
+    let request_method = parts.method.clone();
     let body = match to_bytes(body, MAX_PROXY_BODY).await {
         Ok(body) => body,
         Err(_) => {
@@ -768,8 +769,7 @@ async fn proxy_http(
         state.invalidate_preview_guest(&session.id).await;
     }
     let headers = upstream.headers().clone();
-    let inject_bridge =
-        is_html_response(&headers) && !headers.contains_key(header::CONTENT_ENCODING);
+    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
     let (body, bridge_nonce) = if inject_bridge {
         let bytes = match to_bytes(Body::from_stream(upstream.bytes_stream()), MAX_PROXY_BODY).await
         {
@@ -1146,6 +1146,17 @@ fn is_html_response(headers: &HeaderMap) -> bool {
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"))
+}
+
+fn should_inject_preview_bridge(method: &Method, status: StatusCode, headers: &HeaderMap) -> bool {
+    method != Method::HEAD
+        && !status.is_informational()
+        && !matches!(
+            status,
+            StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+        )
+        && is_html_response(headers)
+        && !headers.contains_key(header::CONTENT_ENCODING)
 }
 
 fn inject_preview_bridge(body: &[u8]) -> Option<(Vec<u8>, String)> {
@@ -1609,6 +1620,34 @@ mod tests {
         );
         assert!(!forward_request_header(&header::ACCEPT_ENCODING));
         assert!(stale_after_bridge_injection(&header::CONTENT_LENGTH));
+    }
+
+    #[test]
+    fn preview_bridge_is_not_injected_into_responses_that_cannot_carry_a_body() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+        assert!(should_inject_preview_bridge(
+            &Method::GET,
+            StatusCode::OK,
+            &headers
+        ));
+        assert!(!should_inject_preview_bridge(
+            &Method::HEAD,
+            StatusCode::OK,
+            &headers
+        ));
+        for status in [
+            StatusCode::CONTINUE,
+            StatusCode::NO_CONTENT,
+            StatusCode::RESET_CONTENT,
+            StatusCode::NOT_MODIFIED,
+        ] {
+            assert!(!should_inject_preview_bridge(
+                &Method::GET,
+                status,
+                &headers
+            ));
+        }
     }
 
     #[test]
