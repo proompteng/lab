@@ -33,6 +33,7 @@ export type WindowAction =
   | { type: 'viewport'; viewport: Bounds }
 
 export const MAX_DESKTOP_WINDOWS = 20
+const MAXIMIZED_INSET = 8
 
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
@@ -185,8 +186,8 @@ function preferredSize(app: TengriApp) {
 }
 
 function maximizedBounds(viewport: Bounds): Bounds {
-  const horizontalInset = Math.min(8, Math.max(0, (viewport.width - 320) / 2))
-  const verticalInset = Math.min(8, Math.max(0, (viewport.height - 220) / 2))
+  const horizontalInset = Math.min(MAXIMIZED_INSET, Math.max(0, (viewport.width - 320) / 2))
+  const verticalInset = Math.min(MAXIMIZED_INSET, Math.max(0, (viewport.height - 220) / 2))
   return {
     x: horizontalInset,
     y: verticalInset,

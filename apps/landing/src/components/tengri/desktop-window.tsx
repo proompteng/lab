@@ -3,7 +3,7 @@
 import { motion, useReducedMotion } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
-import { clampToViewport, type Bounds, type DesktopWindow, type WindowAction } from './window-manager'
+import { clampToViewport, type Bounds, type DesktopWindow, type WindowAction } from '@/lib/tengri/window-manager'
 
 type ResizeEdge = 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w'
 type Interaction = {

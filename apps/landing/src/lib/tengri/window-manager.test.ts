@@ -3,7 +3,7 @@ import { initialWindowState, MAX_DESKTOP_WINDOWS, windowReducer } from './window
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
-describe('Tengri window manager', () => {
+describe('Tengri desktop window manager', () => {
   test('boots with Finder behind frontmost Chrome', () => {
     const state = initialWindowState(viewport)
     expect(state.windows.map((window) => window.app)).toEqual(['finder', 'chrome'])
