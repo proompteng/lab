@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-AzAXvW1uJ7GuIqViq+Lh2gLSx3AwI/M3ht2cGoU4fC8=";
-    aarch64-linux = "sha256-9x0XAUy/jnHwjhc1HJFJN4Y81xK5j8NjMA8thT+SZn0=";
+    x86_64-linux = "sha256-39AmVIPtgGJO+4K1QtnjIomNFuQY/fiIhsrv7kudQ+0=";
+    aarch64-linux = "sha256-GL0DR4QH/Dvoxav1EdulWgD6RQYZ7bRDwrJlgULlQVU=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
