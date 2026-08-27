@@ -176,6 +176,7 @@ jspm_packages/
 
 # Next.js build output
 .next
+.next-playwright
 out
 
 # Nuxt.js build / generate output
@@ -281,6 +282,7 @@ tmp/
 # Rails credentials
 services/dernier/config/master.key
 /packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
+/services/tengri/target/
 /packages/temporal-bun-sdk/vendor/
 
 # Temporal libraries cache and releases

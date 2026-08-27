@@ -1,0 +1,67 @@
+name: Tengri desktop browser
+
+on:
+  pull_request:
+    paths:
+      - 'apps/landing/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'services/tengri/proto/**'
+      - 'bun.lock'
+      - '.github/workflows/tengri.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/landing/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'services/tengri/proto/**'
+      - 'bun.lock'
+      - '.github/workflows/tengri.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: tengri-desktop-browser-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install desktop dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter landing
+          --filter @proompteng/backend
+          --filter @proompteng/design
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run Tengri desktop browser suite
+        run: bun run --cwd apps/landing test:e2e
+
+      - name: Upload browser diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: tengri-desktop-browser-diagnostics
+          path: |
+            apps/landing/playwright-report
+            apps/landing/test-results
+          if-no-files-found: ignore
+          retention-days: 7

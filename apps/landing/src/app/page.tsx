@@ -1,23 +1,25 @@
 import type { Metadata } from 'next'
-import DesktopHero from '@/components/desktop-hero'
+
+import TengriDesktop from '@/components/tengri/desktop'
+import { TengriDesktopApplication } from '@/components/tengri/desktop-application'
 
 export const metadata: Metadata = {
-  title: 'AI Agent Control Plane | Proompteng',
+  title: 'Tengri MicroVM Desktop',
   description:
-    'Build and govern AI agent systems with policy checks, run observability, and model routing in one secure control plane.',
+    'A private Firecracker microVM desktop for building software with Codex, persistent files, real terminals, and localhost previews.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'AI Agent Control Plane | Proompteng',
-    description: 'Policy-first control plane for teams running AI agents at scale.',
+    title: 'Tengri MicroVM Desktop',
+    description: 'Your private Firecracker development desktop.',
     url: '/',
     images: ['/opengraph-image'],
   },
   twitter: {
-    title: 'AI Agent Control Plane | Proompteng',
-    description: 'Policy-first control plane for teams running AI agents at scale.',
+    title: 'Tengri MicroVM Desktop',
+    description: 'Your private Firecracker development desktop.',
   },
 }
 
 export default function Home() {
-  return <DesktopHero />
+  return <TengriDesktop Application={TengriDesktopApplication} />
 }
