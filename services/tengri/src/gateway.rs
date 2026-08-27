@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use axum::{
     Router,
@@ -16,11 +20,15 @@ use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
-use tokio::net::TcpStream;
+use tokio::{
+    net::TcpStream,
+    sync::{Mutex, OnceCell},
+};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
-        Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
+        Error as TungsteniteError, Message as TungsteniteMessage, client::IntoClientRequest,
+        protocol::WebSocketConfig,
     },
 };
 
@@ -40,10 +48,24 @@ const MAX_WEBSOCKET_MESSAGE: usize = 8 << 20;
 const MAX_WEBSOCKET_WRITE_BUFFER: usize = 16 << 20;
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
+const NANOAGENT_AUTH_FAILURE_HEADER: &str = "x-tengri-nanoagent-auth-failure";
+const NANOAGENT_AUTH_FAILURE_HEADER_VALUE: &[u8] = b"1";
 const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
 type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpstreamWebSocketError {
+    StaleGuestBinding,
+    PreserveGuestBinding,
+}
+
+impl UpstreamWebSocketError {
+    fn invalidates_guest_binding(self) -> bool {
+        self == Self::StaleGuestBinding
+    }
+}
 const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
   const token = decodeURIComponent(window.location.hash.slice(1));
   const target = window.location.pathname + window.location.search;
@@ -100,6 +122,7 @@ pub struct GatewayState {
     activity: ActivityTracker,
     http: reqwest::Client,
     preview_origin: PreviewOrigin,
+    preview_guests: Arc<Mutex<HashMap<String, PreviewGuestBinding>>>,
 }
 
 #[derive(Clone)]
@@ -107,6 +130,15 @@ struct PreviewOrigin {
     desktop_origin: Arc<str>,
     domain: Arc<str>,
     template: Arc<str>,
+}
+
+struct PreviewGuestBinding {
+    session_token: String,
+    owner_hash: String,
+    agent_id: String,
+    port: u16,
+    expires_at: SystemTime,
+    guest: Arc<OnceCell<GuestClient>>,
 }
 
 #[derive(Deserialize)]
@@ -137,9 +169,65 @@ impl GatewayState {
             activity,
             http: reqwest::Client::builder()
                 .redirect(Policy::none())
+                .connect_timeout(Duration::from_secs(5))
                 .build()?,
             preview_origin: PreviewOrigin::parse(preview_url_template, desktop_origin)?,
+            preview_guests: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    async fn preview_guest(
+        &self,
+        session: &PreviewSessionRecord,
+    ) -> Result<GuestClient, crate::guest::GuestError> {
+        let guest = {
+            let mut bindings = self.preview_guests.lock().await;
+            bindings.retain(|_, binding| binding.expires_at > SystemTime::now());
+            match bindings.get(&session.id) {
+                Some(binding) if binding.matches(session) => Arc::clone(&binding.guest),
+                _ => {
+                    let binding = PreviewGuestBinding::new(session);
+                    let guest = Arc::clone(&binding.guest);
+                    bindings.insert(session.id.clone(), binding);
+                    guest
+                }
+            }
+        };
+        let client = self.client.clone();
+        let namespace = self.namespace.clone();
+        let agent_id = session.agent_id.clone();
+        Ok(guest
+            .get_or_try_init(|| async move {
+                GuestClient::for_agent(client, &namespace, &agent_id).await
+            })
+            .await?
+            .clone())
+    }
+
+    async fn invalidate_preview_guest(&self, session_id: &str) {
+        self.preview_guests.lock().await.remove(session_id);
+    }
+}
+
+impl PreviewGuestBinding {
+    fn new(session: &PreviewSessionRecord) -> Self {
+        Self {
+            session_token: session.token.clone(),
+            owner_hash: session.owner_hash.clone(),
+            agent_id: session.agent_id.clone(),
+            port: session.port,
+            expires_at: session.expires_at,
+            guest: Arc::new(OnceCell::new()),
+        }
+    }
+
+    fn matches(&self, session: &PreviewSessionRecord) -> bool {
+        self.session_token == session.token
+            && self.owner_hash == session.owner_hash
+            && self.agent_id == session.agent_id
+            && self.port == session.port
+            && self.expires_at == session.expires_at
+            && self.expires_at > SystemTime::now()
     }
 }
 
@@ -499,15 +587,12 @@ async fn preview_host_proxy(
         Err(error) => return status_response(error.code(), error.message()),
     };
     state.activity.touch(&session.agent_id);
-    let guest =
-        match GuestClient::for_agent(state.client.clone(), &state.namespace, &session.agent_id)
-            .await
-        {
-            Ok(guest) => guest,
-            Err(error) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
-            }
-        };
+    let guest = match state.preview_guest(&session).await {
+        Ok(guest) => guest,
+        Err(error) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
+        }
+    };
     let path = request.uri().path();
     let query = request
         .uri()
@@ -524,14 +609,19 @@ async fn preview_host_proxy(
     if let Some(websocket) = websocket {
         let websocket_target = target.replacen("http://", "ws://", 1);
         let token = guest.token().to_owned();
-        let activity = state.activity;
-        let agent_id = session.agent_id;
+        let activity = state.activity.clone();
+        let agent_id = session.agent_id.clone();
         let (upstream, selected_protocol) =
             match connect_upstream_websocket(&websocket_target, &token, Some(request.headers()))
                 .await
             {
                 Ok(connection) => connection,
-                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+                Err(error) => {
+                    if error.invalidates_guest_binding() {
+                        state.invalidate_preview_guest(&session.id).await;
+                    }
+                    return StatusCode::BAD_GATEWAY.into_response();
+                }
             };
         let websocket = websocket
             .max_frame_size(MAX_WEBSOCKET_FRAME)
@@ -636,6 +726,7 @@ async fn proxy_http(
     let upstream = match upstream.send().await {
         Ok(response) => response,
         Err(_) => {
+            state.invalidate_preview_guest(&session.id).await;
             return (
                 StatusCode::BAD_GATEWAY,
                 "preview application is unavailable",
@@ -644,6 +735,9 @@ async fn proxy_http(
         }
     };
     let status = upstream.status();
+    if nanoagent_auth_failed(status, upstream.headers()) {
+        state.invalidate_preview_guest(&session.id).await;
+    }
     let headers = upstream.headers().clone();
     let stream = upstream.bytes_stream();
     let preview_origin = state.preview_origin.origin(&session.id);
@@ -707,18 +801,33 @@ async fn connect_upstream_websocket(
     target: &str,
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
-) -> Result<(UpstreamWebSocket, Option<String>), ()> {
-    let request = upstream_websocket_request(target, token, forwarded_headers)?;
-    let requested_protocols = websocket_protocols(request.headers())?;
+) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
+    let request = upstream_websocket_request(target, token, forwarded_headers)
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    let requested_protocols = websocket_protocols(request.headers())
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     let config = WebSocketConfig::default()
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
     let (upstream, response) = connect_async_with_config(request, Some(config), false)
         .await
-        .map_err(|_| ())?;
-    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)?;
+        .map_err(|error| classify_upstream_websocket_error(&error))?;
+    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     Ok((upstream, selected_protocol))
+}
+
+fn classify_upstream_websocket_error(error: &TungsteniteError) -> UpstreamWebSocketError {
+    match error {
+        TungsteniteError::Io(_) => UpstreamWebSocketError::StaleGuestBinding,
+        TungsteniteError::Http(response)
+            if nanoagent_auth_failed(response.status(), response.headers()) =>
+        {
+            UpstreamWebSocketError::StaleGuestBinding
+        }
+        _ => UpstreamWebSocketError::PreserveGuestBinding,
+    }
 }
 
 async fn bridge_open_websocket(
@@ -948,6 +1057,7 @@ fn forward_response_header(name: &HeaderName) -> bool {
         name.as_str().to_ascii_lowercase().as_str(),
         "connection"
             | "keep-alive"
+            | NANOAGENT_AUTH_FAILURE_HEADER
             | "proxy-authenticate"
             | "proxy-authorization"
             | "te"
@@ -956,6 +1066,13 @@ fn forward_response_header(name: &HeaderName) -> bool {
             | "upgrade"
             | "x-frame-options"
     )
+}
+
+fn nanoagent_auth_failed(status: StatusCode, headers: &HeaderMap) -> bool {
+    status == StatusCode::UNAUTHORIZED
+        && headers
+            .get(NANOAGENT_AUTH_FAILURE_HEADER)
+            .is_some_and(|value| value.as_bytes() == NANOAGENT_AUTH_FAILURE_HEADER_VALUE)
 }
 
 #[cfg(test)]
@@ -1204,6 +1321,75 @@ mod tests {
         assert_eq!(parsed.path(), "/dashboard");
         assert_eq!(parsed.query(), Some("mode=dev"));
         assert_eq!(parsed.fragment(), Some("secret.ticket"));
+    }
+
+    #[test]
+    fn preview_guest_bindings_are_scoped_to_the_authorized_session() {
+        let session = PreviewSessionRecord {
+            id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
+            token: "session-token".to_owned(),
+            owner_hash: "a".repeat(64),
+            agent_id: "agent-a".to_owned(),
+            port: 3000,
+            initial_path: "/".to_owned(),
+            expires_at: SystemTime::now() + Duration::from_secs(60),
+        };
+        let binding = PreviewGuestBinding::new(&session);
+        assert!(binding.matches(&session));
+
+        let mut other_owner = session.clone();
+        other_owner.owner_hash = "b".repeat(64);
+        assert!(!binding.matches(&other_owner));
+
+        let mut other_token = session.clone();
+        other_token.token = "different-session-token".to_owned();
+        assert!(!binding.matches(&other_token));
+
+        let mut other_port = session.clone();
+        other_port.port = 5173;
+        assert!(!binding.matches(&other_port));
+    }
+
+    #[test]
+    fn preview_guest_cache_is_invalidated_only_for_nanoagent_authentication_failures() {
+        let mut headers = HeaderMap::new();
+        assert!(!nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
+        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
+
+        headers.insert(
+            HeaderName::from_static(NANOAGENT_AUTH_FAILURE_HEADER),
+            HeaderValue::from_static("1"),
+        );
+        assert!(nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
+        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
+        assert!(!forward_response_header(&HeaderName::from_static(
+            NANOAGENT_AUTH_FAILURE_HEADER,
+        )));
+    }
+
+    #[test]
+    fn preview_websocket_application_rejections_preserve_the_guest_cache() {
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::BAD_GATEWAY,
+        ] {
+            let response = http::Response::builder()
+                .status(status)
+                .body(None)
+                .expect("websocket rejection response");
+            let error = TungsteniteError::Http(Box::new(response));
+            assert!(!classify_upstream_websocket_error(&error).invalidates_guest_binding());
+        }
+
+        let response = http::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(NANOAGENT_AUTH_FAILURE_HEADER, "1")
+            .body(None)
+            .expect("Nanoagent authentication rejection");
+        let error = TungsteniteError::Http(Box::new(response));
+        assert!(classify_upstream_websocket_error(&error).invalidates_guest_binding());
     }
 
     #[test]

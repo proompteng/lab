@@ -29,6 +29,9 @@ func TestAPIRoutesRequireBootstrapToken(t *testing.T) {
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
+	if got := unauthorized.Header().Get(nanoagentAuthFailureHeader); got != nanoagentAuthFailureHeaderValue {
+		t.Fatalf("unauthorized %s = %q", nanoagentAuthFailureHeader, got)
+	}
 
 	authorizedRequest := httptest.NewRequest(http.MethodGet, "/v1/files", nil)
 	authorizedRequest.Header.Set("Authorization", "Bearer test-bootstrap-token")
@@ -36,6 +39,9 @@ func TestAPIRoutesRequireBootstrapToken(t *testing.T) {
 	server.authenticatedRoutes().ServeHTTP(authorized, authorizedRequest)
 	if authorized.Code != http.StatusOK {
 		t.Fatalf("authorized status = %d body = %s", authorized.Code, authorized.Body.String())
+	}
+	if got := authorized.Header().Get(nanoagentAuthFailureHeader); got != "" {
+		t.Fatalf("authorized response leaked %s = %q", nanoagentAuthFailureHeader, got)
 	}
 }
 
@@ -293,6 +299,33 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	}
 	if response.Header().Get("Server") != "" || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("preview response headers = %#v", response.Header())
+	}
+}
+
+func TestPreviewApplicationCannotSpoofNanoagentAuthenticationFailure(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	server.previewTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header: http.Header{
+				nanoagentAuthFailureHeader: []string{nanoagentAuthFailureHeaderValue},
+			},
+			Body: io.NopCloser(strings.NewReader("application login required")),
+		}, nil
+	})
+
+	response := performAuthorizedRequest(
+		server.authenticatedRoutes(),
+		http.MethodGet,
+		"/v1/preview/43210/private",
+		nil,
+	)
+	if response.Code != http.StatusUnauthorized || response.Body.String() != "application login required" {
+		t.Fatalf("preview response = status %d body %q", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get(nanoagentAuthFailureHeader); got != "" {
+		t.Fatalf("preview response leaked reserved %s = %q", nanoagentAuthFailureHeader, got)
 	}
 }
 
