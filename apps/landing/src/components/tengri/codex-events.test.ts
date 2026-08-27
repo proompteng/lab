@@ -158,6 +158,11 @@ describe('Codex event decoding', () => {
             reason: 'Needs network',
             command: ['git', 'fetch', 'origin', 'feature branch'],
             cwd: '/workspace',
+            networkApprovalContext: { host: 'api.github.com', protocol: 'https' },
+            proposedNetworkPolicyAmendments: [
+              { host: 'api.github.com', action: 'allow' },
+              { host: 'tracker.invalid', action: 'deny' },
+            ],
             fileChanges: {
               '/workspace/app.ts': { type: 'update' },
               '/workspace/new.ts': { type: 'add' },
@@ -182,6 +187,10 @@ describe('Codex event decoding', () => {
         'Needs network',
         "Command: git fetch origin 'feature branch'",
         'Working directory: /workspace',
+        'Network target: api.github.com (https)',
+        'Proposed network policy:',
+        '- allow api.github.com',
+        '- deny tracker.invalid',
         'Files:',
         '- /workspace/app.ts (update)',
         '- /workspace/new.ts (add)',
@@ -279,6 +288,24 @@ describe('Codex event decoding', () => {
       }),
     ).toBe('hello\n')
     expect(codexEventDisplayText({ ...event, kind: 'tool-output', text: '12 pass' })).toBe('12 pass')
+    expect(
+      codexEventDisplayText({
+        ...event,
+        kind: 'tool-output',
+        method: 'item/completed',
+        text: 'dGVzdA==',
+        rawJson: JSON.stringify({ params: { item: { type: 'mcpToolCall' } } }),
+      }),
+    ).toBe('dGVzdA==')
+    expect(
+      codexEventDisplayText({
+        ...event,
+        kind: 'tool-output',
+        method: 'item/completed',
+        text: 'dGVzdA==',
+        rawJson: JSON.stringify({ params: { item: { type: 'commandExecution' } } }),
+      }),
+    ).toBe('test')
   })
 
   test('shows web search and sub-agent activity from typed raw events', () => {

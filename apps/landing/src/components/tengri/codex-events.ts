@@ -120,7 +120,10 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   if (event.kind === 'approval') return approvalDisplayText(params, event.text)
   if (event.kind === 'usage') return usageDisplayText(params) || event.text
 
-  const eventText = event.kind === 'tool-output' ? decodeMaybeBase64Text(event.text) : event.text
+  const eventText =
+    event.kind === 'tool-output' && isCommandExecutionEvent(event, item)
+      ? decodeMaybeBase64Text(event.text)
+      : event.text
   if (eventText) return eventText
   if (event.kind === 'tool-call') return toolCallText(item)
   if (event.kind === 'tool-output') {
@@ -291,6 +294,7 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
   const cwd = string(params.cwd)
   const grantRoot = string(params.grantRoot)
   const fileChanges = approvalFileChangesText(params.fileChanges)
+  const networkApproval = networkApprovalText(params.networkApprovalContext, params.proposedNetworkPolicyAmendments)
   const permissions = [
     permissionProfileText('Requested permissions', params.permissions),
     permissionProfileText('Additional permissions', params.additionalPermissions),
@@ -300,6 +304,7 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
       reason,
       command && `Command: ${command}`,
       cwd && `Working directory: ${cwd}`,
+      networkApproval,
       grantRoot && `Requested write root: ${grantRoot}`,
       fileChanges,
       ...permissions,
@@ -307,6 +312,27 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
       .filter(Boolean)
       .join('\n'),
   )
+}
+
+function networkApprovalText(contextValue: unknown, amendmentsValue: unknown) {
+  const context = record(contextValue)
+  const host = string(context.host)
+  const protocol = string(context.protocol)
+  const amendments = Array.isArray(amendmentsValue) ? amendmentsValue : []
+  const lines: string[] = []
+
+  if (host) lines.push(`Network target: ${host}${protocol ? ` (${protocol})` : ''}`)
+  const amendmentLines = amendments
+    .map((value) => {
+      const amendment = record(value)
+      const amendmentHost = string(amendment.host)
+      const action = string(amendment.action)
+      return amendmentHost ? `- ${action || 'change'} ${amendmentHost}` : ''
+    })
+    .filter(Boolean)
+  if (amendmentLines.length > 0) lines.push('Proposed network policy:', ...amendmentLines)
+
+  return lines.join('\n')
 }
 
 function approvalFileChangesText(value: unknown) {
@@ -669,6 +695,10 @@ function commandOutputDeltaText(event: TengriCodexEvent) {
   return event.kind === 'tool-output' && method.includes('commandexecution') && method.endsWith('delta')
     ? decodeMaybeBase64Text(event.text)
     : event.text
+}
+
+function isCommandExecutionEvent(event: TengriCodexEvent, item: Record<string, unknown>) {
+  return event.method.toLowerCase().includes('commandexecution') || string(item.type) === 'commandExecution'
 }
 
 function truncateEventText(value: string) {
