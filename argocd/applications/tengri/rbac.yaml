@@ -1,0 +1,33 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tengri
+rules:
+  - apiGroups: [runtime.proompteng.ai]
+    resources: [microvms]
+    verbs: [create, delete, get, list, patch, watch]
+  - apiGroups: [runtime.proompteng.ai]
+    resources: [microvms/status]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete, get, list, patch, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, secrets]
+    verbs: [delete, get, patch, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [tengri-auth-nonces]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tengri
+subjects:
+  - kind: ServiceAccount
+    name: tengri
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tengri

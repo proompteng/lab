@@ -1,0 +1,202 @@
+name: Tengri images
+
+on:
+  pull_request:
+    paths:
+      - 'services/tengri/**'
+      - 'services/nanoagent/**'
+      - '.github/workflows/tengri-images.yml'
+      - '.github/workflows/tengri-release.yml'
+      - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/tengri/**'
+      - 'services/nanoagent/**'
+      - '.github/workflows/tengri-images.yml'
+      - '.github/workflows/tengri-release.yml'
+      - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: tengri-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NANOAGENT_IMAGE: registry.ide-newton.ts.net/lab/nanoagent
+  TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
+
+jobs:
+  validate-nanoagent:
+    name: Validate Nanoagent
+    runs-on: arc-amd64
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Install race detector build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential
+
+      - name: Validate guest service
+        working-directory: services/nanoagent
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)"
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...
+
+  build:
+    name: Build ${{ matrix.service }} (${{ matrix.architecture }})
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: tengri
+            architecture: amd64
+            runner: arc-amd64
+            context: services/tengri
+            image: registry.ide-newton.ts.net/lab/tengri
+          - service: tengri
+            architecture: arm64
+            runner: arc-arm64
+            context: services/tengri
+            image: registry.ide-newton.ts.net/lab/tengri
+          - service: nanoagent
+            architecture: amd64
+            runner: arc-amd64
+            context: services/nanoagent
+            image: registry.ide-newton.ts.net/lab/nanoagent
+          - service: nanoagent
+            architecture: arm64
+            runner: arc-arm64
+            context: services/nanoagent
+            image: registry.ide-newton.ts.net/lab/nanoagent
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build native image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - validate-nanoagent
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Publish, verify, and sign multi-architecture images
+        shell: bash
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/tengri-images.yml@refs/heads/main
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/tengri
+          tag="sha-${GITHUB_SHA}"
+
+          publish_image() {
+            local image="$1"
+            local service="${image##*/}"
+            local index_path=".artifacts/tengri/${service}-index.json"
+
+            docker buildx imagetools create \
+              --tag "${image}:${tag}" \
+              "${image}:${tag}-amd64" \
+              "${image}:${tag}-arm64" >&2
+            docker buildx imagetools inspect --raw "${image}:${tag}" > "${index_path}"
+            jq -e '
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+            ' "${index_path}" >&2
+
+            local digest
+            digest="sha256:$(sha256sum "${index_path}" | cut -d ' ' -f1)"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            local reference="${image}@${digest}"
+            cosign sign --yes "${reference}" >&2
+            cosign verify \
+              --certificate-identity "${SIGNING_IDENTITY}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${reference}" >/dev/null
+            printf '%s' "${digest}"
+          }
+
+          tengri_digest="$(publish_image "${TENGRI_IMAGE}")"
+          nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"
+
+          jq -n \
+            --arg sourceSha "${GITHUB_SHA}" \
+            --arg tag "${tag}" \
+            --arg tengriRepository "${TENGRI_IMAGE}" \
+            --arg tengriDigest "${tengri_digest}" \
+            --arg nanoagentRepository "${NANOAGENT_IMAGE}" \
+            --arg nanoagentDigest "${nanoagent_digest}" \
+            '{
+              schemaVersion: 1,
+              sourceSha: $sourceSha,
+              tag: $tag,
+              images: {
+                tengri: {repository: $tengriRepository, digest: $tengriDigest},
+                nanoagent: {repository: $nanoagentRepository, digest: $nanoagentDigest}
+              },
+              signed: true
+            }' > .artifacts/tengri/release-contract.json
+
+      - name: Upload release contract
+        uses: actions/upload-artifact@v5
+        with:
+          name: tengri-release-contract
+          path: .artifacts/tengri/release-contract.json
+          if-no-files-found: error
+          retention-days: 7

@@ -133,6 +133,27 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: tengri
+                path: argocd/applications/tengri
+                namespace: tengri
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "false"
+                ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: tengri-auth-nonces
+                    jsonPointers:
+                      - /data
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: cdi
                 path: argocd/applications/cdi
                 namespace: cdi
