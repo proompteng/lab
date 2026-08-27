@@ -2,6 +2,7 @@ name: product-nix-images
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
   pull_request:
@@ -83,6 +84,7 @@ jobs:
     runs-on: arc-amd64
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
