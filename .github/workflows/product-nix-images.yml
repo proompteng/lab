@@ -171,7 +171,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: proompteng-release-contract
     secrets: inherit
@@ -184,7 +184,7 @@ jobs:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-app', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: app-release-contract
     secrets: inherit
@@ -197,7 +197,7 @@ jobs:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-synthesis', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: synthesis-release-contract
     secrets: inherit
@@ -210,7 +210,7 @@ jobs:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}-docs', github.event.pull_request.number) || '' }}
       latest: true
       release_artifact_name: docs-release-contract
     secrets: inherit

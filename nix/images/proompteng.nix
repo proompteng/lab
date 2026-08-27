@@ -16,6 +16,7 @@ import ./bun-workspace-service.nix {
   };
   dependencyClosure = "bunCache";
   installFilters = [
+    "@proompteng/source"
     "@proompteng/backend"
     "@proompteng/design"
     "landing"
