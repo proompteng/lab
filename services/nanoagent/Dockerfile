@@ -6,8 +6,9 @@ ARG TARGETARCH
 ARG TARGETOS
 
 WORKDIR /src
-COPY go.mod ./
-COPY main.go main_test.go ./
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
