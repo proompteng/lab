@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "codegen": "convex codegen",
+    "deploy": "convex deploy --typecheck enable",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success",
     "seed:models": "convex run models:seed"

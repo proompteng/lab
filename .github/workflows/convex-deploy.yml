@@ -1,0 +1,51 @@
+name: Convex Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/convex-deploy.yml'
+      - 'packages/backend/convex/**'
+      - 'packages/backend/package.json'
+      - 'bun.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: convex-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+      CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install backend dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/backend
+
+      - name: Validate deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CONVEX_SELF_HOSTED_URL}" || -z "${CONVEX_SELF_HOSTED_ADMIN_KEY}" ]]; then
+            echo '::error::Convex self-hosted deployment secrets are not configured.'
+            exit 1
+          fi
+
+      - name: Deploy Convex functions
+        run: bun run --cwd packages/backend deploy --message "GitHub ${GITHUB_SHA}"
