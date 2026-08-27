@@ -53,15 +53,31 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
 
 1. Run the controller tests and generate the CRD.
 2. Build both multi-architecture images in CI and publish immutable digests to the private registry.
-3. Update only the two digest references in `argocd/applications/tengri/kustomization.yaml`.
-4. Merge the reviewed PR and let Argo reconcile the application.
-5. Verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged node scheduling.
-6. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
+3. Update the two digest references in `argocd/applications/tengri/kustomization.yaml` and confirm the required 1Password
+   fields exist.
+4. For the initial rollout, set the `tengri` entry in `argocd/applicationsets/platform.yaml` to `enabled: "true"` in
+   the same reviewed rollout PR or a reviewed follow-up. Until that enablement is merged, no Tengri Application,
+   Deployment, or endpoint is expected to exist and the remaining live verification steps must not run.
+5. Merge the reviewed rollout PR and let the auto-reconciled Tengri Application deploy from `main`.
+6. Verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged node scheduling.
+7. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
 Do not deploy from a worktree, directly apply rendered manifests, cordon or drain a node, reboot a node, or create a
 permanent canary DaemonSet.
+
+The `kata` Application is intentionally manual. After this canary-removal change reaches `main`, reconcile that
+Application once with pruning and verify that only the RuntimeClasses remain:
+
+```bash
+set -euo pipefail
+
+argocd app sync kata --prune
+argocd app wait kata --sync --health --timeout 300
+test -z "$(kubectl --context galactic-lan -n kata get daemonset -o name)"
+kubectl --context galactic-lan get runtimeclass kata-fc kata-clh kata-dragonball kata-qemu
+```
 
 ## Validation
 

@@ -20,6 +20,7 @@ const kataKustomization = YAML.parse(readFileSync('argocd/applications/kata/kust
   resources?: string[]
 }
 const kataReadme = readFileSync('argocd/applications/kata/README.md', 'utf8')
+const tengriOperations = readFileSync('docs/tengri/operations.md', 'utf8')
 const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
 const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
 const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
@@ -242,6 +243,9 @@ describe('enabled app inventory', () => {
     expect(kataKustomization.resources).toEqual(['runtime-class.yaml'])
     expect(kataReadme).toContain('must not render a `Namespace` object or permanent runtime canary workloads')
     expect(kataReadme).toContain('bounded acceptance operation')
+    expect(tengriOperations).toContain('enabled: "true"')
+    expect(tengriOperations).toContain('argocd app sync kata --prune')
+    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
