@@ -4,6 +4,30 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/synthesis/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'services/tengri/proto/**'
+      - 'nix/images/app.nix'
+      - 'nix/images/docs.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/images/synthesis.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'flake.lock'
+      - 'bun.lock'
   push:
     branches:
       - main
