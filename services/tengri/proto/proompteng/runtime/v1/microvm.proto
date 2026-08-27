@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package proompteng.runtime.v1;
+
+service MicroVMControlPlane {
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
+  rpc SleepAgent(SleepAgentRequest) returns (Agent);
+  rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
+  rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
+}
+
+message Empty {}
+
+enum Architecture {
+  ARCHITECTURE_UNSPECIFIED = 0;
+  ARCHITECTURE_AMD64 = 1;
+  ARCHITECTURE_ARM64 = 2;
+}
+
+enum AgentPhase {
+  AGENT_PHASE_UNSPECIFIED = 0;
+  AGENT_PHASE_PENDING = 1;
+  AGENT_PHASE_BOOTING = 2;
+  AGENT_PHASE_READY = 3;
+  AGENT_PHASE_SLEEPING = 4;
+  AGENT_PHASE_FAILED = 5;
+  AGENT_PHASE_TERMINATING = 6;
+}
+
+message AgentCondition {
+  string type = 1;
+  string status = 2;
+  string reason = 3;
+  string message = 4;
+  string last_transition_at = 5;
+}
+
+message Agent {
+  string id = 1;
+  string display_name = 2;
+  AgentPhase phase = 3;
+  Architecture architecture = 4;
+  uint32 cpu_millis = 5;
+  uint32 memory_mib = 6;
+  uint32 workspace_gib = 7;
+  string node_name = 8;
+  string message = 9;
+  string created_at = 10;
+  string ready_at = 11;
+  string last_activity_at = 12;
+  string idle_deadline = 13;
+  string expires_at = 14;
+  repeated AgentCondition conditions = 15;
+}
+
+message CreateAgentRequest { string display_name = 1; }
+message ListAgentsRequest {}
+message ListAgentsResponse { repeated Agent agents = 1; }
+message GetAgentRequest { string id = 1; }
+message WatchAgentRequest { string id = 1; }
+message SleepAgentRequest { string id = 1; }
+message ResumeAgentRequest { string id = 1; }
+message DeleteAgentRequest { string id = 1; }
