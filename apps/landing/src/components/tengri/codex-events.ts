@@ -38,7 +38,7 @@ export type CodexTranscriptItem = {
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
 
-export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent) {
+export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent, restoredPrefix = '') {
   const resolvedApprovalId = codexResolvedApprovalId(event)
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
@@ -87,7 +87,13 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
     return next
   }
 
-  return [...current.slice(-(MAX_CODEX_EVENTS - 1)), { ...event, text: truncateEventText(eventText) }]
+  return [
+    ...current.slice(-(MAX_CODEX_EVENTS - 1)),
+    {
+      ...event,
+      text: isDeltaEvent(event) ? appendBoundedText(restoredPrefix, eventText) : truncateEventText(eventText),
+    },
+  ]
 }
 
 export function parseCodexEvent(data: string): TengriCodexEvent | null {
@@ -184,6 +190,28 @@ export function codexEventShouldRender(
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
+}
+
+export function codexEventContinuesRestoredItem(
+  event: TengriCodexEvent,
+  restoredItem: CodexTranscriptItem | undefined,
+  restoredHistorySequence: number,
+) {
+  return Boolean(
+    restoredItem &&
+    event.itemId === restoredItem.id &&
+    event.kind === restoredItem.kind &&
+    event.sequence > restoredHistorySequence,
+  )
+}
+
+export function codexResumeCommitIsCurrent(
+  requestGeneration: number,
+  currentGeneration: number,
+  requestedThreadId: string,
+  currentThreadId: string,
+) {
+  return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {

@@ -16,11 +16,13 @@ import {
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
+  codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
   type CodexApprovalDecision,
@@ -53,7 +55,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const loginIdRef = useRef('')
   const threadIdRef = useRef('')
   const lastEventSequence = useRef(0)
+  const restoredHistoryRef = useRef<ReadonlyMap<string, CodexTranscriptItem>>(new Map())
+  const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
+  const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const accountChecked = account !== null
 
@@ -124,6 +129,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEventStreamState('connecting')
     completedTurns.current.clear()
     lastEventSequence.current = 0
+    restoredHistoryRef.current = new Map()
+    restoredHistorySequenceRef.current = 0
+    replayRecoveryRef.current = false
+    threadResumeGeneration.current += 1
     const stored = readStoredThread(agentId)
     threadIdRef.current = stored
     setThreadId(stored)
@@ -167,24 +176,43 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
-      setRestoredHistorySequence(lastEventSequence.current)
+      const sequence = lastEventSequence.current
+      const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
+      restoredHistoryRef.current = restoredById
+      restoredHistorySequenceRef.current = sequence
+      setRestoredHistorySequence(sequence)
+      setEvents((current) =>
+        current.filter(
+          (event) =>
+            event.kind === 'approval' || !event.itemId || !restoredById.has(event.itemId) || event.sequence > sequence,
+        ),
+      )
       setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
     },
     [agentId],
   )
 
   useEffect(() => {
-    if (!active || !account?.authenticated || !threadId || threadReady) return
+    if (!active || !account?.authenticated || !threadId || threadReady || replayRecoveryRef.current) return
     const controller = new AbortController()
+    const generation = ++threadResumeGeneration.current
     void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
       .then((thread) => {
-        if (controller.signal.aborted) return
+        if (
+          controller.signal.aborted ||
+          !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+        ) {
+          return
+        }
         commitThreadState(thread)
         setThreadReady(true)
         setError('')
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted &&
+          codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+        ) {
           setError(cause instanceof Error ? cause.message : 'Codex thread could not be resumed')
         }
       })
@@ -195,6 +223,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
     replayRecoveryRef.current = true
+    const generation = ++threadResumeGeneration.current
     setThreadReady(false)
     setReplayRecovering(true)
     try {
@@ -203,17 +232,27 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         agentId,
         threadId: currentThread,
       })
-      if (!mountedRef.current || threadIdRef.current !== currentThread) return
+      if (
+        !mountedRef.current ||
+        !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
+      ) {
+        return
+      }
       commitThreadState(thread)
       setThreadReady(true)
       setError('')
     } catch (cause) {
-      if (mountedRef.current) {
+      if (
+        mountedRef.current &&
+        codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
+      ) {
         setError(cause instanceof Error ? cause.message : 'Codex thread state could not be refreshed')
       }
     } finally {
-      replayRecoveryRef.current = false
-      if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
+      if (generation === threadResumeGeneration.current) {
+        replayRecoveryRef.current = false
+        if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
+      }
     }
   }, [agentId, commitThreadState])
 
@@ -238,7 +277,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       ) {
         return
       }
-      setEvents((current) => appendCodexEvent(current, event))
+      const restoredItem = restoredHistoryRef.current.get(event.itemId)
+      const restoredPrefix = codexEventContinuesRestoredItem(event, restoredItem, restoredHistorySequenceRef.current)
+        ? restoredItem?.text || ''
+        : ''
+      setEvents((current) => appendCodexEvent(current, event, restoredPrefix))
       if (event.method === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''
@@ -270,6 +313,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [active, events, historyItems])
 
   const historyIds = useMemo(() => new Set(historyItems.map((item) => item.id)), [historyItems])
+  const historyById = useMemo(() => new Map(historyItems.map((item) => [item.id, item])), [historyItems])
   const renderedEvents = useMemo(
     () =>
       events
@@ -285,10 +329,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     () =>
       new Set(
         renderedEvents
-          .map(({ event }) => (event.sequence > restoredHistorySequence ? event.itemId : ''))
-          .filter((itemId) => itemId && historyIds.has(itemId)),
+          .map(({ event }) =>
+            codexEventContinuesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence)
+              ? event.itemId
+              : '',
+          )
+          .filter(Boolean),
       ),
-    [historyIds, renderedEvents, restoredHistorySequence],
+    [historyById, renderedEvents, restoredHistorySequence],
   )
   const renderedHistoryItems = useMemo(
     () => historyItems.filter((item) => !renderedEventItemIds.has(item.id)),
@@ -387,6 +435,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (activeTurnId || submitting) return
     removeStoredThread(agentId)
     threadIdRef.current = ''
+    restoredHistoryRef.current = new Map()
+    restoredHistorySequenceRef.current = 0
+    threadResumeGeneration.current += 1
     setThreadId('')
     setThreadReady(false)
     setActiveTurnId('')
@@ -683,8 +734,9 @@ function commitThread(
   threadRef.current = thread.id
   setThreadId(thread.id)
   writeStoredThread(agentId, thread.id)
-  setHistoryItems(codexTranscriptFromThread(thread.rawJson))
-  return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
+  const historyItems = codexTranscriptFromThread(thread.rawJson)
+  setHistoryItems(historyItems)
+  return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson), historyItems }
 }
 
 function storageKey(agentId: string) {

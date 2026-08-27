@@ -6,11 +6,13 @@ import {
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
+  codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
 } from './codex-events'
@@ -121,6 +123,28 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence - 1)).toBe(true)
+  })
+
+  test('seeds the first post-resume delta with the authoritative restored prefix', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'restored prefix' } as const
+    const delta = {
+      ...event,
+      sequence: 43,
+      kind: 'assistant-text' as const,
+      method: 'item/agentMessage/delta',
+      text: ' plus live delta',
+    }
+
+    expect(codexEventContinuesRestoredItem(delta, restored, 42)).toBe(true)
+    expect(codexEventContinuesRestoredItem({ ...delta, sequence: 42 }, restored, 42)).toBe(false)
+    expect(codexEventContinuesRestoredItem({ ...delta, kind: 'tool-output' }, restored, 42)).toBe(false)
+    expect(appendCodexEvent([], delta, restored.text)[0]?.text).toBe('restored prefix plus live delta')
+  })
+
+  test('rejects stale or cross-thread resume responses', () => {
+    expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
+    expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
+    expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
   })
 
   test('removes a replayed approval after its server request resolves', () => {
