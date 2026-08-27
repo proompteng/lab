@@ -4,6 +4,7 @@ namespace: tengri
 resources:
   - crd.yaml
   - service-account.yaml
+  - auth-nonces.yaml
   - rbac.yaml
   - deployment.yaml
   - services.yaml

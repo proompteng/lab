@@ -140,6 +140,12 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "false"
+                ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: tengri-auth-nonces
+                    jsonPointers:
+                      - /data
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: restricted
