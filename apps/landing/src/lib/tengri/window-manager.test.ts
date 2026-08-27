@@ -3,7 +3,7 @@ import { createElement, createRef } from 'react'
 import { renderToString } from 'react-dom/server'
 
 import { DesktopWindowFrame, paintWindowInteractionFrame } from '@/components/tengri/desktop-window'
-import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowReducer } from './window-manager'
+import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowIdForOpen, windowReducer } from './window-manager'
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
@@ -38,6 +38,17 @@ describe('Tengri desktop window manager', () => {
     expect(state.activeWindowId).toBe(secondId)
     expect(state.windows.find((window) => window.id === secondId)?.mode).toBe('normal')
     expect(state.activeApp).toBe('terminal')
+  })
+
+  test('predicts the exact new or frontmost window targeted by open', () => {
+    let state = initialWindowState(viewport)
+    const newCodeId = windowIdForOpen(state, 'code')
+    state = windowReducer(state, { type: 'open', app: 'code', title: 'Code', viewport })
+    expect(state.activeWindowId).toBe(newCodeId)
+
+    state = windowReducer(state, { type: 'new', app: 'code', title: 'Code', viewport })
+    const frontmostCodeId = state.activeWindowId
+    expect(windowIdForOpen(state, 'code')).toBe(frontmostCodeId)
   })
 
   test('does not trust persisted titles, ids, modes, or unbounded window counts', () => {

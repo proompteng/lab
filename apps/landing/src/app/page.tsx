@@ -4,6 +4,7 @@ import DesktopOnboarding from '@/components/tengri/desktop-onboarding'
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
 import { shouldRenderTengriDesktop } from '@/lib/tengri/desktop-gate'
 import { isTengriControlPlaneConfigured } from '@/lib/tengri/grpc'
+import { TENGRI_PRODUCT_IDENTITY } from '@/lib/tengri/product-identity'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,17 +27,18 @@ const publicMetadata: Metadata = {
 
 const tengriMetadata: Metadata = {
   title: 'Tengri | Proompteng',
-  description: 'Create and manage a private Firecracker agent workspace.',
+  description: TENGRI_PRODUCT_IDENTITY.description,
   alternates: { canonical: '/' },
   openGraph: {
     title: 'Tengri | Proompteng',
-    description: 'Create and manage a private Firecracker agent workspace.',
+    description: TENGRI_PRODUCT_IDENTITY.description,
     url: '/',
-    images: ['/opengraph-image'],
+    images: [TENGRI_PRODUCT_IDENTITY.openGraphImage],
   },
   twitter: {
     title: 'Tengri | Proompteng',
-    description: 'Create and manage a private Firecracker agent workspace.',
+    description: TENGRI_PRODUCT_IDENTITY.description,
+    images: [TENGRI_PRODUCT_IDENTITY.openGraphImage],
   },
 }
 

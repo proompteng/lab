@@ -1,17 +1,6 @@
 'use client'
 
-import {
-  CheckCircle2,
-  FileCode2,
-  Folder,
-  LoaderCircle,
-  LogOut,
-  Moon,
-  Settings,
-  SquareTerminal,
-  Trash2,
-  Wifi,
-} from 'lucide-react'
+import { FileCode2, Folder, LoaderCircle, Moon, Settings, SquareTerminal, Wifi } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
@@ -23,16 +12,21 @@ import {
   initialWindowState,
   type Bounds,
   type DesktopWindow,
+  windowIdForOpen,
   windowReducer,
 } from '@/lib/tengri/window-manager'
 import { ChromeApp } from './chrome-app'
 import { runTengriAction } from './client'
 import { CodeEditor } from './code-editor'
-import type { CodeOpenRequest } from './code-editor-model'
+import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
 import { FinderApp } from './finder-app'
+import { SettingsApp } from './settings-app'
+import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
 import { TerminalApp } from './terminal-app'
+
+type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 
 export function ReadyDesktop({
   agent,
@@ -53,8 +47,9 @@ export function ReadyDesktop({
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [codeRequest, setCodeRequest] = useState<CodeOpenRequest | null>(null)
-  const [codeDirty, setCodeDirty] = useState(false)
+  const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
+  const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
+  const [sleepRequested, setSleepRequested] = useState(false)
   const codeRequestIdRef = useRef(0)
   const reducedMotion = useReducedMotion()
 
@@ -70,22 +65,25 @@ export function ReadyDesktop({
 
   const closeWindow = useCallback(
     (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
-      if (desktopWindow.app === 'code' && codeDirty) {
+      if (desktopWindow.app === 'code' && dirtyCodeWindows.has(desktopWindow.id)) {
         setError('Save or close every edited Code tab before closing the Code window.')
         dispatch({ type: 'focus', id: desktopWindow.id })
         return
       }
       dispatch({ type: 'close', id: desktopWindow.id })
     },
-    [codeDirty],
+    [dirtyCodeWindows],
   )
 
-  const handleCodeDirtyChange = useCallback((dirty: boolean) => {
-    setCodeDirty(dirty)
-    if (!dirty) {
+  const handleCodeDirtyChange = useCallback((windowId: string, dirty: boolean) => {
+    setDirtyCodeWindows((current) => updateDirtyCodeWindows(current, windowId, dirty))
+  }, [])
+
+  useEffect(() => {
+    if (dirtyCodeWindows.size === 0) {
       setError((current) => (current.startsWith('Save or close every edited Code tab') ? '' : current))
     }
-  }, [])
+  }, [dirtyCodeWindows])
 
   useEffect(() => {
     setClock(new Date())
@@ -106,6 +104,26 @@ export function ReadyDesktop({
       window.removeEventListener('resize', clampWindows)
     }
   }, [viewport])
+
+  useEffect(() => {
+    if (!sleepRequested) return
+    let stopped = false
+    let timer = 0
+    const refreshUntilObserved = async () => {
+      try {
+        await onChanged()
+      } catch {
+        if (!stopped) setError('Sleep was accepted, but the latest controller state is temporarily unavailable.')
+      } finally {
+        if (!stopped) timer = window.setTimeout(() => void refreshUntilObserved(), 1_000)
+      }
+    }
+    timer = window.setTimeout(() => void refreshUntilObserved(), 1_000)
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [onChanged, sleepRequested])
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -141,10 +159,11 @@ export function ReadyDesktop({
 
   const openCode = useCallback(
     (path?: string) => {
+      const targetWindowId = windowIdForOpen(windowState, 'code')
       dispatch({ type: 'open', app: 'code', title: APP_TITLES.code, viewport: viewport() })
-      if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current })
+      if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current, targetWindowId })
     },
-    [viewport],
+    [viewport, windowState],
   )
 
   const openTerminal = useCallback(() => {
@@ -173,25 +192,39 @@ export function ReadyDesktop({
   }, [openChrome, openCode, openFinder, openSettings, openTerminal, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
-    if (codeDirty) {
+    if (dirtyCodeWindows.size > 0) {
       setError('Save or close every edited Code tab before changing the agent lifecycle.')
       return
     }
     setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
     setError('')
+    let committed = false
     try {
-      await runTengriAction<TengriAgent | null>({ action, agentId: agent.id })
-      setConfirmOpen(false)
-      await onChanged()
+      await commitDesktopLifecycleAction({
+        action,
+        request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
+        onCommitted: (committedAction) => {
+          committed = true
+          if (committedAction === 'sleep-agent') setSleepRequested(true)
+          else setConfirmOpen(false)
+        },
+      })
+      if (action === 'delete-agent') await onChanged()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The agent lifecycle request failed')
+      setError(
+        committed
+          ? 'The lifecycle request was accepted, but the latest controller state could not be loaded.'
+          : cause instanceof Error
+            ? cause.message
+            : 'The agent lifecycle request failed',
+      )
     } finally {
       setBusyAction(null)
     }
   }
 
   async function signOut() {
-    if (codeDirty) {
+    if (dirtyCodeWindows.size > 0) {
       setError('Save or close every edited Code tab before signing out.')
       return
     }
@@ -215,6 +248,12 @@ export function ReadyDesktop({
   const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeAppTitle = activeWindow ? APP_TITLES[activeWindow.app] : 'Tengri'
+
+  if (sleepRequested) {
+    return (
+      <SleepRequestScreen agentName={agent.displayName} error={selectSleepRequestError(error, connectionWarning)} />
+    )
+  }
 
   return (
     <>
@@ -301,14 +340,20 @@ export function ReadyDesktop({
               ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
-                <CodeEditor agentId={agent.id} onDirtyChange={handleCodeDirtyChange} request={codeRequest} />
+                <CodeEditor
+                  agentId={agent.id}
+                  onDirtyChange={(dirty) => handleCodeDirtyChange(desktopWindow.id, dirty)}
+                  request={codeRequest?.targetWindowId === desktopWindow.id ? codeRequest : null}
+                />
               ) : desktopWindow.app === 'terminal' ? (
                 <TerminalApp agentId={agent.id} />
               ) : (
-                <AgentSettings
+                <SettingsApp
+                  active={desktopWindow.id === windowState.activeWindowId}
                   agent={agent}
                   busyAction={busyAction}
                   error={error}
+                  instanceId={desktopWindow.id}
                   onDelete={() => {
                     setError('')
                     setConfirmOpen(true)
@@ -417,6 +462,43 @@ export function ReadyDesktop({
   )
 }
 
+function SleepRequestScreen({ agentName, error }: { agentName: string; error: string }) {
+  return (
+    <main className="font-inter relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#050914] px-5 text-white">
+      <DesktopWallpaper />
+      <header className="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-4 text-xs font-semibold text-white/90 backdrop-blur-2xl">
+        <span className="mr-2">
+          <TengriMark />
+        </span>
+        Tengri
+      </header>
+      <section
+        aria-live="polite"
+        className="relative z-10 w-full max-w-md rounded-[24px] border border-white/16 bg-[rgba(25,29,42,0.72)] p-8 text-center shadow-2xl backdrop-blur-3xl"
+      >
+        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/12 bg-white/7">
+          <Moon aria-hidden="true" className="h-6 w-6 text-sky-200" />
+        </span>
+        <h1 className="mt-5 text-xl font-semibold tracking-[-0.02em]">Putting {agentName} to sleep</h1>
+        <p className="mt-2 text-sm leading-6 text-white/52">
+          Guest applications are disconnected while the controller removes the microVM Pod. Your workspace is retained.
+        </p>
+        <p role="status" className="mt-5 inline-flex items-center gap-2 text-xs text-white/62">
+          <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Waiting for controller state
+        </p>
+        {error ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-xl border border-amber-300/12 bg-amber-400/8 px-3 py-2 text-xs text-amber-100"
+          >
+            {error}
+          </p>
+        ) : null}
+      </section>
+    </main>
+  )
+}
+
 function DockTooltip({ label }: { label: string }) {
   return (
     <span className="pointer-events-none absolute -top-10 rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[10px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
@@ -450,89 +532,6 @@ function isEditableTarget(target: EventTarget | null) {
   )
 }
 
-function AgentSettings({
-  agent,
-  busyAction,
-  error,
-  onDelete,
-  onSignOut,
-  onSleep,
-  user,
-}: {
-  agent: TengriAgent
-  busyAction: 'delete' | 'sign-out' | 'sleep' | null
-  error: string
-  onDelete: () => void
-  onSignOut: () => void
-  onSleep: () => void
-  user: TengriUser
-}) {
-  const busy = busyAction !== null
-  return (
-    <div className="grid h-full min-h-0 grid-cols-[176px_minmax(0,1fr)] bg-[rgba(15,18,25,0.62)]">
-      <aside className="border-r border-white/8 bg-white/[0.035] p-3">
-        <p className="px-3 pt-2 pb-3 text-[10px] font-semibold tracking-[0.12em] text-white/35 uppercase">Tengri</p>
-        <div className="flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium text-white/90">
-          <Settings aria-hidden="true" className="h-4 w-4" /> Agent
-        </div>
-      </aside>
-      <section aria-labelledby="agent-settings-title" className="min-h-0 overflow-auto p-7">
-        <div className="flex items-start justify-between gap-6">
-          <div>
-            <p className="text-xs font-medium text-emerald-300">Ready</p>
-            <h1 id="agent-settings-title" className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-white/95">
-              {agent.displayName}
-            </h1>
-            <p className="mt-2 text-sm leading-6 text-white/48">Private Firecracker workspace for {user.name}.</p>
-          </div>
-          <div
-            aria-hidden="true"
-            className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-emerald-200/12 bg-emerald-400/8 shadow-inner"
-          >
-            <CheckCircle2 className="h-7 w-7 text-emerald-300" />
-          </div>
-        </div>
-
-        <dl className="mt-7 divide-y divide-white/8 overflow-hidden rounded-2xl border border-white/9 bg-black/16 px-4 text-sm">
-          <Detail label="Runtime" value="Firecracker via kata-fc" />
-          <Detail label="Resources" value={`${formatCpu(agent.cpuMillis)} · ${formatGib(agent.memoryMib)} GiB RAM`} />
-          <Detail label="Workspace" value={`${agent.workspaceGib} GiB persistent`} />
-          <Detail label="Node" value={agent.nodeName || 'Scheduling'} />
-          <Detail label="Idle sleep" value={formatTimestamp(agent.idleDeadline)} />
-          <Detail label="Hard expiry" value={formatTimestamp(agent.expiresAt)} />
-        </dl>
-
-        {error ? (
-          <p
-            role="alert"
-            className="mt-4 rounded-xl border border-red-300/12 bg-red-500/8 px-3 py-2 text-xs text-red-100"
-          >
-            {error}
-          </p>
-        ) : null}
-        {busy ? (
-          <p role="status" className="mt-4 inline-flex items-center gap-2 text-xs text-white/62">
-            <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
-            Applying {busyAction === 'sign-out' ? 'sign out' : `${busyAction} request`}…
-          </p>
-        ) : null}
-
-        <div className="mt-7 flex flex-wrap gap-2 border-t border-white/8 pt-5">
-          <button type="button" disabled={busy} className={secondaryButton} onClick={onSleep}>
-            <Moon aria-hidden="true" className="h-4 w-4" /> Sleep Agent
-          </button>
-          <button type="button" disabled={busy} className={secondaryButton} onClick={onSignOut}>
-            <LogOut aria-hidden="true" className="h-4 w-4" /> Sign Out
-          </button>
-          <button type="button" disabled={busy} className={dangerButton} onClick={onDelete}>
-            <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete Agent
-          </button>
-        </div>
-      </section>
-    </div>
-  )
-}
-
 function DesktopWallpaper() {
   return (
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden bg-[#07101d]">
@@ -552,35 +551,6 @@ function TengriMark() {
   )
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-5 py-3">
-      <dt className="text-white/46">{label}</dt>
-      <dd className="min-w-0 truncate text-right font-medium text-white/78">{value}</dd>
-    </div>
-  )
-}
-
-function formatCpu(millis: number) {
-  if (!Number.isFinite(millis)) return '0 CPU'
-  const cores = Math.round((millis / 1_000) * 10) / 10
-  return `${cores} CPU`
-}
-
-function formatGib(mebibytes: number) {
-  return Number.isFinite(mebibytes) ? Math.round((mebibytes / 1_024) * 10) / 10 : 0
-}
-
-function formatTimestamp(value: string) {
-  const timestamp = new Date(value)
-  if (!value || Number.isNaN(timestamp.getTime())) return 'Not reported'
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
-}
-
-const secondaryButton =
-  'inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/7 px-3.5 py-2 text-sm font-medium text-white/76 outline-none transition hover:bg-white/11 focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-40'
-const dangerButton =
-  'ml-auto inline-flex items-center gap-2 rounded-xl border border-red-300/12 bg-red-500/8 px-3.5 py-2 text-sm font-medium text-red-100 outline-none transition hover:bg-red-500/14 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40'
 const dockHoverAnimation = { scale: 1.18, y: -8 }
 const dockTapAnimation = { scale: 0.96 }
 const dockTransition = { damping: 28, stiffness: 520, type: 'spring' as const }

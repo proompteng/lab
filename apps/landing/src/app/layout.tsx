@@ -70,7 +70,7 @@ export const metadata: Metadata = {
     icon: [{ url: '/favicon.ico' }, { url: '/favicon.svg', type: 'image/svg+xml' }],
     shortcut: '/favicon.ico',
   },
-  manifest: '/site.webmanifest',
+  manifest: '/manifest.webmanifest',
 }
 
 export const viewport: Viewport = {
