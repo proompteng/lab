@@ -148,7 +148,7 @@ impl ControlPlane {
                     self.activity.touch(id);
                     return self.wait_ready(principal, id).await;
                 }
-                Err(kube::Error::Api(response)) if response.code == 409 => continue,
+                Err(error) if is_conflict(&error) => continue,
                 Err(error) => return Err(map_kube_error(error)),
             }
         }
@@ -348,20 +348,31 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Agent>, Status> {
         let principal = self.authorize(&request).await?;
         let id = request.get_ref().id.clone();
-        let agent = self.owned_agent(&principal, &id).await?;
-        let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        let updated = api
-            .patch(
-                &id,
-                &PatchParams::default(),
-                &Patch::Merge(json!({
-                    "metadata": {"resourceVersion": agent.resource_version()},
-                    "spec": {"desiredState": MicroVMDesiredState::Sleeping}
-                })),
-            )
-            .await
-            .map_err(map_kube_error)?;
-        Ok(Response::new(agent_from_microvm(&updated)))
+        for _ in 0..3 {
+            let agent = self.owned_agent(&principal, &id).await?;
+            if agent.spec.desired_state == MicroVMDesiredState::Sleeping {
+                return Ok(Response::new(agent_from_microvm(&agent)));
+            }
+            let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            match api
+                .patch(
+                    &id,
+                    &PatchParams::default(),
+                    &Patch::Merge(json!({
+                        "metadata": {"resourceVersion": agent.resource_version()},
+                        "spec": {"desiredState": MicroVMDesiredState::Sleeping}
+                    })),
+                )
+                .await
+            {
+                Ok(updated) => return Ok(Response::new(agent_from_microvm(&updated))),
+                Err(error) if is_conflict(&error) => continue,
+                Err(error) => return Err(map_kube_error(error)),
+            }
+        }
+        Err(Status::aborted(
+            "agent lifecycle changed concurrently; retry the request",
+        ))
     }
 
     async fn resume_agent(
@@ -1395,6 +1406,10 @@ fn map_kube_error(error: kube::Error) -> Status {
     Status::internal(error.to_string())
 }
 
+fn is_conflict(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 409)
+}
+
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
@@ -1579,6 +1594,38 @@ mod tests {
             agent_from_microvm(&agent).phase,
             AgentPhase::Terminating as i32,
         );
+    }
+
+    #[test]
+    fn lifecycle_conflicts_are_retried_instead_of_reported_as_existing_agents() {
+        let conflict = kube::Error::Api(
+            kube::core::Status {
+                code: 409,
+                reason: "Conflict".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let already_exists = kube::Error::Api(
+            kube::core::Status {
+                code: 409,
+                reason: "AlreadyExists".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let invalid = kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+
+        assert!(is_conflict(&conflict));
+        assert!(is_conflict(&already_exists));
+        assert!(!is_conflict(&invalid));
     }
 
     #[test]
