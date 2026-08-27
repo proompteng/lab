@@ -16,6 +16,10 @@ const argoCdApplicationSetCrdOverlay = readFileSync(
 const argoCdLovelyPluginOverlay = readFileSync('argocd/applications/argocd/overlays/argocd-lovely-plugin.yaml', 'utf8')
 const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
 const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
+const kataKustomization = YAML.parse(readFileSync('argocd/applications/kata/kustomization.yaml', 'utf8')) as {
+  resources?: string[]
+}
+const kataReadme = readFileSync('argocd/applications/kata/README.md', 'utf8')
 const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
 const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
 const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
@@ -227,6 +231,17 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('automation: manual')
     expect(metallbEntry).not.toContain('automation: auto')
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
+  })
+
+  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
+    const tengriEntry = platformApplicationSet.match(
+      /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(tengriEntry).toContain('argocd.argoproj.io/sync-options: Prune=false,Delete=false')
+    expect(kataKustomization.resources).toEqual(['runtime-class.yaml'])
+    expect(kataReadme).toContain('must not render a `Namespace` object or permanent runtime canary workloads')
+    expect(kataReadme).toContain('bounded acceptance operation')
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {

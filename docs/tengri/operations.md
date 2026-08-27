@@ -16,8 +16,8 @@ Kata RuntimeClasses, node scheduling, or cluster nodes.
 
 Both image references must be immutable digests before the application is enabled. The zero digests in the disabled
 scaffold intentionally prevent an accidental rollout. CI regenerates the CRD and compares it with both committed CRD
-copies. `Prune=false,Delete=false` protects the CRD when the application is disabled or removed, preserving existing
-`MicroVM` resources and their PVC-owned state.
+copies. `Prune=false,Delete=false` protects both the CRD and the ApplicationSet-managed `tengri` namespace when the
+application is disabled or removed, preserving existing `MicroVM` resources and their PVC-owned state.
 
 The Kata application contains RuntimeClasses only. It must not contain permanent canary DaemonSets. Runtime proof is a
 bounded acceptance operation, not a continuously scheduled workload.
