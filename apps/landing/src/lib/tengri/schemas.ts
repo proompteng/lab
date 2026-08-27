@@ -3,6 +3,7 @@ import { z } from 'zod'
 const agentId = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
 export const MAX_EDITABLE_FILE_BYTES = 4 * 1024 * 1024
 export const MAX_CODEX_PROMPT_BYTES = 64 * 1024
+export const MAX_FILE_SEARCH_QUERY_BYTES = 256
 
 const filePath = z
   .string()
@@ -55,7 +56,15 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('search-files'),
     agentId,
     path: filePath,
-    query: z.string().trim().min(1).max(256),
+    query: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_FILE_SEARCH_QUERY_BYTES)
+      .refine(
+        (value) => Buffer.byteLength(value, 'utf8') <= MAX_FILE_SEARCH_QUERY_BYTES,
+        'Search query exceeds 256 bytes',
+      ),
   }),
   z.strictObject({ action: z.literal('list-terminals'), agentId }),
   z.strictObject({

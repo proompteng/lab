@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { MAX_CODEX_PROMPT_BYTES, MAX_EDITABLE_FILE_BYTES, tengriActionSchema } from './schemas'
+import {
+  MAX_CODEX_PROMPT_BYTES,
+  MAX_EDITABLE_FILE_BYTES,
+  MAX_FILE_SEARCH_QUERY_BYTES,
+  tengriActionSchema,
+} from './schemas'
 
 describe('Tengri BFF action schema', () => {
   test('CreateAgent accepts only a display name and rejects resource escalation fields', () => {
@@ -120,6 +125,22 @@ describe('Tengri BFF action schema', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         text: `${exact}🙂`,
+      }).success,
+    ).toBe(false)
+  })
+
+  test('bounds file-search queries by UTF-8 bytes', () => {
+    const exact = 'é'.repeat(MAX_FILE_SEARCH_QUERY_BYTES / 2)
+    expect(
+      tengriActionSchema.safeParse({ action: 'search-files', agentId: 'agent-123', path: '/workspace', query: exact })
+        .success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'search-files',
+        agentId: 'agent-123',
+        path: '/workspace',
+        query: `${exact}é`,
       }).success,
     ).toBe(false)
   })

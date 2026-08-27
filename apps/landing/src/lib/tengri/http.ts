@@ -10,6 +10,7 @@ const RATE_WINDOW_MS = 60_000
 const SUBJECT_LIMIT = 120
 const RATE_WINDOW_CAP = 20_000
 export const MAX_TENGRI_ACTION_BODY_BYTES = MAX_EDITABLE_FILE_BYTES * 6 + 64 * 1024
+export const MAX_CONCURRENT_TENGRI_ACTION_BODIES = 4
 
 export async function requireTengriIdentity(request: Request) {
   const identity = await getRateLimitedTengriIdentity(request)
@@ -63,37 +64,55 @@ export async function readTengriJsonBody(request: Request): Promise<unknown> {
   }
 
   if (!request.body) throw new SyntaxError('Request body is empty')
+  const releaseBodySlot = acquireTengriActionBodySlot()
   const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   let totalBytes = 0
+  let text = ''
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
       totalBytes += value.byteLength
       if (totalBytes > MAX_TENGRI_ACTION_BODY_BYTES) {
-        await reader.cancel('Tengri action body is too large')
+        await reader.cancel('Tengri action body is too large').catch(() => undefined)
         throw new TengriUnavailableError('Tengri action body is too large', 413)
       }
-      chunks.push(value)
+      try {
+        text += decoder.decode(value, { stream: true })
+      } catch {
+        await reader.cancel('Request body is not valid UTF-8').catch(() => undefined)
+        throw new SyntaxError('Request body is not valid UTF-8')
+      }
+    }
+    try {
+      text += decoder.decode()
+    } catch {
+      throw new SyntaxError('Request body is not valid UTF-8')
     }
   } finally {
     reader.releaseLock()
-  }
-
-  const body = new Uint8Array(totalBytes)
-  let offset = 0
-  for (const chunk of chunks) {
-    body.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  let text: string
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(body)
-  } catch {
-    throw new SyntaxError('Request body is not valid UTF-8')
+    releaseBodySlot()
   }
   return JSON.parse(text)
+}
+
+function acquireTengriActionBodySlot() {
+  const state = globalThis as typeof globalThis & { tengriActiveActionBodies?: number }
+  const activeBodies = state.tengriActiveActionBodies ?? 0
+  if (activeBodies >= MAX_CONCURRENT_TENGRI_ACTION_BODIES) {
+    throw new TengriUnavailableError('Too many concurrent Tengri action bodies', 429)
+  }
+  state.tengriActiveActionBodies = activeBodies + 1
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const remaining = (state.tengriActiveActionBodies ?? 1) - 1
+    if (remaining <= 0) delete state.tengriActiveActionBodies
+    else state.tengriActiveActionBodies = remaining
+  }
 }
 
 export function noStoreHeaders(): Record<string, string> {

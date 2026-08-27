@@ -1,8 +1,14 @@
 import { describe, expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
-const { MAX_TENGRI_ACTION_BODY_BYTES, isTengriRateLimited, readTengriJsonBody, requireSameOrigin, tengriRouteError } =
-  await import('./http')
+const {
+  MAX_CONCURRENT_TENGRI_ACTION_BODIES,
+  MAX_TENGRI_ACTION_BODY_BYTES,
+  isTengriRateLimited,
+  readTengriJsonBody,
+  requireSameOrigin,
+  tengriRouteError,
+} = await import('./http')
 
 describe('Tengri BFF request bodies', () => {
   test('parses a bounded UTF-8 JSON body', async () => {
@@ -68,6 +74,42 @@ describe('Tengri BFF request bodies', () => {
       path: '/workspace/nul.txt',
       content,
     })
+  })
+
+  test('bounds concurrent body memory and releases capacity after parsing', async () => {
+    const controllers: ReadableStreamDefaultController<Uint8Array>[] = []
+    const activeParses = Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES }, () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controllers.push(controller)
+        },
+      })
+      const request = {
+        body,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      } as Request
+      return readTengriJsonBody(request)
+    })
+
+    const blockedRequest = new Request('https://proompteng.ai/api/tengri', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'content-type': 'application/json' },
+    })
+    const blockedError = await readTengriJsonBody(blockedRequest).catch((cause: unknown) => cause)
+    const blockedResponse = tengriRouteError(blockedError)
+    expect(blockedResponse.status).toBe(429)
+    expect(await blockedResponse.json()).toEqual({ error: 'Too many concurrent Tengri action bodies' })
+
+    const encodedBody = new TextEncoder().encode('{}')
+    for (const controller of controllers) {
+      controller.enqueue(encodedBody)
+      controller.close()
+    }
+    expect(await Promise.all(activeParses)).toEqual(
+      Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES }, () => ({})),
+    )
+    expect(await readTengriJsonBody(blockedRequest.clone())).toEqual({})
   })
 
   test('requires JSON and rejects cross-origin state-changing requests', async () => {
