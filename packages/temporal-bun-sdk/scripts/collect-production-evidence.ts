@@ -891,19 +891,39 @@ const collectProductionUsageEvidence = async (): Promise<ProductionUsageEvidence
   }
 }
 
-const requiredCiCommands = [
-  'bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs',
-  'bun run --cwd packages/temporal-bun-sdk lint:oxlint',
-  'TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus',
-  'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load',
-  'TEMPORAL_BUN_EVIDENCE_PURPOSE',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:production',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
-  'bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness',
-  'bun run verify:packed-readiness --npm "$spec"',
-  'packages/temporal-bun-sdk/dist/release-provenance.json',
+const requiredCiWorkflowFragments = [
+  {
+    id: 'format',
+    fragment:
+      'bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs',
+  },
+  { id: 'lint', fragment: 'bun run --cwd packages/temporal-bun-sdk lint:oxlint' },
+  { id: 'non-integration-tests', fragment: 'bun test "${test_files[@]}" --timeout=30000' },
+  { id: 'integration-tests', fragment: 'bun test tests/integration --timeout=30000 --max-concurrency=1' },
+  { id: 'replay-corpus', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus' },
+  { id: 'worker-load', fragment: 'TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load' },
+  { id: 'evidence-purpose', fragment: 'TEMPORAL_BUN_EVIDENCE_PURPOSE' },
+  { id: 'production-verification', fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:production' },
+  {
+    id: 'default-choice-verification',
+    fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:default-choice',
+  },
+  {
+    id: 'packed-readiness-verification',
+    fragment: 'bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness',
+  },
+  { id: 'published-readiness-verification', fragment: 'bun run verify:packed-readiness --npm "$spec"' },
+  { id: 'release-provenance-artifact', fragment: 'packages/temporal-bun-sdk/dist/release-provenance.json' },
+  { id: 'determinism-evidence-upload', fragment: 'name: Upload deterministic readiness evidence' },
+  { id: 'determinism-evidence-download', fragment: 'name: Download deterministic readiness evidence' },
+  {
+    id: 'determinism-evidence-artifact-handoff',
+    fragment: 'name: temporal-bun-sdk-determinism-artifacts',
+    minimumOccurrences: 2,
+  },
 ] as const
+
+const countOccurrences = (value: string, fragment: string): number => value.split(fragment).length - 1
 
 const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   const workflowPath = join(repoRoot, '.github', 'workflows', 'temporal-bun-sdk.yml')
@@ -912,10 +932,16 @@ const validateCiWorkflowCoverage = async (): Promise<GateStatus> => {
   }
 
   const workflow = await readFile(workflowPath, 'utf8')
-  const missing = requiredCiCommands.filter((command) => !workflow.includes(command))
+  const missing = requiredCiWorkflowFragments
+    .filter(
+      (requirement) =>
+        countOccurrences(workflow, requirement.fragment) <
+        ('minimumOccurrences' in requirement ? requirement.minimumOccurrences : 1),
+    )
+    .map((requirement) => requirement.id)
   return buildGate(
     missing.length === 0,
-    missing.length === 0 ? `commands=${requiredCiCommands.length}` : `missing=${missing.join(' | ')}`,
+    missing.length === 0 ? `requirements=${requiredCiWorkflowFragments.length}` : `missing=${missing.join(' | ')}`,
   )
 }
 
