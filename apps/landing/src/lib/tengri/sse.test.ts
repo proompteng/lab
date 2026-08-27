@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, mock, test } from 'bun:test'
 
 void mock.module('server-only', () => ({}))
+const { MAX_EVENT_STREAMS_PER_SUBJECT } = await import('./limits')
 const { acquireTengriEventStreamSlot, createTengriEventStream } = await import('./sse')
 
 function fakeSource() {
@@ -65,7 +66,9 @@ describe('Tengri SSE bridge', () => {
   })
 
   test('caps combined file and Codex streams per subject and releases slots idempotently', () => {
-    const releases = Array.from({ length: 4 }, () => acquireTengriEventStreamSlot('github:stream-test'))
+    const releases = Array.from({ length: MAX_EVENT_STREAMS_PER_SUBJECT }, () =>
+      acquireTengriEventStreamSlot('github:stream-test'),
+    )
     expect(releases.every(Boolean)).toBe(true)
     expect(acquireTengriEventStreamSlot('github:stream-test')).toBeNull()
     const otherRelease = acquireTengriEventStreamSlot('github:other-user')
