@@ -43,7 +43,10 @@ func main() {
 
 func run(logger *slog.Logger) error {
 	microVMID := strings.TrimSpace(os.Getenv("MICROVM_ID"))
-	bootstrapToken := os.Getenv("MICROVM_BOOTSTRAP_TOKEN")
+	bootstrapToken, err := loadBootstrapToken()
+	if err != nil {
+		return err
+	}
 	current, err := collectEvidence(microVMID, bootstrapToken, os.ReadFile, time.Now().UTC())
 	if err != nil {
 		return err
@@ -169,7 +172,7 @@ func collectEvidence(
 		return evidence{}, errors.New("MICROVM_ID is required")
 	}
 	if bootstrapToken == "" {
-		return evidence{}, errors.New("MICROVM_BOOTSTRAP_TOKEN is required")
+		return evidence{}, errors.New("bootstrap token is required")
 	}
 
 	bootID, err := readTrimmed(readFile, bootIDPath)
