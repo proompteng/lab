@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "dev:landing": "bun run --filter landing --filter @proompteng/backend dev",
+    "setup:tengri-local": "bun run --filter landing setup:tengri-local",
     "build:landing": "turbo run build --filter=landing",
     "build:proompteng": "bun run packages/scripts/src/proompteng/build-image.ts",
     "build:reviseur": "bun run --filter reviseur build",
