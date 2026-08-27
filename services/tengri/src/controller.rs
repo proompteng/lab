@@ -20,16 +20,19 @@ use tracing::{error, info, warn};
 use crate::{
     activity::{idle_deadline_passed, last_activity_at},
     crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
+    metrics,
     pod::{
         FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
         ensure_pvc, pvc_name,
     },
+    tickets::TicketStore,
 };
 
 #[derive(Clone)]
 pub struct ControllerContext {
     pub client: Client,
     pub namespace: String,
+    pub tickets: TicketStore,
 }
 
 #[derive(Debug, Error)]
@@ -38,6 +41,8 @@ pub enum ReconcileError {
     Kubernetes(#[from] kube::Error),
     #[error("MicroVM {0} is missing a namespace")]
     MissingNamespace(String),
+    #[error("Tengri capability cleanup failed: {0}")]
+    TicketStore(String),
     #[error("timed out deleting owned resource {0}")]
     CleanupTimeout(String),
     #[error("failed waiting for owned resource deletion: {0}")]
@@ -80,7 +85,7 @@ async fn reconcile(
         if microvm.status.as_ref() != Some(&status) {
             patch_status(&microvms, &microvm, status).await?;
         }
-        cleanup(&context.client, &namespace, &microvm).await?;
+        cleanup(&context.client, &namespace, &microvm, &context.tickets).await?;
         let current = microvms.get(&name).await?;
         remove_finalizer(&microvms, &current).await?;
         return Ok(Action::await_change());
@@ -98,6 +103,7 @@ async fn reconcile(
     let now = Utc::now();
     if deadline_passed(&microvm.spec.expires_at, now) {
         info!(microvm = %name, "hard expiry reached; deleting MicroVM and persistent state");
+        metrics::global().record_expiry_deletion();
         microvms.delete(&name, &DeleteParams::default()).await?;
         return Ok(Action::await_change());
     }
@@ -109,6 +115,11 @@ async fn reconcile(
     }
 
     if microvm.spec.desired_state == MicroVMDesiredState::Sleeping {
+        context
+            .tickets
+            .remove_agent(&name)
+            .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
+        metrics::global().clear_pty_sessions(&name);
         // Sleeping is observable only after the Firecracker guest is gone. Waiting for
         // foreground deletion also prevents a resume from racing a terminating Pod.
         delete_and_wait(&pods, &name).await?;
@@ -175,11 +186,44 @@ async fn reconcile(
     };
     let status = derive_status(&microvm, &pod, &home_claim, now);
 
+    if status.phase == MicroVMPhase::Ready
+        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready)
+    {
+        let previous = microvm.status.as_ref().map(|value| value.phase);
+        let since = if previous == Some(MicroVMPhase::Sleeping) {
+            microvm
+                .status
+                .as_ref()
+                .and_then(|value| value.last_activity_at.as_deref())
+        } else {
+            Some(microvm.spec.created_at.as_str())
+        };
+        if let Some(millis) = since.and_then(|value| elapsed_millis(value, now)) {
+            if previous == Some(MicroVMPhase::Sleeping) {
+                metrics::global().observe_resume(millis);
+            } else {
+                metrics::global().observe_boot(millis);
+            }
+        }
+    }
+    if status.phase == MicroVMPhase::Failed
+        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Failed)
+    {
+        metrics::global().record_guest_failure();
+    }
+
     if microvm.status.as_ref() != Some(&status) {
         patch_status(&microvms, &microvm, status).await?;
     }
 
     Ok(Action::requeue(next_requeue(&microvm, now)))
+}
+
+fn elapsed_millis(value: &str, now: DateTime<Utc>) -> Option<u64> {
+    let started = DateTime::parse_from_rfc3339(value)
+        .ok()?
+        .with_timezone(&Utc);
+    u64::try_from((now - started).num_milliseconds().max(0)).ok()
 }
 
 fn error_policy(
@@ -195,7 +239,12 @@ async fn cleanup(
     client: &Client,
     namespace: &str,
     microvm: &MicroVM,
+    tickets: &TicketStore,
 ) -> Result<(), ReconcileError> {
+    tickets
+        .remove_agent(&microvm.name_any())
+        .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
+    metrics::global().clear_pty_sessions(&microvm.name_any());
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
     let claims: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), namespace);

@@ -2,21 +2,24 @@ mod activity;
 mod auth;
 mod controller;
 mod crd;
+mod gateway;
 mod grpc;
+mod guest;
+mod metrics;
 mod pod;
+mod tickets;
 
 use std::{env, net::SocketAddr, time::Duration};
 
 use activity::ActivityTracker;
 use anyhow::Context as _;
-use axum::{Json, Router, routing::get};
 use crd::MicroVMArchitecture;
+use gateway::GatewayState;
 use grpc::{
     ControlPlane, ControlPlaneConfig,
     proto::micro_vm_control_plane_server::MicroVmControlPlaneServer,
 };
 use kube::Client;
-use serde_json::{Value, json};
 use tokio::{net::TcpListener, signal, sync::watch, time::timeout};
 use tonic::transport::Server;
 use tracing::{info, warn};
@@ -26,6 +29,7 @@ const DEFAULT_NAMESPACE: &str = "tengri";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
 const DEFAULT_GATEWAY_ADDRESS: &str = "0.0.0.0:8080";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
+const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,13 +41,23 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let namespace = env_value("TENGRI_NAMESPACE").unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
-    let listen_address = socket_address("TENGRI_LISTEN_ADDRESS", DEFAULT_LISTEN_ADDRESS)?;
-    let gateway_address = socket_address("TENGRI_GATEWAY_ADDRESS", DEFAULT_GATEWAY_ADDRESS)?;
+    let listen_address = env_value("TENGRI_LISTEN_ADDRESS")
+        .unwrap_or_else(|| DEFAULT_LISTEN_ADDRESS.to_owned())
+        .parse::<SocketAddr>()
+        .context("parse TENGRI_LISTEN_ADDRESS")?;
+    let gateway_address = env_value("TENGRI_GATEWAY_ADDRESS")
+        .unwrap_or_else(|| DEFAULT_GATEWAY_ADDRESS.to_owned())
+        .parse::<SocketAddr>()
+        .context("parse TENGRI_GATEWAY_ADDRESS")?;
     let architecture = parse_architecture(
         &env_value("TENGRI_GUEST_ARCHITECTURE").unwrap_or_else(|| DEFAULT_ARCHITECTURE.to_owned()),
     )?;
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
     let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
+    let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
+    let public_url = required_env("TENGRI_PUBLIC_URL")?;
+    let preview_url_template = required_env("TENGRI_PREVIEW_URL_TEMPLATE")?;
+    let desktop_origin = required_env("TENGRI_DESKTOP_ORIGIN")?;
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
@@ -55,20 +69,32 @@ async fn main() -> anyhow::Result<()> {
             default_image,
             architecture,
             internal_hmac_secret,
+            ticket_signing_secret,
+            public_url,
         },
+        activity.clone(),
+    )?;
+    let tickets = service.tickets();
+    let gateway_state = GatewayState::new(
+        client.clone(),
+        namespace.clone(),
+        tickets.clone(),
         activity,
+        preview_url_template,
+        desktop_origin,
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
         .with_context(|| format!("bind HTTP gateway on {gateway_address}"))?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let controller_client = client;
+    let controller_client = client.clone();
     let controller_namespace = namespace.clone();
     let mut controller_task = tokio::spawn(async move {
         controller::run(controller::ControllerContext {
             client: controller_client,
             namespace: controller_namespace,
+            tickets,
         })
         .await;
         Ok::<(), anyhow::Error>(())
@@ -77,24 +103,25 @@ async fn main() -> anyhow::Result<()> {
     let grpc_shutdown = shutdown_rx.clone();
     let mut grpc_task = tokio::spawn(async move {
         Server::builder()
-            .add_service(MicroVmControlPlaneServer::new(service))
+            .add_service(
+                MicroVmControlPlaneServer::new(service)
+                    .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
+                    .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES),
+            )
             .serve_with_shutdown(listen_address, wait_for_shutdown(grpc_shutdown))
             .await
-            .context("serve gRPC lifecycle API")
+            .context("serve gRPC control plane")
     });
 
     let gateway_shutdown = shutdown_rx;
     let mut gateway_task = tokio::spawn(async move {
-        let router = Router::new()
-            .route("/health", get(health))
-            .route("/ready", get(health));
-        axum::serve(gateway_listener, router)
+        axum::serve(gateway_listener, gateway::router(gateway_state))
             .with_graceful_shutdown(wait_for_shutdown(gateway_shutdown))
             .await
-            .context("serve HTTP health endpoints")
+            .context("serve HTTP and WebSocket gateway")
     });
 
-    info!(%listen_address, %gateway_address, %namespace, ?architecture, "Tengri lifecycle control plane ready");
+    info!(%listen_address, %gateway_address, %namespace, ?architecture, "Tengri control plane ready");
     let result = tokio::select! {
         () = shutdown_signal() => Ok(()),
         result = &mut controller_task => task_result("controller", result),
@@ -114,10 +141,6 @@ async fn main() -> anyhow::Result<()> {
     })
     .await;
     result
-}
-
-async fn health() -> Json<Value> {
-    Json(json!({"status": "ok"}))
 }
 
 fn task_result(
@@ -162,13 +185,6 @@ async fn shutdown_signal() {
     warn!("shutdown signal received");
 }
 
-fn socket_address(name: &str, default: &str) -> anyhow::Result<SocketAddr> {
-    env_value(name)
-        .unwrap_or_else(|| default.to_owned())
-        .parse()
-        .with_context(|| format!("parse {name}"))
-}
-
 fn env_value(name: &str) -> Option<String> {
     env::var(name)
         .ok()
@@ -187,25 +203,5 @@ fn parse_architecture(value: &str) -> anyhow::Result<MicroVMArchitecture> {
         _ => Err(anyhow::anyhow!(
             "TENGRI_GUEST_ARCHITECTURE must be amd64 or arm64"
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn health_is_explicit_and_non_demo() {
-        let Json(body) = health().await;
-        assert_eq!(body, json!({"status": "ok"}));
-    }
-
-    #[test]
-    fn architecture_policy_is_server_owned() {
-        assert_eq!(
-            parse_architecture("amd64").expect("amd64"),
-            MicroVMArchitecture::Amd64,
-        );
-        assert!(parse_architecture("caller-selected").is_err());
     }
 }

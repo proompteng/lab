@@ -2,12 +2,12 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::try_stream;
 use chrono::{DateTime, Utc};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use kube::{
     Api, Client, Resource, ResourceExt,
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
@@ -19,6 +19,9 @@ use crate::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
+    guest::{GuestClient, GuestError},
+    metrics,
+    tickets::TicketStore,
 };
 
 pub mod proto {
@@ -26,13 +29,24 @@ pub mod proto {
 }
 
 use proto::{
-    Agent, AgentCondition, AgentPhase, Architecture, CreateAgentRequest, DeleteAgentRequest, Empty,
-    GetAgentRequest, ListAgentsRequest, ListAgentsResponse, ResumeAgentRequest, SleepAgentRequest,
-    WatchAgentRequest, micro_vm_control_plane_server::MicroVmControlPlane,
+    Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
+    CodexEvent, CodexEventKind, CodexLogin, CodexThread, CodexTurn, CreateAgentRequest,
+    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
+    DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
+    GetCodexAccountRequest, InterruptCodexTurnRequest, IssuePreviewSessionRequest,
+    IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListFilesRequest,
+    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
+    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
+    ResumeAgentRequest, ResumeCodexThreadRequest, SearchFilesRequest, SearchFilesResponse,
+    SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest,
+    TerminalSession, TerminalTicket, TerminateTerminalRequest, WatchAgentRequest,
+    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
+    micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
 const MAX_AGENTS: usize = 6;
+const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
@@ -42,6 +56,7 @@ pub struct ControlPlane {
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
     auth: Authenticator,
+    tickets: TicketStore,
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
 }
@@ -51,6 +66,8 @@ pub struct ControlPlaneConfig {
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
     pub internal_hmac_secret: String,
+    pub ticket_signing_secret: String,
+    pub public_url: String,
 }
 
 impl ControlPlane {
@@ -71,9 +88,14 @@ impl ControlPlane {
             default_image: config.default_image.into(),
             architecture: config.architecture,
             auth,
+            tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
             create_lock: Arc::new(Mutex::new(())),
         })
+    }
+
+    pub fn tickets(&self) -> TicketStore {
+        self.tickets.clone()
     }
 
     async fn authorize<T: prost::Message>(
@@ -173,6 +195,13 @@ impl ControlPlane {
             sleep(Duration::from_millis(750)).await;
         }
     }
+
+    async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
+        self.wake_agent(principal, id).await?;
+        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
+            .await
+            .map_err(map_guest_error)
+    }
 }
 
 fn agent_ready_for_guest(agent: &MicroVM) -> bool {
@@ -209,6 +238,7 @@ impl MicroVmControlPlane for ControlPlane {
             .items
             .len();
         if count >= MAX_AGENTS {
+            metrics::global().record_quota_rejection();
             return Err(Status::resource_exhausted(
                 "global six-agent capacity is full",
             ));
@@ -241,6 +271,9 @@ impl MicroVmControlPlane for ControlPlane {
             }
             Err(error) => {
                 let status = map_kube_error(error);
+                if status.code() == tonic::Code::ResourceExhausted {
+                    metrics::global().record_quota_rejection();
+                }
                 return Err(status);
             }
         };
@@ -345,6 +378,499 @@ impl MicroVmControlPlane for ControlPlane {
             .map_err(map_kube_error)?;
         Ok(Response::new(Empty {}))
     }
+
+    async fn list_files(
+        &self,
+        request: Request<ListFilesRequest>,
+    ) -> Result<Response<ListFilesResponse>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .list_files(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(ListFilesResponse {
+            path: result.path,
+            entries: result.entries.into_iter().map(file_entry).collect(),
+        }))
+    }
+
+    async fn read_file(
+        &self,
+        request: Request<ReadFileRequest>,
+    ) -> Result<Response<ReadFileResponse>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .read_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(ReadFileResponse {
+            path: result.path,
+            content: result.content,
+            content_type: result.content_type,
+        }))
+    }
+
+    async fn write_file(
+        &self,
+        request: Request<WriteFileRequest>,
+    ) -> Result<Response<WriteFileResponse>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .write_file(&request.path, &request.content)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(WriteFileResponse {
+            path: result.path,
+            size: result.size,
+        }))
+    }
+
+    async fn create_directory(
+        &self,
+        request: Request<CreateDirectoryRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let entry = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .create_directory(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(entry)))
+    }
+
+    async fn move_file(
+        &self,
+        request: Request<MoveFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let entry = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .move_file(&request.source_path, &request.destination_path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(entry)))
+    }
+
+    async fn delete_file(
+        &self,
+        request: Request<DeleteFileRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        self.guest(&principal, &request.agent_id)
+            .await?
+            .delete_file(&request.path, request.recursive)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn search_files(
+        &self,
+        request: Request<SearchFilesRequest>,
+    ) -> Result<Response<SearchFilesResponse>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let limit = request.limit.clamp(1, 200);
+        let entries = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .search_files(&request.query, &request.path, limit)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(SearchFilesResponse {
+            entries: entries.into_iter().map(file_entry).collect(),
+        }))
+    }
+
+    type WatchFilesStream = Pin<Box<dyn Stream<Item = Result<FileEvent, Status>> + Send>>;
+
+    async fn watch_files(
+        &self,
+        request: Request<WatchFilesRequest>,
+    ) -> Result<Response<Self::WatchFilesStream>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let activity = self.activity.clone();
+        let agent_id = request.agent_id.clone();
+        let stream = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .watch_files(&request.path, request.after_sequence)
+            .await
+            .map_err(map_guest_error)?
+            .map(move |event| {
+                if event.is_ok() {
+                    activity.touch(&agent_id);
+                }
+                event
+                    .map(|event| FileEvent {
+                        sequence: event.sequence,
+                        kind: file_event_kind(&event.kind) as i32,
+                        path: event.path,
+                        previous_path: event.previous_path,
+                        entry: event.entry.map(file_entry),
+                    })
+                    .map_err(map_guest_error)
+            });
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    async fn create_terminal(
+        &self,
+        request: Request<CreateTerminalRequest>,
+    ) -> Result<Response<TerminalSession>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let terminal = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .create_terminal(&request.cwd, request.columns, request.rows)
+            .await
+            .map_err(map_guest_error)?;
+        metrics::global().record_pty_created(&request.agent_id, &terminal.id);
+        Ok(Response::new(terminal_session(terminal)))
+    }
+
+    async fn list_terminals(
+        &self,
+        request: Request<ListTerminalsRequest>,
+    ) -> Result<Response<ListTerminalsResponse>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let sessions = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .list_terminals()
+            .await
+            .map_err(map_guest_error)?;
+        metrics::global().replace_pty_sessions(
+            &request.agent_id,
+            sessions.iter().map(|session| session.id.clone()),
+        );
+        Ok(Response::new(ListTerminalsResponse {
+            sessions: sessions.into_iter().map(terminal_session).collect(),
+        }))
+    }
+
+    async fn terminate_terminal(
+        &self,
+        request: Request<TerminateTerminalRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        self.guest(&principal, &request.agent_id)
+            .await?
+            .terminate_terminal(&request.terminal_id)
+            .await
+            .map_err(map_guest_error)?;
+        metrics::global().record_pty_terminated(&request.agent_id, &request.terminal_id);
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn issue_terminal_ticket(
+        &self,
+        request: Request<IssueTerminalTicketRequest>,
+    ) -> Result<Response<TerminalTicket>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let terminals = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .list_terminals()
+            .await
+            .map_err(map_guest_error)?;
+        metrics::global().replace_pty_sessions(
+            &request.agent_id,
+            terminals.iter().map(|terminal| terminal.id.clone()),
+        );
+        if !terminals
+            .iter()
+            .any(|terminal| terminal.id == request.terminal_id)
+        {
+            return Err(Status::not_found("terminal session was not found"));
+        }
+        let issued = self.tickets.issue_terminal(
+            &principal.owner_hash,
+            &request.agent_id,
+            &request.terminal_id,
+        )?;
+        Ok(Response::new(TerminalTicket {
+            websocket_url: issued.url,
+            ticket: issued.token,
+            expires_at: issued.expires_at,
+        }))
+    }
+
+    async fn get_codex_account(
+        &self,
+        request: Request<GetCodexAccountRequest>,
+    ) -> Result<Response<CodexAccount>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call("account/read", json!({"refreshToken": true}))
+            .await
+            .map_err(map_guest_error)?;
+        let authenticated = value
+            .pointer("/account")
+            .is_some_and(|value| !value.is_null());
+        Ok(Response::new(CodexAccount {
+            authenticated,
+            email: json_string(&value, &["/account/email", "/email"]),
+            plan: json_string(&value, &["/account/planType", "/planType", "/plan"]),
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn start_codex_login(
+        &self,
+        request: Request<StartCodexLoginRequest>,
+    ) -> Result<Response<CodexLogin>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call("account/login/start", json!({"type": "chatgptDeviceCode"}))
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexLogin {
+            login_id: json_string(&value, &["/loginId"]),
+            verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
+            user_code: json_string(&value, &["/userCode"]),
+            expires_at: String::new(),
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn create_codex_thread(
+        &self,
+        request: Request<CreateCodexThreadRequest>,
+    ) -> Result<Response<CodexThread>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "thread/start",
+                json!({
+                    "cwd": "/workspace",
+                    "runtimeWorkspaceRoots": ["/workspace"],
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": null,
+                    "sandbox": "danger-full-access",
+                    "ephemeral": false,
+                    "experimentalRawEvents": false,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexThread {
+            id: json_string(&value, &["/thread/id"]),
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn resume_codex_thread(
+        &self,
+        request: Request<ResumeCodexThreadRequest>,
+    ) -> Result<Response<CodexThread>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "thread/resume",
+                json!({
+                    "threadId": request.thread_id,
+                    "cwd": "/workspace",
+                    "runtimeWorkspaceRoots": ["/workspace"],
+                    "approvalPolicy": "on-request",
+                    "sandbox": "danger-full-access",
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexThread {
+            id: json_string(&value, &["/thread/id"]),
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn send_codex_turn(
+        &self,
+        request: Request<SendCodexTurnRequest>,
+    ) -> Result<Response<CodexTurn>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        let text = validate_prompt(&request.text)?;
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "turn/start",
+                json!({
+                    "threadId": request.thread_id,
+                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                    "cwd": "/workspace",
+                    "runtimeWorkspaceRoots": ["/workspace"],
+                    "approvalPolicy": "on-request",
+                    "sandboxPolicy": {"type": "dangerFullAccess"},
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexTurn {
+            id: json_string(&value, &["/turn/id"]),
+            thread_id: request.thread_id,
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn steer_codex_turn(
+        &self,
+        request: Request<SteerCodexTurnRequest>,
+    ) -> Result<Response<CodexTurn>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        validate_codex_id(&request.turn_id)?;
+        let text = validate_prompt(&request.text)?;
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "turn/steer",
+                json!({
+                    "threadId": request.thread_id,
+                    "expectedTurnId": request.turn_id,
+                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexTurn {
+            id: json_string(&value, &["/turn/id", "/turnId"]),
+            thread_id: request.thread_id,
+            raw_json: value.to_string(),
+        }))
+    }
+
+    async fn interrupt_codex_turn(
+        &self,
+        request: Request<InterruptCodexTurnRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.thread_id)?;
+        validate_codex_id(&request.turn_id)?;
+        self.guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "turn/interrupt",
+                json!({"threadId": request.thread_id, "turnId": request.turn_id}),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn resolve_codex_approval(
+        &self,
+        request: Request<ResolveCodexApprovalRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_codex_id(&request.approval_id)?;
+        let decision = match CodexApprovalDecision::try_from(request.decision)
+            .unwrap_or(CodexApprovalDecision::Unspecified)
+        {
+            CodexApprovalDecision::ApproveOnce => "approveOnce",
+            CodexApprovalDecision::ApproveSession => "approveSession",
+            CodexApprovalDecision::Deny => "deny",
+            CodexApprovalDecision::Unspecified => {
+                return Err(Status::invalid_argument("approval decision is required"));
+            }
+        };
+        self.guest(&principal, &request.agent_id)
+            .await?
+            .resolve_codex_approval(&request.approval_id, decision)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(Empty {}))
+    }
+
+    type WatchCodexEventsStream = Pin<Box<dyn Stream<Item = Result<CodexEvent, Status>> + Send>>;
+
+    async fn watch_codex_events(
+        &self,
+        request: Request<WatchCodexEventsRequest>,
+    ) -> Result<Response<Self::WatchCodexEventsStream>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let activity = self.activity.clone();
+        let agent_id = request.agent_id.clone();
+        let stream = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .watch_codex_events(request.after_sequence)
+            .await
+            .map_err(map_guest_error)?
+            .map(move |event| {
+                if event.is_ok() {
+                    activity.touch(&agent_id);
+                }
+                event.map(codex_event).map_err(map_guest_error)
+            });
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    async fn issue_preview_session(
+        &self,
+        request: Request<IssuePreviewSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        let port = u16::try_from(request.port)
+            .ok()
+            .filter(|port| *port >= 1024 && *port != 8080)
+            .ok_or_else(|| {
+                Status::invalid_argument(
+                    "preview port must be between 1024 and 65535 and cannot be 8080",
+                )
+            })?;
+        let path = validate_preview_path(&request.path)?;
+        self.guest(&principal, &request.agent_id).await?;
+        let issued =
+            self.tickets
+                .issue_preview(&principal.owner_hash, &request.agent_id, port, &path)?;
+        metrics::global().record_preview_session();
+        Ok(Response::new(PreviewSession {
+            id: issued.token.clone(),
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+        }))
+    }
 }
 
 fn agent_from_microvm(microvm: &MicroVM) -> Agent {
@@ -403,6 +929,329 @@ fn agent_phase(microvm: &MicroVM) -> MicroVMPhase {
     }
 }
 
+fn file_entry(entry: crate::guest::FileEntry) -> FileEntry {
+    FileEntry {
+        name: entry.name,
+        path: entry.path,
+        directory: entry.directory,
+        size: entry.size,
+        modified_at: entry.modified_at,
+    }
+}
+
+fn terminal_session(session: crate::guest::TerminalSession) -> TerminalSession {
+    TerminalSession {
+        id: session.id,
+        cwd: session.cwd,
+        created_at: session.created_at,
+        last_activity_at: session.last_activity_at,
+        attached: session.attached,
+    }
+}
+
+fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
+    let method = event.method.clone();
+    let raw_json = event.raw.to_string();
+    let raw_json = if raw_json.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
+        raw_json
+    } else {
+        "{}".to_owned()
+    };
+    CodexEvent {
+        sequence: event.sequence,
+        kind: codex_event_kind(&method, &event.approval_id, &event.raw) as i32,
+        method,
+        thread_id: json_string(&event.raw, &["/params/threadId", "/params/thread/id"]),
+        turn_id: json_string(&event.raw, &["/params/turnId", "/params/turn/id"]),
+        item_id: json_string(&event.raw, &["/params/itemId", "/params/item/id"]),
+        text: codex_event_text(&event.raw),
+        approval_id: event.approval_id,
+        raw_json,
+    }
+}
+
+fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventKind {
+    let normalized_method = method.to_ascii_lowercase();
+    if !approval_id.is_empty() {
+        return CodexEventKind::Approval;
+    }
+    if let Some(kind) = raw
+        .pointer("/params/item")
+        .and_then(|item| codex_thread_item_kind(&normalized_method, item))
+    {
+        kind
+    } else if normalized_method == "error" || normalized_method.contains("error") {
+        CodexEventKind::Error
+    } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
+        CodexEventKind::Warning
+    } else if normalized_method.contains("tokenusage") || normalized_method.contains("ratelimits") {
+        CodexEventKind::Usage
+    } else if normalized_method.contains("filechange") || normalized_method.contains("diff") {
+        CodexEventKind::FileDiff
+    } else if normalized_method.contains("commandexecution")
+        || normalized_method.contains("tool")
+        || normalized_method.contains("mcp")
+    {
+        if normalized_method.contains("output") || normalized_method.contains("progress") {
+            CodexEventKind::ToolOutput
+        } else {
+            CodexEventKind::ToolCall
+        }
+    } else if normalized_method.contains("plan") {
+        CodexEventKind::Plan
+    } else if normalized_method.contains("reasoning") {
+        CodexEventKind::ReasoningSummary
+    } else if normalized_method.contains("agentmessage") {
+        CodexEventKind::AssistantText
+    } else {
+        CodexEventKind::ThreadState
+    }
+}
+
+fn codex_thread_item_kind(normalized_method: &str, item: &Value) -> Option<CodexEventKind> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    Some(match item_type {
+        "userMessage" => CodexEventKind::UserMessage,
+        "agentMessage" => CodexEventKind::AssistantText,
+        "reasoning" => CodexEventKind::ReasoningSummary,
+        "plan" => CodexEventKind::Plan,
+        "fileChange" => CodexEventKind::FileDiff,
+        "commandExecution" => {
+            if item
+                .get("aggregatedOutput")
+                .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed" | "declined")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "mcpToolCall" | "dynamicToolCall" => {
+            if item.get("result").is_some_and(|value| !value.is_null())
+                || item.get("error").is_some_and(|value| !value.is_null())
+                || item
+                    .get("contentItems")
+                    .is_some_and(|value| !value.is_null())
+                || matches!(
+                    item.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed")
+                )
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "webSearch" => {
+            if normalized_method == "item/completed"
+                || item.get("action").is_some_and(|value| !value.is_null())
+            {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "imageView" | "subAgentActivity" => CodexEventKind::ToolCall,
+        "imageGeneration" => {
+            if matches!(
+                item.get("status").and_then(Value::as_str),
+                Some("completed" | "failed")
+            ) {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        "collabAgentToolCall" => {
+            if matches!(
+                item.get("status").and_then(Value::as_str),
+                Some("completed" | "failed")
+            ) {
+                CodexEventKind::ToolOutput
+            } else {
+                CodexEventKind::ToolCall
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn codex_event_text(value: &Value) -> String {
+    bounded_codex_text(codex_event_text_unbounded(value))
+}
+
+fn codex_event_text_unbounded(value: &Value) -> String {
+    if let Some(outcome) = codex_collaboration_outcome(value) {
+        return outcome;
+    }
+
+    let direct = json_string(
+        value,
+        &[
+            "/params/delta",
+            "/params/text",
+            "/params/message",
+            "/params/reason",
+            "/params/summary",
+            "/params/details",
+            "/params/diff",
+            "/params/command",
+            "/params/item/text",
+            "/params/item/aggregatedOutput",
+            "/params/item/command",
+            "/params/item/query",
+            "/params/item/path",
+            "/params/item/savedPath",
+            "/params/item/result",
+            "/params/item/revisedPrompt",
+            "/params/item/failure/message",
+            "/params/item/prompt",
+            "/params/item/agentPath",
+            "/params/error/message",
+            "/params/turn/error/message",
+        ],
+    );
+    if !direct.is_empty() {
+        return direct;
+    }
+    for pointer in ["/params/item/content", "/params/item/summary"] {
+        let text = value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    for pointer in [
+        "/params/item/contentItems",
+        "/params/item/result/content",
+        "/params/item/changes",
+    ] {
+        let text = value
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+                    .or_else(|| item.get("diff").and_then(Value::as_str))
+                    .or_else(|| item.get("path").and_then(Value::as_str))
+                    .or_else(|| match item.get("type").and_then(Value::as_str) {
+                        Some("inputImage") => Some("[Image output]"),
+                        Some("inputAudio") => Some("[Audio output]"),
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    if let Some(plan) = value.pointer("/params/plan").and_then(Value::as_array) {
+        let explanation = value
+            .pointer("/params/explanation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let steps = plan
+            .iter()
+            .filter_map(|step| {
+                let text = step.get("step")?.as_str()?;
+                let status = step
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("pending");
+                let marker = if status == "completed" { "x" } else { " " };
+                Some(format!("- [{marker}] {text}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return [explanation, steps.as_str()]
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    String::new()
+}
+
+fn codex_collaboration_outcome(value: &Value) -> Option<String> {
+    let item = value.pointer("/params/item")?;
+    if item.get("type").and_then(Value::as_str) != Some("collabAgentToolCall") {
+        return None;
+    }
+
+    let status = item.get("status").and_then(Value::as_str)?;
+    if !matches!(status, "completed" | "failed") {
+        return None;
+    }
+
+    let tool = item
+        .get("tool")
+        .and_then(Value::as_str)
+        .filter(|tool| !tool.is_empty());
+    let mut lines = vec![match tool {
+        Some(tool) => format!("Agent collaboration {tool}: {status}"),
+        None => format!("Agent collaboration: {status}"),
+    }];
+
+    if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
+        let mut states = states.iter().collect::<Vec<_>>();
+        states.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (thread_id, state) in states {
+            let agent_status = state
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let message = state
+                .get("message")
+                .and_then(Value::as_str)
+                .filter(|message| !message.is_empty());
+            lines.push(match message {
+                Some(message) => format!("{thread_id}: {agent_status} — {message}"),
+                None => format!("{thread_id}: {agent_status}"),
+            });
+        }
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn bounded_codex_text(text: String) -> String {
+    if text.len() <= MAX_CODEX_EVENT_TEXT_BYTES {
+        return text;
+    }
+    const MARKER: &str = "\n… output truncated …";
+    let mut end = MAX_CODEX_EVENT_TEXT_BYTES.saturating_sub(MARKER.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &text[..end], MARKER)
+}
+
+fn file_event_kind(kind: &str) -> FileEventKind {
+    match kind {
+        "created" => FileEventKind::Created,
+        "changed" => FileEventKind::Changed,
+        "removed" => FileEventKind::Removed,
+        "renamed" => FileEventKind::Renamed,
+        _ => FileEventKind::Reset,
+    }
+}
+
 fn phase_to_proto(phase: MicroVMPhase) -> AgentPhase {
     match phase {
         MicroVMPhase::Pending => AgentPhase::Pending,
@@ -452,6 +1301,48 @@ fn validate_resource_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
+fn validate_codex_id(value: &str) -> Result<(), Status> {
+    if value.is_empty()
+        || value.len() > 160
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(Status::invalid_argument("invalid Codex identifier"));
+    }
+    Ok(())
+}
+
+fn validate_prompt(value: &str) -> Result<String, Status> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 64 << 10 {
+        return Err(Status::invalid_argument(
+            "message must contain between 1 byte and 64 KiB",
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_preview_path(value: &str) -> Result<String, Status> {
+    let value = if value.is_empty() { "/" } else { value };
+    if !value.starts_with('/') || value.len() > 4_096 || value.contains(['\0', '\r', '\n', '#']) {
+        return Err(Status::invalid_argument(
+            "preview path must be an absolute path without a fragment and at most 4096 bytes",
+        ));
+    }
+    let parsed = reqwest::Url::parse(&format!("http://guest.invalid{value}"))
+        .map_err(|_| Status::invalid_argument("preview path is invalid"))?;
+    if parsed.host_str() != Some("guest.invalid") || parsed.fragment().is_some() {
+        return Err(Status::invalid_argument("preview path is invalid"));
+    }
+    let mut normalized = parsed.path().to_owned();
+    if let Some(query) = parsed.query() {
+        normalized.push('?');
+        normalized.push_str(query);
+    }
+    Ok(normalized)
+}
+
 fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
     let (_, digest) = image
         .rsplit_once("@sha256:")
@@ -464,6 +1355,14 @@ fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
         "TENGRI_DEFAULT_IMAGE has an invalid sha256 digest"
     );
     Ok(())
+}
+
+fn json_string(value: &Value, pointers: &[&str]) -> String {
+    pointers
+        .iter()
+        .find_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn deadline_passed(value: &str, now: DateTime<Utc>) -> bool {
@@ -486,6 +1385,31 @@ fn map_kube_error(error: kube::Error) -> Status {
         };
     }
     Status::internal(error.to_string())
+}
+
+fn map_guest_error(error: GuestError) -> Status {
+    metrics::global().record_guest_failure();
+    match error {
+        GuestError::NotReady(message) | GuestError::MissingGuestIp(message) => {
+            Status::unavailable(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::NOT_FOUND => {
+            Status::not_found(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::CONFLICT => {
+            Status::already_exists(message)
+        }
+        GuestError::Api { status, message }
+            if status == reqwest::StatusCode::BAD_REQUEST
+                || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY =>
+        {
+            Status::invalid_argument(message)
+        }
+        GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
+            Status::permission_denied(message)
+        }
+        other => Status::internal(other.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -614,5 +1538,205 @@ mod tests {
             agent_from_microvm(&agent).phase,
             AgentPhase::Terminating as i32,
         );
+    }
+
+    #[test]
+    fn codex_events_are_typed_without_fabrication() {
+        assert_eq!(
+            codex_event_kind("item/agentMessage/delta", "", &json!({})),
+            CodexEventKind::AssistantText
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/commandExecution/requestApproval",
+                "approval-1",
+                &json!({}),
+            ),
+            CodexEventKind::Approval
+        );
+        assert_eq!(
+            codex_event_kind("item/fileChange/patchUpdated", "", &json!({})),
+            CodexEventKind::FileDiff
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "userMessage"}}}),
+            ),
+            CodexEventKind::UserMessage
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "agentMessage", "text": "done"}}}),
+            ),
+            CodexEventKind::AssistantText
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({
+                    "params": {
+                        "item": {
+                            "type": "commandExecution",
+                            "status": "completed",
+                            "aggregatedOutput": "12 pass"
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/started",
+                "",
+                &json!({"params": {"item": {"type": "webSearch", "query": "Kata Firecracker", "action": null}}}),
+            ),
+            CodexEventKind::ToolCall
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "webSearch", "query": "Kata Firecracker", "action": null}}}),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_kind(
+                "thread/item",
+                "",
+                &json!({
+                    "params": {
+                        "item": {
+                            "type": "webSearch",
+                            "query": "Kata Firecracker",
+                            "action": {"type": "search", "query": "Kata Firecracker", "queries": null}
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "imageGeneration",
+                        "status": "completed",
+                        "result": "generated-image-result"
+                    }
+                }
+            })),
+            "generated-image-result"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "imageGeneration",
+                        "status": "completed",
+                        "revisedPrompt": "refined image prompt"
+                    }
+                }
+            })),
+            "refined image prompt"
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "imageView", "path": "/workspace/image.png"}}}),
+            ),
+            CodexEventKind::ToolCall
+        );
+        assert_eq!(
+            codex_event_kind(
+                "item/completed",
+                "",
+                &json!({"params": {"item": {"type": "imageGeneration", "status": "completed", "result": "opaque"}}}),
+            ),
+            CodexEventKind::ToolOutput
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "collabAgentToolCall",
+                        "tool": "spawnAgent",
+                        "status": "completed",
+                        "prompt": "repeat only the input",
+                        "agentsStates": {
+                            "thread-b": {"status": "failed", "message": "test failed"},
+                            "thread-a": {"status": "completed", "message": "PR opened"}
+                        }
+                    }
+                }
+            })),
+            "Agent collaboration spawnAgent: completed\nthread-a: completed — PR opened\nthread-b: failed — test failed"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {"item": {"content": [{"type": "text", "text": "actual input"}]}}
+            })),
+            "actual input"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "fileChange",
+                        "changes": [{"path": "/workspace/main.rs", "diff": "+fn main() {}"}]
+                    }
+                }
+            })),
+            "+fn main() {}"
+        );
+        assert_eq!(
+            codex_event_kind("configWarning", "", &json!({})),
+            CodexEventKind::Warning
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "explanation": "Implementation order",
+                    "plan": [
+                        {"step": "Build runtime", "status": "completed"},
+                        {"step": "Verify guest", "status": "inProgress"}
+                    ]
+                }
+            })),
+            "Implementation order\n\n- [x] Build runtime\n- [ ] Verify guest"
+        );
+        assert_eq!(
+            codex_event_text(&json!({"params": {"turn": {"error": {"message": "turn failed"}}}})),
+            "turn failed"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {"item": {"contentItems": [{"type": "inputImage", "imageUrl": "opaque"}]}}
+            })),
+            "[Image output]"
+        );
+        let bounded = codex_event_text(&json!({"params": {"text": "😀".repeat(200_000)}}));
+        assert!(bounded.len() <= MAX_CODEX_EVENT_TEXT_BYTES);
+        assert!(bounded.ends_with("… output truncated …"));
+        assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn preview_path_is_normalized_and_cannot_smuggle_a_fragment() {
+        assert_eq!(
+            validate_preview_path("/app?mode=dev").expect("preview path"),
+            "/app?mode=dev",
+        );
+        assert_eq!(validate_preview_path("").expect("default path"), "/");
+        assert!(validate_preview_path("https://private.example").is_err());
+        assert!(validate_preview_path("/app#stolen").is_err());
+        assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
     }
 }

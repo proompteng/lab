@@ -1,47 +1,27 @@
-# Tengri MicroVM reconciler
+# Tengri control plane
 
-This slice implements the Kubernetes runtime boundary for Tengri. A
-`runtime.proompteng.ai/v1alpha1` `MicroVM` is reconciled into exactly one
-Firecracker-backed Nanoagent guest and its persistent state:
+Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` resources. It accepts only signed,
+authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
+an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
 
-```text
-MicroVM CR -> bootstrap Secret + 16 GiB PVC + kata-fc Pod -> MicroVM status
-```
+The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
+the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
-The internal gRPC lifecycle API creates and controls these resources. It is not public: the web BFF
-signs every request with a GitHub subject, timestamp, one-use nonce, RPC path, and protobuf body.
-Tengri verifies the HMAC and derives the deterministic owner-scoped CR name.
+`/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
+Kubernetes control path and in-process ticket state are usable; deployment probes do not advertise an isolated process
+as ready to accept agent operations.
 
-## Lifecycle API
+`TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
+authentication outage by publishing `new,current` in the same 1Password field first: the BFF signs with both keys and
+the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
+bundle, remove the previous key. More than two keys are rejected.
 
-`MicroVMControlPlane` exposes `CreateAgent`, `ListAgents`, `GetAgent`, `WatchAgent`, `SleepAgent`,
-`ResumeAgent`, and `DeleteAgent`. Callers provide only a display name; architecture, image, resource
-profile, idle deadline, and hard expiry are server policy.
+Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
+`tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
+controller restarts and overlapping rollout Pods; only live receipts are retained and the bounded store fails closed.
+The deployment RBAC grants only `get` and `update` on that named ConfigMap.
 
-Authentication rejects stale timestamps, replayed nonces, invalid bodies, invalid RPC paths, and
-cross-owner agent IDs. A one-key or bounded current/previous HMAC bundle supports safe rotation.
-Nonce consumption is persisted in the `tengri-auth-nonces` ConfigMap so replay protection survives
-process restarts.
-
-## Runtime contract
-
-- `runtimeClassName: kata-fc`
-- digest-pinned Nanoagent image
-- fixed 2 CPU, 4 GiB memory, and 16 GiB `rook-ceph-block` workspace
-- unprivileged, non-root guest with no service-account token, host namespace, host path, or added
-  capability
-- proven-runtime and architecture node selection, control-plane tolerations, and topology spreading
-- exact `Pending`, `Booting`, `Ready`, `Sleeping`, `Failed`, and `Terminating` status
-- Pod deletion after 60 idle minutes while preserving the PVC
-- CR, Pod, Secret, and PVC deletion after the four-hour hard expiry
-- foreground finalizer cleanup for the Pod, bootstrap Secret, and PVC
-
-The CRD schema rejects mutable image tags and caller-selected resource sizes. Tengri never changes
-Talos, RuntimeClasses, node schedulability, or node power state.
-
-## Validation
-
-Run from the repository root:
+## Local validation
 
 ```bash
 cargo fmt --manifest-path services/tengri/Cargo.toml --check
@@ -52,7 +32,4 @@ cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdg
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
 ```
 
-The unit tests prove the fixed resource profile, unprivileged `kata-fc` Pod projection, persistent
-PVC projection, precise scheduling/image/container failures, idle sleep, hard expiry, and finalizer
-preservation. Live rollout remains disabled until the later delivery slice pins signed multi-arch
-image digests and enables the Argo applications.
+The protobuf contract is `proto/proompteng/runtime/v1/microvm.proto`.
