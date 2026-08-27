@@ -51,7 +51,6 @@ func (workspace workspace) close() error {
 }
 
 func (workspace workspace) relative(requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
 	if requested == "" || requested == "/" || requested == "." {
 		return ".", nil
 	}
