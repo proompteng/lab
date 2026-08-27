@@ -10,7 +10,7 @@ import kotlin.test.fail
 
 class AlpacaMapperTest {
   @Test
-  fun `keeps bars and updated-bar corrections on one per-symbol sequence`() {
+  fun `keeps finalized bars and updated-bar corrections on one per-symbol sequence`() {
     val sequenceKeys = mutableListOf<String>()
     val sequences = mutableMapOf<String, Long>()
     val nextSequence: (String) -> Long = { key ->
@@ -46,7 +46,10 @@ class AlpacaMapperTest {
 
     assertEquals(listOf("bars:NVDA", "bars:NVDA"), sequenceKeys)
     assertEquals(1L, assertNotNull(barEnvelope).seq)
+    assertTrue(barEnvelope.isFinal)
     assertEquals(2L, assertNotNull(correctionEnvelope).seq)
+    assertEquals("updatedBars", correctionEnvelope.channel)
+    assertTrue(correctionEnvelope.isFinal)
   }
 
   @Test

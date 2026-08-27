@@ -65,6 +65,7 @@ object AlpacaMapper {
           equityFeed = equityFeed,
           isFinal = true,
         )
+      // Alpaca emits updatedBars as completed prior-minute corrections after late trades.
       is AlpacaUpdatedBar ->
         envelope(
           message.symbol,
@@ -74,7 +75,7 @@ object AlpacaMapper {
           payload = json.encodeToJsonElement(AlpacaUpdatedBar.serializer(), message),
           feed = feed,
           equityFeed = equityFeed,
-          isFinal = false,
+          isFinal = true,
           source = "ws",
         )
       is AlpacaStatus ->
