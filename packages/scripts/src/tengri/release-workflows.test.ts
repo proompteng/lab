@@ -7,6 +7,8 @@ import YAML from 'yaml'
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
 const releasePath = resolve(repositoryRoot, '.github/workflows/tengri-release.yml')
+const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
+const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri release workflows', () => {
   it('connects promotion to the image workflow release contract', () => {
@@ -35,6 +37,24 @@ describe('Tengri release workflows', () => {
     expect(source).toContain('digest="sha256:$(sha256sum "${index_path}"')
     expect(source).not.toContain('.Manifest.Digest')
     expect(source).toContain('sourceSha: $sourceSha')
+  })
+
+  it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {
+    const nanoagent = readFileSync(nanoagentDockerfilePath, 'utf8')
+    const tengri = readFileSync(tengriDockerfilePath, 'utf8')
+
+    for (const dockerfile of [nanoagent, tengri]) {
+      expect(dockerfile).toStartWith('# syntax=mirror.gcr.io/docker/dockerfile:1.7')
+      expect(dockerfile).not.toContain('docker.io/')
+    }
+    expect(nanoagent).toContain('ARG GO_BASE_IMAGE=mirror.gcr.io/golang')
+    expect(nanoagent).toContain('ARG NODE_BASE_IMAGE=mirror.gcr.io/node')
+    expect(nanoagent).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
+    expect(nanoagent).toContain('ARG UBUNTU_BASE_IMAGE=mirror.gcr.io/ubuntu')
+    expect(nanoagent).toContain('"bun@${BUN_VERSION}"')
+    expect(nanoagent).not.toContain('oven/bun')
+    expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
+    expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })
 
   it('verifies the exact publishing workflow identity before promotion', () => {
