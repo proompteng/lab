@@ -77,6 +77,12 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("blocked Codex write ignored request cancellation")
 	}
+	select {
+	case <-supervisor.writePermit:
+		supervisor.writePermit <- struct{}{}
+	case <-time.After(time.Second):
+		t.Fatal("canceled Codex write retained the process write permit")
+	}
 
 	closed := make(chan struct{})
 	go func() {

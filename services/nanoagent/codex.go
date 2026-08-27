@@ -335,6 +335,9 @@ func (supervisor *codexSupervisor) request(
 	key := fmt.Sprintf("%d", id)
 	response := make(chan codexPendingResult, 1)
 	supervisor.mu.Lock()
+	if generation == nil {
+		generation = supervisor.generation
+	}
 	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
 		supervisor.mu.Unlock()
 		return nil, errors.New("Codex app-server restarted before the request could be sent")
@@ -351,7 +354,7 @@ func (supervisor *codexSupervisor) request(
 		supervisor.removePending(key)
 		return nil, err
 	}
-	err = supervisor.writeToProcess(ctx, stdin, append(message, '\n'))
+	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
 		supervisor.removePending(key)
 		return nil, err
@@ -676,7 +679,7 @@ func (supervisor *codexSupervisor) writeMessageForGeneration(
 	if stdin == nil {
 		return errors.New("Codex app-server is unavailable")
 	}
-	return supervisor.writeToProcess(context.Background(), stdin, append(message, '\n'))
+	return supervisor.writeToProcess(context.Background(), generation, stdin, append(message, '\n'))
 }
 
 func (supervisor *codexSupervisor) writeMessage(value any) error {
@@ -686,14 +689,20 @@ func (supervisor *codexSupervisor) writeMessage(value any) error {
 	}
 	supervisor.mu.Lock()
 	stdin := supervisor.stdin
+	generation := supervisor.generation
 	supervisor.mu.Unlock()
 	if stdin == nil {
 		return errors.New("Codex app-server is unavailable")
 	}
-	return supervisor.writeToProcess(context.Background(), stdin, append(message, '\n'))
+	return supervisor.writeToProcess(context.Background(), generation, stdin, append(message, '\n'))
 }
 
-func (supervisor *codexSupervisor) writeToProcess(ctx context.Context, stdin io.Writer, message []byte) error {
+func (supervisor *codexSupervisor) writeToProcess(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+	stdin io.Writer,
+	message []byte,
+) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -711,12 +720,40 @@ func (supervisor *codexSupervisor) writeToProcess(ctx context.Context, stdin io.
 
 	select {
 	case <-ctx.Done():
+		select {
+		case err := <-written:
+			return err
+		default:
+		}
+		supervisor.abortProcessWrite(generation, stdin)
 		return ctx.Err()
 	case <-supervisor.shutdown:
+		select {
+		case err := <-written:
+			return err
+		default:
+		}
+		supervisor.abortProcessWrite(generation, stdin)
 		return errors.New("Codex app-server is shutting down")
 	case err := <-written:
 		return err
 	}
+}
+
+func (supervisor *codexSupervisor) abortProcessWrite(
+	generation *codexProcessGeneration,
+	stdin io.Writer,
+) {
+	if closer, ok := stdin.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	supervisor.mu.Lock()
+	var command *exec.Cmd
+	if supervisor.generation == generation {
+		command = supervisor.command
+	}
+	supervisor.mu.Unlock()
+	killProcessGroup(command)
 }
 
 func (supervisor *codexSupervisor) publish(method, approvalID string, value any) {
