@@ -216,6 +216,32 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(packageJson.scripts?.prepack).toBe('bun run build && bun run verify:default-choice')
   })
 
+  test('hands deterministic evidence from the test job to the integration release gate', async () => {
+    const workflow = await readFile(join(packageRoot, '..', '..', '.github', 'workflows', 'temporal-bun-sdk.yml'), 'utf8')
+    const testJobStart = workflow.indexOf('\n  test:')
+    const integrationJobStart = workflow.indexOf('\n  integration:')
+    const prepareReleaseJobStart = workflow.indexOf('\n  prepare-release:')
+
+    expect(testJobStart).toBeGreaterThanOrEqual(0)
+    expect(integrationJobStart).toBeGreaterThan(testJobStart)
+    expect(prepareReleaseJobStart).toBeGreaterThan(integrationJobStart)
+
+    const testJob = workflow.slice(testJobStart, integrationJobStart)
+    const integrationJob = workflow.slice(integrationJobStart, prepareReleaseJobStart)
+    expect(testJob).toContain('name: Upload deterministic readiness evidence')
+    expect(testJob).toContain('name: temporal-bun-sdk-determinism-artifacts')
+    expect(testJob).toContain('packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json')
+    expect(testJob).toContain('packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json')
+    expect(testJob).toContain('if-no-files-found: error')
+    expect(integrationJob).toContain('needs:\n      - test')
+    expect(integrationJob).toContain('name: Download deterministic readiness evidence')
+    expect(integrationJob).toContain('name: temporal-bun-sdk-determinism-artifacts')
+    expect(integrationJob).toContain('path: packages/temporal-bun-sdk/.artifacts')
+    expect(integrationJob.indexOf('name: Download deterministic readiness evidence')).toBeLessThan(
+      integrationJob.indexOf('name: Verify production package boundary'),
+    )
+  })
+
   test('generates production and agent readiness evidence for published artifacts', async () => {
     const productionEvidence = JSON.parse(
       await readFile(join(packageRoot, 'dist', 'production-readiness.json'), 'utf8'),
