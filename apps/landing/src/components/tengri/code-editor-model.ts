@@ -46,6 +46,14 @@ export function enqueueCodeOpenRequest(queue: CodeOpenRequest[], request: CodeOp
   return queue.some((candidate) => codeOpenRequestKey(candidate) === requestKey) ? queue : [...queue, request]
 }
 
+export function updateDirtyCodeWindows(current: Set<string>, windowId: string, dirty: boolean): Set<string> {
+  if (!windowId || current.has(windowId) === dirty) return current
+  const next = new Set(current)
+  if (dirty) next.add(windowId)
+  else next.delete(windowId)
+  return next
+}
+
 export function codeModelTransition<Model>(
   activePath: string,
   targetPath: string,
