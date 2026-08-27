@@ -96,15 +96,15 @@
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.oxlint.json --ignore-pattern tests ."
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.12.0",
-    "@connectrpc/connect": "^2.1.1",
-    "@connectrpc/connect-node": "^2.1.1",
+    "@bufbuild/protobuf": "^2.14.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
     "@effect/schema": "^0.75.5",
-    "effect": "^3.21.2",
+    "effect": "^3.22.1",
     "typescript": "^7.0.2"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^26.4.0",
     "bun-types": "^1.4.0"
   },
   "engines": {
