@@ -34,6 +34,20 @@ export function finderSearchRefreshInterval(active: boolean, query: string): num
   return active && query.trim() ? FINDER_SEARCH_REFRESH_MS : null
 }
 
+export function retainVisibleFinderEntry<T extends Pick<TengriFileEntry, 'path'>>(
+  current: T | null,
+  entries: readonly Pick<TengriFileEntry, 'path'>[],
+): T | null {
+  return current && entries.some((entry) => entry.path === current.path) ? current : null
+}
+
+export function finderCanBeginRename<T extends Pick<TengriFileEntry, 'path'>>(
+  entry: T | null,
+  actionBusy: boolean,
+): entry is T {
+  return Boolean(entry && entry.path !== FINDER_WORKSPACE_PATH && !actionBusy)
+}
+
 export function finderChildPath(parentPath: string, name: string): string | null {
   const parent = normalizeFinderPath(parentPath)
   const child = name

@@ -4,6 +4,7 @@ import {
   FINDER_SEARCH_REFRESH_MS,
   FINDER_WORKSPACE_PATH,
   finderCanPreviewText,
+  finderCanBeginRename,
   finderChildPath,
   finderDeletionDescription,
   finderDeletionTargets,
@@ -13,6 +14,7 @@ import {
   formatFinderBytes,
   formatFinderDate,
   normalizeFinderPath,
+  retainVisibleFinderEntry,
   updateFinderSelection,
 } from './finder-model'
 
@@ -35,6 +37,19 @@ describe('Finder model', () => {
     expect(finderSearchRefreshInterval(true, 'main')).toBe(FINDER_SEARCH_REFRESH_MS)
     expect(finderSearchRefreshInterval(true, '   ')).toBeNull()
     expect(finderSearchRefreshInterval(false, 'main')).toBeNull()
+  })
+
+  test('clears stale rename state when refreshed results no longer contain the item', () => {
+    const renamed = { path: '/src/old.ts' }
+    expect(retainVisibleFinderEntry(renamed, [{ path: '/src/new.ts' }])).toBeNull()
+    expect(retainVisibleFinderEntry(renamed, [renamed])).toBe(renamed)
+  })
+
+  test('allows rename only for a visible non-root item while no mutation is pending', () => {
+    expect(finderCanBeginRename({ path: '/src/index.ts' }, false)).toBe(true)
+    expect(finderCanBeginRename({ path: '/src/index.ts' }, true)).toBe(false)
+    expect(finderCanBeginRename({ path: FINDER_WORKSPACE_PATH }, false)).toBe(false)
+    expect(finderCanBeginRename(null, false)).toBe(false)
   })
 
   test('formats sizes and dates without exposing invalid values', () => {

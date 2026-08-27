@@ -33,6 +33,7 @@ import { runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
 import {
   FINDER_WORKSPACE_PATH,
+  finderCanBeginRename,
   finderCanPreviewText,
   finderChildPath,
   finderDeletionDescription,
@@ -43,6 +44,7 @@ import {
   formatFinderBytes,
   formatFinderDate,
   normalizeFinderPath,
+  retainVisibleFinderEntry,
   updateFinderSelection,
 } from './finder-model'
 
@@ -150,6 +152,7 @@ export function FinderApp({
             )
         if (sequence !== loadSequence.current || signal?.aborted) return
         setEntries(result.entries)
+        setRenaming((current) => retainVisibleFinderEntry(current, result.entries))
         if (selectionAnchor.current && !result.entries.some((entry) => entry.path === selectionAnchor.current)) {
           selectionAnchor.current = null
         }
@@ -315,7 +318,7 @@ export function FinderApp({
   }
 
   function beginRename(entry = primarySelection) {
-    if (!entry || entry.path === FINDER_WORKSPACE_PATH) return
+    if (!finderCanBeginRename(entry, actionBusy)) return
     setShowCreate(false)
     resetCreateFolder()
     resetRename({ name: entry.name })
@@ -627,7 +630,7 @@ export function FinderApp({
         {showCreate ? (
           <form
             noValidate
-            className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
             onSubmit={createFolder}
           >
             <Folder className="h-4 w-4 text-[#79b8ff]" />
@@ -639,38 +642,40 @@ export function FinderApp({
               disabled={actionBusy}
               placeholder="New folder name"
               {...registerCreateFolder('name')}
-              className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+              className="min-w-0 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
             />
-            <button
-              type="submit"
-              disabled={actionBusy}
-              className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
-            >
-              Create
-            </button>
-            <button
-              type="button"
-              disabled={actionBusy}
-              className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
-              onClick={() => {
-                setShowCreate(false)
-                resetCreateFolder()
-              }}
-            >
-              Cancel
-            </button>
-            {createFolderError ? (
-              <span id="create-folder-name-error" role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
-                {createFolderError}
-              </span>
-            ) : null}
+            <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={actionBusy}
+                className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                disabled={actionBusy}
+                className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+                onClick={() => {
+                  setShowCreate(false)
+                  resetCreateFolder()
+                }}
+              >
+                Cancel
+              </button>
+              {createFolderError ? (
+                <span id="create-folder-name-error" role="alert" className="min-w-0 basis-full text-xs text-red-200">
+                  {createFolderError}
+                </span>
+              ) : null}
+            </div>
           </form>
         ) : null}
 
         {renaming ? (
           <form
             noValidate
-            className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
+            className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
             onSubmit={renameSelected}
           >
             <Pencil className="h-4 w-4 text-[#79b8ff]" />
@@ -685,31 +690,33 @@ export function FinderApp({
                 event.currentTarget.setSelectionRange(0, extension > 0 ? extension : event.currentTarget.value.length)
               }}
               {...registerRename('name')}
-              className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
+              className="min-w-0 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
             />
-            <button
-              type="submit"
-              disabled={actionBusy}
-              className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
-            >
-              Rename
-            </button>
-            <button
-              type="button"
-              disabled={actionBusy}
-              className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
-              onClick={() => {
-                setRenaming(null)
-                resetRename()
-              }}
-            >
-              Cancel
-            </button>
-            {renameError ? (
-              <span id="rename-item-error" role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
-                {renameError}
-              </span>
-            ) : null}
+            <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={actionBusy}
+                className="rounded-md bg-[#2574e8] px-3 py-1 text-xs font-medium disabled:opacity-50"
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                disabled={actionBusy}
+                className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
+                onClick={() => {
+                  setRenaming(null)
+                  resetRename()
+                }}
+              >
+                Cancel
+              </button>
+              {renameError ? (
+                <span id="rename-item-error" role="alert" className="min-w-0 basis-full text-xs text-red-200">
+                  {renameError}
+                </span>
+              ) : null}
+            </div>
           </form>
         ) : null}
 
