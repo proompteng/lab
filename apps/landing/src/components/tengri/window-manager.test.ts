@@ -110,6 +110,22 @@ describe('Tengri window manager', () => {
     expect(state.windows.find((window) => window.id === id)).toMatchObject({ bounds: original, mode: 'normal' })
   })
 
+  test('keeps maximized windows inside compact viewports', () => {
+    const compact = { x: 0, y: 0, width: 320, height: 240 }
+    let state = initialWindowState(viewport)
+    const id = state.activeWindowId
+
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport: compact })
+    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, compact)
+
+    const smaller = { x: 0, y: 0, width: 300, height: 200 }
+    state = windowReducer(state, { type: 'viewport', viewport: smaller })
+    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, smaller)
+
+    state = windowReducer(state, { type: 'hydrate', state, viewport: compact })
+    expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, compact)
+  })
+
   test('enforces the persisted window cap while creating windows', () => {
     let state = initialWindowState(viewport)
     for (let index = 0; index < MAX_DESKTOP_WINDOWS + 5; index += 1) {
@@ -121,3 +137,13 @@ describe('Tengri window manager', () => {
     expect(state.nextWindowId).toBe(MAX_DESKTOP_WINDOWS + 1)
   })
 })
+
+function expectInsideViewport(
+  bounds: { x: number; y: number; width: number; height: number },
+  target: typeof viewport,
+) {
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.y).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(target.width)
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(target.height)
+}

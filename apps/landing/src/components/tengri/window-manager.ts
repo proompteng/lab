@@ -105,12 +105,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
         }
         return {
           ...window,
-          bounds: {
-            x: 8,
-            y: 8,
-            width: Math.max(320, action.viewport.width - 16),
-            height: Math.max(240, action.viewport.height - 16),
-          },
+          bounds: maximizedBounds(action.viewport),
           restoredBounds: window.bounds,
           mode: 'maximized' as const,
         }
@@ -124,12 +119,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
         ...window,
         bounds:
           window.mode === 'maximized'
-            ? {
-                x: 8,
-                y: 8,
-                width: Math.max(320, action.viewport.width - 16),
-                height: Math.max(220, action.viewport.height - 16),
-              }
+            ? maximizedBounds(action.viewport)
             : clampToViewport(window.bounds, action.viewport),
         restoredBounds: clampToViewport(window.restoredBounds, action.viewport),
       })),
@@ -194,6 +184,17 @@ function preferredSize(app: TengriApp) {
   return { width: 1060, height: 700 }
 }
 
+function maximizedBounds(viewport: Bounds): Bounds {
+  const horizontalInset = Math.min(8, Math.max(0, (viewport.width - 320) / 2))
+  const verticalInset = Math.min(8, Math.max(0, (viewport.height - 220) / 2))
+  return {
+    x: horizontalInset,
+    y: verticalInset,
+    width: Math.max(0, viewport.width - horizontalInset * 2),
+    height: Math.max(0, viewport.height - verticalInset * 2),
+  }
+}
+
 export function clampToViewport(bounds: Bounds, viewport: Bounds): Bounds {
   const width = Math.min(Math.max(bounds.width, 320), Math.max(320, viewport.width - 16))
   const height = Math.min(Math.max(bounds.height, 220), Math.max(220, viewport.height - 16))
@@ -231,15 +232,7 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
     return [
       {
         app: window.app,
-        bounds:
-          mode === 'maximized'
-            ? {
-                x: 8,
-                y: 8,
-                width: Math.max(320, viewport.width - 16),
-                height: Math.max(220, viewport.height - 16),
-              }
-            : clampToViewport(window.bounds, viewport),
+        bounds: mode === 'maximized' ? maximizedBounds(viewport) : clampToViewport(window.bounds, viewport),
         id,
         mode,
         restoredBounds,
