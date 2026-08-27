@@ -96,12 +96,25 @@ Roll out only through the normal image workflow and Argo reconciliation:
 3. From a configured `galactic-lan` client, verify the replacement and its control path:
 
    ```bash
+   set -euo pipefail
+
    kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m
    kubectl --context galactic-lan -n tengri get pods -l app.kubernetes.io/name=tengri -o wide
    kubectl --context galactic-lan -n tengri get endpointslice -l kubernetes.io/service-name=tengri-grpc
-   kubectl --context galactic-lan -n tengri port-forward service/tengri-gateway 18080:8080
+   kubectl --context galactic-lan -n tengri port-forward service/tengri-gateway 18080:8080 &
+   tengri_port_forward_pid=$!
+   trap 'kill "$tengri_port_forward_pid" 2>/dev/null || true' EXIT INT TERM
+   for tengri_attempt in {1..30}; do
+     if curl --fail --silent --output /dev/null http://127.0.0.1:18080/livez; then
+       break
+     fi
+     sleep 1
+   done
    curl --fail --silent --show-error http://127.0.0.1:18080/livez
    curl --fail --silent --show-error http://127.0.0.1:18080/readyz
+   kill "$tengri_port_forward_pid"
+   wait "$tengri_port_forward_pid" 2>/dev/null || true
+   trap - EXIT INT TERM
    ```
 
 4. Confirm the pre-rollout `MicroVM` count and phases are unchanged, then exercise one authenticated read-only control
