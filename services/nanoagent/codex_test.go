@@ -224,6 +224,51 @@ func TestApprovalCancellationRestartsBlockedProcessWriter(t *testing.T) {
 	}
 }
 
+func TestAutomaticCodexResponsesRestartBlockedProcessWriter(t *testing.T) {
+	tests := []struct {
+		name    string
+		message codexRPCMessage
+	}{
+		{
+			name:    "current time",
+			message: codexRPCMessage{ID: json.RawMessage(`10`), Method: "currentTime/read"},
+		},
+		{
+			name:    "unsupported request",
+			message: codexRPCMessage{ID: json.RawMessage(`11`), Method: "unsupported/request"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+			supervisor.stdin = writer
+			supervisor.responseTimeout = 50 * time.Millisecond
+			t.Cleanup(func() {
+				_ = reader.Close()
+				_ = writer.Close()
+			})
+
+			done := make(chan struct{})
+			go func() {
+				supervisor.handleServerMessage(supervisor.generation, test.message, nil)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("automatic Codex response remained blocked after its write deadline")
+			}
+			select {
+			case <-supervisor.writePermit:
+				supervisor.writePermit <- struct{}{}
+			case <-time.After(time.Second):
+				t.Fatal("automatic Codex response retained the process write permit")
+			}
+		})
+	}
+}
+
 func TestCodexSupervisorCompletesInitializationHandshake(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a local fake app-server process")

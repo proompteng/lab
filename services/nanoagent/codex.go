@@ -25,6 +25,7 @@ const (
 	codexProtocolLineMaxBytes = 8 << 20
 	codexSubscriberLimit      = 8
 	codexApprovalWriteTimeout = 15 * time.Second
+	codexResponseWriteTimeout = 15 * time.Second
 )
 
 type codexCallRequest struct {
@@ -80,12 +81,13 @@ type codexProcessGeneration struct {
 }
 
 type codexSupervisor struct {
-	binary      string
-	cwd         string
-	closed      atomic.Bool
-	requestID   atomic.Uint64
-	writePermit chan struct{}
-	loginMu     sync.Mutex
+	binary          string
+	cwd             string
+	closed          atomic.Bool
+	requestID       atomic.Uint64
+	writePermit     chan struct{}
+	loginMu         sync.Mutex
+	responseTimeout time.Duration
 
 	mu             sync.Mutex
 	command        *exec.Cmd
@@ -104,14 +106,15 @@ type codexSupervisor struct {
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	supervisor := &codexSupervisor{
-		binary:        binary,
-		cwd:           cwd,
-		writePermit:   make(chan struct{}, 1),
-		generation:    newCodexProcessGeneration(),
-		pending:       make(map[string]chan codexPendingResult),
-		approvals:     make(map[string]codexApproval),
-		subscriptions: make(map[uint64]codexSubscription),
-		shutdown:      make(chan struct{}),
+		binary:          binary,
+		cwd:             cwd,
+		writePermit:     make(chan struct{}, 1),
+		responseTimeout: codexResponseWriteTimeout,
+		generation:      newCodexProcessGeneration(),
+		pending:         make(map[string]chan codexPendingResult),
+		approvals:       make(map[string]codexApproval),
+		subscriptions:   make(map[uint64]codexSubscription),
+		shutdown:        make(chan struct{}),
 	}
 	supervisor.writePermit <- struct{}{}
 	return supervisor
@@ -503,8 +506,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		approvalID = normalizeRequestID(message.ID)
 		switch message.Method {
 		case "currentTime/read":
-			_ = supervisor.respondRawForGeneration(
-				context.Background(),
+			_ = supervisor.respondRawForGenerationWithin(
 				generation,
 				message.ID,
 				map[string]any{"currentTimeAt": time.Now().Unix()},
@@ -716,14 +718,34 @@ func (supervisor *codexSupervisor) respondErrorForGeneration(
 	id json.RawMessage,
 	message string,
 ) {
-	_ = supervisor.writeMessageForGeneration(
-		context.Background(),
+	_ = supervisor.writeMessageForGenerationWithin(
 		generation,
 		map[string]any{
 			"id":    json.RawMessage(id),
 			"error": map[string]any{"code": -32_000, "message": message},
 		},
 	)
+}
+
+func (supervisor *codexSupervisor) respondRawForGenerationWithin(
+	generation *codexProcessGeneration,
+	id json.RawMessage,
+	result any,
+) error {
+	return supervisor.writeMessageForGenerationWithin(
+		generation,
+		map[string]any{"id": json.RawMessage(id), "result": result},
+	)
+}
+
+func (supervisor *codexSupervisor) writeMessageForGenerationWithin(
+	generation *codexProcessGeneration,
+	value any,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), supervisor.responseTimeout)
+	defer cancel()
+
+	return supervisor.writeMessageForGeneration(ctx, generation, value)
 }
 
 func (supervisor *codexSupervisor) writeMessageForGeneration(
