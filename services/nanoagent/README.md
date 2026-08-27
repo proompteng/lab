@@ -28,5 +28,6 @@ Run locally:
 MICROVM_ID=local MICROVM_BOOTSTRAP_TOKEN=development-only go run .
 ```
 
-The release workflow publishes and keylessly signs `ghcr.io/proompteng/nanoagent` for `linux/amd64` and
-`linux/arm64`. Kubernetes manifests must use the resulting multi-architecture digest, never a mutable tag.
+This foundation workflow validates the minimal guest process but deliberately does not publish it. Image publication
+starts only in the next Nanoagent layer, after the authenticated file, terminal, Codex, and preview API is present;
+the resulting multi-architecture private-registry image is always consumed by immutable digest.
