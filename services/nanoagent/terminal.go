@@ -31,6 +31,7 @@ const (
 	terminalBufferBytes  = 4 << 20
 	terminalBufferChunks = 8192
 	terminalIdleTimeout  = 30 * time.Minute
+	terminalCleanupDelay = 2 * time.Second
 	terminalQueueDepth   = 128
 	outputFrameType      = byte(1)
 )
@@ -155,40 +156,52 @@ func (connection *terminalConnection) abort() {
 }
 
 type terminalSession struct {
-	id             string
-	cwd            string
-	createdAt      time.Time
-	lastActivityAt time.Time
-	command        *exec.Cmd
-	terminal       *os.File
-	mu             sync.Mutex
-	ioMu           sync.Mutex
-	sequence       uint32
-	bufferBytes    int
-	buffer         []terminalChunk
-	connections    map[string]*terminalConnection
-	closed         bool
-	processExited  chan struct{}
-	outputDrained  chan struct{}
+	id               string
+	cwd              string
+	createdAt        time.Time
+	lastActivityAt   time.Time
+	command          *exec.Cmd
+	processSessionID int
+	terminal         *os.File
+	mu               sync.Mutex
+	ioMu             sync.Mutex
+	sequence         uint32
+	bufferBytes      int
+	buffer           []terminalChunk
+	connections      map[string]*terminalConnection
+	closed           bool
+	processExited    chan struct{}
+	outputDrained    chan struct{}
 }
 
 type terminalManager struct {
 	workspace workspace
 	shell     string
+	home      string
 	mu        sync.RWMutex
 	sessions  map[string]*terminalSession
 	stop      chan struct{}
 	stopOnce  sync.Once
 	closed    bool
+
+	signalProcessSession func(int, syscall.Signal) error
+	cleanupDelay         time.Duration
 }
 
-func newTerminalManager(workspace workspace, shell string) *terminalManager {
+func newTerminalManager(workspace workspace, shell string, home string) *terminalManager {
 	shell = resolveTerminalShell(shell)
+	home = strings.TrimSpace(home)
+	if home == "" {
+		home = workspace.root
+	}
 	manager := &terminalManager{
-		workspace: workspace,
-		shell:     shell,
-		sessions:  make(map[string]*terminalSession),
-		stop:      make(chan struct{}),
+		workspace:            workspace,
+		shell:                shell,
+		home:                 home,
+		sessions:             make(map[string]*terminalSession),
+		stop:                 make(chan struct{}),
+		signalProcessSession: signalTerminalProcessSession,
+		cleanupDelay:         terminalCleanupDelay,
 	}
 	go manager.reapIdle()
 	return manager
@@ -252,6 +265,7 @@ func (manager *terminalManager) create(cwd string, columns, rows uint16) (termin
 	command := exec.Command(manager.shell, "-l", "-i")
 	command.Dir = resolved
 	command.Env = childEnvironment(
+		"HOME="+manager.home,
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"TENGRI_TERMINAL_SESSION="+id,
@@ -262,15 +276,16 @@ func (manager *terminalManager) create(cwd string, columns, rows uint16) (termin
 	}
 	now := time.Now().UTC()
 	session := &terminalSession{
-		id:             id,
-		cwd:            manager.workspace.displayPath(resolved),
-		createdAt:      now,
-		lastActivityAt: now,
-		command:        command,
-		terminal:       terminal,
-		connections:    make(map[string]*terminalConnection),
-		processExited:  make(chan struct{}),
-		outputDrained:  make(chan struct{}),
+		id:               id,
+		cwd:              manager.workspace.displayPath(resolved),
+		createdAt:        now,
+		lastActivityAt:   now,
+		command:          command,
+		processSessionID: command.Process.Pid,
+		terminal:         terminal,
+		connections:      make(map[string]*terminalConnection),
+		processExited:    make(chan struct{}),
+		outputDrained:    make(chan struct{}),
 	}
 	manager.sessions[id] = session
 	go manager.readOutput(session)
@@ -328,21 +343,39 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 	for _, connection := range connections {
 		connection.close(websocket.StatusNormalClosure, reason)
 	}
-	if session.command.Process != nil {
-		pid := session.command.Process.Pid
-		if err := signalTerminalProcessSession(pid, syscall.SIGTERM); err != nil {
-			_ = session.command.Process.Signal(syscall.SIGTERM)
-		}
-		go func() {
-			timer := time.NewTimer(2 * time.Second)
-			defer timer.Stop()
-			<-timer.C
-			if err := signalTerminalProcessSession(pid, syscall.SIGKILL); err != nil {
-				_ = session.command.Process.Kill()
-			}
-		}()
-	}
+	manager.cleanupProcessSession(session)
 	_ = session.terminal.Close()
+}
+
+func (manager *terminalManager) cleanupProcessSession(session *terminalSession) {
+	sessionID := session.processSessionID
+	if sessionID <= 0 && session.command != nil && session.command.Process != nil {
+		sessionID = session.command.Process.Pid
+	}
+	if sessionID <= 0 {
+		return
+	}
+
+	signalSession := manager.signalProcessSession
+	if signalSession == nil {
+		signalSession = signalTerminalProcessSession
+	}
+	if err := signalSession(sessionID, syscall.SIGTERM); err != nil && session.command != nil && session.command.Process != nil {
+		_ = session.command.Process.Signal(syscall.SIGTERM)
+	}
+
+	delay := manager.cleanupDelay
+	if delay <= 0 {
+		delay = terminalCleanupDelay
+	}
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+		if err := signalSession(sessionID, syscall.SIGKILL); err != nil && session.command != nil && session.command.Process != nil {
+			_ = session.command.Process.Kill()
+		}
+	}()
 }
 
 func (manager *terminalManager) readOutput(session *terminalSession) {
@@ -405,6 +438,7 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	}
 	session.connections = make(map[string]*terminalConnection)
 	session.mu.Unlock()
+	manager.cleanupProcessSession(session)
 	_ = session.terminal.Close()
 	for _, connection := range connections {
 		connection.closeAfter(

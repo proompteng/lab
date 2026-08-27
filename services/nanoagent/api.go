@@ -22,6 +22,7 @@ const (
 type apiConfig struct {
 	bootstrapToken string
 	evidence       evidence
+	homeRoot       string
 	shell          string
 	workspaceRoot  string
 }
@@ -60,7 +61,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		evidence:         config.evidence,
 		fileWatcher:      files,
 		previewTransport: transport,
-		terminals:        newTerminalManager(workspace, config.shell),
+		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
 	return server, nil

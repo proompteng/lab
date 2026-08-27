@@ -34,7 +34,7 @@ func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	for index := 0; index < maxTerminalSessions; index++ {
 		if _, err := manager.create("/", 80, 24); err != nil {
@@ -64,7 +64,7 @@ func TestCreateTerminalRemovesSessionWhenRequestIsCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	server := &apiServer{terminals: manager}
 	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(`{"cwd":"/","columns":80,"rows":24}`))
@@ -85,7 +85,7 @@ func TestTerminalManagerRunsInteractiveShell(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 
 	view, err := manager.create("/", 80, 24)
@@ -126,7 +126,7 @@ func TestTerminalManagerDrainsFinalOutputBeforeExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, script)
+	manager := newTerminalManager(workspace, script, workspace.root)
 	t.Cleanup(manager.close)
 
 	view, err := manager.create("/", 80, 24)
@@ -177,7 +177,7 @@ func TestTerminalManagerDefaultsToConfiguredWorkspaceRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 
 	view, err := manager.create("", 80, 24)
@@ -193,13 +193,53 @@ func TestTerminalManagerDefaultsToConfiguredWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestTerminalManagerSetsConfiguredHome(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	workspaceRoot := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("create home: %v", err)
+	}
+	if err := os.MkdirAll(workspaceRoot, 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	workspace, err := newWorkspace(workspaceRoot)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", home)
+	t.Cleanup(manager.close)
+
+	view, err := manager.create("/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	session, found := manager.get(view.ID)
+	if !found {
+		t.Fatal("created terminal session was not retained")
+	}
+
+	homeEntries := 0
+	for _, entry := range session.command.Env {
+		if strings.HasPrefix(entry, "HOME=") {
+			homeEntries++
+			if entry != "HOME="+home {
+				t.Fatalf("terminal HOME = %q, want %q", entry, "HOME="+home)
+			}
+		}
+	}
+	if homeEntries != 1 {
+		t.Fatalf("terminal HOME entries = %d, want 1", homeEntries)
+	}
+}
+
 func TestTerminalManagerCloseIsIdempotent(t *testing.T) {
 	t.Parallel()
 	workspace, err := newWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	manager.close()
 	manager.close()
 }
@@ -442,7 +482,7 @@ func TestTerminalResizeChangesPTYDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh")
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	view, err := manager.create("/", 80, 24)
 	if err != nil {
@@ -474,7 +514,7 @@ func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, shell)
+	manager := newTerminalManager(workspace, shell, workspace.root)
 	t.Cleanup(manager.close)
 	view, err := manager.create("/", 80, 24)
 	if err != nil {
@@ -576,5 +616,59 @@ func TestTerminalCleanupSignalsEveryProcessInTheSession(t *testing.T) {
 	}
 	if got, want := fmt.Sprint(signaled), "[701 702 700]"; got != want {
 		t.Fatalf("signaled process IDs = %s, want %s", got, want)
+	}
+}
+
+func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
+	terminal, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open terminal fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = terminal.Close() })
+
+	type signalEvent struct {
+		sessionID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 2)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		signalProcessSession: func(sessionID int, signal syscall.Signal) error {
+			signals <- signalEvent{sessionID: sessionID, signal: signal}
+			return nil
+		},
+		cleanupDelay: time.Millisecond,
+	}
+	session := &terminalSession{
+		id:               "terminal-session",
+		processSessionID: 700,
+		terminal:         terminal,
+		connections:      make(map[string]*terminalConnection),
+	}
+	manager.sessions[session.id] = session
+
+	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+
+	for _, expected := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		select {
+		case actual := <-signals:
+			if actual.sessionID != 700 {
+				t.Fatalf("process session ID = %d, want 700", actual.sessionID)
+			}
+			if actual.signal != expected {
+				t.Fatalf("cleanup signal = %v, want %v", actual.signal, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for cleanup signal %v", expected)
+		}
+	}
+	if _, found := manager.get(session.id); found {
+		t.Fatal("naturally exited terminal remained in the manager")
+	}
+	session.mu.Lock()
+	closed := session.closed
+	session.mu.Unlock()
+	if !closed {
+		t.Fatal("naturally exited terminal was not closed")
 	}
 }

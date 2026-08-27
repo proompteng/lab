@@ -25,18 +25,28 @@ func TestChildProcessEnvironmentPreservesSimilarKeys(t *testing.T) {
 	environment := childProcessEnvironment(
 		[]string{
 			"PATH=/usr/bin",
+			"HOME=/root",
 			bootstrapTokenEnvironmentKey + "=guest-secret",
 			"MICROVM_BOOTSTRAP_TOKEN_SUFFIX=retained",
 		},
 		"TERM=xterm-256color",
+		"HOME=/home/nanoagent",
 	)
 	if slices.Contains(environment, bootstrapTokenEnvironmentKey+"=guest-secret") {
 		t.Fatal("bootstrap token remained in the child environment")
 	}
-	for _, expected := range []string{"PATH=/usr/bin", "MICROVM_BOOTSTRAP_TOKEN_SUFFIX=retained", "TERM=xterm-256color"} {
+	for _, expected := range []string{
+		"PATH=/usr/bin",
+		"MICROVM_BOOTSTRAP_TOKEN_SUFFIX=retained",
+		"TERM=xterm-256color",
+		"HOME=/home/nanoagent",
+	} {
 		if !slices.Contains(environment, expected) {
 			t.Fatalf("child environment omitted %q: %#v", expected, environment)
 		}
+	}
+	if slices.Contains(environment, "HOME=/root") {
+		t.Fatal("child environment retained the replaced HOME")
 	}
 }
 
