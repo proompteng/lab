@@ -13,7 +13,8 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
 COPY src ./src
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
     cargo test --locked --all-targets && \
@@ -32,5 +33,5 @@ RUN apt-get update -o Acquire::Retries=3 && \
 COPY --from=build /out-tengri /usr/local/bin/tengri
 
 USER 65532:65532
-EXPOSE 8080
+EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/tengri"]

@@ -6,6 +6,7 @@ pub const CPU_MILLIS: u32 = 2_000;
 pub const MEMORY_MIB: u32 = 4_096;
 pub const WORKSPACE_GIB: u32 = 16;
 pub const IDLE_MINUTES: i64 = 60;
+pub const LIFETIME_HOURS: i64 = 4;
 
 #[derive(CustomResource, Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[kube(

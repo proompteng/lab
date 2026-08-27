@@ -8,8 +8,20 @@ Firecracker-backed Nanoagent guest and its persistent state:
 MicroVM CR -> bootstrap Secret + 16 GiB PVC + kata-fc Pod -> MicroVM status
 ```
 
-The reconciler does not expose a public creation API yet. The authenticated lifecycle API is the
-next vertical slice; keeping it separate makes the CR-to-runtime behavior independently reviewable.
+The internal gRPC lifecycle API creates and controls these resources. It is not public: the web BFF
+signs every request with a GitHub subject, timestamp, one-use nonce, RPC path, and protobuf body.
+Tengri verifies the HMAC and derives the deterministic owner-scoped CR name.
+
+## Lifecycle API
+
+`MicroVMControlPlane` exposes `CreateAgent`, `ListAgents`, `GetAgent`, `WatchAgent`, `SleepAgent`,
+`ResumeAgent`, and `DeleteAgent`. Callers provide only a display name; architecture, image, resource
+profile, idle deadline, and hard expiry are server policy.
+
+Authentication rejects stale timestamps, replayed nonces, invalid bodies, invalid RPC paths, and
+cross-owner agent IDs. A one-key or bounded current/previous HMAC bundle supports safe rotation.
+Nonce consumption is persisted in the `tengri-auth-nonces` ConfigMap so replay protection survives
+process restarts.
 
 ## Runtime contract
 
