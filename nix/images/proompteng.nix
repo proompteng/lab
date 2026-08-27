@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-Vly9kiHI3JUxr6tTVYq27ntT8twhgwSDw1UTqrCnU8g=";
-    aarch64-linux = "sha256-WwzyiAhZGBOsUy+7KYcaFOSNL8HqNuPlkoTtCnsL9tk=";
+    x86_64-linux = "sha256-QZseGvUJBQUMdJtf1m54gWtj4FZBK3CQCNeYe2GA1I4=";
+    aarch64-linux = "sha256-ZW8Q1d6H0M7SCqVllM97uBrNCv5pwJdc3k/we0PINdI=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -24,6 +24,7 @@ import ./bun-workspace-service.nix {
     "apps/landing"
     "packages/backend"
     "packages/design"
+    "services/tengri/proto"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run build"
@@ -35,6 +36,8 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/landing/public" ]; then
       cp -R "$TMPDIR/work/apps/landing/public/." "$out/app/apps/landing/public/"
     fi
+    mkdir -p "$out/app/services/tengri/proto"
+    cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
   '';
   command = [
     "node"
@@ -44,6 +47,7 @@ import ./bun-workspace-service.nix {
   env = [
     "PORT=3000"
     "HOSTNAME=0.0.0.0"
+    "TENGRI_PROTO_PATH=/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"
   ];
   extraContents = [
     nodejs

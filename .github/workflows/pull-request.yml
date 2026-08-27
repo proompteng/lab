@@ -120,6 +120,8 @@ jobs:
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+          bun run --cwd apps/landing test
+          bun run --cwd apps/landing format:check
           bun run --cwd apps/landing lint:oxlint
           bun run --cwd apps/landing lint:oxlint:type
           bun run --filter landing build
