@@ -19,5 +19,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: "sha-14c565a3316a20a1c0ee1ef8d9562804255129c4"
-    digest: sha256:86a79eaafb1edc7b4d5091407d08f440de4516f968370b471042b910dfc2a450
+    newTag: "sha-f34b6492c746608bcaa6e068328c60da4d39754a"
+    digest: sha256:1c89ed7305214f9896ebcf59c6f6b1e289fdbdfdf1fb7f41e6c7f699386e9ffa
