@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -181,9 +183,7 @@ type terminalManager struct {
 }
 
 func newTerminalManager(workspace workspace, shell string) *terminalManager {
-	if strings.TrimSpace(shell) == "" {
-		shell = "/bin/bash"
-	}
+	shell = resolveTerminalShell(shell)
 	manager := &terminalManager{
 		workspace: workspace,
 		shell:     shell,
@@ -192,6 +192,18 @@ func newTerminalManager(workspace workspace, shell string) *terminalManager {
 	}
 	go manager.reapIdle()
 	return manager
+}
+
+func resolveTerminalShell(configured string) string {
+	if shell := strings.TrimSpace(configured); shell != "" {
+		return shell
+	}
+	for _, candidate := range []string{"bash", "sh"} {
+		if shell, err := exec.LookPath(candidate); err == nil {
+			return shell
+		}
+	}
+	return "/bin/sh"
 }
 
 func (manager *terminalManager) close() {
@@ -318,19 +330,15 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 	}
 	if session.command.Process != nil {
 		pid := session.command.Process.Pid
-		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		if err := signalTerminalProcessSession(pid, syscall.SIGTERM); err != nil {
 			_ = session.command.Process.Signal(syscall.SIGTERM)
 		}
 		go func() {
 			timer := time.NewTimer(2 * time.Second)
 			defer timer.Stop()
-			select {
-			case <-session.processExited:
-				return
-			case <-timer.C:
-				if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-					_ = session.command.Process.Kill()
-				}
+			<-timer.C
+			if err := signalTerminalProcessSession(pid, syscall.SIGKILL); err != nil {
+				_ = session.command.Process.Kill()
 			}
 		}()
 	}
@@ -615,14 +623,115 @@ func (session *terminalSession) signal(name string) error {
 		return errors.New("terminal session is closed")
 	}
 	process := session.command.Process
+	terminal := session.terminal
 	session.lastActivityAt = time.Now().UTC()
 	session.mu.Unlock()
-	if err := syscall.Kill(-process.Pid, signal); err != nil {
+	err = signalTerminalForeground(terminal, process.Pid, signal, terminalForegroundProcessGroup, syscall.Kill)
+	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		if fallbackErr := process.Signal(signal); fallbackErr != nil {
 			return fmt.Errorf("signal terminal process: %w", fallbackErr)
 		}
 	}
 	return nil
+}
+
+func signalTerminalForeground(
+	terminal *os.File,
+	fallbackProcessGroup int,
+	signal syscall.Signal,
+	foregroundProcessGroup func(*os.File) (int, error),
+	kill func(int, syscall.Signal) error,
+) error {
+	processGroup, err := foregroundProcessGroup(terminal)
+	if err == nil {
+		err = kill(-processGroup, signal)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	return kill(-fallbackProcessGroup, signal)
+}
+
+func terminalForegroundProcessGroup(terminal *os.File) (int, error) {
+	processGroup, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
+	if err != nil {
+		return 0, fmt.Errorf("read terminal foreground process group: %w", err)
+	}
+	if processGroup <= 0 {
+		return 0, errors.New("terminal has no foreground process group")
+	}
+	return processGroup, nil
+}
+
+func signalTerminalProcessSession(sessionID int, signal syscall.Signal) error {
+	return signalProcessSession("/proc", sessionID, signal, syscall.Kill)
+}
+
+func signalProcessSession(
+	procRoot string,
+	sessionID int,
+	signal syscall.Signal,
+	kill func(int, syscall.Signal) error,
+) error {
+	processIDs, err := processIDsInSession(procRoot, sessionID)
+	if err != nil || len(processIDs) == 0 {
+		return kill(-sessionID, signal)
+	}
+
+	var firstError error
+	for _, processID := range processIDs {
+		if processID == sessionID {
+			continue
+		}
+		if err := kill(processID, signal); err != nil && !errors.Is(err, syscall.ESRCH) && firstError == nil {
+			firstError = err
+		}
+	}
+	if err := kill(sessionID, signal); err != nil && !errors.Is(err, syscall.ESRCH) && firstError == nil {
+		firstError = err
+	}
+	return firstError
+}
+
+func processIDsInSession(procRoot string, sessionID int) ([]int, error) {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return nil, err
+	}
+	processIDs := make([]int, 0)
+	for _, entry := range entries {
+		processID, err := strconv.Atoi(entry.Name())
+		if err != nil || processID <= 0 {
+			continue
+		}
+		contents, err := os.ReadFile(filepath.Join(procRoot, entry.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		processSessionID, err := parseProcSessionID(contents)
+		if err == nil && processSessionID == sessionID {
+			processIDs = append(processIDs, processID)
+		}
+	}
+	sort.Ints(processIDs)
+	return processIDs, nil
+}
+
+func parseProcSessionID(contents []byte) (int, error) {
+	closingParenthesis := strings.LastIndexByte(string(contents), ')')
+	if closingParenthesis < 0 || closingParenthesis+1 >= len(contents) {
+		return 0, errors.New("invalid proc stat command field")
+	}
+	fields := strings.Fields(string(contents[closingParenthesis+1:]))
+	if len(fields) < 4 {
+		return 0, errors.New("invalid proc stat process fields")
+	}
+	sessionID, err := strconv.Atoi(fields[3])
+	if err != nil || sessionID <= 0 {
+		return 0, errors.New("invalid proc stat session ID")
+	}
+	return sessionID, nil
 }
 
 func terminalSignal(name string) (syscall.Signal, error) {

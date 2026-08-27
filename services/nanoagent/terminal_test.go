@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,6 +43,19 @@ func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
 	}
 	if _, err := manager.create("/", 80, 24); err == nil || !strings.Contains(err.Error(), "four") {
 		t.Fatalf("fifth terminal error = %v", err)
+	}
+}
+
+func TestTerminalManagerFallsBackToAvailablePOSIXShell(t *testing.T) {
+	directory := t.TempDir()
+	shell := filepath.Join(directory, "sh")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shell fixture: %v", err)
+	}
+	t.Setenv("PATH", directory)
+
+	if resolved := resolveTerminalShell(""); resolved != shell {
+		t.Fatalf("resolveTerminalShell() = %q, want %q", resolved, shell)
 	}
 }
 
@@ -479,5 +494,87 @@ func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
 	}
 	if _, err := terminalSignal("kill"); err == nil {
 		t.Fatal("unsupported terminal signal was accepted")
+	}
+}
+
+func TestTerminalSignalTargetsForegroundProcessGroup(t *testing.T) {
+	var signaled []int
+	err := signalTerminalForeground(
+		nil,
+		700,
+		syscall.SIGINT,
+		func(*os.File) (int, error) { return 701, nil },
+		func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("signalTerminalForeground() error = %v", err)
+	}
+	if got, want := fmt.Sprint(signaled), "[-701]"; got != want {
+		t.Fatalf("signaled process groups = %s, want %s", got, want)
+	}
+}
+
+func TestProcessIDsInSessionParsesProcStatWithComplexCommandNames(t *testing.T) {
+	procRoot := t.TempDir()
+	for _, fixture := range []struct {
+		pid     string
+		session int
+	}{
+		{pid: "101", session: 77},
+		{pid: "102", session: 88},
+	} {
+		directory := filepath.Join(procRoot, fixture.pid)
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatalf("create proc fixture: %v", err)
+		}
+		stat := fmt.Sprintf("%s (shell ) worker) S 1 2 %d 0 0 0\n", fixture.pid, fixture.session)
+		if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
+			t.Fatalf("write proc fixture: %v", err)
+		}
+	}
+
+	processIDs, err := processIDsInSession(procRoot, 77)
+	if err != nil {
+		t.Fatalf("processIDsInSession() error = %v", err)
+	}
+	if len(processIDs) != 1 || processIDs[0] != 101 {
+		t.Fatalf("processIDsInSession() = %v, want [101]", processIDs)
+	}
+}
+
+func TestTerminalCleanupSignalsEveryProcessInTheSession(t *testing.T) {
+	procRoot := t.TempDir()
+	for _, fixture := range []struct {
+		pid     string
+		session int
+	}{
+		{pid: "700", session: 700},
+		{pid: "701", session: 700},
+		{pid: "702", session: 700},
+		{pid: "800", session: 800},
+	} {
+		directory := filepath.Join(procRoot, fixture.pid)
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatalf("create proc fixture: %v", err)
+		}
+		stat := fmt.Sprintf("%s (terminal process) S 1 2 %d 0 0 0\n", fixture.pid, fixture.session)
+		if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
+			t.Fatalf("write proc fixture: %v", err)
+		}
+	}
+
+	var signaled []int
+	err := signalProcessSession(procRoot, 700, syscall.SIGTERM, func(pid int, _ syscall.Signal) error {
+		signaled = append(signaled, pid)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("signalProcessSession() error = %v", err)
+	}
+	if got, want := fmt.Sprint(signaled), "[701 702 700]"; got != want {
+		t.Fatalf("signaled process IDs = %s, want %s", got, want)
 	}
 }
