@@ -15,6 +15,7 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -62,6 +63,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const accountChecked = account !== null
+  const canStartNewConversation = codexCanStartNewConversation({
+    activeTurnId,
+    recovering: replayRecovering,
+    submitting,
+    threadReady,
+  })
 
   useEffect(() => {
     mountedRef.current = true
@@ -428,7 +435,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function newConversation() {
-    if (activeTurnId || submitting) return
+    if (
+      !codexCanStartNewConversation({
+        activeTurnId,
+        recovering: replayRecovering || replayRecoveryRef.current,
+        submitting,
+        threadReady,
+      })
+    ) {
+      return
+    }
     removeStoredThread(agentId)
     threadIdRef.current = ''
     restoredHistoryRef.current = new Map()
@@ -490,7 +506,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         {account.plan ? <span className="ml-2 text-white/28">{account.plan}</span> : null}
         <button
           type="button"
-          disabled={Boolean(activeTurnId) || submitting || replayRecovering}
+          disabled={!canStartNewConversation}
           onClick={newConversation}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-white/55 outline-none hover:bg-white/7 hover:text-white/82 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-35"
         >

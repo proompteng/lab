@@ -229,6 +229,20 @@ export function codexResumeCommitIsCurrent(
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
 }
 
+export function codexCanStartNewConversation({
+  activeTurnId,
+  recovering,
+  submitting,
+  threadReady,
+}: {
+  activeTurnId: string
+  recovering: boolean
+  submitting: boolean
+  threadReady: boolean
+}) {
+  return !recovering && !submitting && (!activeTurnId || !threadReady)
+}
+
 export function codexActiveTurnIdFromThread(rawJson: string) {
   try {
     const response = record(JSON.parse(rawJson))

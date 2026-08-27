@@ -5,6 +5,7 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -146,6 +147,19 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
+  })
+
+  test('allows abandoning a thread after replay recovery fails', () => {
+    const failedRecovery = {
+      activeTurnId: 'stale-turn',
+      recovering: false,
+      submitting: false,
+      threadReady: false,
+    }
+
+    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
+    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
+    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
   })
 
   test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
