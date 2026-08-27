@@ -84,6 +84,26 @@ describe('Tengri desktop window manager', () => {
     expect(state.windows[0]?.id).not.toBe('finder-1')
   })
 
+  test('wraps generated ids after the largest accepted persisted id', () => {
+    const base = initialWindowState(viewport)
+    const persisted = {
+      ...base,
+      activeApp: 'finder' as const,
+      activeWindowId: 'finder-999999',
+      windows: [{ ...base.windows[0]!, id: 'finder-999999' }],
+    }
+
+    let state = windowReducer(base, { type: 'hydrate', state: persisted, viewport })
+    expect(state.nextWindowId).toBe(1)
+
+    state = windowReducer(state, { type: 'new', app: 'terminal', title: 'Terminal', viewport })
+    expect(state.activeWindowId).toBe('terminal-1')
+
+    const rehydrated = windowReducer(base, { type: 'hydrate', state, viewport })
+    expect(rehydrated.activeWindowId).toBe('terminal-1')
+    expect(rehydrated.windows.map((window) => window.id)).toEqual(['finder-999999', 'terminal-1'])
+  })
+
   test('clamps windows when the viewport shrinks', () => {
     const state = windowReducer(initialWindowState(viewport), {
       type: 'viewport',

@@ -34,6 +34,7 @@ export type WindowAction =
   | { type: 'viewport'; viewport: Bounds }
 
 export const MAX_DESKTOP_WINDOWS = 20
+const MAX_WINDOW_ID = 999_999
 const MIN_WINDOW_HEIGHT = 220
 const MIN_WINDOW_WIDTH = 320
 const MIN_VISIBLE_HEIGHT = 56
@@ -142,14 +143,16 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
 
 function appendWindow(state: WindowManagerState, app: TengriApp, title: string, viewport: Bounds): WindowManagerState {
   if (state.windows.length >= MAX_DESKTOP_WINDOWS) return state
-  const created = newWindow(app, title, viewport, state.nextZ, state.nextWindowId)
+  const id = nextAvailableWindowId(state.windows, state.nextWindowId)
+  const created = newWindow(app, title, viewport, state.nextZ, id)
+  const windows = [...state.windows, created]
   return {
     ...state,
     activeApp: created.app,
     activeWindowId: created.id,
-    nextWindowId: state.nextWindowId + 1,
+    nextWindowId: nextAvailableWindowId(windows, incrementWindowId(id)),
     nextZ: state.nextZ + 1,
-    windows: [...state.windows, created],
+    windows,
   }
 }
 
@@ -357,10 +360,31 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
   return {
     activeApp: active?.app || 'finder',
     activeWindowId: active?.id || '',
-    nextWindowId: Math.max(largestId + 1, 1),
+    nextWindowId: nextAvailableWindowId(windows, incrementWindowId(largestId)),
     nextZ: largestZ + 1,
     windows,
   }
+}
+
+function nextAvailableWindowId(windows: DesktopWindow[], requested: number) {
+  const usedIds = new Set(
+    windows.map((window) => Number(window.id.slice(window.id.lastIndexOf('-') + 1))).filter(Number.isInteger),
+  )
+  let candidate = normalizeWindowId(requested)
+  for (let attempt = 0; attempt <= usedIds.size; attempt += 1) {
+    if (!usedIds.has(candidate)) return candidate
+    candidate = incrementWindowId(candidate)
+  }
+  return candidate
+}
+
+function normalizeWindowId(value: number) {
+  if (!Number.isFinite(value)) return 1
+  return ((((Math.trunc(value) - 1) % MAX_WINDOW_ID) + MAX_WINDOW_ID) % MAX_WINDOW_ID) + 1
+}
+
+function incrementWindowId(value: number) {
+  return normalizeWindowId(value + 1)
 }
 
 function validWindowId(value: unknown, app: TengriApp) {
