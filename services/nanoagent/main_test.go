@@ -167,9 +167,11 @@ func TestBeginShutdownClosesStreamingSubscriptions(t *testing.T) {
 
 func testAPIServer(t *testing.T) *apiServer {
 	t.Helper()
+	root := t.TempDir()
 	server, err := newAPIServer(apiConfig{
 		bootstrapToken: "test-bootstrap-token",
-		workspaceRoot:  t.TempDir(),
+		homeRoot:       root,
+		workspaceRoot:  root,
 	})
 	if err != nil {
 		t.Fatalf("newAPIServer() error = %v", err)

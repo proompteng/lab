@@ -22,6 +22,8 @@ const (
 type apiConfig struct {
 	bootstrapToken string
 	evidence       evidence
+	homeRoot       string
+	shell          string
 	workspaceRoot  string
 }
 
@@ -30,6 +32,7 @@ type apiServer struct {
 	evidence         evidence
 	fileWatcher      *fileWatcher
 	previewTransport http.RoundTripper
+	terminals        *terminalManager
 	workspace        workspace
 }
 
@@ -58,6 +61,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		evidence:         config.evidence,
 		fileWatcher:      files,
 		previewTransport: transport,
+		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
 	}
 	return server, nil
@@ -69,6 +73,7 @@ func (server *apiServer) close() {
 }
 
 func (server *apiServer) beginShutdown() {
+	server.terminals.close()
 	_ = server.fileWatcher.close()
 }
 
@@ -83,6 +88,10 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	mux.HandleFunc("POST /v1/files/directory", server.handleCreateDirectory)
 	mux.HandleFunc("POST /v1/files/move", server.handleMoveFile)
 	mux.HandleFunc("DELETE /v1/files", server.handleDeleteFile)
+	mux.HandleFunc("POST /v1/terminals", server.handleCreateTerminal)
+	mux.HandleFunc("GET /v1/terminals", server.handleListTerminals)
+	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
+	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
