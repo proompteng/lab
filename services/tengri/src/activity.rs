@@ -106,6 +106,14 @@ pub fn last_activity_at(microvm: &MicroVM) -> Option<String> {
 }
 
 pub fn idle_deadline_passed(microvm: &MicroVM, now: DateTime<Utc>) -> bool {
+    effective_idle_deadline_at(microvm).is_some_and(|deadline| deadline <= now)
+}
+
+pub fn effective_idle_deadline(microvm: &MicroVM) -> Option<String> {
+    effective_idle_deadline_at(microvm).map(|deadline| deadline.to_rfc3339())
+}
+
+fn effective_idle_deadline_at(microvm: &MicroVM) -> Option<DateTime<Utc>> {
     let configured_deadline = DateTime::parse_from_rfc3339(&microvm.spec.idle_deadline)
         .ok()
         .map(|value| value.with_timezone(&Utc));
@@ -117,7 +125,6 @@ pub fn idle_deadline_passed(microvm: &MicroVM, now: DateTime<Utc>) -> bool {
         .into_iter()
         .chain(activity_deadline)
         .max()
-        .is_some_and(|deadline| deadline <= now)
 }
 
 fn activity_metadata_patch(now: DateTime<Utc>) -> serde_json::Value {
@@ -186,6 +193,14 @@ mod tests {
         assert_eq!(
             last_activity_at(&microvm).as_deref(),
             Some(now_text.as_str())
+        );
+        assert_eq!(
+            effective_idle_deadline(&microvm).as_deref(),
+            Some(
+                (now + chrono::Duration::minutes(IDLE_MINUTES))
+                    .to_rfc3339()
+                    .as_str()
+            ),
         );
         assert!(!idle_deadline_passed(&microvm, now));
         assert!(idle_deadline_passed(
