@@ -77,7 +77,15 @@ argocd app sync kata --prune
 argocd app wait kata --sync --health --timeout 300
 test -z "$(kubectl --context galactic-lan -n kata get daemonset -o name)"
 kubectl --context galactic-lan get runtimeclass kata-fc kata-clh kata-dragonball kata-qemu
+
+PROOF_DIR="/tmp/galactic-kata-proof-$(date -u +%Y%m%dT%H%M%SZ)"
+devices/galactic/extensions/kata/verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc
+test -z "$(kubectl --context galactic-lan -n kata get pod,secret \
+  -l app.kubernetes.io/component=runtime-acceptance -o name)"
 ```
+
+The verifier creates one unprivileged, digest-pinned Nanoagent Pod at a time, captures guest and host evidence, and
+deletes the Pod plus its unique bootstrap Secret through an exit trap. It never changes node scheduling or Talos.
 
 ## Validation
 

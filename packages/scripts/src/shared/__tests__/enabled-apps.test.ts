@@ -20,6 +20,8 @@ const kataKustomization = YAML.parse(readFileSync('argocd/applications/kata/kust
   resources?: string[]
 }
 const kataReadme = readFileSync('argocd/applications/kata/README.md', 'utf8')
+const kataRuntimeVerifier = readFileSync('devices/galactic/extensions/kata/verify-runtimes.sh', 'utf8')
+const talosUpgradeRunbook = readFileSync('docs/runbooks/talos-latest-upgrade-plan.md', 'utf8')
 const tengriOperations = readFileSync('docs/tengri/operations.md', 'utf8')
 const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
 const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
@@ -243,9 +245,20 @@ describe('enabled app inventory', () => {
     expect(kataKustomization.resources).toEqual(['runtime-class.yaml'])
     expect(kataReadme).toContain('must not render a `Namespace` object or permanent runtime canary workloads')
     expect(kataReadme).toContain('bounded acceptance operation')
+    expect(kataRuntimeVerifier).toMatch(/readonly NANOAGENT_IMAGE='[^']+@sha256:[a-f0-9]{64}'/)
+    expect(kataRuntimeVerifier).toContain('kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create -f -')
+    expect(kataRuntimeVerifier).toContain('runtimeClassName: ${runtime_class}')
+    expect(kataRuntimeVerifier).toContain('activeDeadlineSeconds: 900')
+    expect(kataRuntimeVerifier).toContain('kubernetes.io/hostname: ${node}')
+    expect(kataRuntimeVerifier).toContain('trap cleanup_active_resources EXIT')
+    expect(kataRuntimeVerifier).toContain('delete_active_resources >"$node_dir/$vmm-cleanup.txt"')
+    expect(kataRuntimeVerifier).not.toContain('daemonset_for_vmm')
+    expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
+    expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
     expect(tengriOperations).toContain('enabled: "true"')
     expect(tengriOperations).toContain('argocd app sync kata --prune')
     expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
+    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
   })
 
   it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
