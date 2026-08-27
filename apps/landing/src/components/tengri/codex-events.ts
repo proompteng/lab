@@ -210,14 +210,23 @@ export function reconcileCodexEventsWithRestoredHistory(
   restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
   snapshotSequence: number,
 ) {
-  return current.reduce<TengriCodexEvent[]>((next, event) => {
-    const restoredItem = restoredHistory.get(event.itemId)
-    if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return next
-    const restoredPrefix = codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence)
-      ? restoredItem?.text || ''
-      : ''
-    return appendCodexEvent(next, event, restoredPrefix)
-  }, [])
+  return current.reduce<TengriCodexEvent[]>(
+    (next, event) => appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence),
+    [],
+  )
+}
+
+export function appendCodexEventAfterRestore(
+  current: TengriCodexEvent[],
+  event: TengriCodexEvent,
+  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
+  snapshotSequence: number,
+) {
+  const restoredItem = restoredHistory.get(event.itemId)
+  if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return current
+  const restoredPrefix =
+    restoredItem && codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence) ? restoredItem.text : ''
+  return appendCodexEvent(current, event, restoredPrefix)
 }
 
 export function codexResumeCommitIsCurrent(

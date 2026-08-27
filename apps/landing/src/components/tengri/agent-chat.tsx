@@ -11,7 +11,7 @@ import type {
 } from '@/lib/tengri/types'
 import { CodexEventCard } from './codex-event-card'
 import {
-  appendCodexEvent,
+  appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
@@ -280,11 +280,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       ) {
         return
       }
-      const restoredItem = restoredHistoryRef.current.get(event.itemId)
-      const restoredPrefix = codexEventContinuesRestoredItem(event, restoredItem, restoredHistorySequenceRef.current)
-        ? restoredItem?.text || ''
-        : ''
-      setEvents((current) => appendCodexEvent(current, event, restoredPrefix))
+      setEvents((current) =>
+        appendCodexEventAfterRestore(current, event, restoredHistoryRef.current, restoredHistorySequenceRef.current),
+      )
       if (event.method === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''

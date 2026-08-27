@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
 import {
   appendCodexEvent,
+  appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
@@ -181,6 +182,31 @@ describe('Codex event replay', () => {
     expect(reconcileCodexEventsWithRestoredHistory([earlyPostSnapshotDelta], restoredById, 42)[0]?.text).toBe(
       'snapshot includes delta plus newer output',
     )
+  })
+
+  test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
+    const restoredById = new Map([[restored.id, restored]])
+    const delayedIncludedDelta = {
+      ...event,
+      sequence: 42,
+      method: 'item/agentMessage/delta',
+      text: ' hidden suffix',
+    }
+    const liveDelta = {
+      ...delayedIncludedDelta,
+      sequence: 43,
+      text: ' plus newer output',
+    }
+
+    const afterDelayed = appendCodexEventAfterRestore([], delayedIncludedDelta, restoredById, 42)
+    expect(afterDelayed).toEqual([])
+    expect(appendCodexEventAfterRestore(afterDelayed, liveDelta, restoredById, 42)[0]?.text).toBe(
+      'snapshot includes delta plus newer output',
+    )
+
+    const approval = { ...delayedIncludedDelta, kind: 'approval' as const, approvalId: 'approval-1' }
+    expect(appendCodexEventAfterRestore([], approval, restoredById, 42)).toEqual([approval])
   })
 
   test('removes a replayed approval after its server request resolves', () => {
