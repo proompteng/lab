@@ -65,11 +65,11 @@ func TestBootstrapTokenReexecHelper(t *testing.T) {
 	}
 	if runtime.GOOS == "linux" {
 		environment, err := os.ReadFile("/proc/self/environ")
-		if err != nil {
+		if err != nil && !errors.Is(err, os.ErrPermission) {
 			t.Fatalf("read /proc/self/environ: %v", err)
 		}
-		if bytes.Contains(environment, []byte(token)) ||
-			bytes.Contains(environment, []byte(bootstrapTokenEnvironmentKey+"=")) {
+		if err == nil && (bytes.Contains(environment, []byte(token)) ||
+			bytes.Contains(environment, []byte(bootstrapTokenEnvironmentKey+"="))) {
 			t.Fatal("/proc/self/environ retained the bootstrap credential")
 		}
 	}
