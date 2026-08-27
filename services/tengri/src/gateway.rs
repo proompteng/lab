@@ -27,7 +27,8 @@ use tokio::{
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
-        Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
+        Error as TungsteniteError, Message as TungsteniteMessage, client::IntoClientRequest,
+        protocol::WebSocketConfig,
     },
 };
 
@@ -53,6 +54,18 @@ const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
 type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpstreamWebSocketError {
+    StaleGuestBinding,
+    PreserveGuestBinding,
+}
+
+impl UpstreamWebSocketError {
+    fn invalidates_guest_binding(self) -> bool {
+        self == Self::StaleGuestBinding
+    }
+}
 const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
   const token = decodeURIComponent(window.location.hash.slice(1));
   const target = window.location.pathname + window.location.search;
@@ -603,8 +616,10 @@ async fn preview_host_proxy(
                 .await
             {
                 Ok(connection) => connection,
-                Err(_) => {
-                    state.invalidate_preview_guest(&session.id).await;
+                Err(error) => {
+                    if error.invalidates_guest_binding() {
+                        state.invalidate_preview_guest(&session.id).await;
+                    }
                     return StatusCode::BAD_GATEWAY.into_response();
                 }
             };
@@ -786,18 +801,33 @@ async fn connect_upstream_websocket(
     target: &str,
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
-) -> Result<(UpstreamWebSocket, Option<String>), ()> {
-    let request = upstream_websocket_request(target, token, forwarded_headers)?;
-    let requested_protocols = websocket_protocols(request.headers())?;
+) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
+    let request = upstream_websocket_request(target, token, forwarded_headers)
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    let requested_protocols = websocket_protocols(request.headers())
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     let config = WebSocketConfig::default()
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
     let (upstream, response) = connect_async_with_config(request, Some(config), false)
         .await
-        .map_err(|_| ())?;
-    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)?;
+        .map_err(|error| classify_upstream_websocket_error(&error))?;
+    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)
+        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     Ok((upstream, selected_protocol))
+}
+
+fn classify_upstream_websocket_error(error: &TungsteniteError) -> UpstreamWebSocketError {
+    match error {
+        TungsteniteError::Io(_) => UpstreamWebSocketError::StaleGuestBinding,
+        TungsteniteError::Http(response)
+            if nanoagent_auth_failed(response.status(), response.headers()) =>
+        {
+            UpstreamWebSocketError::StaleGuestBinding
+        }
+        _ => UpstreamWebSocketError::PreserveGuestBinding,
+    }
 }
 
 async fn bridge_open_websocket(
@@ -1335,6 +1365,31 @@ mod tests {
         assert!(!forward_response_header(&HeaderName::from_static(
             NANOAGENT_AUTH_FAILURE_HEADER,
         )));
+    }
+
+    #[test]
+    fn preview_websocket_application_rejections_preserve_the_guest_cache() {
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::BAD_GATEWAY,
+        ] {
+            let response = http::Response::builder()
+                .status(status)
+                .body(None)
+                .expect("websocket rejection response");
+            let error = TungsteniteError::Http(Box::new(response));
+            assert!(!classify_upstream_websocket_error(&error).invalidates_guest_binding());
+        }
+
+        let response = http::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(NANOAGENT_AUTH_FAILURE_HEADER, "1")
+            .body(None)
+            .expect("Nanoagent authentication rejection");
+        let error = TungsteniteError::Http(Box::new(response));
+        assert!(classify_upstream_websocket_error(&error).invalidates_guest_binding());
     }
 
     #[test]
