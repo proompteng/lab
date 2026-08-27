@@ -14,6 +14,16 @@ describe('Tengri desktop window manager', () => {
     expect(state.activeApp).toBe('chrome')
   })
 
+  test('can boot an incremental desktop with only implemented applications', () => {
+    const state = initialWindowState(viewport, ['settings'])
+
+    expect(state.windows).toHaveLength(1)
+    expect(state.windows[0]).toMatchObject({ app: 'settings', id: 'settings-1', title: 'Settings' })
+    expect(state.activeApp).toBe('settings')
+    expect(state.activeWindowId).toBe('settings-1')
+    expect(state.nextWindowId).toBe(2)
+  })
+
   test('open focuses an existing app while new creates an independent window', () => {
     let state = initialWindowState(viewport)
     state = windowReducer(state, { type: 'open', app: 'terminal', title: 'Terminal', viewport })
