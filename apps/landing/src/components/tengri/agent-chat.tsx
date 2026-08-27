@@ -42,6 +42,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [events, setEvents] = useState<TengriCodexEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
@@ -119,6 +120,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setRestoredInProgressItemIds(new Set())
     setEvents([])
     setPrompt('')
+    setReplayRecovering(false)
     setError('')
     setEventStreamState('connecting')
     completedTurns.current.clear()
@@ -194,6 +196,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
     replayRecoveryRef.current = true
+    setThreadReady(false)
+    setReplayRecovering(true)
     try {
       const thread = await runTengriAction<TengriCodexThread>({
         action: 'resume-thread',
@@ -210,6 +214,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       }
     } finally {
       replayRecoveryRef.current = false
+      if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
     }
   }, [agentId, commitThreadState])
 
@@ -293,7 +298,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   async function send() {
     const text = prompt.trim()
-    if (!text || submitting) return
+    if (!text || submitting || replayRecovering || replayRecoveryRef.current || (threadId && !threadReady)) return
     setSubmitting(true)
     setError('')
     setPrompt('')
@@ -389,6 +394,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setHistoryItems([])
     setRestoredInProgressItemIds(new Set())
     setEvents([])
+    setReplayRecovering(false)
     setError('')
     completedTurns.current.clear()
   }
@@ -438,7 +444,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         {account.plan ? <span className="ml-2 text-white/28">{account.plan}</span> : null}
         <button
           type="button"
-          disabled={Boolean(activeTurnId) || submitting}
+          disabled={Boolean(activeTurnId) || submitting || replayRecovering}
           onClick={newConversation}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-white/55 outline-none hover:bg-white/7 hover:text-white/82 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-35"
         >
@@ -467,7 +473,21 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </div>
       <div className="shrink-0 px-[max(20px,8vw)] pb-5">
         <StreamStatus error={error} state={eventStreamState} />
+        {replayRecovering ? (
+          <p className="mx-auto mb-2 max-w-3xl text-xs text-white/45" role="status">
+            Recovering the active conversation…
+          </p>
+        ) : threadId && !threadReady ? (
+          <button
+            type="button"
+            className="mx-auto mb-2 block max-w-3xl text-xs text-[#79b8ff] hover:text-[#9bcaff]"
+            onClick={() => void recoverThreadState()}
+          >
+            Retry conversation recovery
+          </button>
+        ) : null}
         <form
+          aria-busy={replayRecovering}
           className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.055] p-2 shadow-[0_18px_55px_rgba(0,0,0,0.3)] backdrop-blur-xl"
           onSubmit={(event) => {
             event.preventDefault()
@@ -476,6 +496,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         >
           <textarea
             aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
+            disabled={replayRecovering || Boolean(threadId && !threadReady)}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
@@ -485,14 +506,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               }
             }}
             rows={1}
-            placeholder={activeTurnId ? 'Steer the current turn…' : 'Message your agent…'}
+            placeholder={
+              replayRecovering
+                ? 'Recovering conversation…'
+                : activeTurnId
+                  ? 'Steer the current turn…'
+                  : 'Message your agent…'
+            }
             className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white/82 outline-none placeholder:text-white/28"
           />
           {activeTurnId ? (
             <button
               type="button"
               aria-label="Interrupt turn"
-              disabled={interrupting}
+              disabled={interrupting || replayRecovering}
               className="grid h-9 w-9 place-items-center rounded-xl bg-white/8 outline-none hover:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
               onClick={() => void interruptTurn()}
             >
@@ -506,7 +533,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <button
             type="submit"
             aria-label={activeTurnId ? 'Steer turn' : 'Send message'}
-            disabled={!prompt.trim() || submitting}
+            disabled={!prompt.trim() || submitting || replayRecovering || Boolean(threadId && !threadReady)}
             className="grid h-9 w-9 place-items-center rounded-xl bg-[#2574e8] outline-none hover:bg-[#3981e9] focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30"
           >
             {submitting ? (
