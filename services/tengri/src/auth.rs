@@ -12,6 +12,7 @@ use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::PostParams};
 use prost::Message;
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex as AsyncMutex;
 use tonic::{GrpcMethod, Request, Status};
 
 const SUBJECT_HEADER: &str = "x-tengri-subject";
@@ -22,7 +23,8 @@ const PREVIOUS_SIGNATURE_HEADER: &str = "x-tengri-signature-previous";
 const MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
 pub const AUTH_NONCE_CONFIG_MAP: &str = "tengri-auth-nonces";
 const MAX_ACTIVE_NONCES: usize = 8_192;
-const NONCE_UPDATE_RETRIES: usize = 5;
+const NONCE_UPDATE_RETRIES: usize = 8;
+const NONCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(5);
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -42,6 +44,7 @@ enum NonceStore {
     Kubernetes {
         client: Client,
         namespace: Arc<str>,
+        update_lock: Arc<AsyncMutex<()>>,
     },
     #[cfg(test)]
     Memory(Arc<Mutex<HashMap<String, u64>>>),
@@ -54,6 +57,7 @@ impl Authenticator {
             NonceStore::Kubernetes {
                 client,
                 namespace: namespace.into(),
+                update_lock: Arc::new(AsyncMutex::new(())),
             },
         )
     }
@@ -145,7 +149,12 @@ impl Authenticator {
 impl NonceStore {
     async fn consume(&self, key: &str, expires_at: u64, now: u64) -> Result<(), Status> {
         match self {
-            Self::Kubernetes { client, namespace } => {
+            Self::Kubernetes {
+                client,
+                namespace,
+                update_lock,
+            } => {
+                let _update_guard = update_lock.lock().await;
                 consume_kubernetes_nonce(client, namespace, key, expires_at, now).await
             }
             #[cfg(test)]
@@ -175,7 +184,7 @@ async fn consume_kubernetes_nonce(
     now: u64,
 ) -> Result<(), Status> {
     let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
-    for _ in 0..NONCE_UPDATE_RETRIES {
+    for attempt in 0..NONCE_UPDATE_RETRIES {
         let mut state = config_maps
             .get(AUTH_NONCE_CONFIG_MAP)
             .await
@@ -199,13 +208,22 @@ async fn consume_kubernetes_nonce(
             .await
         {
             Ok(_) => return Ok(()),
-            Err(kube::Error::Api(response)) if response.code == 409 => continue,
+            Err(kube::Error::Api(response))
+                if response.code == 409 && attempt + 1 < NONCE_UPDATE_RETRIES =>
+            {
+                tokio::time::sleep(nonce_retry_delay(attempt)).await;
+            }
+            Err(kube::Error::Api(response)) if response.code == 409 => break,
             Err(error) => return Err(map_nonce_store_error(error)),
         }
     }
     Err(Status::unavailable(
         "authentication replay state changed concurrently; retry the request",
     ))
+}
+
+fn nonce_retry_delay(attempt: usize) -> Duration {
+    NONCE_RETRY_BASE_DELAY.saturating_mul(1_u32 << attempt.min(5))
 }
 
 fn map_nonce_store_error(error: kube::Error) -> Status {
@@ -322,6 +340,7 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kube::client::Body as KubeBody;
 
     #[derive(Clone, PartialEq, Message)]
     struct TestRequest {
@@ -391,6 +410,68 @@ mod tests {
                 .code(),
             tonic::Code::Unauthenticated
         );
+    }
+
+    #[tokio::test]
+    async fn serializes_kubernetes_nonce_updates_across_clones() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, http::Response<KubeBody>>();
+        let store = NonceStore::Kubernetes {
+            client: Client::new(service, "tengri"),
+            namespace: Arc::from("tengri"),
+            update_lock: Arc::new(AsyncMutex::new(())),
+        };
+
+        let first_store = store.clone();
+        let first = tokio::spawn(async move { first_store.consume("first", 20_000, 10_000).await });
+        let (first_get, first_get_response) =
+            handle.next_request().await.expect("first ConfigMap read");
+        assert_eq!(first_get.method(), http::Method::GET);
+        first_get_response.send_response(config_map_response("1", "{}"));
+        let (first_put, first_put_response) =
+            handle.next_request().await.expect("first ConfigMap update");
+        assert_eq!(first_put.method(), http::Method::PUT);
+
+        let second_store = store.clone();
+        let second =
+            tokio::spawn(async move { second_store.consume("second", 20_000, 10_000).await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), handle.next_request())
+                .await
+                .is_err(),
+            "a clone must not read stale replay state while the first update is in flight",
+        );
+
+        first_put_response.send_response(config_map_response("2", r#"{"first":"20000"}"#));
+        first.await.expect("first task").expect("first nonce");
+
+        let (second_get, second_get_response) =
+            handle.next_request().await.expect("second ConfigMap read");
+        assert_eq!(second_get.method(), http::Method::GET);
+        second_get_response.send_response(config_map_response("2", r#"{"first":"20000"}"#));
+        let (second_put, second_put_response) = handle
+            .next_request()
+            .await
+            .expect("second ConfigMap update");
+        assert_eq!(second_put.method(), http::Method::PUT);
+        second_put_response.send_response(config_map_response(
+            "3",
+            r#"{"first":"20000","second":"20000"}"#,
+        ));
+        second.await.expect("second task").expect("second nonce");
+    }
+
+    fn config_map_response(resource_version: &str, data: &str) -> http::Response<KubeBody> {
+        http::Response::builder()
+            .status(http::StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(KubeBody::from(
+                format!(
+                    r#"{{"apiVersion":"v1","kind":"ConfigMap","metadata":{{"name":"{AUTH_NONCE_CONFIG_MAP}","namespace":"tengri","resourceVersion":"{resource_version}"}},"data":{data}}}"#,
+                )
+                .into_bytes(),
+            ))
+            .expect("ConfigMap response")
     }
 
     #[test]

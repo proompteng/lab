@@ -13,7 +13,10 @@ use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 
 use crate::{
-    activity::{ActivityTracker, RESUME_STARTED_AT_ANNOTATION, idle_deadline_passed},
+    activity::{
+        ActivityTracker, RESUME_STARTED_AT_ANNOTATION, effective_idle_deadline,
+        idle_deadline_passed, last_activity_at,
+    },
     auth::{Authenticator, Principal, deterministic_agent_id},
     crd::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
@@ -937,10 +940,10 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
         ready_at: status
             .and_then(|value| value.ready_at.clone())
             .unwrap_or_default(),
-        last_activity_at: status
-            .and_then(|value| value.last_activity_at.clone())
+        last_activity_at: last_activity_at(microvm)
             .unwrap_or_else(|| microvm.spec.created_at.clone()),
-        idle_deadline: microvm.spec.idle_deadline.clone(),
+        idle_deadline: effective_idle_deadline(microvm)
+            .unwrap_or_else(|| microvm.spec.idle_deadline.clone()),
         expires_at: microvm.spec.expires_at.clone(),
         conditions: status
             .map(|value| {
@@ -1547,6 +1550,7 @@ fn map_guest_error(error: GuestError) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
     use crate::crd::MicroVMStatus;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
@@ -1702,6 +1706,37 @@ mod tests {
         assert_eq!(
             agent_from_microvm(&agent).phase,
             AgentPhase::Terminating as i32,
+        );
+    }
+
+    #[test]
+    fn agent_projection_reports_the_activity_extended_idle_deadline() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-active",
+            MicroVMSpec {
+                display_name: "Active agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
+                idle_deadline: now.to_rfc3339(),
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
+            },
+        );
+        let activity_at = now + chrono::Duration::minutes(15);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            LAST_ACTIVITY_ANNOTATION.to_owned(),
+            activity_at.to_rfc3339(),
+        )]));
+
+        let projected = agent_from_microvm(&agent);
+        assert_eq!(projected.last_activity_at, activity_at.to_rfc3339());
+        assert_eq!(
+            projected.idle_deadline,
+            (activity_at + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
         );
     }
 
