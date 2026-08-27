@@ -122,7 +122,7 @@ jobs:
             case "${service}" in
               proompteng)
                 manifest_path="argocd/applications/proompteng/kustomization.yaml"
-                input_paths=(apps/landing packages/backend packages/design nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
+                input_paths=(apps/landing packages/backend packages/design services/tengri/proto nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               app)
                 manifest_path="argocd/applications/app/kustomization.yaml"
