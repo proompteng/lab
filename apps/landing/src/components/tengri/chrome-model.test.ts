@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   activeChromeTab,
   chromeReducer,
+  chromeTabLoadInstanceKey,
   currentChromePage,
   initialChromeState,
   MAX_CHROME_TABS,
@@ -51,8 +52,10 @@ describe('Tengri Chrome tabs', () => {
 
   test('reloads only the active tab and clamps history navigation', () => {
     let state = initialChromeState()
+    const initialInstance = chromeTabLoadInstanceKey(activeChromeTab(state))
     state = chromeReducer(state, { type: 'reload' })
     expect(activeChromeTab(state).load.revision).toBe(1)
+    expect(chromeTabLoadInstanceKey(activeChromeTab(state))).not.toBe(initialInstance)
     const unchanged = chromeReducer(state, { type: 'history', offset: -1 })
     expect(unchanged).toBe(state)
   })

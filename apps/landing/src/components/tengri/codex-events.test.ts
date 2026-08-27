@@ -2,17 +2,22 @@ import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
 import {
   appendCodexEvent,
+  appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexCanStartNewConversation,
   codexEventDisplayText,
+  codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
+  reconcileCodexEventsWithRestoredHistory,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -115,6 +120,116 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
+  test('keeps only post-resume updates visible for items restored into history', () => {
+    const restoredItemIds = new Set([event.itemId])
+
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence - 1)).toBe(true)
+  })
+
+  test('seeds the first post-resume delta with the authoritative restored prefix', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'restored prefix' } as const
+    const delta = {
+      ...event,
+      sequence: 43,
+      kind: 'assistant-text' as const,
+      method: 'item/agentMessage/delta',
+      text: ' plus live delta',
+    }
+
+    expect(codexEventContinuesRestoredItem(delta, restored, 42)).toBe(true)
+    expect(codexEventContinuesRestoredItem({ ...delta, sequence: 42 }, restored, 42)).toBe(false)
+    expect(codexEventContinuesRestoredItem({ ...delta, kind: 'tool-output' }, restored, 42)).toBe(false)
+    expect(appendCodexEvent([], delta, restored.text)[0]?.text).toBe('restored prefix plus live delta')
+  })
+
+  test('rejects stale or cross-thread resume responses', () => {
+    expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
+    expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
+    expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
+  })
+
+  test('allows abandoning a thread after replay recovery fails', () => {
+    const failedRecovery = {
+      activeTurnId: 'stale-turn',
+      recovering: false,
+      submitting: false,
+      threadReady: false,
+    }
+
+    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
+    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
+    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
+  })
+
+  test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
+    const restoredById = new Map([[restored.id, restored]])
+    const delayedIncludedDelta = {
+      ...event,
+      sequence: 42,
+      method: 'item/agentMessage/delta',
+      text: ' delta',
+    }
+    const earlyPostSnapshotDelta = {
+      ...delayedIncludedDelta,
+      sequence: 43,
+      text: ' plus newer output',
+    }
+
+    expect(reconcileCodexEventsWithRestoredHistory([delayedIncludedDelta], restoredById, 42)).toEqual([])
+    expect(reconcileCodexEventsWithRestoredHistory([earlyPostSnapshotDelta], restoredById, 42)[0]?.text).toBe(
+      'snapshot includes delta plus newer output',
+    )
+  })
+
+  test('drops snapshot-covered deltas delivered after the snapshot commit', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text', text: 'snapshot includes delta' } as const
+    const restoredById = new Map([[restored.id, restored]])
+    const delayedIncludedDelta = {
+      ...event,
+      sequence: 42,
+      method: 'item/agentMessage/delta',
+      text: ' hidden suffix',
+    }
+    const liveDelta = {
+      ...delayedIncludedDelta,
+      sequence: 43,
+      text: ' plus newer output',
+    }
+
+    const afterDelayed = appendCodexEventAfterRestore([], delayedIncludedDelta, restoredById, 42)
+    expect(afterDelayed).toEqual([])
+    expect(appendCodexEventAfterRestore(afterDelayed, liveDelta, restoredById, 42)[0]?.text).toBe(
+      'snapshot includes delta plus newer output',
+    )
+
+    const approval = { ...delayedIncludedDelta, kind: 'approval' as const, approvalId: 'approval-1' }
+    expect(appendCodexEventAfterRestore([], approval, restoredById, 42)).toEqual([approval])
+  })
+
+  test('removes a replayed approval after its server request resolves', () => {
+    const approval = {
+      ...event,
+      sequence: 1,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: '7',
+    }
+    const otherApproval = { ...approval, sequence: 2, approvalId: '8' }
+    const resolved = {
+      ...event,
+      sequence: 3,
+      kind: 'thread-state' as const,
+      method: 'serverRequest/resolved',
+      itemId: '',
+      rawJson: JSON.stringify({ params: { threadId: event.threadId, requestId: 7 } }),
+    }
+
+    expect(appendCodexEvent([approval, otherApproval], resolved)).toEqual([otherApproval])
+  })
+
   test('replaces authoritative plan snapshots for the same turn', () => {
     const first = {
       ...event,
@@ -126,6 +241,25 @@ describe('Codex event replay', () => {
     }
     const second = { ...first, sequence: 2, text: '- [x] Updated plan' }
     const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '- [ ] Other turn' }
+
+    expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
+    expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([
+      second,
+      otherTurn,
+    ])
+  })
+
+  test('replaces authoritative aggregate diff snapshots for the same turn', () => {
+    const first = {
+      ...event,
+      sequence: 1,
+      kind: 'file-diff' as const,
+      method: 'turn/diff/updated',
+      itemId: '',
+      text: '--- first diff',
+    }
+    const second = { ...first, sequence: 2, text: '--- current diff' }
+    const otherTurn = { ...second, sequence: 3, turnId: 'turn-2', text: '--- other turn' }
 
     expect(appendCodexEvent(appendCodexEvent([], first), second)).toEqual([second])
     expect(appendCodexEvent(appendCodexEvent(appendCodexEvent([], first), second), otherTurn)).toEqual([

@@ -11,18 +11,22 @@ import type {
 } from '@/lib/tengri/types'
 import { CodexEventCard } from './codex-event-card'
 import {
-  appendCodexEvent,
+  appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexCanStartNewConversation,
   codexEventDisplayText,
+  codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
+  codexResumeCommitIsCurrent,
   codexTranscriptFromThread,
   parseCodexEvent,
+  reconcileCodexEventsWithRestoredHistory,
   type CodexApprovalDecision,
   type CodexTranscriptItem,
 } from './codex-events'
@@ -37,9 +41,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [threadReady, setThreadReady] = useState(false)
   const [activeTurnId, setActiveTurnId] = useState('')
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
+  const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<TengriCodexEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
@@ -51,9 +57,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const loginIdRef = useRef('')
   const threadIdRef = useRef('')
   const lastEventSequence = useRef(0)
+  const restoredHistoryRef = useRef<ReadonlyMap<string, CodexTranscriptItem>>(new Map())
+  const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
+  const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const accountChecked = account !== null
+  const canStartNewConversation = codexCanStartNewConversation({
+    activeTurnId,
+    recovering: replayRecovering,
+    submitting,
+    threadReady,
+  })
 
   useEffect(() => {
     mountedRef.current = true
@@ -114,12 +129,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
+    setRestoredHistorySequence(0)
     setEvents([])
     setPrompt('')
+    setReplayRecovering(false)
     setError('')
     setEventStreamState('connecting')
     completedTurns.current.clear()
     lastEventSequence.current = 0
+    restoredHistoryRef.current = new Map()
+    restoredHistorySequenceRef.current = 0
+    replayRecoveryRef.current = false
+    threadResumeGeneration.current += 1
     const stored = readStoredThread(agentId)
     threadIdRef.current = stored
     setThreadId(stored)
@@ -162,24 +183,39 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
-      const activeTurn = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
-      setActiveTurnId(codexReconciledActiveTurnId(activeTurn, completedTurns.current))
+      const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
+      const sequence = thread.eventSequence
+      const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
+      restoredHistoryRef.current = restoredById
+      restoredHistorySequenceRef.current = sequence
+      setRestoredHistorySequence(sequence)
+      setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence))
+      setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
     },
     [agentId],
   )
 
   useEffect(() => {
-    if (!active || !account?.authenticated || !threadId || threadReady) return
+    if (!active || !account?.authenticated || !threadId || threadReady || replayRecoveryRef.current) return
     const controller = new AbortController()
+    const generation = ++threadResumeGeneration.current
     void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
       .then((thread) => {
-        if (controller.signal.aborted) return
+        if (
+          controller.signal.aborted ||
+          !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+        ) {
+          return
+        }
         commitThreadState(thread)
         setThreadReady(true)
         setError('')
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted &&
+          codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+        ) {
           setError(cause instanceof Error ? cause.message : 'Codex thread could not be resumed')
         }
       })
@@ -190,22 +226,36 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
     replayRecoveryRef.current = true
+    const generation = ++threadResumeGeneration.current
+    setThreadReady(false)
+    setReplayRecovering(true)
     try {
       const thread = await runTengriAction<TengriCodexThread>({
         action: 'resume-thread',
         agentId,
         threadId: currentThread,
       })
-      if (!mountedRef.current || threadIdRef.current !== currentThread) return
+      if (
+        !mountedRef.current ||
+        !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
+      ) {
+        return
+      }
       commitThreadState(thread)
       setThreadReady(true)
       setError('')
     } catch (cause) {
-      if (mountedRef.current) {
+      if (
+        mountedRef.current &&
+        codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
+      ) {
         setError(cause instanceof Error ? cause.message : 'Codex thread state could not be refreshed')
       }
     } finally {
-      replayRecoveryRef.current = false
+      if (generation === threadResumeGeneration.current) {
+        replayRecoveryRef.current = false
+        if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
+      }
     }
   }, [agentId, commitThreadState])
 
@@ -230,7 +280,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       ) {
         return
       }
-      setEvents((current) => appendCodexEvent(current, event))
+      setEvents((current) =>
+        appendCodexEventAfterRestore(current, event, restoredHistoryRef.current, restoredHistorySequenceRef.current),
+      )
       if (event.method === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''
@@ -262,21 +314,39 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [active, events, historyItems])
 
   const historyIds = useMemo(() => new Set(historyItems.map((item) => item.id)), [historyItems])
+  const historyById = useMemo(() => new Map(historyItems.map((item) => [item.id, item])), [historyItems])
   const renderedEvents = useMemo(
     () =>
       events
-        .filter((event) => codexEventShouldRender(event, threadId, historyIds))
+        .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredHistorySequence))
         .map((event) => ({ event, text: codexEventDisplayText(event) }))
         .filter(
           ({ event, text }) =>
             Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
         ),
-    [events, historyIds, threadId],
+    [events, historyIds, restoredHistorySequence, threadId],
+  )
+  const renderedEventItemIds = useMemo(
+    () =>
+      new Set(
+        renderedEvents
+          .map(({ event }) =>
+            codexEventContinuesRestoredItem(event, historyById.get(event.itemId), restoredHistorySequence)
+              ? event.itemId
+              : '',
+          )
+          .filter(Boolean),
+      ),
+    [historyById, renderedEvents, restoredHistorySequence],
+  )
+  const renderedHistoryItems = useMemo(
+    () => historyItems.filter((item) => !renderedEventItemIds.has(item.id)),
+    [historyItems, renderedEventItemIds],
   )
 
   async function send() {
     const text = prompt.trim()
-    if (!text || submitting) return
+    if (!text || submitting || replayRecovering || replayRecoveryRef.current || (threadId && !threadReady)) return
     setSubmitting(true)
     setError('')
     setPrompt('')
@@ -363,14 +433,28 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function newConversation() {
-    if (activeTurnId || submitting) return
+    if (
+      !codexCanStartNewConversation({
+        activeTurnId,
+        recovering: replayRecovering || replayRecoveryRef.current,
+        submitting,
+        threadReady,
+      })
+    ) {
+      return
+    }
     removeStoredThread(agentId)
     threadIdRef.current = ''
+    restoredHistoryRef.current = new Map()
+    restoredHistorySequenceRef.current = 0
+    threadResumeGeneration.current += 1
     setThreadId('')
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
+    setRestoredHistorySequence(0)
     setEvents([])
+    setReplayRecovering(false)
     setError('')
     completedTurns.current.clear()
   }
@@ -420,7 +504,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         {account.plan ? <span className="ml-2 text-white/28">{account.plan}</span> : null}
         <button
           type="button"
-          disabled={Boolean(activeTurnId) || submitting}
+          disabled={!canStartNewConversation}
           onClick={newConversation}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-white/55 outline-none hover:bg-white/7 hover:text-white/82 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-35"
         >
@@ -428,9 +512,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-[max(20px,8vw)] py-6">
-        {historyItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
+        {renderedHistoryItems.length === 0 && renderedEvents.length === 0 ? <EmptyConversation /> : null}
         <div className="mx-auto max-w-3xl space-y-3" role="log" aria-live="polite" aria-relevant="additions text">
-          {historyItems.map((item) => (
+          {renderedHistoryItems.map((item) => (
             <CodexEventCard key={`history-${item.id}`} kind={item.kind} text={item.text} />
           ))}
           {renderedEvents.map(({ event, text }) => (
@@ -449,7 +533,21 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </div>
       <div className="shrink-0 px-[max(20px,8vw)] pb-5">
         <StreamStatus error={error} state={eventStreamState} />
+        {replayRecovering ? (
+          <p className="mx-auto mb-2 max-w-3xl text-xs text-white/45" role="status">
+            Recovering the active conversation…
+          </p>
+        ) : threadId && !threadReady ? (
+          <button
+            type="button"
+            className="mx-auto mb-2 block max-w-3xl text-xs text-[#79b8ff] hover:text-[#9bcaff]"
+            onClick={() => void recoverThreadState()}
+          >
+            Retry conversation recovery
+          </button>
+        ) : null}
         <form
+          aria-busy={replayRecovering}
           className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.055] p-2 shadow-[0_18px_55px_rgba(0,0,0,0.3)] backdrop-blur-xl"
           onSubmit={(event) => {
             event.preventDefault()
@@ -458,6 +556,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         >
           <textarea
             aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
+            disabled={replayRecovering || Boolean(threadId && !threadReady)}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
@@ -467,14 +566,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               }
             }}
             rows={1}
-            placeholder={activeTurnId ? 'Steer the current turn…' : 'Message your agent…'}
+            placeholder={
+              replayRecovering
+                ? 'Recovering conversation…'
+                : activeTurnId
+                  ? 'Steer the current turn…'
+                  : 'Message your agent…'
+            }
             className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white/82 outline-none placeholder:text-white/28"
           />
           {activeTurnId ? (
             <button
               type="button"
               aria-label="Interrupt turn"
-              disabled={interrupting}
+              disabled={interrupting || replayRecovering}
               className="grid h-9 w-9 place-items-center rounded-xl bg-white/8 outline-none hover:bg-white/12 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
               onClick={() => void interruptTurn()}
             >
@@ -488,7 +593,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <button
             type="submit"
             aria-label={activeTurnId ? 'Steer turn' : 'Send message'}
-            disabled={!prompt.trim() || submitting}
+            disabled={!prompt.trim() || submitting || replayRecovering || Boolean(threadId && !threadReady)}
             className="grid h-9 w-9 place-items-center rounded-xl bg-[#2574e8] outline-none hover:bg-[#3981e9] focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-30"
           >
             {submitting ? (
@@ -639,8 +744,9 @@ function commitThread(
   threadRef.current = thread.id
   setThreadId(thread.id)
   writeStoredThread(agentId, thread.id)
-  setHistoryItems(codexTranscriptFromThread(thread.rawJson))
-  return codexActiveTurnIdFromThread(thread.rawJson)
+  const historyItems = codexTranscriptFromThread(thread.rawJson)
+  setHistoryItems(historyItems)
+  return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson), historyItems }
 }
 
 function storageKey(agentId: string) {

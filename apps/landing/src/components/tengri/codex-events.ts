@@ -38,24 +38,30 @@ export type CodexTranscriptItem = {
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
 
-export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent) {
+export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent, restoredPrefix = '') {
+  const resolvedApprovalId = codexResolvedApprovalId(event)
+  if (resolvedApprovalId) {
+    const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
+    return next.length === current.length ? current : next
+  }
   if (isRawReasoningDelta(event)) return current
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
 
-  const planIndex = isAuthoritativePlanSnapshot(event)
+  const snapshotMethod = authoritativeTurnSnapshotMethod(event)
+  const snapshotIndex = snapshotMethod
     ? current.findIndex(
         (candidate) =>
-          isAuthoritativePlanSnapshot(candidate) &&
+          authoritativeTurnSnapshotMethod(candidate) === snapshotMethod &&
           candidate.threadId === event.threadId &&
           candidate.turnId === event.turnId,
       )
     : -1
 
-  if (planIndex >= 0) {
+  if (snapshotIndex >= 0) {
     const next = [...current]
-    next[planIndex] = { ...event, text: truncateEventText(eventText) }
+    next[snapshotIndex] = { ...event, text: truncateEventText(eventText) }
     return next
   }
 
@@ -81,7 +87,13 @@ export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodex
     return next
   }
 
-  return [...current.slice(-(MAX_CODEX_EVENTS - 1)), { ...event, text: truncateEventText(eventText) }]
+  return [
+    ...current.slice(-(MAX_CODEX_EVENTS - 1)),
+    {
+      ...event,
+      text: isDeltaEvent(event) ? appendBoundedText(restoredPrefix, eventText) : truncateEventText(eventText),
+    },
+  ]
 }
 
 export function parseCodexEvent(data: string): TengriCodexEvent | null {
@@ -173,10 +185,71 @@ export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
   restoredItemIds: ReadonlySet<string>,
+  restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
-  return !event.itemId || !restoredItemIds.has(event.itemId)
+  return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
+}
+
+export function codexEventContinuesRestoredItem(
+  event: TengriCodexEvent,
+  restoredItem: CodexTranscriptItem | undefined,
+  restoredHistorySequence: number,
+) {
+  return Boolean(
+    restoredItem &&
+    event.itemId === restoredItem.id &&
+    event.kind === restoredItem.kind &&
+    event.sequence > restoredHistorySequence,
+  )
+}
+
+export function reconcileCodexEventsWithRestoredHistory(
+  current: TengriCodexEvent[],
+  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
+  snapshotSequence: number,
+) {
+  return current.reduce<TengriCodexEvent[]>(
+    (next, event) => appendCodexEventAfterRestore(next, event, restoredHistory, snapshotSequence),
+    [],
+  )
+}
+
+export function appendCodexEventAfterRestore(
+  current: TengriCodexEvent[],
+  event: TengriCodexEvent,
+  restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,
+  snapshotSequence: number,
+) {
+  const restoredItem = restoredHistory.get(event.itemId)
+  if (event.kind !== 'approval' && restoredItem && event.sequence <= snapshotSequence) return current
+  const restoredPrefix =
+    restoredItem && codexEventContinuesRestoredItem(event, restoredItem, snapshotSequence) ? restoredItem.text : ''
+  return appendCodexEvent(current, event, restoredPrefix)
+}
+
+export function codexResumeCommitIsCurrent(
+  requestGeneration: number,
+  currentGeneration: number,
+  requestedThreadId: string,
+  currentThreadId: string,
+) {
+  return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
+}
+
+export function codexCanStartNewConversation({
+  activeTurnId,
+  recovering,
+  submitting,
+  threadReady,
+}: {
+  activeTurnId: string
+  recovering: boolean
+  submitting: boolean
+  threadReady: boolean
+}) {
+  return !recovering && !submitting && (!activeTurnId || !threadReady)
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {
@@ -769,8 +842,12 @@ function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
 }
 
-function isAuthoritativePlanSnapshot(event: TengriCodexEvent) {
-  return event.kind === 'plan' && Boolean(event.turnId) && event.method.toLowerCase() === 'turn/plan/updated'
+function authoritativeTurnSnapshotMethod(event: TengriCodexEvent) {
+  if (!event.turnId) return ''
+  const method = event.method.toLowerCase()
+  if (event.kind === 'plan' && method === 'turn/plan/updated') return method
+  if (event.kind === 'file-diff' && method === 'turn/diff/updated') return method
+  return ''
 }
 
 function isRawReasoningDelta(event: TengriCodexEvent) {
@@ -779,4 +856,12 @@ function isRawReasoningDelta(event: TengriCodexEvent) {
 
 function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
+}
+
+function codexResolvedApprovalId(event: TengriCodexEvent) {
+  if (event.method.toLowerCase() !== 'serverrequest/resolved') return ''
+  const requestId = record(parseRawEvent(event.rawJson).params).requestId
+  if (typeof requestId === 'string') return boundedIdentifier(requestId, 256)
+  if (typeof requestId === 'number' && Number.isSafeInteger(requestId)) return String(requestId)
+  return ''
 }

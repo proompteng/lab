@@ -54,6 +54,10 @@ export function initialChromeState(): ChromeState {
   }
 }
 
+export function chromeTabLoadInstanceKey(tab: Pick<ChromeTab, 'id' | 'load'>) {
+  return `${tab.id}:${tab.load.revision}`
+}
+
 export function chromeReducer(state: ChromeState, action: ChromeAction): ChromeState {
   if (action.type === 'activate') {
     return state.tabs.some((tab) => tab.id === action.id) ? { ...state, activeId: action.id } : state

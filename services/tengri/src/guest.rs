@@ -118,8 +118,16 @@ pub struct CodexEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodexCallResponse {
     result: Value,
+    event_sequence: u64,
+}
+
+#[derive(Debug)]
+pub struct CodexCallResult {
+    pub result: Value,
+    pub event_sequence: u64,
 }
 
 impl GuestClient {
@@ -307,13 +315,24 @@ impl GuestClient {
     }
 
     pub async fn codex_call(&self, method: &str, params: Value) -> Result<Value, GuestError> {
+        Ok(self.codex_call_with_sequence(method, params).await?.result)
+    }
+
+    pub async fn codex_call_with_sequence(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexCallResult, GuestError> {
         let response: CodexCallResponse = self
             .json(
                 self.request(Method::POST, "/v1/codex/call")
                     .json(&serde_json::json!({"method": method, "params": params})),
             )
             .await?;
-        Ok(response.result)
+        Ok(CodexCallResult {
+            result: response.result,
+            event_sequence: response.event_sequence,
+        })
     }
 
     pub async fn resolve_codex_approval(

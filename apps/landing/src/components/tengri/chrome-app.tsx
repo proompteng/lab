@@ -17,6 +17,7 @@ import type { TengriPreviewSession } from '@/lib/tengri/types'
 import { AgentChat } from './agent-chat'
 import {
   activeChromeTab,
+  chromeTabLoadInstanceKey,
   chromeReducer,
   currentChromePage,
   initialChromeState,
@@ -231,7 +232,11 @@ export function ChromeApp({ active: applicationActive = true, agentId }: { activ
               role="tabpanel"
             >
               {page.kind === 'agent' ? (
-                <AgentChat active={applicationActive && selected} agentId={agentId} key={tab.id} />
+                <AgentChat
+                  active={applicationActive && selected}
+                  agentId={agentId}
+                  key={chromeTabLoadInstanceKey(tab)}
+                />
               ) : (
                 <PreviewFrame
                   active={applicationActive && selected}

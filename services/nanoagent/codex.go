@@ -34,8 +34,9 @@ type codexCallRequest struct {
 }
 
 type codexCallResponse struct {
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  json.RawMessage `json:"error,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	Error         json.RawMessage `json:"error,omitempty"`
+	EventSequence uint64          `json:"eventSequence"`
 }
 
 type codexApprovalRequest struct {
@@ -58,8 +59,14 @@ type codexRPCMessage struct {
 }
 
 type codexPendingResult struct {
-	result json.RawMessage
-	err    json.RawMessage
+	result        json.RawMessage
+	err           json.RawMessage
+	eventSequence uint64
+}
+
+type codexCallResult struct {
+	result        json.RawMessage
+	eventSequence uint64
 }
 
 type codexSubscription struct {
@@ -274,9 +281,9 @@ func killProcessGroup(command *exec.Cmd) {
 	}
 }
 
-func (supervisor *codexSupervisor) call(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+func (supervisor *codexSupervisor) call(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
 	if !allowedCodexMethod(method) {
-		return nil, errors.New("Codex method is not exposed by Nanoagent")
+		return codexCallResult{}, errors.New("Codex method is not exposed by Nanoagent")
 	}
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
@@ -284,7 +291,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	return supervisor.request(ctx, method, params, true)
 }
 
-func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
+func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
 	supervisor.loginMu.Lock()
 	defer supervisor.loginMu.Unlock()
 
@@ -297,7 +304,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true)
 		cancel()
 		if cancelErr != nil {
-			return nil, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
+			return codexCallResult{}, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
 		}
 		supervisor.mu.Lock()
 		if supervisor.activeLoginID == previousLoginID {
@@ -307,13 +314,13 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	}
 	result, err := supervisor.request(ctx, "account/login/start", params, true)
 	if err != nil {
-		return nil, err
+		return codexCallResult{}, err
 	}
 	var login struct {
 		LoginID string `json:"loginId"`
 	}
-	if json.Unmarshal(result, &login) != nil || login.LoginID == "" || len(login.LoginID) > 160 {
-		return nil, errors.New("Codex app-server returned an invalid device login")
+	if json.Unmarshal(result.result, &login) != nil || login.LoginID == "" || len(login.LoginID) > 160 {
+		return codexCallResult{}, errors.New("Codex app-server returned an invalid device login")
 	}
 	supervisor.mu.Lock()
 	supervisor.activeLoginID = login.LoginID
@@ -326,14 +333,14 @@ func (supervisor *codexSupervisor) request(
 	method string,
 	params json.RawMessage,
 	waitReady bool,
-) (json.RawMessage, error) {
+) (codexCallResult, error) {
 	var generation *codexProcessGeneration
 	if waitReady {
 		supervisor.mu.Lock()
 		generation = supervisor.generation
 		supervisor.mu.Unlock()
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
-			return nil, err
+			return codexCallResult{}, err
 		}
 	}
 	id := supervisor.requestID.Add(1)
@@ -345,34 +352,34 @@ func (supervisor *codexSupervisor) request(
 	}
 	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
 		supervisor.mu.Unlock()
-		return nil, errors.New("Codex app-server restarted before the request could be sent")
+		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
 	}
 	supervisor.pending[key] = response
 	stdin := supervisor.stdin
 	supervisor.mu.Unlock()
 	if stdin == nil {
 		supervisor.removePending(key)
-		return nil, errors.New("Codex app-server is unavailable")
+		return codexCallResult{}, errors.New("Codex app-server is unavailable")
 	}
 	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
 	if err != nil {
 		supervisor.removePending(key)
-		return nil, err
+		return codexCallResult{}, err
 	}
 	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
 		supervisor.removePending(key)
-		return nil, err
+		return codexCallResult{}, err
 	}
 	select {
 	case <-ctx.Done():
 		supervisor.removePending(key)
-		return nil, ctx.Err()
+		return codexCallResult{}, ctx.Err()
 	case result := <-response:
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return nil, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
+			return codexCallResult{}, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
 		}
-		return result.result, nil
+		return codexCallResult{result: result.result, eventSequence: result.eventSequence}, nil
 	}
 }
 
@@ -475,9 +482,10 @@ func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
 	supervisor.mu.Lock()
 	pending := supervisor.pending[key]
 	delete(supervisor.pending, key)
+	eventSequence := supervisor.sequence
 	supervisor.mu.Unlock()
 	if pending != nil {
-		pending <- codexPendingResult{result: message.Result, err: message.Error}
+		pending <- codexPendingResult{result: message.Result, err: message.Error, eventSequence: eventSequence}
 	}
 }
 
@@ -1050,7 +1058,7 @@ func (server *apiServer) handleCodexCall(writer http.ResponseWriter, request *ht
 		writeAPIError(writer, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(writer, http.StatusOK, codexCallResponse{Result: result})
+	writeJSON(writer, http.StatusOK, codexCallResponse{Result: result.result, EventSequence: result.eventSequence})
 }
 
 func (server *apiServer) handleCodexApproval(writer http.ResponseWriter, request *http.Request) {
