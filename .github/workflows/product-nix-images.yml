@@ -27,6 +27,7 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
+      - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
   push:
@@ -51,6 +52,7 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
+      - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
   workflow_dispatch:
@@ -113,6 +115,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             app:
@@ -126,6 +129,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             synthesis:
@@ -139,6 +143,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
             docs:
@@ -152,6 +157,7 @@ jobs:
               - 'nix/ci-run-timed.sh'
               - 'nix/oci-inspect-archive.sh'
               - 'nix/oci-push.sh'
+              - 'flake.nix'
               - 'flake.lock'
               - 'bun.lock'
       - name: Manual build selection
