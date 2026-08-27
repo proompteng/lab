@@ -425,7 +425,7 @@ function mapGrpcError(error: grpc.ServiceError) {
 
 function decodeUtf8File(content: Uint8Array) {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(content)
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content)
   } catch {
     throw new TengriUnavailableError('This file is not valid UTF-8 text', 415)
   }

@@ -24,6 +24,7 @@ import ./bun-workspace-service.nix {
     "apps/landing"
     "packages/backend"
     "packages/design"
+    "services/tengri/proto"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run build"
@@ -35,6 +36,8 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/landing/public" ]; then
       cp -R "$TMPDIR/work/apps/landing/public/." "$out/app/apps/landing/public/"
     fi
+    mkdir -p "$out/app/services/tengri/proto"
+    cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
   '';
   command = [
     "node"
@@ -44,6 +47,7 @@ import ./bun-workspace-service.nix {
   env = [
     "PORT=3000"
     "HOSTNAME=0.0.0.0"
+    "TENGRI_PROTO_PATH=/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"
   ];
   extraContents = [
     nodejs

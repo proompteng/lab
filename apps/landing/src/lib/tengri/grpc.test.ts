@@ -66,6 +66,14 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.path === '/workspace/bom.txt') {
+        callback(null, {
+          path: String(call.request.path),
+          content: Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from('hello')]),
+          contentType: 'text/plain; charset=utf-8',
+        })
+        return
+      }
       callback(null, {
         path: String(call.request.path),
         content: Buffer.from([0xff, 0xfe, 0x00]),
@@ -135,6 +143,13 @@ describe('Tengri gRPC BFF transport', () => {
       message: 'This file is not valid UTF-8 text',
       status: 415,
     })
+  })
+
+  test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
+    const { readFile } = await import('./grpc')
+    const file = await readFile('github:42', 'agent-test', '/workspace/bom.txt')
+
+    expect(file.content).toBe('\ufeffhello')
   })
 
   test('sends current and previous signatures during HMAC rotation', async () => {

@@ -2,13 +2,14 @@ import 'server-only'
 
 import { getTengriIdentity } from '@/lib/tengri/auth'
 import { TengriUnavailableError } from '@/lib/tengri/grpc'
+import { MAX_EDITABLE_FILE_BYTES } from '@/lib/tengri/schemas'
 
 type RateWindow = { count: number; resetsAt: number }
 
 const RATE_WINDOW_MS = 60_000
 const SUBJECT_LIMIT = 120
 const RATE_WINDOW_CAP = 20_000
-export const MAX_TENGRI_ACTION_BODY_BYTES = 5 * 1024 * 1024
+export const MAX_TENGRI_ACTION_BODY_BYTES = MAX_EDITABLE_FILE_BYTES * 6 + 64 * 1024
 
 export async function requireTengriIdentity(request: Request) {
   const identity = await getRateLimitedTengriIdentity(request)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { tengriActionSchema } from './schemas'
+import { MAX_CODEX_PROMPT_BYTES, MAX_EDITABLE_FILE_BYTES, tengriActionSchema } from './schemas'
 
 describe('Tengri BFF action schema', () => {
   test('CreateAgent accepts only a display name and rejects resource escalation fields', () => {
@@ -61,6 +61,44 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: '/workspace/file.ts',
         impersonateSubject: 'github:999',
+      }).success,
+    ).toBe(false)
+  })
+
+  test('preserves whitespace in valid paths and bounds files by encoded bytes', () => {
+    const spacedPath = '/workspace/report '
+    const parsed = tengriActionSchema.safeParse({ action: 'read-file', agentId: 'agent-123', path: spacedPath })
+    expect(parsed.success).toBe(true)
+    if (parsed.success && parsed.data.action === 'read-file') expect(parsed.data.path).toBe(spacedPath)
+
+    const exact = 'é'.repeat(MAX_EDITABLE_FILE_BYTES / 2)
+    expect(
+      tengriActionSchema.safeParse({ action: 'write-file', agentId: 'agent-123', path: spacedPath, content: exact })
+        .success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'write-file',
+        agentId: 'agent-123',
+        path: spacedPath,
+        content: `${exact}é`,
+      }).success,
+    ).toBe(false)
+  })
+
+  test('bounds Codex prompts by UTF-8 bytes', () => {
+    const exact = '🙂'.repeat(MAX_CODEX_PROMPT_BYTES / 4)
+    expect(
+      tengriActionSchema.safeParse({ action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: exact })
+        .success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'steer-turn',
+        agentId: 'agent-123',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        text: `${exact}🙂`,
       }).success,
     ).toBe(false)
   })
