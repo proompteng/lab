@@ -6,6 +6,8 @@ import {
   initialChromeState,
   MAX_CHROME_TABS,
   parseChromeAddress,
+  parsePreviewBridgeMessage,
+  PREVIEW_BRIDGE_CHANNEL,
   safePreviewLaunchUrl,
 } from './chrome-model'
 
@@ -43,14 +45,48 @@ describe('Tengri Chrome tabs', () => {
     const active = activeChromeTab(state)
     expect(currentChromePage(active).title).toBe('replacement')
     expect(active.historyIndex).toBe(active.history.length - 1)
+    expect(active.load.page).toMatchObject({ kind: 'preview', port: 4000 })
+    expect(active.load.revision).toBeGreaterThan(30)
   })
 
   test('reloads only the active tab and clamps history navigation', () => {
     let state = initialChromeState()
     state = chromeReducer(state, { type: 'reload' })
-    expect(activeChromeTab(state).reload).toBe(1)
+    expect(activeChromeTab(state).load.revision).toBe(1)
     const unchanged = chromeReducer(state, { type: 'history', offset: -1 })
     expect(unchanged).toBe(state)
+  })
+
+  test('synchronizes iframe navigation without reloading the live preview session', () => {
+    let state = initialChromeState()
+    state = chromeReducer(state, {
+      type: 'navigate',
+      page: { kind: 'preview', title: 'localhost:3000', displayUrl: 'http://localhost:3000/', port: 3000, path: '/' },
+    })
+    const liveLoad = activeChromeTab(state).load
+    state = chromeReducer(state, {
+      type: 'frame-navigate',
+      id: state.activeId,
+      mode: 'push',
+      page: {
+        kind: 'preview',
+        title: 'localhost:3000',
+        displayUrl: 'http://localhost:3000/dashboard',
+        port: 3000,
+        path: '/dashboard',
+      },
+    })
+    expect(currentChromePage(activeChromeTab(state)).displayUrl).toBe('http://localhost:3000/dashboard')
+    expect(activeChromeTab(state).load).toBe(liveLoad)
+
+    state = chromeReducer(state, {
+      type: 'frame-navigate',
+      id: state.activeId,
+      mode: 'load',
+      page: { kind: 'preview', title: 'localhost:3000', displayUrl: 'http://localhost:3000/', port: 3000, path: '/' },
+    })
+    expect(activeChromeTab(state).historyIndex).toBe(1)
+    expect(activeChromeTab(state).load).toBe(liveLoad)
   })
 })
 
@@ -88,10 +124,83 @@ describe('Tengri Chrome addresses', () => {
       'http://localhost:3000/#secret',
       'javascript:alert(1)',
       'data:text/html,hello',
+      'ftp://example.com/file',
+      'ssh://host/path',
+      'custom:payload',
       `https://example.com/${'x'.repeat(4096)}`,
+      `http://localhost:3000/${'😀'.repeat(500)}`,
     ]) {
       expect(parseChromeAddress(address).kind).toBe('invalid')
     }
+  })
+
+  test('accepts only authenticated preview bridge messages from the expected session origin', () => {
+    const sessionId = 'abc123abc123abc123abc123'
+    const origin = `https://tengri-${sessionId}.proompteng.ai`
+    expect(
+      parsePreviewBridgeMessage(
+        {
+          channel: PREVIEW_BRIDGE_CHANNEL,
+          sessionId,
+          type: 'navigation',
+          mode: 'push',
+          url: `${origin}/workspace?q=1#editor`,
+        },
+        origin,
+        origin,
+        sessionId,
+        3000,
+      ),
+    ).toEqual({
+      kind: 'navigation',
+      mode: 'push',
+      page: {
+        kind: 'preview',
+        title: 'localhost:3000',
+        displayUrl: 'http://localhost:3000/workspace?q=1#editor',
+        port: 3000,
+        path: '/workspace?q=1',
+      },
+    })
+    expect(
+      parsePreviewBridgeMessage(
+        { channel: PREVIEW_BRIDGE_CHANNEL, sessionId, type: 'shortcut', key: 'w' },
+        origin,
+        origin,
+        sessionId,
+        3000,
+      ),
+    ).toEqual({ kind: 'shortcut', key: 'w' })
+    expect(
+      parsePreviewBridgeMessage(
+        {
+          channel: PREVIEW_BRIDGE_CHANNEL,
+          sessionId,
+          type: 'navigation',
+          mode: 'load',
+          url: 'https://attacker.example/',
+        },
+        'https://attacker.example',
+        origin,
+        sessionId,
+        3000,
+      ),
+    ).toBeNull()
+    expect(
+      parsePreviewBridgeMessage(
+        {
+          channel: PREVIEW_BRIDGE_CHANNEL,
+          sessionId,
+          type: 'navigation',
+          mode: 'load',
+          url: `https://tengri-${sessionId}.attacker.example/`,
+        },
+        `https://tengri-${sessionId}.attacker.example`,
+        origin,
+        sessionId,
+        3000,
+      ),
+    ).toBeNull()
   })
 
   test('never mistakes a loopback-looking external host for a microVM preview', () => {

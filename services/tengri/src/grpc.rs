@@ -37,11 +37,11 @@ use proto::{
     IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListFilesRequest,
     ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
     PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
-    ResumeAgentRequest, ResumeCodexThreadRequest, SearchFilesRequest, SearchFilesResponse,
-    SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest,
-    TerminalSession, TerminalTicket, TerminateTerminalRequest, WatchAgentRequest,
-    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
-    micro_vm_control_plane_server::MicroVmControlPlane,
+    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
+    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
+    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -889,10 +889,26 @@ impl MicroVmControlPlane for ControlPlane {
                 .issue_preview(&principal.owner_hash, &request.agent_id, port, &path)?;
         metrics::global().record_preview_session();
         Ok(Response::new(PreviewSession {
-            id: issued.token.clone(),
+            id: issued.id,
             launch_url: issued.url,
             expires_at: issued.expires_at,
         }))
+    }
+
+    async fn revoke_preview_session(
+        &self,
+        request: Request<RevokePreviewSessionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request).await?;
+        let request = request.into_inner();
+        validate_preview_session_id(&request.session_id)?;
+        self.owned_agent(&principal, &request.agent_id).await?;
+        self.tickets.revoke_preview(
+            &principal.owner_hash,
+            &request.agent_id,
+            &request.session_id,
+        )?;
+        Ok(Response::new(Empty {}))
     }
 }
 
@@ -1394,6 +1410,17 @@ fn validate_resource_id(value: &str) -> Result<(), Status> {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
         return Err(Status::invalid_argument("invalid agent id"));
+    }
+    Ok(())
+}
+
+fn validate_preview_session_id(value: &str) -> Result<(), Status> {
+    if value.len() != 24
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(Status::invalid_argument("invalid preview session id"));
     }
     Ok(())
 }

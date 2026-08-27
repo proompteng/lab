@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   X,
 } from 'lucide-react'
-import { useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { TengriPreviewSession } from '@/lib/tengri/types'
 import { AgentChat } from './agent-chat'
 import {
@@ -22,17 +22,20 @@ import {
   initialChromeState,
   MAX_CHROME_TABS,
   parseChromeAddress,
+  parsePreviewBridgeMessage,
   safePreviewLaunchUrl,
   type ChromePage,
+  type ChromePreviewNavigationMode,
+  type ChromePreviewShortcut,
 } from './chrome-model'
 import { runTengriAction } from './client'
 
 type PreviewPage = Extract<ChromePage, { kind: 'preview' }>
 
-export function ChromeApp({ agentId }: { agentId: string }) {
+export function ChromeApp({ active: applicationActive = true, agentId }: { active?: boolean; agentId: string }) {
   const [state, dispatch] = useReducer(chromeReducer, undefined, initialChromeState)
-  const active = activeChromeTab(state)
-  const activePage = currentChromePage(active)
+  const activeTab = activeChromeTab(state)
+  const activePage = currentChromePage(activeTab)
   const [address, setAddress] = useState(activePage.displayUrl)
   const [navigationError, setNavigationError] = useState('')
   const addressRef = useRef<HTMLInputElement | null>(null)
@@ -66,34 +69,48 @@ export function ChromeApp({ agentId }: { agentId: string }) {
       return
     }
     popup.opener = null
+    let issuedSessionId = ''
     try {
       const session = await issuePreview(agentId, activePage)
+      issuedSessionId = session.id
       const launchUrl = safePreviewLaunchUrl(session.launchUrl)
       if (!launchUrl) throw new Error('Tengri returned an invalid preview URL')
       popup.location.replace(launchUrl)
     } catch (cause) {
+      if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
       popup.close()
       setNavigationError(cause instanceof Error ? cause.message : 'The microVM preview could not be opened')
     }
   }
 
+  const runShortcut = useCallback(
+    (key: ChromePreviewShortcut) => {
+      if (key === 'l') {
+        addressRef.current?.focus()
+        addressRef.current?.select()
+      } else if (key === 'r') {
+        dispatch({ type: 'reload' })
+      } else if (key === 't') {
+        dispatch({ type: 'new-tab' })
+      } else {
+        dispatch({ type: 'close', id: state.activeId })
+      }
+    },
+    [state.activeId],
+  )
+
   function handleShortcut(event: KeyboardEvent<HTMLDivElement>) {
-    if (!event.metaKey) return
-    const key = event.key.toLowerCase()
+    if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
+    const key = event.key.toLowerCase() as ChromePreviewShortcut
     if (!['l', 'r', 't', 'w'].includes(key)) return
     event.preventDefault()
     event.stopPropagation()
-    if (key === 'l') {
-      addressRef.current?.focus()
-      addressRef.current?.select()
-    } else if (key === 'r') {
-      dispatch({ type: 'reload' })
-    } else if (key === 't') {
-      dispatch({ type: 'new-tab' })
-    } else {
-      dispatch({ type: 'close', id: state.activeId })
-    }
+    runShortcut(key)
   }
+
+  const synchronizePreview = useCallback((id: string, page: PreviewPage, mode: ChromePreviewNavigationMode) => {
+    dispatch({ type: 'frame-navigate', id, mode, page })
+  }, [])
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#101216]" onKeyDownCapture={handleShortcut}>
@@ -157,14 +174,14 @@ export function ChromeApp({ agentId }: { agentId: string }) {
         }}
       >
         <ToolbarButton
-          disabled={active.historyIndex === 0}
+          disabled={activeTab.historyIndex === 0}
           label="Back"
           onClick={() => dispatch({ type: 'history', offset: -1 })}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         </ToolbarButton>
         <ToolbarButton
-          disabled={active.historyIndex >= active.history.length - 1}
+          disabled={activeTab.historyIndex >= activeTab.history.length - 1}
           label="Forward"
           onClick={() => dispatch({ type: 'history', offset: 1 })}
         >
@@ -214,12 +231,15 @@ export function ChromeApp({ agentId }: { agentId: string }) {
               role="tabpanel"
             >
               {page.kind === 'agent' ? (
-                <AgentChat agentId={agentId} key={`${tab.id}-${tab.historyIndex}-${tab.reload}`} />
+                <AgentChat active={applicationActive && selected} agentId={agentId} key={tab.id} />
               ) : (
                 <PreviewFrame
-                  active={selected}
+                  active={applicationActive && selected}
                   agentId={agentId}
-                  key={`${tab.id}-${tab.historyIndex}-${tab.reload}`}
+                  key={tab.id}
+                  loadRevision={tab.load.revision}
+                  onNavigate={(nextPage, mode) => synchronizePreview(tab.id, nextPage, mode)}
+                  onShortcut={runShortcut}
                   page={page}
                 />
               )}
@@ -231,32 +251,71 @@ export function ChromeApp({ agentId }: { agentId: string }) {
   )
 }
 
-function PreviewFrame({ active, agentId, page }: { active: boolean; agentId: string; page: PreviewPage }) {
+function PreviewFrame({
+  active,
+  agentId,
+  loadRevision,
+  onNavigate,
+  onShortcut,
+  page,
+}: {
+  active: boolean
+  agentId: string
+  loadRevision: number
+  onNavigate: (page: PreviewPage, mode: ChromePreviewNavigationMode) => void
+  onShortcut: (key: ChromePreviewShortcut) => void
+  page: PreviewPage
+}) {
   const [attempt, setAttempt] = useState(0)
-  const [launchUrl, setLaunchUrl] = useState('')
+  const [session, setSession] = useState<{ id: string; launchUrl: string } | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const pageRef = useRef(page)
+  pageRef.current = page
 
   useEffect(() => {
-    if (!active || launchUrl) return
-    const controller = new AbortController()
-    setLaunchUrl('')
+    if (!active) return
+    let disposed = false
+    let issuedSessionId = ''
+    setSession(null)
     setLoaded(false)
     setError('')
-    void issuePreview(agentId, page, controller.signal)
-      .then((session) => {
-        if (controller.signal.aborted) return
-        const safeUrl = safePreviewLaunchUrl(session.launchUrl)
+    void issuePreview(agentId, pageRef.current)
+      .then((issued) => {
+        issuedSessionId = issued.id
+        if (disposed) {
+          void revokePreview(agentId, issued.id)
+          return
+        }
+        const safeUrl = safePreviewLaunchUrl(issued.launchUrl)
         if (!safeUrl) throw new Error('Tengri returned an invalid preview URL')
-        setLaunchUrl(safeUrl)
+        setSession({ id: issued.id, launchUrl: safeUrl })
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
+        if (!disposed) {
           setError(cause instanceof Error ? cause.message : 'The microVM preview could not be opened')
         }
       })
-    return () => controller.abort()
-  }, [active, agentId, attempt, launchUrl, page])
+    return () => {
+      disposed = true
+      if (issuedSessionId) void revokePreview(agentId, issuedSessionId)
+    }
+  }, [active, agentId, attempt, loadRevision])
+
+  useEffect(() => {
+    if (!session) return
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      const expectedOrigin = new URL(session.launchUrl).origin
+      const message = parsePreviewBridgeMessage(event.data, event.origin, expectedOrigin, session.id, page.port)
+      if (!message) return
+      if (message.kind === 'shortcut') onShortcut(message.key)
+      else onNavigate(message.page, message.mode)
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [onNavigate, onShortcut, page.port, session])
 
   if (error) {
     return (
@@ -276,7 +335,7 @@ function PreviewFrame({ active, agentId, page }: { active: boolean; agentId: str
       </div>
     )
   }
-  if (!launchUrl) {
+  if (!session) {
     return (
       <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-white/48">
         <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Opening localhost preview…
@@ -294,8 +353,9 @@ function PreviewFrame({ active, agentId, page }: { active: boolean; agentId: str
         </div>
       ) : null}
       <iframe
+        ref={iframeRef}
         title={page.title}
-        src={launchUrl}
+        src={session.launchUrl}
         className="h-full w-full border-0 bg-white"
         onLoad={() => setLoaded(true)}
         referrerPolicy="no-referrer"
@@ -339,4 +399,8 @@ function issuePreview(agentId: string, page: PreviewPage, signal?: AbortSignal) 
     },
     signal,
   )
+}
+
+function revokePreview(agentId: string, sessionId: string) {
+  return runTengriAction<null>({ action: 'revoke-preview-session', agentId, sessionId }).catch(() => null)
 }

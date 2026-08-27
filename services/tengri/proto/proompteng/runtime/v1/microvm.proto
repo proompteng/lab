@@ -36,6 +36,7 @@ service MicroVMControlPlane {
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
 
   rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
+  rpc RevokePreviewSession(RevokePreviewSessionRequest) returns (Empty);
 }
 
 message Empty {}
@@ -222,3 +223,4 @@ message CodexEvent {
 
 message IssuePreviewSessionRequest { string agent_id = 1; uint32 port = 2; string path = 3; }
 message PreviewSession { string id = 1; string launch_url = 2; string expires_at = 3; }
+message RevokePreviewSessionRequest { string agent_id = 1; string session_id = 2; }
