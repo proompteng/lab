@@ -1107,6 +1107,9 @@ fn codex_event_text_unbounded(value: &Value) -> String {
     if let Some(outcome) = codex_collaboration_outcome(value) {
         return outcome;
     }
+    if let Some(outcome) = codex_command_outcome(value) {
+        return outcome;
+    }
 
     let direct = json_string(
         value,
@@ -1137,7 +1140,7 @@ fn codex_event_text_unbounded(value: &Value) -> String {
     if !direct.is_empty() {
         return direct;
     }
-    for pointer in ["/params/item/content", "/params/item/summary"] {
+    for pointer in ["/params/item/summary", "/params/item/content"] {
         let text = value
             .pointer(pointer)
             .and_then(Value::as_array)
@@ -1180,6 +1183,19 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             return text;
         }
     }
+    for pointer in [
+        "/params/item/result/structuredContent",
+        "/params/item/result/structured_content",
+    ] {
+        if let Some(structured) = value
+            .pointer(pointer)
+            .filter(|structured| !structured.is_null())
+        {
+            if let Ok(text) = serde_json::to_string_pretty(structured) {
+                return text;
+            }
+        }
+    }
     if let Some(plan) = value.pointer("/params/plan").and_then(Value::as_array) {
         let explanation = value
             .pointer("/params/explanation")
@@ -1205,6 +1221,32 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             .join("\n\n");
     }
     String::new()
+}
+
+fn codex_command_outcome(value: &Value) -> Option<String> {
+    let item = value.pointer("/params/item")?;
+    if item.get("type").and_then(Value::as_str) != Some("commandExecution") {
+        return None;
+    }
+    if item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .is_some_and(|output| !output.is_empty())
+    {
+        return None;
+    }
+
+    let status = item.get("status").and_then(Value::as_str)?;
+    let label = match status {
+        "completed" => "Command completed",
+        "failed" => "Command failed",
+        "declined" => "Command declined",
+        _ => return None,
+    };
+    Some(match item.get("exitCode").and_then(Value::as_i64) {
+        Some(exit_code) => format!("{label} (exit {exit_code})"),
+        None => label.to_owned(),
+    })
 }
 
 fn codex_collaboration_outcome(value: &Value) -> Option<String> {
@@ -1772,6 +1814,46 @@ mod tests {
                 "params": {"item": {"content": [{"type": "text", "text": "actual input"}]}}
             })),
             "actual input"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "reasoning",
+                        "summary": ["Public reasoning summary"],
+                        "content": ["Internal reasoning content"]
+                    }
+                }
+            })),
+            "Public reasoning summary"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "commandExecution",
+                        "status": "completed",
+                        "aggregatedOutput": "",
+                        "exitCode": 0
+                    }
+                }
+            })),
+            "Command completed (exit 0)"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "result": {
+                            "content": [],
+                            "structuredContent": {"id": "ENG-123", "state": "Done"}
+                        }
+                    }
+                }
+            })),
+            "{\n  \"id\": \"ENG-123\",\n  \"state\": \"Done\"\n}"
         );
         assert_eq!(
             codex_event_text(&json!({

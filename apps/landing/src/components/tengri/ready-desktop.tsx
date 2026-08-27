@@ -6,7 +6,9 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
+import { cn } from '@/lib/utils'
 import { APP_TITLES, initialWindowState, type Bounds, windowReducer } from '@/lib/tengri/window-manager'
+import { ChromeAgentWindow } from './chrome-agent-window'
 import { runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
@@ -24,7 +26,7 @@ export function ReadyDesktop({
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const [windowState, dispatch] = useReducer(windowReducer, { x: 0, y: 0, width: 1_280, height: 760 }, (viewport) =>
-    initialWindowState(viewport, ['settings']),
+    initialWindowState(viewport, ['settings', 'chrome']),
   )
   const [clock, setClock] = useState<Date | null>(null)
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
@@ -64,7 +66,7 @@ export function ReadyDesktop({
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (!event.metaKey || event.defaultPrevented || event.target instanceof HTMLInputElement) return
+      if (!event.metaKey || event.defaultPrevented || isEditableTarget(event.target)) return
       const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
       if (!active) return
       if (event.key.toLowerCase() === 'w') {
@@ -84,6 +86,10 @@ export function ReadyDesktop({
 
   const openSettings = useCallback(() => {
     dispatch({ type: 'open', app: 'settings', title: APP_TITLES.settings, viewport: viewport() })
+  }, [viewport])
+
+  const openChrome = useCallback(() => {
+    dispatch({ type: 'open', app: 'chrome', title: APP_TITLES.chrome, viewport: viewport() })
   }, [viewport])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
@@ -114,7 +120,10 @@ export function ReadyDesktop({
     }
   }
 
+  const chromeRunning = windowState.windows.some((candidate) => candidate.app === 'chrome')
   const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
+  const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
+  const activeAppTitle = activeWindow ? APP_TITLES[activeWindow.app] : 'Tengri'
 
   return (
     <>
@@ -137,16 +146,16 @@ export function ReadyDesktop({
             <button
               type="button"
               className="flex h-6 items-center rounded-md px-2 font-semibold text-white/88 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/50"
-              onClick={openSettings}
+              onClick={activeWindow?.app === 'chrome' ? openChrome : openSettings}
             >
-              Settings
+              {activeAppTitle}
             </button>
           </nav>
           <div className="flex min-w-0 items-center gap-3 text-white/72">
             <span className="hidden items-center gap-1.5 sm:flex">
               <span
                 aria-hidden="true"
-                className={`h-1.5 w-1.5 rounded-full ${connectionWarning ? 'bg-amber-300' : 'bg-emerald-400'}`}
+                className={cn('h-1.5 w-1.5 rounded-full', connectionWarning ? 'bg-amber-300' : 'bg-emerald-400')}
               />
               <span className="max-w-36 truncate">{agent.displayName}</span>
             </span>
@@ -182,45 +191,57 @@ export function ReadyDesktop({
               stageRef={stageRef}
               window={desktopWindow}
             >
-              <AgentSettings
-                agent={agent}
-                busyAction={busyAction}
-                error={error}
-                onDelete={() => {
-                  setError('')
-                  setConfirmOpen(true)
-                }}
-                onSignOut={() => void signOut()}
-                onSleep={() => void mutate('sleep-agent')}
-                user={user}
-              />
+              {desktopWindow.app === 'chrome' ? (
+                <ChromeAgentWindow agentId={agent.id} />
+              ) : (
+                <AgentSettings
+                  agent={agent}
+                  busyAction={busyAction}
+                  error={error}
+                  onDelete={() => {
+                    setError('')
+                    setConfirmOpen(true)
+                  }}
+                  onSignOut={() => void signOut()}
+                  onSleep={() => void mutate('sleep-agent')}
+                  user={user}
+                />
+              )}
             </DesktopWindowFrame>
           ))}
 
           <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[1500] flex justify-center">
             <nav
               aria-label="Dock"
-              className="pointer-events-auto flex h-[72px] items-end rounded-[24px] border border-white/20 bg-[rgba(28,33,45,0.5)] px-3 pb-2 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-3xl"
+              className="pointer-events-auto flex h-[72px] items-end gap-2 rounded-[24px] border border-white/20 bg-[rgba(28,33,45,0.5)] px-3 pb-2 shadow-[0_20px_60px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-3xl"
             >
+              <motion.button
+                type="button"
+                aria-label="Open Chrome"
+                className="group relative flex flex-col items-center outline-none"
+                onClick={openChrome}
+                whileHover={reducedMotion ? undefined : dockHoverAnimation}
+                whileTap={reducedMotion ? undefined : dockTapAnimation}
+                transition={dockTransition}
+              >
+                <DockTooltip label="Chrome" />
+                <ChromeDockIcon />
+                <DockIndicator running={chromeRunning} />
+              </motion.button>
               <motion.button
                 type="button"
                 aria-label="Open Settings"
                 className="group relative flex flex-col items-center outline-none"
                 onClick={openSettings}
-                whileHover={reducedMotion ? undefined : { y: -8, scale: 1.18 }}
-                whileTap={reducedMotion ? undefined : { scale: 0.96 }}
-                transition={{ type: 'spring', stiffness: 520, damping: 28 }}
+                whileHover={reducedMotion ? undefined : dockHoverAnimation}
+                whileTap={reducedMotion ? undefined : dockTapAnimation}
+                transition={dockTransition}
               >
-                <span className="pointer-events-none absolute -top-10 rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[10px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                  Settings
-                </span>
+                <DockTooltip label="Settings" />
                 <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#aeb8c8] to-[#596273] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
                   <Settings aria-hidden="true" className="h-7 w-7 text-white" />
                 </span>
-                <span
-                  aria-hidden="true"
-                  className={`mt-1 h-1 w-1 rounded-full ${settingsRunning ? 'bg-white' : 'bg-transparent'}`}
-                />
+                <DockIndicator running={settingsRunning} />
               </motion.button>
             </nav>
           </div>
@@ -237,6 +258,39 @@ export function ReadyDesktop({
         title={`Delete “${agent.displayName}”?`}
       />
     </>
+  )
+}
+
+function DockTooltip({ label }: { label: string }) {
+  return (
+    <span className="pointer-events-none absolute -top-10 rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[10px] text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+      {label}
+    </span>
+  )
+}
+
+function DockIndicator({ running }: { running: boolean }) {
+  return (
+    <span aria-hidden="true" className={cn('mt-1 h-1 w-1 rounded-full', running ? 'bg-white' : 'bg-transparent')} />
+  )
+}
+
+function ChromeDockIcon() {
+  return (
+    <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-[conic-gradient(from_210deg,#ef4b45_0_33%,#f4c447_33%_66%,#42b76a_66%_100%)] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.3)]">
+      <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-white/80 bg-[#4f8ee8] shadow-inner">
+        <span className="h-2 w-2 rounded-full bg-white/28" />
+      </span>
+    </span>
+  )
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
   )
 }
 
@@ -371,3 +425,6 @@ const secondaryButton =
   'inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/7 px-3.5 py-2 text-sm font-medium text-white/76 outline-none transition hover:bg-white/11 focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-40'
 const dangerButton =
   'ml-auto inline-flex items-center gap-2 rounded-xl border border-red-300/12 bg-red-500/8 px-3.5 py-2 text-sm font-medium text-red-100 outline-none transition hover:bg-red-500/14 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40'
+const dockHoverAnimation = { scale: 1.18, y: -8 }
+const dockTapAnimation = { scale: 0.96 }
+const dockTransition = { damping: 28, stiffness: 520, type: 'spring' as const }
