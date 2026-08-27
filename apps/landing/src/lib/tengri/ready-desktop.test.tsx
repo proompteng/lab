@@ -31,7 +31,7 @@ const user: TengriUser = {
 }
 
 describe('Tengri ready desktop', () => {
-  test('renders real Finder and Chrome surfaces without placeholder applications', () => {
+  test('renders the implemented desktop applications without placeholder surfaces', () => {
     const html = renderToString(
       createElement(ReadyDesktop, {
         agent,
@@ -50,6 +50,7 @@ describe('Tengri ready desktop', () => {
     expect(html).toContain('tengri://agent')
     expect(html).toContain('Checking Codex login')
     expect(html).toContain('Open Chrome')
+    expect(html).toContain('Open Code')
     expect(html).toContain('Open Finder')
     expect(html).toContain('Open Settings')
     expect(html).not.toContain('Open Terminal')

@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, Folder, LoaderCircle, LogOut, Moon, Settings, Trash2, Wifi } from 'lucide-react'
+import { CheckCircle2, FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, Trash2, Wifi } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils'
 import { APP_TITLES, initialWindowState, type Bounds, windowReducer } from '@/lib/tengri/window-manager'
 import { ChromeApp } from './chrome-app'
 import { runTengriAction } from './client'
+import { CodeEditor } from './code-editor'
+import type { CodeOpenRequest } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
 import { FinderApp } from './finder-app'
@@ -33,6 +35,8 @@ export function ReadyDesktop({
   const [busyAction, setBusyAction] = useState<'delete' | 'sign-out' | 'sleep' | null>(null)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [codeRequest, setCodeRequest] = useState<CodeOpenRequest | null>(null)
+  const codeRequestIdRef = useRef(0)
   const reducedMotion = useReducedMotion()
 
   const viewport = useCallback((): Bounds => {
@@ -97,6 +101,14 @@ export function ReadyDesktop({
     dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
   }, [viewport])
 
+  const openCode = useCallback(
+    (path?: string) => {
+      dispatch({ type: 'open', app: 'code', title: APP_TITLES.code, viewport: viewport() })
+      if (path) setCodeRequest({ path, requestId: ++codeRequestIdRef.current })
+    },
+    [viewport],
+  )
+
   const openActiveApp = useCallback(() => {
     const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
     if (active?.app === 'chrome') {
@@ -107,8 +119,12 @@ export function ReadyDesktop({
       openFinder()
       return
     }
+    if (active?.app === 'code') {
+      openCode()
+      return
+    }
     openSettings()
-  }, [openChrome, openFinder, openSettings, windowState.activeWindowId, windowState.windows])
+  }, [openChrome, openCode, openFinder, openSettings, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
     setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
@@ -139,6 +155,7 @@ export function ReadyDesktop({
   }
 
   const chromeRunning = windowState.windows.some((candidate) => candidate.app === 'chrome')
+  const codeRunning = windowState.windows.some((candidate) => candidate.app === 'code')
   const finderRunning = windowState.windows.some((candidate) => candidate.app === 'finder')
   const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
@@ -211,9 +228,15 @@ export function ReadyDesktop({
               window={desktopWindow}
             >
               {desktopWindow.app === 'finder' ? (
-                <FinderApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
+                <FinderApp
+                  active={desktopWindow.id === windowState.activeWindowId}
+                  agentId={agent.id}
+                  onOpenFile={openCode}
+                />
               ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
+              ) : desktopWindow.app === 'code' ? (
+                <CodeEditor agentId={agent.id} key={agent.id} request={codeRequest} />
               ) : (
                 <AgentSettings
                   agent={agent}
@@ -263,6 +286,21 @@ export function ReadyDesktop({
                 <DockTooltip label="Chrome" />
                 <ChromeDockIcon />
                 <DockIndicator running={chromeRunning} />
+              </motion.button>
+              <motion.button
+                type="button"
+                aria-label="Open Code"
+                className="group relative flex flex-col items-center outline-none"
+                onClick={() => openCode()}
+                whileHover={reducedMotion ? undefined : dockHoverAnimation}
+                whileTap={reducedMotion ? undefined : dockTapAnimation}
+                transition={dockTransition}
+              >
+                <DockTooltip label="Code" />
+                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#5f6fff] via-[#775dd8] to-[#312d7d] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]">
+                  <FileCode2 aria-hidden="true" className="h-7 w-7 text-white" />
+                </span>
+                <DockIndicator running={codeRunning} />
               </motion.button>
               <motion.button
                 type="button"
