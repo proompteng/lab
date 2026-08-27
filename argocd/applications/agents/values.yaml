@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: sha-98e610b0719a2551659fc9b2ccaea548c6631e9f
-  digest: sha256:92699c01560197aaef1dc39539cbb6960b944190854c8874af1d80320753b6d4
+  tag: sha-6f5d585f047193fafe171345d3bf7e7d2daa172a
+  digest: sha256:1efeaf780d8043cee794fc453d0affa001c2df618e149b0a33417ba357efa598
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,26 +14,26 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: sha-98e610b0719a2551659fc9b2ccaea548c6631e9f
-    digest: sha256:c284e4785024262480d95857f057eb4e5a46fdbc84192ee14ec7e3327d9266d3
+    tag: sha-6f5d585f047193fafe171345d3bf7e7d2daa172a
+    digest: sha256:9d861b17c709c9c7c354a9302d44b2a64903341ef353c758e44063b4a5844333
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 98e610b0719a2551659fc9b2ccaea548c6631e9f
-      AGENTS_GITOPS_REVISION: 98e610b0719a2551659fc9b2ccaea548c6631e9f
-      AGENTS_SOURCE_CI_RUN_ID: "32685156239"
+      AGENTS_SOURCE_HEAD_SHA: 6f5d585f047193fafe171345d3bf7e7d2daa172a
+      AGENTS_GITOPS_REVISION: 6f5d585f047193fafe171345d3bf7e7d2daa172a
+      AGENTS_SOURCE_CI_RUN_ID: "33124644159"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:c284e4785024262480d95857f057eb4e5a46fdbc84192ee14ec7e3327d9266d3
-      AGENTS_SERVING_BUILD_COMMIT: 98e610b0719a2551659fc9b2ccaea548c6631e9f
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:c284e4785024262480d95857f057eb4e5a46fdbc84192ee14ec7e3327d9266d3
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:9d861b17c709c9c7c354a9302d44b2a64903341ef353c758e44063b4a5844333
+      AGENTS_SERVING_BUILD_COMMIT: 6f5d585f047193fafe171345d3bf7e7d2daa172a
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:9d861b17c709c9c7c354a9302d44b2a64903341ef353c758e44063b4a5844333
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: sha-98e610b0719a2551659fc9b2ccaea548c6631e9f
-    digest: sha256:f6f3db1e3e1ece6c7aa8be693264c9472e380f0d672bc94733a7c0e963f5f774
+    tag: sha-6f5d585f047193fafe171345d3bf7e7d2daa172a
+    digest: sha256:c29c4927f479d767bf061eb5cff34a162f16e7ca708f6317dc79db1466454825
 linearMcpGateway:
   enabled: false
   replicaCount: 2
@@ -56,8 +56,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: sha-98e610b0719a2551659fc9b2ccaea548c6631e9f
-    digest: sha256:e5c530c260a81dc072979e73adc49a4ece0084375ee5ad552075ce73a825c83a
+    tag: sha-6f5d585f047193fafe171345d3bf7e7d2daa172a
+    digest: sha256:df9e01de8e3b2f338568245aff6017a261fd443977778cb5ce5253a3cd9085f1
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -183,8 +183,8 @@ argocdHooks:
           ttlSecondsAfterFinished: 600
           implementation:
             inline:
-              summary: "Run the agents primitives smoke implementation"
-              text: "Execute the sample implementation for the agents primitives workflow."
+              summary: Run the agents primitives smoke implementation
+              text: Execute the sample implementation for the agents primitives workflow.
           runtime:
             type: workflow
           workflow:
@@ -203,8 +203,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: sha-98e610b0719a2551659fc9b2ccaea548c6631e9f
-    digest: sha256:92699c01560197aaef1dc39539cbb6960b944190854c8874af1d80320753b6d4
+    tag: sha-6f5d585f047193fafe171345d3bf7e7d2daa172a
+    digest: sha256:1efeaf780d8043cee794fc453d0affa001c2df618e149b0a33417ba357efa598
   autoscaling:
     enabled: false
 swarm:
