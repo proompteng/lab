@@ -20,12 +20,10 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/nanoagent
-
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: arc-amd64
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -34,69 +32,19 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
 
-      - name: Test
-        working-directory: services/nanoagent
+      - name: Install race detector build tools
         run: |
-          go test ./...
-          go vet ./...
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential
 
-  image:
-    needs: test
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and optionally publish
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: services/nanoagent
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.ref == 'refs/heads/main' }}
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Install Cosign
-        if: github.ref == 'refs/heads/main'
-        uses: sigstore/cosign-installer@v3.10.0
-
-      - name: Sign and summarize the image
-        if: github.ref == 'refs/heads/main'
+      - name: Validate guest service
+        working-directory: services/nanoagent
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          CGO_ENABLED: '1'
         run: |
           set -euo pipefail
-          image_ref="${IMAGE}@${DIGEST}"
-          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/nanoagent.yaml@refs/heads/main"
-
-          cosign sign --yes "$image_ref"
-          cosign verify \
-            --certificate-identity "$identity" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$image_ref"
-          {
-            echo '### Nanoagent'
-            echo
-            echo "\`${image_ref}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          test -z "$(gofmt -l .)"
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...
