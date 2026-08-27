@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.0...temporal-bun-sdk-v0.11.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** upgrade dependencies ([#14099](https://github.com/proompteng/lab/issues/14099)) ([f34b649](https://github.com/proompteng/lab/commit/f34b6492c746608bcaa6e068328c60da4d39754a))
+* **temporal:** preserve process env mutations outside workflows ([#13975](https://github.com/proompteng/lab/issues/13975)) ([e2f9545](https://github.com/proompteng/lab/commit/e2f9545d63dbb320fb08361990d9244ddea866a1))
+
 ## [0.11.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.10.0...temporal-bun-sdk-v0.11.0) (2026-05-15)
 
 
