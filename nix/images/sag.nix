@@ -14,8 +14,8 @@ import ./bun-workspace-service.nix {
   serviceName = "sag";
   packageName = "@proompteng/sag";
   depsHash = {
-    x86_64-linux = "sha256-xIoTlcnSERTMeVytZOLywUhjGY1XJL0DvcfdkkHXrzk=";
-    aarch64-linux = "sha256-nbw/F041ec+/4VAYjEWf2AbSLaI4s4MzFKklHIB8sE4=";
+    x86_64-linux = "sha256-92QXEXFPyfPrttxBL2KpNKHw+NUGib2jgfzO3L7Ehhs=";
+    aarch64-linux = "sha256-ZkvREXBrS0SHHcgUfj4no4zM2yuH/dVFzpzNVwO1xjU=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
