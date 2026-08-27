@@ -25,8 +25,10 @@ bundle, remove the previous key. More than two keys are rejected.
 
 Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
 `tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
-controller restarts and overlapping rollout Pods; only live receipts are retained and the bounded store fails closed.
-The deployment RBAC grants only `get` and `update` on that named ConfigMap.
+controller restarts. The singleton serializes nonce updates before entering the Kubernetes compare-and-swap loop, and
+bounded exponential retry absorbs an external write conflict without rejecting an ordinary burst of valid requests.
+Only live receipts are retained and the bounded store fails closed. The deployment RBAC grants only `get` and `update`
+on that named ConfigMap.
 
 ## GitOps rollout and rollback
 
