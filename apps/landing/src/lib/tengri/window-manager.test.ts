@@ -139,9 +139,38 @@ describe('Tengri desktop window manager', () => {
     const original = state.windows.find((window) => window.id === id)?.bounds
     state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
     state = windowReducer(state, { type: 'minimize', id })
-    state = windowReducer(state, { type: 'restore', id })
+    state = windowReducer(state, { type: 'restore', id, viewport })
 
     expect(state.windows.find((window) => window.id === id)).toMatchObject({ bounds: original, mode: 'normal' })
+  })
+
+  test('preserves restore bounds across temporary compact viewports while maximized', () => {
+    let state = initialWindowState(viewport)
+    const id = state.activeWindowId
+    const original = state.windows.find((window) => window.id === id)!.bounds
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
+    state = windowReducer(state, { type: 'viewport', viewport: { x: 0, y: 0, width: 300, height: 200 } })
+    state = windowReducer(state, { type: 'viewport', viewport })
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
+
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({
+      bounds: original,
+      restoredBounds: original,
+      mode: 'normal',
+    })
+
+    let hydrated = initialWindowState(viewport)
+    const hydratedId = hydrated.activeWindowId
+    const hydratedOriginal = hydrated.windows.find((window) => window.id === hydratedId)!.bounds
+    hydrated = windowReducer(hydrated, { type: 'toggle-maximize', id: hydratedId, viewport })
+    hydrated = windowReducer(hydrated, {
+      type: 'hydrate',
+      state: hydrated,
+      viewport: { x: 0, y: 0, width: 300, height: 200 },
+    })
+    hydrated = windowReducer(hydrated, { type: 'viewport', viewport })
+    hydrated = windowReducer(hydrated, { type: 'toggle-maximize', id: hydratedId, viewport })
+    expect(hydrated.windows.find((window) => window.id === hydratedId)?.bounds).toEqual(hydratedOriginal)
   })
 
   test('keeps maximized windows inside compact viewports', () => {
@@ -202,6 +231,14 @@ describe('Tengri desktop window manager', () => {
     const east = resizeBounds(base, 'e', 2_000, 0, viewport)
     expect(east.x).toBe(base.x)
     expect(east.x + east.width).toBe(viewport.width - 8)
+
+    const leftEdge = { ...base, x: -896, width: 1_000 }
+    const reachableEast = resizeBounds(leftEdge, 'e', -100, 0, viewport)
+    expect(reachableEast.x + reachableEast.width).toBe(104)
+
+    const rightEdge = { ...base, x: 1_336, width: 1_000 }
+    const reachableWest = resizeBounds(rightEdge, 'w', 100, 0, viewport)
+    expect(reachableWest.x).toBe(1_336)
   })
 
   test('server-renders a minimized frame without browser globals', () => {

@@ -29,7 +29,7 @@ export type WindowAction =
   | { type: 'move'; id: string; bounds: Bounds }
   | { type: 'new'; app: TengriApp; title: string; viewport: Bounds }
   | { type: 'open'; app: TengriApp; title: string; viewport: Bounds }
-  | { type: 'restore'; id: string }
+  | { type: 'restore'; id: string; viewport: Bounds }
   | { type: 'toggle-maximize'; id: string; viewport: Bounds }
   | { type: 'viewport'; viewport: Bounds }
 
@@ -66,7 +66,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
   if (action.type === 'hydrate') return sanitizeState(action.state, action.viewport)
   if (action.type === 'open') {
     const existing = [...state.windows].filter((window) => window.app === action.app).sort((a, b) => b.z - a.z)[0]
-    if (existing) return focusWindow(state, existing.id, existing.mode === 'minimized')
+    if (existing) return focusWindow(state, existing.id, existing.mode === 'minimized', action.viewport)
     return appendWindow(state, action.app, action.title, action.viewport)
   }
   if (action.type === 'new') {
@@ -77,7 +77,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
     return activateFrontmost({ ...state, windows })
   }
   if (action.type === 'focus') return focusWindow(state, action.id)
-  if (action.type === 'restore') return focusWindow(state, action.id, true)
+  if (action.type === 'restore') return focusWindow(state, action.id, true, action.viewport)
   if (action.type === 'minimize') {
     const windows = state.windows.map((window) =>
       window.id === action.id
@@ -111,7 +111,8 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
       windows: focused.windows.map((window) => {
         if (window.id !== action.id) return window
         if (window.mode === 'maximized') {
-          return { ...window, bounds: window.restoredBounds, mode: 'normal' as const }
+          const restoredBounds = clampToViewport(window.restoredBounds, action.viewport)
+          return { ...window, bounds: restoredBounds, restoredBounds, mode: 'normal' as const }
         }
         return {
           ...window,
@@ -131,7 +132,8 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
           window.mode === 'maximized'
             ? maximizedBounds(action.viewport)
             : clampToViewport(window.bounds, action.viewport),
-        restoredBounds: clampToViewport(window.restoredBounds, action.viewport),
+        restoredBounds:
+          window.mode === 'normal' ? clampToViewport(window.restoredBounds, action.viewport) : window.restoredBounds,
       })),
     }
   }
@@ -151,17 +153,21 @@ function appendWindow(state: WindowManagerState, app: TengriApp, title: string, 
   }
 }
 
-function focusWindow(state: WindowManagerState, id: string, restore = false): WindowManagerState {
+function focusWindow(state: WindowManagerState, id: string, restore = false, viewport?: Bounds): WindowManagerState {
   const target = state.windows.find((window) => window.id === id)
   if (!target) return state
+  const restoredBounds = restore && viewport ? clampToViewport(target.restoredBounds, viewport) : target.bounds
   return {
     ...state,
     activeApp: target.app,
     activeWindowId: id,
     nextZ: state.nextZ + 1,
-    windows: state.windows.map((window) =>
-      window.id === id ? { ...window, mode: restore ? 'normal' : window.mode, z: state.nextZ } : window,
-    ),
+    windows: state.windows.map((window) => {
+      if (window.id !== id) return window
+      return restore
+        ? { ...window, bounds: restoredBounds, restoredBounds, mode: 'normal' as const, z: state.nextZ }
+        : { ...window, z: state.nextZ }
+    }),
   }
 }
 
@@ -235,20 +241,20 @@ export function clampToViewport(bounds: Bounds, viewport: Bounds): Bounds {
 export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: number, viewport: Bounds): Bounds {
   const next = { ...base }
   if (edge.includes('w')) {
-    const horizontal = resizeAxis(base.x, base.width, dx, true, viewport.width, MIN_WINDOW_WIDTH)
+    const horizontal = resizeAxis(base.x, base.width, dx, true, viewport.width, MIN_WINDOW_WIDTH, MIN_VISIBLE_WIDTH)
     next.x = horizontal.start
     next.width = horizontal.size
   } else if (edge.includes('e')) {
-    const horizontal = resizeAxis(base.x, base.width, dx, false, viewport.width, MIN_WINDOW_WIDTH)
+    const horizontal = resizeAxis(base.x, base.width, dx, false, viewport.width, MIN_WINDOW_WIDTH, MIN_VISIBLE_WIDTH)
     next.x = horizontal.start
     next.width = horizontal.size
   }
   if (edge.includes('n')) {
-    const vertical = resizeAxis(base.y, base.height, dy, true, viewport.height, MIN_WINDOW_HEIGHT)
+    const vertical = resizeAxis(base.y, base.height, dy, true, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
     next.y = vertical.start
     next.height = vertical.size
   } else if (edge.includes('s')) {
-    const vertical = resizeAxis(base.y, base.height, dy, false, viewport.height, MIN_WINDOW_HEIGHT)
+    const vertical = resizeAxis(base.y, base.height, dy, false, viewport.height, MIN_WINDOW_HEIGHT, MIN_VISIBLE_HEIGHT)
     next.y = vertical.start
     next.height = vertical.size
   }
@@ -266,10 +272,15 @@ function resizeAxis(
   fromStart: boolean,
   viewportSize: number,
   minimumSize: number,
+  minimumVisible: number,
 ) {
   const viewport = viewportAxis(viewportSize, minimumSize)
-  const minimum = Math.min(minimumSize, viewport.available)
   const anchor = fromStart ? start + size : start
+  const visibleBoundary = fromStart
+    ? viewport.size - viewport.inset - Math.min(minimumVisible, viewport.available)
+    : viewport.inset + Math.min(minimumVisible, viewport.available)
+  const visibleMinimum = fromStart ? anchor - visibleBoundary : visibleBoundary - anchor
+  const minimum = Math.min(viewport.available, Math.max(Math.min(minimumSize, viewport.available), visibleMinimum))
   const distanceToBoundary = fromStart ? anchor - viewport.inset : viewport.size - viewport.inset - anchor
   const maximum = Math.max(minimum, Math.min(viewport.available, Math.max(0, distanceToBoundary)))
   const nextSize = clamp(fromStart ? size - delta : size + delta, minimum, maximum)
@@ -319,7 +330,8 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
     }
     usedIds.add(id)
     const mode = isWindowMode(window.mode) ? window.mode : ('normal' as const)
-    const restoredBounds = clampToViewport(window.restoredBounds, viewport)
+    const restoredBounds =
+      mode === 'normal' ? clampToViewport(window.restoredBounds, viewport) : nonNegativeBounds(window.restoredBounds)
     return [
       {
         app: window.app,
