@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - 'services/tengri/**'
-      - 'argocd/applications/tengri/crd.yaml'
+      - 'services/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   push:
     branches:
       - main
     paths:
       - 'services/tengri/**'
-      - 'argocd/applications/tengri/crd.yaml'
+      - 'services/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   workflow_dispatch:
 
@@ -54,4 +54,4 @@ jobs:
         run: |
           set -euo pipefail
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
-          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
+          diff -u /tmp/tengri-crd.yaml crd.yaml

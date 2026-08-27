@@ -150,11 +150,14 @@ func readTrimmed(readFile fileReader, path string) (string, error) {
 
 func newHandler(current evidence) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
+	health := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
-	})
+	}
+	mux.HandleFunc("GET /livez", health)
+	mux.HandleFunc("GET /readyz", health)
+	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /evidence", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(writer).Encode(current); err != nil {

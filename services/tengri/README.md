@@ -37,7 +37,7 @@ cargo clippy --manifest-path services/tengri/Cargo.toml --locked --all-targets -
 cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
 cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen \
   > /tmp/tengri-crd.yaml
-diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
+diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
 ```
 
 The unit tests prove the fixed resource profile, unprivileged `kata-fc` Pod projection, persistent
