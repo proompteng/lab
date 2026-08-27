@@ -1,5 +1,6 @@
 export type TengriApp = 'chrome' | 'code' | 'finder' | 'settings' | 'terminal'
 export type WindowMode = 'maximized' | 'minimized' | 'normal'
+export type ResizeEdge = 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w'
 
 export type Bounds = { x: number; y: number; width: number; height: number }
 export type DesktopWindow = {
@@ -33,7 +34,11 @@ export type WindowAction =
   | { type: 'viewport'; viewport: Bounds }
 
 export const MAX_DESKTOP_WINDOWS = 20
-const MAXIMIZED_INSET = 8
+const MIN_WINDOW_HEIGHT = 220
+const MIN_WINDOW_WIDTH = 320
+const MIN_VISIBLE_HEIGHT = 56
+const MIN_VISIBLE_WIDTH = 96
+const WINDOW_INSET = 8
 
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
@@ -89,8 +94,12 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
     return {
       ...state,
       windows: state.windows.map((window) =>
-        window.id === action.id
-          ? { ...window, bounds: clampBounds(action.bounds), restoredBounds: clampBounds(action.bounds) }
+        window.id === action.id && validBounds(action.bounds)
+          ? {
+              ...window,
+              bounds: nonNegativeBounds(action.bounds),
+              restoredBounds: nonNegativeBounds(action.bounds),
+            }
           : window,
       ),
     }
@@ -186,33 +195,99 @@ function preferredSize(app: TengriApp) {
 }
 
 function maximizedBounds(viewport: Bounds): Bounds {
-  const horizontalInset = Math.min(MAXIMIZED_INSET, Math.max(0, (viewport.width - 320) / 2))
-  const verticalInset = Math.min(MAXIMIZED_INSET, Math.max(0, (viewport.height - 220) / 2))
+  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
+  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
   return {
-    x: horizontalInset,
-    y: verticalInset,
-    width: Math.max(0, viewport.width - horizontalInset * 2),
-    height: Math.max(0, viewport.height - verticalInset * 2),
+    x: horizontal.inset,
+    y: vertical.inset,
+    width: horizontal.available,
+    height: vertical.available,
   }
 }
 
 export function clampToViewport(bounds: Bounds, viewport: Bounds): Bounds {
-  const width = Math.min(Math.max(bounds.width, 320), Math.max(320, viewport.width - 16))
-  const height = Math.min(Math.max(bounds.height, 220), Math.max(220, viewport.height - 16))
+  const horizontal = viewportAxis(viewport.width, MIN_WINDOW_WIDTH)
+  const vertical = viewportAxis(viewport.height, MIN_WINDOW_HEIGHT)
+  const width = clamp(bounds.width, Math.min(MIN_WINDOW_WIDTH, horizontal.available), horizontal.available)
+  const height = clamp(bounds.height, Math.min(MIN_WINDOW_HEIGHT, vertical.available), vertical.available)
   return {
-    x: Math.min(Math.max(bounds.x, 8 - width + 96), Math.max(8, viewport.width - 96)),
-    y: Math.min(Math.max(bounds.y, 8), Math.max(8, viewport.height - 56)),
+    x:
+      width === horizontal.available
+        ? horizontal.inset
+        : clamp(
+            bounds.x,
+            horizontal.inset - width + Math.min(MIN_VISIBLE_WIDTH, width),
+            Math.max(horizontal.inset, horizontal.size - horizontal.inset - Math.min(MIN_VISIBLE_WIDTH, width)),
+          ),
+    y:
+      height === vertical.available
+        ? vertical.inset
+        : clamp(
+            bounds.y,
+            vertical.inset,
+            Math.max(vertical.inset, vertical.size - vertical.inset - Math.min(MIN_VISIBLE_HEIGHT, height)),
+          ),
     width,
     height,
   }
 }
 
-function clampBounds(bounds: Bounds): Bounds {
-  return { ...bounds, width: Math.max(320, bounds.width), height: Math.max(220, bounds.height) }
+export function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: number, viewport: Bounds): Bounds {
+  const next = { ...base }
+  if (edge.includes('w')) {
+    const horizontal = resizeAxis(base.x, base.width, dx, true, viewport.width, MIN_WINDOW_WIDTH)
+    next.x = horizontal.start
+    next.width = horizontal.size
+  } else if (edge.includes('e')) {
+    const horizontal = resizeAxis(base.x, base.width, dx, false, viewport.width, MIN_WINDOW_WIDTH)
+    next.x = horizontal.start
+    next.width = horizontal.size
+  }
+  if (edge.includes('n')) {
+    const vertical = resizeAxis(base.y, base.height, dy, true, viewport.height, MIN_WINDOW_HEIGHT)
+    next.y = vertical.start
+    next.height = vertical.size
+  } else if (edge.includes('s')) {
+    const vertical = resizeAxis(base.y, base.height, dy, false, viewport.height, MIN_WINDOW_HEIGHT)
+    next.y = vertical.start
+    next.height = vertical.size
+  }
+  return next
 }
 
 function offsetBounds(bounds: Bounds, x: number, y: number, viewport: Bounds) {
   return clampToViewport({ ...bounds, x: bounds.x + x, y: bounds.y + y }, viewport)
+}
+
+function resizeAxis(
+  start: number,
+  size: number,
+  delta: number,
+  fromStart: boolean,
+  viewportSize: number,
+  minimumSize: number,
+) {
+  const viewport = viewportAxis(viewportSize, minimumSize)
+  const minimum = Math.min(minimumSize, viewport.available)
+  const anchor = fromStart ? start + size : start
+  const distanceToBoundary = fromStart ? anchor - viewport.inset : viewport.size - viewport.inset - anchor
+  const maximum = Math.max(minimum, Math.min(viewport.available, Math.max(0, distanceToBoundary)))
+  const nextSize = clamp(fromStart ? size - delta : size + delta, minimum, maximum)
+  return { start: fromStart ? anchor - nextSize : anchor, size: nextSize }
+}
+
+function viewportAxis(viewportSize: number, minimumSize: number) {
+  const size = Math.max(0, viewportSize)
+  const inset = Math.min(WINDOW_INSET, Math.max(0, (size - minimumSize) / 2))
+  return { available: Math.max(0, size - inset * 2), inset, size }
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), maximum)
+}
+
+function nonNegativeBounds(bounds: Bounds): Bounds {
+  return { ...bounds, width: Math.max(0, bounds.width), height: Math.max(0, bounds.height) }
 }
 
 function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManagerState {

@@ -3,9 +3,15 @@
 import { motion, useReducedMotion } from 'motion/react'
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
-import { clampToViewport, type Bounds, type DesktopWindow, type WindowAction } from '@/lib/tengri/window-manager'
+import {
+  clampToViewport,
+  resizeBounds,
+  type Bounds,
+  type DesktopWindow,
+  type ResizeEdge,
+  type WindowAction,
+} from '@/lib/tengri/window-manager'
 
-type ResizeEdge = 'e' | 'n' | 'ne' | 'nw' | 's' | 'se' | 'sw' | 'w'
 type Interaction = {
   pointerId: number
   edge: ResizeEdge | null
@@ -45,7 +51,9 @@ export function DesktopWindowFrame({
 
   const viewport = useCallback((): Bounds => {
     const rect = stageRef.current?.getBoundingClientRect()
-    return { x: 0, y: 0, width: rect?.width || innerWidth, height: rect?.height || innerHeight - 28 }
+    const browserWidth = typeof globalThis.window === 'undefined' ? 0 : globalThis.window.innerWidth
+    const browserHeight = typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 28)
+    return { x: 0, y: 0, width: rect?.width ?? browserWidth, height: rect?.height ?? browserHeight }
   }, [stageRef])
 
   const begin = useCallback(
@@ -215,29 +223,6 @@ function resetTransientStyles(element: HTMLDivElement | null) {
   if (!element) return
   element.style.transform = ''
   element.style.willChange = ''
-}
-
-function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: number, viewport: Bounds) {
-  let next = { ...base }
-  if (edge.includes('e')) next.width = base.width + dx
-  if (edge.includes('s')) next.height = base.height + dy
-  if (edge.includes('w')) {
-    next.x = base.x + dx
-    next.width = base.width - dx
-  }
-  if (edge.includes('n')) {
-    next.y = base.y + dy
-    next.height = base.height - dy
-  }
-  if (next.width < 320) {
-    if (edge.includes('w')) next.x -= 320 - next.width
-    next.width = 320
-  }
-  if (next.height < 220) {
-    if (edge.includes('n')) next.y -= 220 - next.height
-    next.height = 220
-  }
-  return clampToViewport(next, viewport)
 }
 
 function resizeHandleClass(edge: ResizeEdge) {

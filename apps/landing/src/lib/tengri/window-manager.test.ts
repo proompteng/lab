@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { initialWindowState, MAX_DESKTOP_WINDOWS, windowReducer } from './window-manager'
+import { createElement, createRef } from 'react'
+import { renderToString } from 'react-dom/server'
+
+import { DesktopWindowFrame } from '@/components/tengri/desktop-window'
+import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowReducer } from './window-manager'
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
@@ -126,6 +130,63 @@ describe('Tengri desktop window manager', () => {
     expectInsideViewport(state.windows.find((window) => window.id === id)!.bounds, compact)
   })
 
+  test('fits normal windows inside compact viewports', () => {
+    const compact = { x: 0, y: 0, width: 300, height: 200 }
+    const initial = initialWindowState(compact)
+    expect(initial.windows.every((window) => isInsideViewport(window.bounds, compact))).toBe(true)
+
+    const resized = windowReducer(initialWindowState(viewport), { type: 'viewport', viewport: compact })
+    expect(resized.windows.every((window) => isInsideViewport(window.bounds, compact))).toBe(true)
+
+    const hydrated = windowReducer(initial, {
+      type: 'hydrate',
+      state: initialWindowState(viewport),
+      viewport: compact,
+    })
+    expect(hydrated.windows.every((window) => isInsideViewport(window.bounds, compact))).toBe(true)
+
+    const id = initial.activeWindowId
+    const moved = windowReducer(initial, {
+      type: 'move',
+      id,
+      bounds: { x: 0, y: 0, width: compact.width, height: compact.height },
+    })
+    expect(moved.windows.find((window) => window.id === id)?.bounds).toEqual({
+      x: 0,
+      y: 0,
+      width: compact.width,
+      height: compact.height,
+    })
+  })
+
+  test('preserves the opposite edge while clamping resizes', () => {
+    const base = { x: 100, y: 100, width: 400, height: 400 }
+    const north = resizeBounds(base, 'n', 0, -200, viewport)
+    expect(north.y).toBe(8)
+    expect(north.y + north.height).toBe(base.y + base.height)
+
+    const west = resizeBounds(base, 'w', -200, 0, viewport)
+    expect(west.x).toBe(8)
+    expect(west.x + west.width).toBe(base.x + base.width)
+
+    const east = resizeBounds(base, 'e', 2_000, 0, viewport)
+    expect(east.x).toBe(base.x)
+    expect(east.x + east.width).toBe(viewport.width - 8)
+  })
+
+  test('server-renders a minimized frame without browser globals', () => {
+    const minimized = { ...initialWindowState(viewport).windows[0]!, mode: 'minimized' as const }
+    const frame = createElement(DesktopWindowFrame, {
+      active: false,
+      children: createElement('div'),
+      dispatch: () => undefined,
+      stageRef: createRef<HTMLDivElement>(),
+      window: minimized,
+    })
+
+    expect(() => renderToString(frame)).not.toThrow()
+  })
+
   test('enforces the persisted window cap while creating windows', () => {
     let state = initialWindowState(viewport)
     for (let index = 0; index < MAX_DESKTOP_WINDOWS + 5; index += 1) {
@@ -146,4 +207,13 @@ function expectInsideViewport(
   expect(bounds.y).toBeGreaterThanOrEqual(0)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(target.width)
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(target.height)
+}
+
+function isInsideViewport(bounds: { x: number; y: number; width: number; height: number }, target: typeof viewport) {
+  return (
+    bounds.x >= 0 &&
+    bounds.y >= 0 &&
+    bounds.x + bounds.width <= target.width &&
+    bounds.y + bounds.height <= target.height
+  )
 }
