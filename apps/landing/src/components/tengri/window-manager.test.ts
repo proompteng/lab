@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { initialWindowState, windowReducer } from './window-manager'
+import { initialWindowState, MAX_DESKTOP_WINDOWS, windowReducer } from './window-manager'
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
 
@@ -83,5 +83,41 @@ describe('Tengri window manager', () => {
     expect(state.windows).toHaveLength(0)
     expect(state.activeApp).toBe('finder')
     expect(state.activeWindowId).toBe('')
+  })
+
+  test('hydrates an intentionally empty desktop with Finder as the frontmost application', () => {
+    const empty = {
+      ...initialWindowState(viewport),
+      activeApp: 'chrome' as const,
+      activeWindowId: '',
+      windows: [],
+    }
+    const state = windowReducer(empty, { type: 'hydrate', state: empty, viewport })
+
+    expect(state.windows).toEqual([])
+    expect(state.activeApp).toBe('finder')
+    expect(state.activeWindowId).toBe('')
+  })
+
+  test('restores original bounds after minimizing a maximized window', () => {
+    let state = initialWindowState(viewport)
+    const id = state.activeWindowId
+    const original = state.windows.find((window) => window.id === id)?.bounds
+    state = windowReducer(state, { type: 'toggle-maximize', id, viewport })
+    state = windowReducer(state, { type: 'minimize', id })
+    state = windowReducer(state, { type: 'restore', id })
+
+    expect(state.windows.find((window) => window.id === id)).toMatchObject({ bounds: original, mode: 'normal' })
+  })
+
+  test('enforces the persisted window cap while creating windows', () => {
+    let state = initialWindowState(viewport)
+    for (let index = 0; index < MAX_DESKTOP_WINDOWS + 5; index += 1) {
+      state = windowReducer(state, { type: 'new', app: 'terminal', title: 'Terminal', viewport })
+    }
+
+    expect(state.windows).toHaveLength(MAX_DESKTOP_WINDOWS)
+    expect(state.windows.some((window) => window.id === state.activeWindowId)).toBe(true)
+    expect(state.nextWindowId).toBe(MAX_DESKTOP_WINDOWS + 1)
   })
 })

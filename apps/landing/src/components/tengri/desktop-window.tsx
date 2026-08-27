@@ -117,6 +117,8 @@ export function DesktopWindowFrame({
     <motion.section
       ref={elementRef}
       aria-label={`${window.title} window`}
+      aria-hidden={window.mode === 'minimized'}
+      inert={window.mode === 'minimized' ? true : undefined}
       className="tengri-window absolute overflow-hidden rounded-[22px] border border-white/20 bg-[rgba(20,22,28,0.91)] shadow-[0_38px_100px_rgba(0,0,0,0.48),inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl [contain:layout_paint]"
       initial={false}
       animate={
@@ -213,10 +215,6 @@ function resetTransientStyles(element: HTMLDivElement | null) {
   if (!element) return
   element.style.transform = ''
   element.style.willChange = ''
-  element.style.left = ''
-  element.style.top = ''
-  element.style.width = ''
-  element.style.height = ''
 }
 
 function resizeBounds(base: Bounds, edge: ResizeEdge, dx: number, dy: number, viewport: Bounds) {

@@ -32,6 +32,8 @@ export type WindowAction =
   | { type: 'toggle-maximize'; id: string; viewport: Bounds }
   | { type: 'viewport'; viewport: Bounds }
 
+export const MAX_DESKTOP_WINDOWS = 20
+
 export const APP_TITLES: Record<TengriApp, string> = {
   finder: 'Finder',
   chrome: 'Chrome',
@@ -72,7 +74,13 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
   if (action.type === 'restore') return focusWindow(state, action.id, true)
   if (action.type === 'minimize') {
     const windows = state.windows.map((window) =>
-      window.id === action.id ? { ...window, mode: 'minimized' as const } : window,
+      window.id === action.id
+        ? {
+            ...window,
+            bounds: window.mode === 'maximized' ? window.restoredBounds : window.bounds,
+            mode: 'minimized' as const,
+          }
+        : window,
     )
     return activateFrontmost({ ...state, windows })
   }
@@ -131,6 +139,7 @@ export function windowReducer(state: WindowManagerState, action: WindowAction): 
 }
 
 function appendWindow(state: WindowManagerState, app: TengriApp, title: string, viewport: Bounds): WindowManagerState {
+  if (state.windows.length >= MAX_DESKTOP_WINDOWS) return state
   const created = newWindow(app, title, viewport, state.nextZ, state.nextWindowId)
   return {
     ...state,
@@ -208,7 +217,7 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
   if (!state || !Array.isArray(state.windows)) return initialWindowState(viewport)
   let generatedId = 1
   const usedIds = new Set<string>()
-  const windows = state.windows.slice(0, 20).flatMap((window) => {
+  const windows = state.windows.slice(0, MAX_DESKTOP_WINDOWS).flatMap((window) => {
     if (!window || !isTengriApp(window.app) || !validBounds(window.bounds) || !validBounds(window.restoredBounds)) {
       return []
     }
@@ -250,7 +259,7 @@ function sanitizeState(state: WindowManagerState, viewport: Bounds): WindowManag
     return Number.isFinite(numericId) ? Math.max(largest, numericId) : largest
   }, 0)
   return {
-    activeApp: active?.app || 'chrome',
+    activeApp: active?.app || 'finder',
     activeWindowId: active?.id || '',
     nextWindowId: Math.max(largestId + 1, 1),
     nextZ: largestZ + 1,
