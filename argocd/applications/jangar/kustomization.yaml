@@ -40,5 +40,5 @@ images:
     newTag: v0.11.0
     digest: sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: sha-b585d87c2b531fccd919f251d9440b20dcbb8a68
-    digest: sha256:fc18f7ea3f593f71e7441a1c5be723ab3d14f020c06c4dfbd67388a94211938c
+    newTag: sha-c9e7e812e662f56fe32d69eefe03db1230d04155
+    digest: sha256:37a1de689f56a3614b4051063c1d14c797dc1c4552c73d7711dd25ebda517bfa
