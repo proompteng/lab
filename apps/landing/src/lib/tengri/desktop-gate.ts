@@ -28,3 +28,24 @@ export function resolveDesktopGate(snapshot: TengriDesktopSnapshot | null, error
   if (agent.phase === 'unknown') return { kind: 'unknown', agent }
   return { kind: 'transitioning', agent }
 }
+
+export function shouldRenderTengriDesktop(authConfigured: boolean, controlPlaneConfigured: boolean) {
+  return authConfigured && controlPlaneConfigured
+}
+
+export function desktopRefreshDelay(state: DesktopGateState, now: number): number | null {
+  if (state.kind === 'transitioning') return 2_000
+  if (state.kind === 'ready') return refreshBeforeDeadline(now, state.agent.idleDeadline, state.agent.expiresAt)
+  if (state.kind === 'sleeping') return refreshBeforeDeadline(now, state.agent.expiresAt)
+  return null
+}
+
+function refreshBeforeDeadline(now: number, ...deadlines: string[]) {
+  let delay = 30_000
+  for (const deadline of deadlines) {
+    const timestamp = Date.parse(deadline)
+    if (!Number.isFinite(timestamp)) continue
+    delay = Math.min(delay, Math.max(1_000, timestamp - now + 250))
+  }
+  return delay
+}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createAgentFormSchema } from '@/schemas/tengri-agent'
-import { resolveDesktopGate } from './desktop-gate'
+import { desktopRefreshDelay, resolveDesktopGate, shouldRenderTengriDesktop } from './desktop-gate'
 import type { AgentPhase, TengriAgent, TengriDesktopSnapshot } from './types'
 
 const agent: TengriAgent = {
@@ -61,5 +61,25 @@ describe('Tengri desktop lifecycle gate', () => {
     expect(createAgentFormSchema.parse({ displayName: '  Tengri  ' })).toEqual({ displayName: 'Tengri' })
     expect(createAgentFormSchema.safeParse({ displayName: '   ' }).success).toBe(false)
     expect(createAgentFormSchema.safeParse({ displayName: 'a'.repeat(65) }).success).toBe(false)
+  })
+
+  test('keeps the public homepage until auth and the control plane are both configured', () => {
+    expect(shouldRenderTengriDesktop(false, false)).toBe(false)
+    expect(shouldRenderTengriDesktop(true, false)).toBe(false)
+    expect(shouldRenderTengriDesktop(false, true)).toBe(false)
+    expect(shouldRenderTengriDesktop(true, true)).toBe(true)
+  })
+
+  test('polls transitions quickly and stable agents through controller deadlines', () => {
+    const now = Date.parse('2026-08-26T00:00:00Z')
+    expect(desktopRefreshDelay({ kind: 'transitioning', agent }, now)).toBe(2_000)
+    expect(desktopRefreshDelay({ kind: 'ready', agent }, now)).toBe(30_000)
+    expect(desktopRefreshDelay({ kind: 'ready', agent: { ...agent, idleDeadline: '2026-08-26T00:00:01Z' } }, now)).toBe(
+      1_250,
+    )
+    expect(
+      desktopRefreshDelay({ kind: 'sleeping', agent: { ...agent, expiresAt: '2026-08-26T00:00:00.500Z' } }, now),
+    ).toBe(1_000)
+    expect(desktopRefreshDelay({ kind: 'create' }, now)).toBeNull()
   })
 })

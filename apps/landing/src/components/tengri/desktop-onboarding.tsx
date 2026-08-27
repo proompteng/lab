@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
-import { resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
+import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
 import { getDesktopSnapshot, runTengriAction } from './client'
@@ -57,10 +57,11 @@ export default function DesktopOnboarding() {
 
   const gate = resolveDesktopGate(snapshot, snapshotError)
   useEffect(() => {
-    if (gate.kind !== 'transitioning') return
-    const timer = window.setTimeout(() => void refresh(), 2_000)
+    const refreshDelay = desktopRefreshDelay(gate, Date.now())
+    if (refreshDelay === null) return
+    const timer = window.setTimeout(() => void refresh(), refreshDelay)
     return () => window.clearTimeout(timer)
-  }, [gate.kind, refresh, snapshot])
+  }, [gate, refresh])
 
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
