@@ -48,6 +48,20 @@ func TestCollectEvidenceRequiresBootstrapInputs(t *testing.T) {
 	}
 }
 
+func TestRuntimeRootsPreserveTheWritableKataCompatibilityMount(t *testing.T) {
+	t.Parallel()
+
+	home, workspace := runtimeRoots("", "")
+	if home != "/workspace" || workspace != "/workspace" {
+		t.Fatalf("runtimeRoots() = (%q, %q), want /workspace for both", home, workspace)
+	}
+
+	home, workspace = runtimeRoots(" /home/nanoagent ", " /workspace ")
+	if home != "/home/nanoagent" || workspace != "/workspace" {
+		t.Fatalf("runtimeRoots(explicit) = (%q, %q)", home, workspace)
+	}
+}
+
 func TestEvidenceHandler(t *testing.T) {
 	t.Parallel()
 
