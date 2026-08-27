@@ -59,14 +59,10 @@ func run(logger *slog.Logger) error {
 	if listenAddress == "" {
 		listenAddress = ":8080"
 	}
-	homeRoot := strings.TrimSpace(os.Getenv("NANOAGENT_HOME"))
-	if homeRoot == "" {
-		homeRoot = "/home/nanoagent"
-	}
-	workspaceRoot := strings.TrimSpace(os.Getenv("NANOAGENT_WORKSPACE"))
-	if workspaceRoot == "" {
-		workspaceRoot = homeRoot
-	}
+	homeRoot, workspaceRoot := runtimeRoots(
+		os.Getenv("NANOAGENT_HOME"),
+		os.Getenv("NANOAGENT_WORKSPACE"),
+	)
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
@@ -111,6 +107,20 @@ func run(logger *slog.Logger) error {
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
+}
+
+func runtimeRoots(homeRoot string, workspaceRoot string) (string, string) {
+	homeRoot = strings.TrimSpace(homeRoot)
+	if homeRoot == "" {
+		// /workspace is the writable compatibility mount in the minimal Kata proof image.
+		// Tengri sets both roots explicitly for persistent production guests.
+		homeRoot = "/workspace"
+	}
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" {
+		workspaceRoot = homeRoot
+	}
+	return homeRoot, workspaceRoot
 }
 
 func bootstrapUserHome(home string) error {
