@@ -16,6 +16,8 @@ unauthenticated.
 - `GET /v1/files`, `GET /v1/files/content`, and `GET /v1/files/search`: bounded file discovery and reads;
 - `PUT /v1/files/content`, `POST /v1/files/directory`, `POST /v1/files/move`, and `DELETE /v1/files`: atomic mutations;
 - `GET /v1/files/watch`: bounded, replayable filesystem events;
+- `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
+- `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
 - `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
@@ -25,6 +27,10 @@ stops searches and event streams.
 Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
 forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
 hosts, Kubernetes APIs, cluster addresses, LAN services, metadata endpoints, or Tailscale peers.
+
+Terminal sessions use real PTYs, cap each agent at four sessions and four clients per session, and retain a bounded
+sequence-numbered output replay window for reconnects. The bootstrap credential is removed from child environments;
+resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group.
 
 ## Local validation
 

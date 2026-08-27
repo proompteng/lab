@@ -72,6 +72,7 @@ func run(logger *slog.Logger) error {
 	api, err := newAPIServer(apiConfig{
 		bootstrapToken: bootstrapToken,
 		evidence:       current,
+		shell:          "/bin/bash",
 		workspaceRoot:  workspaceRoot,
 	})
 	if err != nil {
