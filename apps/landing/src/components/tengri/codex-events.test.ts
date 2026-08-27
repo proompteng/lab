@@ -5,6 +5,7 @@ import {
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventMatchesThread,
+  codexEventShouldRender,
   codexTranscriptFromThread,
   parseCodexEvent,
 } from './codex-events'
@@ -93,6 +94,20 @@ describe('Codex event replay', () => {
     expect(appendCodexEvent([], raw)).toEqual([])
     expect(appendCodexEvent(appendCodexEvent([], raw), summary)).toEqual([summary])
     expect(codexEventDisplayText(raw)).toBe('')
+  })
+
+  test('keeps pending approval controls visible when their item is present in restored history', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: 'approval-1',
+    }
+    const restoredItemIds = new Set([approval.itemId])
+
+    expect(codexEventShouldRender(approval, approval.threadId, restoredItemIds)).toBe(true)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
+    expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 })
 

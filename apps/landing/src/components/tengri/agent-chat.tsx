@@ -15,6 +15,7 @@ import {
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventMatchesThread,
+  codexEventShouldRender,
   codexTranscriptFromThread,
   parseCodexEvent,
   type CodexApprovalDecision,
@@ -194,7 +195,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   const renderedEvents = useMemo(
     () =>
       events
-        .filter((event) => codexEventMatchesThread(event, threadId) && (!event.itemId || !historyIds.has(event.itemId)))
+        .filter((event) => codexEventShouldRender(event, threadId, historyIds))
         .map((event) => ({ event, text: codexEventDisplayText(event) }))
         .filter(
           ({ event, text }) =>

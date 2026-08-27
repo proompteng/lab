@@ -137,6 +137,16 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
+export function codexEventShouldRender(
+  event: TengriCodexEvent,
+  threadId: string,
+  restoredItemIds: ReadonlySet<string>,
+) {
+  if (!codexEventMatchesThread(event, threadId)) return false
+  if (event.kind === 'approval') return true
+  return !event.itemId || !restoredItemIds.has(event.itemId)
+}
+
 export function codexTranscriptFromThread(rawJson: string): CodexTranscriptItem[] {
   try {
     const response = record(JSON.parse(rawJson))
