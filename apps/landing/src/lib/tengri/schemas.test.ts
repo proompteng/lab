@@ -37,6 +37,9 @@ describe('Tengri BFF action schema', () => {
       false,
     )
     expect(
+      tengriActionSchema.safeParse({ action: 'preview-session', agentId: 'agent-123', port: 8080, path: '/' }).success,
+    ).toBe(false)
+    expect(
       tengriActionSchema.safeParse({
         action: 'preview-session',
         agentId: 'agent-123',
@@ -49,6 +52,24 @@ describe('Tengri BFF action schema', () => {
         tengriActionSchema.safeParse({ action: 'preview-session', agentId: 'agent-123', port: 4321, path }).success,
       ).toBe(false)
     }
+    const exactPreviewPath = `/${'é'.repeat(2047)}x`
+    expect(Buffer.byteLength(exactPreviewPath, 'utf8')).toBe(4096)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'preview-session',
+        agentId: 'agent-123',
+        port: 4321,
+        path: exactPreviewPath,
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'preview-session',
+        agentId: 'agent-123',
+        port: 4321,
+        path: `${exactPreviewPath}é`,
+      }).success,
+    ).toBe(false)
   })
 
   test('requires absolute clean file paths and rejects undeclared action fields', () => {

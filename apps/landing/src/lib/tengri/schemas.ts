@@ -24,6 +24,21 @@ const codexId = z
   .min(1)
   .max(160)
   .regex(/^[a-zA-Z0-9._:-]+$/)
+const previewPort = z
+  .number()
+  .int()
+  .min(1024)
+  .max(65535)
+  .refine((value) => value !== 8080, 'Port 8080 is reserved for Nanoagent')
+const previewPath = z
+  .string()
+  .startsWith('/')
+  .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Preview path exceeds 4096 bytes')
+  .refine(
+    (value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n') && !value.includes('#'),
+    'Invalid preview path',
+  )
 
 export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create-agent'), displayName: z.string().trim().min(1).max(64) }),
@@ -79,14 +94,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({
     action: z.literal('preview-session'),
     agentId,
-    port: z.number().int().min(1024).max(65535),
-    path: z
-      .string()
-      .startsWith('/')
-      .max(4096)
-      .refine(
-        (value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n') && !value.includes('#'),
-        'Invalid preview path',
-      ),
+    port: previewPort,
+    path: previewPath,
   }),
 ])
