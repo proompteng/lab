@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -23,14 +22,13 @@ const (
 )
 
 type evidence struct {
-	Architecture         string    `json:"architecture"`
-	BootID               string    `json:"bootId"`
-	BootstrapTokenSHA256 string    `json:"bootstrapTokenSha256"`
-	Hostname             string    `json:"hostname"`
-	KernelRelease        string    `json:"kernelRelease"`
-	MicroVMID            string    `json:"microvmId"`
-	StartedAt            time.Time `json:"startedAt"`
-	State                string    `json:"state"`
+	Architecture  string    `json:"architecture"`
+	BootID        string    `json:"bootId"`
+	Hostname      string    `json:"hostname"`
+	KernelRelease string    `json:"kernelRelease"`
+	MicroVMID     string    `json:"microvmId"`
+	StartedAt     time.Time `json:"startedAt"`
+	State         string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
@@ -55,20 +53,38 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("encode startup evidence: %w", err)
 	}
-	logger.Info("nanoagent ready", "evidence", json.RawMessage(encoded))
+	logger.Info("nanoagent guest booted", "evidence", json.RawMessage(encoded))
 
 	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
 	if listenAddress == "" {
 		listenAddress = ":8080"
 	}
+	homeRoot := strings.TrimSpace(os.Getenv("NANOAGENT_HOME"))
+	if homeRoot == "" {
+		homeRoot = "/home/nanoagent"
+	}
+	workspaceRoot := strings.TrimSpace(os.Getenv("NANOAGENT_WORKSPACE"))
+	if workspaceRoot == "" {
+		workspaceRoot = homeRoot
+	}
+	if err := bootstrapUserHome(homeRoot); err != nil {
+		return fmt.Errorf("bootstrap persistent user home: %w", err)
+	}
+	api, err := newAPIServer(apiConfig{
+		bootstrapToken: bootstrapToken,
+		evidence:       current,
+		workspaceRoot:  workspaceRoot,
+	})
+	if err != nil {
+		return fmt.Errorf("configure Nanoagent API: %w", err)
+	}
+	defer api.close()
 
 	server := &http.Server{
 		Addr:              listenAddress,
-		Handler:           newHandler(current),
+		Handler:           newHandler(api),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -82,6 +98,7 @@ func run(logger *slog.Logger) error {
 
 	select {
 	case <-ctx.Done():
+		api.beginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -94,6 +111,42 @@ func run(logger *slog.Logger) error {
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
+}
+
+func bootstrapUserHome(home string) error {
+	directories := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: "workspace", mode: 0o750},
+		{path: ".cache", mode: 0o750},
+		{path: ".local/bin", mode: 0o750},
+		{path: ".bun", mode: 0o750},
+		{path: ".cargo", mode: 0o750},
+		{path: "go/bin", mode: 0o750},
+		{path: ".codex", mode: 0o700},
+	}
+	for _, directory := range directories {
+		if err := os.MkdirAll(filepath.Join(home, directory.path), directory.mode); err != nil {
+			return err
+		}
+	}
+	files := map[string]string{
+		".bashrc":  "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\ncd /workspace 2>/dev/null || true\n",
+		".profile": "export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(home, name)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(content), 0o640); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func collectEvidence(
@@ -122,17 +175,14 @@ func collectEvidence(
 		return evidence{}, fmt.Errorf("read hostname: %w", err)
 	}
 
-	tokenHash := sha256.Sum256([]byte(bootstrapToken))
-
 	return evidence{
-		Architecture:         runtime.GOARCH,
-		BootID:               bootID,
-		BootstrapTokenSHA256: hex.EncodeToString(tokenHash[:]),
-		Hostname:             hostname,
-		KernelRelease:        kernelRelease,
-		MicroVMID:            microVMID,
-		StartedAt:            startedAt,
-		State:                "ready",
+		Architecture:  runtime.GOARCH,
+		BootID:        bootID,
+		Hostname:      hostname,
+		KernelRelease: kernelRelease,
+		MicroVMID:     microVMID,
+		StartedAt:     startedAt,
+		State:         "ready",
 	}, nil
 }
 
@@ -148,18 +198,16 @@ func readTrimmed(readFile fileReader, path string) (string, error) {
 	return trimmed, nil
 }
 
-func newHandler(current evidence) http.Handler {
+func newHandler(api *apiServer) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
+	live := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
-	})
-	mux.HandleFunc("GET /evidence", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(writer).Encode(current); err != nil {
-			slog.Error("write evidence response", "error", err)
-		}
-	})
+	}
+	mux.HandleFunc("GET /livez", live)
+	mux.HandleFunc("GET /readyz", live)
+	mux.HandleFunc("GET /healthz", live)
+	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
 }

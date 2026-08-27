@@ -1,32 +1,45 @@
-# Nanoagent
+# Nanoagent guest API
 
-`nanoagent` is a small, long-running, multi-architecture process used to prove the `kata-qemu`, `kata-clh`,
-`kata-fc`, and `kata-dragonball` workload paths. It is not an AgentRun runtime and does not require a custom
-Kubernetes controller.
+Nanoagent is the unprivileged guest process inside every Tengri `kata-fc` microVM. It is not a Kubernetes controller,
+AgentRun runtime, privileged launcher, or node daemon. The Rust Tengri control plane is its only caller.
 
-The process requires `MICROVM_ID` and `MICROVM_BOOTSTRAP_TOKEN`. Kubernetes sends both through CRI as environment
-variables, so the Pod does not depend on host filesystem sharing. The checked-in runtime canaries use a fixed,
-non-secret proof nonce; production agents must resolve credentials from a Kubernetes Secret. Nanoagent never returns
-or logs the token. It reports only its SHA-256 digest alongside the guest boot ID, guest kernel release, and
-architecture.
+The process requires `MICROVM_ID` and `MICROVM_BOOTSTRAP_TOKEN`. It authenticates every `/v1/` request with the
+bootstrap token but never returns, hashes into public metadata, or logs that credential. Public health probes remain
+unauthenticated.
 
-The runtime image contains BusyBox `/bin/sh` and a writable `/workspace`, while the `nanoagent` process remains the
-default entrypoint. A running Kata Pod can therefore be inspected without adding a sidecar:
+## Current API
+
+- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
+- `GET /v1/evidence`: guest boot ID, kernel release, architecture, and microVM identity;
+- `GET /v1/files`, `GET /v1/files/content`, and `GET /v1/files/search`: bounded file discovery and reads;
+- `PUT /v1/files/content`, `POST /v1/files/directory`, `POST /v1/files/move`, and `DELETE /v1/files`: atomic mutations;
+- `GET /v1/files/watch`: bounded, replayable filesystem events;
+- `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
+
+Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
+state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
+stops searches and event streams.
+
+Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
+forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
+hosts, Kubernetes APIs, cluster addresses, LAN services, metadata endpoints, or Tailscale peers.
+
+## Local validation
 
 ```bash
-kubectl --context galactic-lan -n kata exec -it <pod> -- /bin/sh
+cd services/nanoagent
+gofmt -w *.go
+go vet ./...
+go test ./...
+go test -race ./...
 ```
 
-Endpoints:
-
-- `GET /healthz`: readiness and liveness check;
-- `GET /evidence`: non-secret guest evidence used by the rollout verifier.
-
-Run locally:
+Start a local instance with a temporary persistent workspace:
 
 ```bash
-MICROVM_ID=local MICROVM_BOOTSTRAP_TOKEN=development-only go run .
+MICROVM_ID=local \
+MICROVM_BOOTSTRAP_TOKEN=development-only \
+NANOAGENT_HOME=/tmp/nanoagent-home \
+NANOAGENT_WORKSPACE=/tmp/nanoagent-home/workspace \
+go run .
 ```
-
-The release workflow publishes and keylessly signs `ghcr.io/proompteng/nanoagent` for `linux/amd64` and
-`linux/arm64`. Kubernetes manifests must use the resulting multi-architecture digest, never a mutable tag.
