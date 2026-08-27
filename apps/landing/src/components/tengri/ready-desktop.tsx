@@ -13,10 +13,12 @@ import { DesktopWindowFrame } from './desktop-window'
 
 export function ReadyDesktop({
   agent,
+  connectionWarning = '',
   onChanged,
   user,
 }: {
   agent: TengriAgent
+  connectionWarning?: string
   onChanged: () => Promise<void>
   user: TengriUser
 }) {
@@ -142,10 +144,13 @@ export function ReadyDesktop({
           </nav>
           <div className="flex min-w-0 items-center gap-3 text-white/72">
             <span className="hidden items-center gap-1.5 sm:flex">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span
+                aria-hidden="true"
+                className={`h-1.5 w-1.5 rounded-full ${connectionWarning ? 'bg-amber-300' : 'bg-emerald-400'}`}
+              />
               <span className="max-w-36 truncate">{agent.displayName}</span>
             </span>
-            <span aria-label="Connected">
+            <span aria-label={connectionWarning ? 'Connection degraded' : 'Connected'}>
               <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
             </span>
             <span className="hidden max-w-32 truncate md:inline">{user.name || 'GitHub user'}</span>
@@ -160,6 +165,15 @@ export function ReadyDesktop({
         </header>
 
         <div ref={stageRef} className="absolute inset-x-0 top-[30px] bottom-0 overflow-hidden">
+          {connectionWarning ? (
+            <p
+              role="status"
+              className="absolute top-3 left-1/2 z-[1000] max-w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-amber-200/16 bg-amber-950/55 px-4 py-1.5 text-xs text-amber-100 shadow-lg backdrop-blur-xl"
+              title={connectionWarning}
+            >
+              Connection interrupted. Using the last confirmed agent state.
+            </p>
+          ) : null}
           {windowState.windows.map((desktopWindow) => (
             <DesktopWindowFrame
               active={desktopWindow.id === windowState.activeWindowId}

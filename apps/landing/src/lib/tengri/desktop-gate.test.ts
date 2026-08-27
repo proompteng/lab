@@ -42,6 +42,10 @@ describe('Tengri desktop lifecycle gate', () => {
     expect(resolveDesktopGate({ ...snapshot, agents: [] }, '').kind).toBe('create')
   })
 
+  test('keeps the last usable agent snapshot through transient polling errors', () => {
+    expect(resolveDesktopGate(snapshot, 'temporary timeout')).toEqual({ kind: 'ready', agent })
+  })
+
   test('maps every control-plane phase to a truthful lifecycle state', () => {
     const expected: Array<[AgentPhase, ReturnType<typeof resolveDesktopGate>['kind']]> = [
       ['ready', 'ready'],

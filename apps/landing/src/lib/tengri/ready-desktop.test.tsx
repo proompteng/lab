@@ -35,6 +35,7 @@ describe('Tengri ready desktop', () => {
     const html = renderToString(
       createElement(ReadyDesktop, {
         agent,
+        connectionWarning: 'temporary timeout',
         onChanged: async () => undefined,
         user,
       }),
@@ -44,6 +45,7 @@ describe('Tengri ready desktop', () => {
     expect(html).toContain('Firecracker via kata-fc')
     expect(html).toContain('Sleep Agent')
     expect(html).toContain('Delete Agent')
+    expect(html).toContain('Using the last confirmed agent state')
     expect(html).not.toContain('Open Finder')
     expect(html).not.toContain('Open Chrome')
     expect(html).not.toContain('Open Terminal')

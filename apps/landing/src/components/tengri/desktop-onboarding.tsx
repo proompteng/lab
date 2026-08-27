@@ -53,7 +53,9 @@ export default function DesktopOnboarding() {
   }, [gate, refresh])
 
   if (gate.kind === 'ready' && snapshot?.user) {
-    return <ReadyDesktop agent={gate.agent} onChanged={refresh} user={snapshot.user} />
+    return (
+      <ReadyDesktop agent={gate.agent} connectionWarning={snapshotError} onChanged={refresh} user={snapshot.user} />
+    )
   }
 
   return (
