@@ -18,7 +18,6 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
-  codexInProgressItemIdsFromThread,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -38,7 +37,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [threadReady, setThreadReady] = useState(false)
   const [activeTurnId, setActiveTurnId] = useState('')
   const [historyItems, setHistoryItems] = useState<CodexTranscriptItem[]>([])
-  const [restoredInProgressItemIds, setRestoredInProgressItemIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<TengriCodexEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -117,7 +116,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
-    setRestoredInProgressItemIds(new Set())
+    setRestoredHistorySequence(0)
     setEvents([])
     setPrompt('')
     setReplayRecovering(false)
@@ -168,7 +167,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
-      setRestoredInProgressItemIds(restored.inProgressItemIds)
+      setRestoredHistorySequence(lastEventSequence.current)
       setActiveTurnId(codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current))
     },
     [agentId],
@@ -274,22 +273,22 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const renderedEvents = useMemo(
     () =>
       events
-        .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredInProgressItemIds))
+        .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredHistorySequence))
         .map((event) => ({ event, text: codexEventDisplayText(event) }))
         .filter(
           ({ event, text }) =>
             Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
         ),
-    [events, historyIds, restoredInProgressItemIds, threadId],
+    [events, historyIds, restoredHistorySequence, threadId],
   )
   const renderedEventItemIds = useMemo(
     () =>
       new Set(
         renderedEvents
-          .map(({ event }) => event.itemId)
-          .filter((itemId) => itemId && restoredInProgressItemIds.has(itemId)),
+          .map(({ event }) => (event.sequence > restoredHistorySequence ? event.itemId : ''))
+          .filter((itemId) => itemId && historyIds.has(itemId)),
       ),
-    [renderedEvents, restoredInProgressItemIds],
+    [historyIds, renderedEvents, restoredHistorySequence],
   )
   const renderedHistoryItems = useMemo(
     () => historyItems.filter((item) => !renderedEventItemIds.has(item.id)),
@@ -392,7 +391,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setThreadReady(false)
     setActiveTurnId('')
     setHistoryItems([])
-    setRestoredInProgressItemIds(new Set())
+    setRestoredHistorySequence(0)
     setEvents([])
     setReplayRecovering(false)
     setError('')
@@ -685,10 +684,7 @@ function commitThread(
   setThreadId(thread.id)
   writeStoredThread(agentId, thread.id)
   setHistoryItems(codexTranscriptFromThread(thread.rawJson))
-  return {
-    activeTurnId: codexActiveTurnIdFromThread(thread.rawJson),
-    inProgressItemIds: codexInProgressItemIdsFromThread(thread.rawJson),
-  }
+  return { activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
 }
 
 function storageKey(agentId: string) {

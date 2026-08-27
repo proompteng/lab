@@ -179,11 +179,11 @@ export function codexEventShouldRender(
   event: TengriCodexEvent,
   threadId: string,
   restoredItemIds: ReadonlySet<string>,
-  restoredInProgressItemIds: ReadonlySet<string> = new Set(),
+  restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
   if (event.kind === 'approval') return true
-  return !event.itemId || !restoredItemIds.has(event.itemId) || restoredInProgressItemIds.has(event.itemId)
+  return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {
@@ -199,27 +199,6 @@ export function codexActiveTurnIdFromThread(rawJson: string) {
     // A malformed resume response cannot identify an active turn.
   }
   return ''
-}
-
-export function codexInProgressItemIdsFromThread(rawJson: string) {
-  const itemIds = new Set<string>()
-  try {
-    const response = record(JSON.parse(rawJson))
-    const thread = record(response.thread)
-    const turns = Array.isArray(thread.turns) ? thread.turns : []
-    for (const turnValue of turns) {
-      const turn = record(turnValue)
-      if (string(turn.status) !== 'inProgress') continue
-      const items = Array.isArray(turn.items) ? turn.items : []
-      for (const itemValue of items) {
-        const itemId = boundedIdentifier(record(itemValue).id, 256)
-        if (itemId) itemIds.add(itemId)
-      }
-    }
-  } catch {
-    // Malformed resume state cannot identify live transcript items.
-  }
-  return itemIds
 }
 
 export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {

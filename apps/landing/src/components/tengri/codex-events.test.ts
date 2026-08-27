@@ -8,7 +8,6 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
-  codexInProgressItemIdsFromThread,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -116,11 +115,12 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
-  test('keeps live updates visible for items restored from an in-progress turn', () => {
+  test('keeps only post-resume updates visible for items restored into history', () => {
     const restoredItemIds = new Set([event.itemId])
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
-    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, restoredItemIds)).toBe(true)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
+    expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence - 1)).toBe(true)
   })
 
   test('removes a replayed approval after its server request resolves', () => {
@@ -436,22 +436,7 @@ describe('Codex thread restoration', () => {
     })
 
     expect(codexActiveTurnIdFromThread(thread)).toBe('turn-active')
-    expect([...codexInProgressItemIdsFromThread(thread)]).toEqual([])
     expect(codexActiveTurnIdFromThread('{')).toBe('')
-    expect([...codexInProgressItemIdsFromThread('{')]).toEqual([])
-  })
-
-  test('identifies only items restored from in-progress turns', () => {
-    const thread = JSON.stringify({
-      thread: {
-        turns: [
-          { id: 'turn-complete', status: 'completed', items: [{ id: 'complete-1' }] },
-          { id: 'turn-active', status: 'inProgress', items: [{ id: 'active-1' }, { id: 'active-2' }, { id: '' }] },
-        ],
-      },
-    })
-
-    expect([...codexInProgressItemIdsFromThread(thread)]).toEqual(['active-1', 'active-2'])
   })
 
   test('restores persisted typed items in thread order', () => {
