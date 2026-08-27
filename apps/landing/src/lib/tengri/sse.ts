@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { MAX_EVENT_STREAMS_PER_SUBJECT } from './limits'
+
 type StreamSource<Value> = {
   cancel(): void
   off(event: 'data', listener: (value: Value) => void): unknown
@@ -15,13 +17,12 @@ type StreamSource<Value> = {
 type ServerSentEvent = { data: unknown; id?: number | string; event?: string }
 
 const HEARTBEAT_INTERVAL_MS = 15_000
-const ACTIVE_STREAM_LIMIT_PER_SUBJECT = 4
 
 export function acquireTengriEventStreamSlot(subject: string): (() => void) | null {
   const state = globalThis as typeof globalThis & { tengriActiveStreams?: Map<string, number> }
   const activeStreams = (state.tengriActiveStreams ??= new Map())
   const active = activeStreams.get(subject) ?? 0
-  if (active >= ACTIVE_STREAM_LIMIT_PER_SUBJECT) return null
+  if (active >= MAX_EVENT_STREAMS_PER_SUBJECT) return null
   activeStreams.set(subject, active + 1)
 
   let released = false

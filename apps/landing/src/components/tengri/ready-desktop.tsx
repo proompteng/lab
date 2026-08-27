@@ -7,7 +7,13 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import { cn } from '@/lib/utils'
-import { APP_TITLES, initialWindowState, type Bounds, windowReducer } from '@/lib/tengri/window-manager'
+import {
+  APP_TITLES,
+  initialWindowState,
+  type Bounds,
+  type DesktopWindow,
+  windowReducer,
+} from '@/lib/tengri/window-manager'
 import { ChromeApp } from './chrome-app'
 import { runTengriAction } from './client'
 import { CodeEditor } from './code-editor'
@@ -36,6 +42,7 @@ export function ReadyDesktop({
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<CodeOpenRequest | null>(null)
+  const [codeDirty, setCodeDirty] = useState(false)
   const codeRequestIdRef = useRef(0)
   const reducedMotion = useReducedMotion()
 
@@ -46,6 +53,25 @@ export function ReadyDesktop({
       y: 0,
       width: rect?.width ?? globalThis.innerWidth,
       height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
+    }
+  }, [])
+
+  const closeWindow = useCallback(
+    (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
+      if (desktopWindow.app === 'code' && codeDirty) {
+        setError('Save or close every edited Code tab before closing the Code window.')
+        dispatch({ type: 'focus', id: desktopWindow.id })
+        return
+      }
+      dispatch({ type: 'close', id: desktopWindow.id })
+    },
+    [codeDirty],
+  )
+
+  const handleCodeDirtyChange = useCallback((dirty: boolean) => {
+    setCodeDirty(dirty)
+    if (!dirty) {
+      setError((current) => (current.startsWith('Save or close every edited Code tab') ? '' : current))
     }
   }, [])
 
@@ -76,7 +102,7 @@ export function ReadyDesktop({
       if (!active) return
       if (event.key.toLowerCase() === 'w') {
         event.preventDefault()
-        dispatch({ type: 'close', id: active.id })
+        closeWindow(active)
       } else if (event.key.toLowerCase() === 'm') {
         event.preventDefault()
         dispatch({ type: 'minimize', id: active.id })
@@ -87,7 +113,7 @@ export function ReadyDesktop({
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [viewport, windowState.activeWindowId, windowState.windows])
+  }, [closeWindow, viewport, windowState.activeWindowId, windowState.windows])
 
   const openSettings = useCallback(() => {
     dispatch({ type: 'open', app: 'settings', title: APP_TITLES.settings, viewport: viewport() })
@@ -127,6 +153,10 @@ export function ReadyDesktop({
   }, [openChrome, openCode, openFinder, openSettings, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
+    if (codeDirty) {
+      setError('Save or close every edited Code tab before changing the agent lifecycle.')
+      return
+    }
     setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
     setError('')
     try {
@@ -141,6 +171,10 @@ export function ReadyDesktop({
   }
 
   async function signOut() {
+    if (codeDirty) {
+      setError('Save or close every edited Code tab before signing out.')
+      return
+    }
     setBusyAction('sign-out')
     setError('')
     try {
@@ -219,11 +253,21 @@ export function ReadyDesktop({
               Connection interrupted. Using the last confirmed agent state.
             </p>
           ) : null}
+          {error && activeWindow?.app !== 'settings' ? (
+            <p
+              role="alert"
+              className="absolute top-3 left-1/2 z-[1001] max-w-[min(42rem,calc(100%-2rem))] -translate-x-1/2 truncate rounded-full border border-red-200/16 bg-red-950/65 px-4 py-1.5 text-xs text-red-100 shadow-lg backdrop-blur-xl"
+              title={error}
+            >
+              {error}
+            </p>
+          ) : null}
           {windowState.windows.map((desktopWindow) => (
             <DesktopWindowFrame
               active={desktopWindow.id === windowState.activeWindowId}
               dispatch={dispatch}
               key={desktopWindow.id}
+              onCloseRequest={() => closeWindow(desktopWindow)}
               stageRef={stageRef}
               window={desktopWindow}
             >
@@ -236,7 +280,7 @@ export function ReadyDesktop({
               ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
-                <CodeEditor agentId={agent.id} key={agent.id} request={codeRequest} />
+                <CodeEditor agentId={agent.id} onDirtyChange={handleCodeDirtyChange} request={codeRequest} />
               ) : (
                 <AgentSettings
                   agent={agent}

@@ -1,3 +1,5 @@
+import { MAX_CODE_WATCH_DIRECTORIES } from '@/lib/tengri/limits'
+
 export type CodeOpenRequest = {
   path: string
   requestId: number
@@ -96,6 +98,22 @@ export function codeParentDirectory(path: string): string {
 
 export function isEditorValuePersisted(value: string, lastSaved: string | undefined, savePending: boolean): boolean {
   return lastSaved !== undefined && value === lastSaved && !savePending
+}
+
+export function canStartEditorSave(
+  path: string,
+  conflictedPaths: ReadonlySet<string>,
+  migratingPaths: ReadonlySet<string>,
+): boolean {
+  return !conflictedPaths.has(path) && !migratingPaths.has(path)
+}
+
+export function codeWatchDirectoryLimitError(): string {
+  return `Code can watch files in at most ${MAX_CODE_WATCH_DIRECTORIES} directories at once. Close a tab before opening this file.`
+}
+
+export function clearCodeWatchDirectoryLimitError(error: string): string {
+  return error === codeWatchDirectoryLimitError() ? '' : error
 }
 
 export function codeFileName(path: string): string {

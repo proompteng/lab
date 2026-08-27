@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  canStartEditorSave,
+  clearCodeWatchDirectoryLimitError,
   closeEditorTab,
   codeFileName,
   codeLanguage,
@@ -8,6 +10,7 @@ import {
   codeModelTransition,
   codePanelId,
   codeParentDirectory,
+  codeWatchDirectoryLimitError,
   disposeCodeModels,
   enqueueCodeOpenRequest,
   isEditorValuePersisted,
@@ -54,6 +57,16 @@ describe('Code editor model', () => {
     expect(isEditorValuePersisted('original', 'original', true)).toBe(false)
     expect(isEditorValuePersisted('changed', 'original', false)).toBe(false)
     expect(isEditorValuePersisted('', undefined, false)).toBe(false)
+  })
+
+  test('blocks queued writes after a conflict and clears only the recoverable directory-limit error', () => {
+    const path = '/workspace/main.rs'
+    expect(canStartEditorSave(path, new Set([path]), new Set())).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set([path]))).toBe(false)
+    expect(canStartEditorSave(path, new Set(), new Set())).toBe(true)
+
+    expect(clearCodeWatchDirectoryLimitError(codeWatchDirectoryLimitError())).toBe('')
+    expect(clearCodeWatchDirectoryLimitError('Monaco failed to initialize')).toBe('Monaco failed to initialize')
   })
 
   test('preserves every open request received before Monaco is ready', () => {
