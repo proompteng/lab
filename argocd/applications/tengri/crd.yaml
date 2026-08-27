@@ -1,0 +1,194 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+  name: microvms.runtime.proompteng.ai
+spec:
+  group: runtime.proompteng.ai
+  names:
+    kind: MicroVM
+    plural: microvms
+    shortNames:
+    - mvm
+    singular: microvm
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.guestReady
+      name: Guest Ready
+      type: boolean
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for MicroVMSpec via `CustomResource`
+        properties:
+          spec:
+            properties:
+              architecture:
+                enum:
+                - amd64
+                - arm64
+                type: string
+              createdAt:
+                format: date-time
+                type: string
+              desiredState:
+                enum:
+                - Running
+                - Sleeping
+                type: string
+              displayName:
+                maxLength: 64
+                minLength: 1
+                type: string
+              expiresAt:
+                format: date-time
+                type: string
+              idleDeadline:
+                format: date-time
+                type: string
+              image:
+                pattern: ^[^@[:space:]]+@sha256:[a-f0-9]{64}$
+                type: string
+              ownerHash:
+                pattern: ^[a-f0-9]{64}$
+                type: string
+              resources:
+                additionalProperties: false
+                properties:
+                  cpuMillis:
+                    enum:
+                    - 2000
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  memoryMib:
+                    enum:
+                    - 4096
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                  workspaceGib:
+                    enum:
+                    - 16
+                    format: uint32
+                    minimum: 0.0
+                    type: integer
+                required:
+                - cpuMillis
+                - memoryMib
+                - workspaceGib
+                type: object
+            required:
+            - architecture
+            - createdAt
+            - desiredState
+            - displayName
+            - expiresAt
+            - idleDeadline
+            - image
+            - ownerHash
+            - resources
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                default: []
+                items:
+                  properties:
+                    lastTransitionAt:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionAt
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureReason:
+                nullable: true
+                type: string
+              guestReady:
+                default: false
+                type: boolean
+              lastActivityAt:
+                format: date-time
+                nullable: true
+                type: string
+              message:
+                nullable: true
+                type: string
+              nodeName:
+                nullable: true
+                type: string
+              observedGeneration:
+                default: 0
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Booting
+                - Ready
+                - Sleeping
+                - Failed
+                - Terminating
+                type: string
+              podIp:
+                nullable: true
+                type: string
+              podName:
+                nullable: true
+                type: string
+              pvcName:
+                nullable: true
+                type: string
+              readyAt:
+                format: date-time
+                nullable: true
+                type: string
+            required:
+            - phase
+            type: object
+        required:
+        - spec
+        title: MicroVM
+        type: object
+        x-kubernetes-validations:
+        - message: ownerHash is immutable
+          rule: self.spec.ownerHash == oldSelf.spec.ownerHash
+        - message: the digest-pinned guest image is immutable
+          rule: self.spec.image == oldSelf.spec.image
+        - message: the server-selected architecture is immutable
+          rule: self.spec.architecture == oldSelf.spec.architecture
+        - message: the v1 resource profile is immutable
+          rule: self.spec.resources == oldSelf.spec.resources
+        - message: creation and hard-expiry timestamps are immutable
+          rule: >-
+            self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt ==
+            oldSelf.spec.expiresAt
+    served: true
+    storage: true
+    subresources:
+      status: {}
