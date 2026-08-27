@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createElement, createRef } from 'react'
 import { renderToString } from 'react-dom/server'
 
-import { DesktopWindowFrame } from '@/components/tengri/desktop-window'
+import { DesktopWindowFrame, paintWindowInteractionFrame } from '@/components/tengri/desktop-window'
 import { initialWindowState, MAX_DESKTOP_WINDOWS, resizeBounds, windowReducer } from './window-manager'
 
 const viewport = { x: 0, y: 0, width: 1440, height: 870 }
@@ -259,6 +259,27 @@ describe('Tengri desktop window manager', () => {
     const rightEdge = { ...base, x: 1_336, width: 1_000 }
     const reachableWest = resizeBounds(rightEdge, 'w', 100, 0, viewport)
     expect(reachableWest.x).toBe(1_336)
+  })
+
+  test('paints the final resize geometry before committing reducer state', () => {
+    const base = { x: 100, y: 80, width: 640, height: 480 }
+    const style = {
+      height: '540px',
+      left: '100px',
+      top: '80px',
+      transform: '',
+      width: '720px',
+    }
+
+    paintWindowInteractionFrame(style, { base, edge: 'se', next: base })
+
+    expect(style).toEqual({
+      height: '480px',
+      left: '100px',
+      top: '80px',
+      transform: '',
+      width: '640px',
+    })
   })
 
   test('server-renders a minimized frame without browser globals', () => {

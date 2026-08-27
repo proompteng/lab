@@ -90,16 +90,7 @@ export function DesktopWindowFrame({
         interaction.frame = null
         const element = elementRef.current
         if (!element) return
-        if (!interaction.edge) {
-          const translateX = interaction.next.x - interaction.base.x
-          const translateY = interaction.next.y - interaction.base.y
-          element.style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`
-          return
-        }
-        element.style.left = `${interaction.next.x}px`
-        element.style.top = `${interaction.next.y}px`
-        element.style.width = `${interaction.next.width}px`
-        element.style.height = `${interaction.next.height}px`
+        paintWindowInteractionFrame(element.style, interaction)
       })
     },
     [viewport],
@@ -110,6 +101,8 @@ export function DesktopWindowFrame({
       const interaction = interactionRef.current
       if (!interaction || interaction.pointerId !== event.pointerId) return
       if (interaction.frame !== null) cancelAnimationFrame(interaction.frame)
+      const element = elementRef.current
+      if (element) paintWindowInteractionFrame(element.style, interaction)
       interactionRef.current = null
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
@@ -217,6 +210,22 @@ export function DesktopWindowFrame({
         : null}
     </motion.section>
   )
+}
+
+export function paintWindowInteractionFrame(
+  style: Pick<CSSStyleDeclaration, 'height' | 'left' | 'top' | 'transform' | 'width'>,
+  interaction: Pick<Interaction, 'base' | 'edge' | 'next'>,
+) {
+  if (!interaction.edge) {
+    const translateX = interaction.next.x - interaction.base.x
+    const translateY = interaction.next.y - interaction.base.y
+    style.transform = `translate3d(${translateX}px, ${translateY}px, 0)`
+    return
+  }
+  style.left = `${interaction.next.x}px`
+  style.top = `${interaction.next.y}px`
+  style.width = `${interaction.next.width}px`
+  style.height = `${interaction.next.height}px`
 }
 
 function resetTransientStyles(element: HTMLDivElement | null) {
