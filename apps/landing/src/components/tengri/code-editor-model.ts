@@ -1,3 +1,5 @@
+import { MAX_CODE_WATCH_DIRECTORIES } from '@/lib/tengri/limits'
+
 export type CodeOpenRequest = {
   path: string
   requestId: number
@@ -5,7 +7,8 @@ export type CodeOpenRequest = {
 
 export type EditorTab = {
   path: string
-  state: 'error' | 'loading' | 'ready'
+  dirty: boolean
+  state: 'error' | 'loading' | 'ready' | 'saving'
   error: string
 }
 
@@ -60,7 +63,7 @@ export function disposeCodeModels<Model extends { dispose: () => void }>(models:
 
 export function openEditorTab(tabs: EditorTab[], path: string): EditorTab[] {
   if (!isCodePath(path) || tabs.some((tab) => tab.path === path)) return tabs
-  return [...tabs, { path, state: 'loading', error: '' }]
+  return [...tabs, { path, dirty: false, state: 'loading', error: '' }]
 }
 
 export function closeEditorTab(
@@ -73,6 +76,44 @@ export function closeEditorTab(
   const nextTabs = tabs.filter((tab) => tab.path !== closingPath)
   if (activePath !== closingPath) return { tabs: nextTabs, activePath }
   return { tabs: nextTabs, activePath: nextTabs[Math.min(index, nextTabs.length - 1)]?.path ?? '' }
+}
+
+export function renameEditorTab(
+  tabs: readonly EditorTab[],
+  activePath: string,
+  previousPath: string,
+  path: string,
+): { tabs: EditorTab[]; activePath: string } {
+  if (!isCodePath(path) || tabs.some((tab) => tab.path === path)) return { tabs: [...tabs], activePath }
+  return {
+    tabs: tabs.map((tab) => (tab.path === previousPath ? { ...tab, path } : tab)),
+    activePath: activePath === previousPath ? path : activePath,
+  }
+}
+
+export function codeParentDirectory(path: string): string {
+  const separator = path.lastIndexOf('/')
+  return separator <= 0 ? '/' : path.slice(0, separator)
+}
+
+export function isEditorValuePersisted(value: string, lastSaved: string | undefined, savePending: boolean): boolean {
+  return lastSaved !== undefined && value === lastSaved && !savePending
+}
+
+export function canStartEditorSave(
+  path: string,
+  conflictedPaths: ReadonlySet<string>,
+  migratingPaths: ReadonlySet<string>,
+): boolean {
+  return !conflictedPaths.has(path) && !migratingPaths.has(path)
+}
+
+export function codeWatchDirectoryLimitError(): string {
+  return `Code can watch files in at most ${MAX_CODE_WATCH_DIRECTORIES} directories at once. Close a tab before opening this file.`
+}
+
+export function clearCodeWatchDirectoryLimitError(error: string): string {
+  return error === codeWatchDirectoryLimitError() ? '' : error
 }
 
 export function codeFileName(path: string): string {

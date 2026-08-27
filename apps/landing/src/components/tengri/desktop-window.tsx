@@ -26,12 +26,14 @@ export function DesktopWindowFrame({
   active,
   children,
   dispatch,
+  onCloseRequest,
   stageRef,
   window,
 }: {
   active: boolean
   children: ReactNode
   dispatch: (action: WindowAction) => void
+  onCloseRequest?: () => void
   stageRef: RefObject<HTMLDivElement | null>
   window: DesktopWindow
 }) {
@@ -156,7 +158,7 @@ export function DesktopWindowFrame({
             aria-label={`Close ${window.title}`}
             className="group grid h-6 w-6 place-items-center rounded-full"
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => dispatch({ type: 'close', id: window.id })}
+            onClick={() => (onCloseRequest ? onCloseRequest() : dispatch({ type: 'close', id: window.id }))}
           >
             <span
               aria-hidden="true"
