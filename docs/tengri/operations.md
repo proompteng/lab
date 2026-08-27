@@ -111,6 +111,9 @@ bun run lint:argocd
 The exact live readback commands and rollback procedure are in
 [`services/tengri/README.md`](../../services/tengri/README.md).
 
+The authenticated Codex account, thread, event-replay, approval, and end-to-end chat acceptance contract is in
+[`agent-chat.md`](./agent-chat.md).
+
 ## Recovery
 
 - Controller unavailable: existing guest Pods and PVCs continue running. Revert the image or manifest commit through a

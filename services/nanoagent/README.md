@@ -40,6 +40,9 @@ ready, and restarts failed processes with bounded backoff. Device login and thre
 PVC-backed `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does
 not inject a shared `OPENAI_API_KEY`.
 
+The owner-scoped browser-to-guest flow, replay behavior, and live acceptance procedure are documented in
+[`../../docs/tengri/agent-chat.md`](../../docs/tengri/agent-chat.md).
+
 ## Local validation
 
 ```bash
