@@ -76,5 +76,5 @@ cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdg
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
 ```
 
-Runtime configuration is documented in `docs/tengri/operations.md`. The protobuf contract is
-`proto/proompteng/runtime/v1/microvm.proto`.
+Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
+protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).

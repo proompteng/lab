@@ -5,6 +5,7 @@ on:
     paths:
       - 'services/tengri/**'
       - 'services/tengri/crd.yaml'
+      - 'argocd/applications/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'services/tengri/**'
       - 'services/tengri/crd.yaml'
+      - 'argocd/applications/tengri/crd.yaml'
       - '.github/workflows/tengri-controller.yaml'
   workflow_dispatch:
 
@@ -55,3 +57,4 @@ jobs:
           set -euo pipefail
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
