@@ -47,6 +47,7 @@ use proto::{
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
 const MAX_AGENTS: usize = 6;
 const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
+const CODEX_LOGIN_ATTEMPT_TTL_MINUTES: i64 = 15;
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
@@ -673,7 +674,8 @@ impl MicroVmControlPlane for ControlPlane {
             login_id: json_string(&value, &["/loginId"]),
             verification_url: json_string(&value, &["/verificationUrl", "/authUrl"]),
             user_code: json_string(&value, &["/userCode"]),
-            expires_at: String::new(),
+            // App-server does not publish a device-code expiry, so Tengri bounds the UI attempt.
+            expires_at: codex_login_expires_at(Utc::now()),
             raw_json: value.to_string(),
         }))
     }
@@ -826,6 +828,8 @@ impl MicroVmControlPlane for ControlPlane {
         {
             CodexApprovalDecision::ApproveOnce => "approveOnce",
             CodexApprovalDecision::ApproveSession => "approveSession",
+            CodexApprovalDecision::ApproveExecPolicyAmendment => "approveExecPolicyAmendment",
+            CodexApprovalDecision::ApproveNetworkPolicyAmendment => "approveNetworkPolicyAmendment",
             CodexApprovalDecision::Deny => "deny",
             CodexApprovalDecision::Unspecified => {
                 return Err(Status::invalid_argument("approval decision is required"));
@@ -980,7 +984,14 @@ fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
         sequence: event.sequence,
         kind: codex_event_kind(&method, &event.approval_id, &event.raw) as i32,
         method,
-        thread_id: json_string(&event.raw, &["/params/threadId", "/params/thread/id"]),
+        thread_id: json_string(
+            &event.raw,
+            &[
+                "/params/threadId",
+                "/params/thread/id",
+                "/params/conversationId",
+            ],
+        ),
         turn_id: json_string(&event.raw, &["/params/turnId", "/params/turn/id"]),
         item_id: json_string(&event.raw, &["/params/itemId", "/params/item/id"]),
         text: codex_event_text(&event.raw),
@@ -999,7 +1010,12 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
         .and_then(|item| codex_thread_item_kind(&normalized_method, item))
     {
         kind
-    } else if normalized_method == "error" || normalized_method.contains("error") {
+    } else if normalized_method == "tengri/eventomitted" {
+        CodexEventKind::Warning
+    } else if codex_event_is_failure(&normalized_method, raw)
+        || normalized_method == "error"
+        || normalized_method.contains("error")
+    {
         CodexEventKind::Error
     } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
         CodexEventKind::Warning
@@ -1025,6 +1041,26 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
     } else {
         CodexEventKind::ThreadState
     }
+}
+
+fn codex_event_is_failure(normalized_method: &str, raw: &Value) -> bool {
+    if normalized_method == "turn/completed" {
+        return matches!(
+            raw.pointer("/params/turn/status").and_then(Value::as_str),
+            Some("failed")
+        ) || raw
+            .pointer("/params/turn/error")
+            .is_some_and(|error| !error.is_null());
+    }
+    normalized_method == "account/login/completed"
+        && (raw.pointer("/params/success").and_then(Value::as_bool) == Some(false)
+            || raw
+                .pointer("/params/error")
+                .is_some_and(|error| !error.is_null()))
+}
+
+fn codex_login_expires_at(now: DateTime<Utc>) -> String {
+    (now + chrono::Duration::minutes(CODEX_LOGIN_ATTEMPT_TTL_MINUTES)).to_rfc3339()
 }
 
 fn codex_thread_item_kind(normalized_method: &str, item: &Value) -> Option<CodexEventKind> {
@@ -1107,6 +1143,9 @@ fn codex_event_text_unbounded(value: &Value) -> String {
     if let Some(outcome) = codex_collaboration_outcome(value) {
         return outcome;
     }
+    if let Some(outcome) = codex_command_outcome(value) {
+        return outcome;
+    }
 
     let direct = json_string(
         value,
@@ -1130,6 +1169,7 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             "/params/item/failure/message",
             "/params/item/prompt",
             "/params/item/agentPath",
+            "/params/error",
             "/params/error/message",
             "/params/turn/error/message",
         ],
@@ -1137,7 +1177,7 @@ fn codex_event_text_unbounded(value: &Value) -> String {
     if !direct.is_empty() {
         return direct;
     }
-    for pointer in ["/params/item/content", "/params/item/summary"] {
+    for pointer in ["/params/item/summary", "/params/item/content"] {
         let text = value
             .pointer(pointer)
             .and_then(Value::as_array)
@@ -1180,6 +1220,18 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             return text;
         }
     }
+    for pointer in [
+        "/params/item/result/structuredContent",
+        "/params/item/result/structured_content",
+    ] {
+        if let Some(structured) = value
+            .pointer(pointer)
+            .filter(|structured| !structured.is_null())
+            && let Ok(text) = serde_json::to_string_pretty(structured)
+        {
+            return text;
+        }
+    }
     if let Some(plan) = value.pointer("/params/plan").and_then(Value::as_array) {
         let explanation = value
             .pointer("/params/explanation")
@@ -1205,6 +1257,32 @@ fn codex_event_text_unbounded(value: &Value) -> String {
             .join("\n\n");
     }
     String::new()
+}
+
+fn codex_command_outcome(value: &Value) -> Option<String> {
+    let item = value.pointer("/params/item")?;
+    if item.get("type").and_then(Value::as_str) != Some("commandExecution") {
+        return None;
+    }
+    if item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .is_some_and(|output| !output.is_empty())
+    {
+        return None;
+    }
+
+    let status = item.get("status").and_then(Value::as_str)?;
+    let label = match status {
+        "completed" => "Command completed",
+        "failed" => "Command failed",
+        "declined" => "Command declined",
+        _ => return None,
+    };
+    Some(match item.get("exitCode").and_then(Value::as_i64) {
+        Some(exit_code) => format!("{label} (exit {exit_code})"),
+        None => label.to_owned(),
+    })
 }
 
 fn codex_collaboration_outcome(value: &Value) -> Option<String> {
@@ -1777,6 +1855,46 @@ mod tests {
             codex_event_text(&json!({
                 "params": {
                     "item": {
+                        "type": "reasoning",
+                        "summary": ["Public reasoning summary"],
+                        "content": ["Internal reasoning content"]
+                    }
+                }
+            })),
+            "Public reasoning summary"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "commandExecution",
+                        "status": "completed",
+                        "aggregatedOutput": "",
+                        "exitCode": 0
+                    }
+                }
+            })),
+            "Command completed (exit 0)"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "result": {
+                            "content": [],
+                            "structuredContent": {"id": "ENG-123", "state": "Done"}
+                        }
+                    }
+                }
+            })),
+            "{\n  \"id\": \"ENG-123\",\n  \"state\": \"Done\"\n}"
+        );
+        assert_eq!(
+            codex_event_text(&json!({
+                "params": {
+                    "item": {
                         "type": "fileChange",
                         "changes": [{"path": "/workspace/main.rs", "diff": "+fn main() {}"}]
                     }
@@ -1788,6 +1906,17 @@ mod tests {
             codex_event_kind("configWarning", "", &json!({})),
             CodexEventKind::Warning
         );
+        assert_eq!(
+            codex_event_kind("tengri/eventOmitted", "", &json!({})),
+            CodexEventKind::Warning
+        );
+        let legacy_approval = codex_event(crate::guest::CodexEvent {
+            sequence: 7,
+            method: "execCommandApproval".to_owned(),
+            approval_id: "approval-legacy".to_owned(),
+            raw: json!({"params": {"conversationId": "thread-legacy"}}),
+        });
+        assert_eq!(legacy_approval.thread_id, "thread-legacy");
         assert_eq!(
             codex_event_text(&json!({
                 "params": {
@@ -1803,6 +1932,41 @@ mod tests {
         assert_eq!(
             codex_event_text(&json!({"params": {"turn": {"error": {"message": "turn failed"}}}})),
             "turn failed"
+        );
+        assert_eq!(
+            codex_event_kind(
+                "turn/completed",
+                "",
+                &json!({
+                    "params": {
+                        "turn": {
+                            "id": "turn-failed",
+                            "status": "failed",
+                            "error": {"message": "turn failed"}
+                        }
+                    }
+                }),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_kind(
+                "account/login/completed",
+                "",
+                &json!({"params": {"success": false, "error": "device code expired"}}),
+            ),
+            CodexEventKind::Error
+        );
+        assert_eq!(
+            codex_event_text(&json!({"params": {"error": "device code expired"}})),
+            "device code expired"
+        );
+        let login_started_at = DateTime::parse_from_rfc3339("2026-08-27T13:00:00Z")
+            .expect("login timestamp")
+            .with_timezone(&Utc);
+        assert_eq!(
+            codex_login_expires_at(login_started_at),
+            "2026-08-27T13:15:00+00:00"
         );
         assert_eq!(
             codex_event_text(&json!({

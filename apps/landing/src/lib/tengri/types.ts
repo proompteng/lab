@@ -157,6 +157,11 @@ export type TengriAction =
       action: 'resolve-approval'
       agentId: string
       approvalId: string
-      decision: 'approve-once' | 'approve-session' | 'deny'
+      decision:
+        | 'approve-once'
+        | 'approve-session'
+        | 'approve-exec-policy-amendment'
+        | 'approve-network-policy-amendment'
+        | 'deny'
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string }

@@ -30,6 +30,16 @@ describe('Tengri BFF action schema', () => {
         rows: 24,
       }).success,
     ).toBe(false)
+    for (const decision of ['approve-exec-policy-amendment', 'approve-network-policy-amendment']) {
+      expect(
+        tengriActionSchema.safeParse({
+          action: 'resolve-approval',
+          agentId: 'agent-123',
+          approvalId: 'approval-1',
+          decision,
+        }).success,
+      ).toBe(true)
+    }
     expect(
       tengriActionSchema.safeParse({
         action: 'resolve-approval',
