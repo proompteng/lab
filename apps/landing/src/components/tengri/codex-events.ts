@@ -3,6 +3,7 @@ import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
 const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
 const TRUNCATION_MARKER = '\n… output truncated …'
+const DEFAULT_CODEX_APPROVAL_DECISIONS = ['approve-once', 'approve-session', 'deny'] as const
 const CODEX_EVENT_KINDS = new Set<TengriCodexEventKind>([
   'approval',
   'assistant-text',
@@ -28,7 +29,10 @@ export type CodexTranscriptItem = {
   text: string
 }
 
+export type CodexApprovalDecision = (typeof DEFAULT_CODEX_APPROVAL_DECISIONS)[number]
+
 export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent) {
+  if (isRawReasoningDelta(event)) return current
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
@@ -93,6 +97,7 @@ export function parseCodexEvent(data: string): TengriCodexEvent | null {
 }
 
 export function codexEventDisplayText(event: TengriCodexEvent) {
+  if (isRawReasoningDelta(event)) return ''
   const raw = parseRawEvent(event.rawJson)
   const params = record(raw.params)
   const item = record(params.item)
@@ -107,6 +112,29 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
     return toolResultText(item) || commandStatusText(string(item.status), number(item.exitCode))
   }
   return ''
+}
+
+export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
+  if (event.kind !== 'approval') return []
+  const params = record(parseRawEvent(event.rawJson).params)
+  const available = params.availableDecisions
+  if (event.method.toLowerCase() !== 'item/commandexecution/requestapproval' || available == null) {
+    return [...DEFAULT_CODEX_APPROVAL_DECISIONS]
+  }
+  if (!Array.isArray(available)) return []
+
+  const decisions = new Set<CodexApprovalDecision>()
+  for (const value of available) {
+    if (value === 'accept') decisions.add('approve-once')
+    if (value === 'acceptForSession') decisions.add('approve-session')
+    if (value === 'decline' || value === 'cancel') decisions.add('deny')
+  }
+  return DEFAULT_CODEX_APPROVAL_DECISIONS.filter((decision) => decisions.has(decision))
+}
+
+export function codexEventMatchesThread(event: TengriCodexEvent, threadId: string) {
+  if (event.kind === 'approval') return Boolean(threadId) && event.threadId === threadId
+  return !event.threadId || event.threadId === threadId
 }
 
 export function codexTranscriptFromThread(rawJson: string): CodexTranscriptItem[] {
@@ -618,6 +646,10 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return event.method.toLowerCase().endsWith('delta')
+}
+
+function isRawReasoningDelta(event: TengriCodexEvent) {
+  return event.method.toLowerCase() === 'item/reasoning/textdelta'
 }
 
 function codexEventKey(event: TengriCodexEvent) {

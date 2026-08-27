@@ -6,18 +6,19 @@ import type { Components } from 'react-markdown'
 
 import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
-
-type ApprovalDecision = 'approve-once' | 'approve-session' | 'deny'
+import type { CodexApprovalDecision } from './codex-events'
 
 type CodexEventCardProps = {
+  approvalDecisions?: readonly CodexApprovalDecision[]
   approvalId?: string
   kind: TengriCodexEventKind
-  onResolveApproval?: (decision: ApprovalDecision) => void
+  onResolveApproval?: (decision: CodexApprovalDecision) => void
   resolvingApproval?: boolean
   text: string
 }
 
 export function CodexEventCard({
+  approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
   kind,
   onResolveApproval,
@@ -43,18 +44,30 @@ export function CodexEventCard({
         </div>
         <p className="mt-2 whitespace-pre-wrap text-amber-50/82">{text || 'Codex is requesting approval.'}</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <ApprovalButton
-            disabled={resolvingApproval}
-            label="Approve once"
-            onClick={() => onResolveApproval('approve-once')}
-            primary
-          />
-          <ApprovalButton
-            disabled={resolvingApproval}
-            label="Approve for session"
-            onClick={() => onResolveApproval('approve-session')}
-          />
-          <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
+          {approvalDecisions.includes('approve-once') ? (
+            <ApprovalButton
+              disabled={resolvingApproval}
+              label="Approve once"
+              onClick={() => onResolveApproval('approve-once')}
+              primary
+            />
+          ) : null}
+          {approvalDecisions.includes('approve-session') ? (
+            <ApprovalButton
+              disabled={resolvingApproval}
+              label="Approve for session"
+              onClick={() => onResolveApproval('approve-session')}
+              primary={!approvalDecisions.includes('approve-once')}
+            />
+          ) : null}
+          {approvalDecisions.includes('deny') ? (
+            <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
+          ) : null}
+          {approvalDecisions.length === 0 ? (
+            <span className="text-xs text-amber-100/58" role="status">
+              No supported response is available.
+            </span>
+          ) : null}
           {resolvingApproval ? (
             <span className="inline-flex items-center gap-1.5 px-1 text-xs text-white/48" role="status">
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Resolving…

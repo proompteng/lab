@@ -12,14 +12,16 @@ import type {
 import { CodexEventCard } from './codex-event-card'
 import {
   appendCodexEvent,
+  codexApprovalDecisions,
   codexEventDisplayText,
+  codexEventMatchesThread,
   codexTranscriptFromThread,
   parseCodexEvent,
+  type CodexApprovalDecision,
   type CodexTranscriptItem,
 } from './codex-events'
 import { runTengriAction } from './client'
 
-type ApprovalDecision = 'approve-once' | 'approve-session' | 'deny'
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
 export function AgentChat({ agentId }: { agentId: string }) {
@@ -165,7 +167,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
       }
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       const currentThread = threadIdRef.current
-      if (event.threadId && event.threadId !== currentThread) return
+      if (!codexEventMatchesThread(event, currentThread)) return
       setEvents((current) => appendCodexEvent(current, event))
       if (event.method === 'tengri/replayWarning') {
         void recoverThreadState()
@@ -192,10 +194,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   const renderedEvents = useMemo(
     () =>
       events
-        .filter(
-          (event) =>
-            (!event.threadId || event.threadId === threadId) && (!event.itemId || !historyIds.has(event.itemId)),
-        )
+        .filter((event) => codexEventMatchesThread(event, threadId) && (!event.itemId || !historyIds.has(event.itemId)))
         .map((event) => ({ event, text: codexEventDisplayText(event) }))
         .filter(
           ({ event, text }) =>
@@ -247,7 +246,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
     return thread.id
   }
 
-  async function resolveApproval(event: TengriCodexEvent, decision: ApprovalDecision) {
+  async function resolveApproval(event: TengriCodexEvent, decision: CodexApprovalDecision) {
     if (!event.approvalId || resolvingApprovals.has(event.approvalId)) return
     setResolvingApprovals((current) => new Set(current).add(event.approvalId))
     setError('')
@@ -363,6 +362,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
           ))}
           {renderedEvents.map(({ event, text }) => (
             <CodexEventCard
+              approvalDecisions={codexApprovalDecisions(event)}
               approvalId={event.approvalId}
               key={`${event.sequence}-${event.method}-${event.itemId}`}
               kind={event.kind}

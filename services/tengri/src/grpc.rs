@@ -980,7 +980,14 @@ fn codex_event(event: crate::guest::CodexEvent) -> CodexEvent {
         sequence: event.sequence,
         kind: codex_event_kind(&method, &event.approval_id, &event.raw) as i32,
         method,
-        thread_id: json_string(&event.raw, &["/params/threadId", "/params/thread/id"]),
+        thread_id: json_string(
+            &event.raw,
+            &[
+                "/params/threadId",
+                "/params/thread/id",
+                "/params/conversationId",
+            ],
+        ),
         turn_id: json_string(&event.raw, &["/params/turnId", "/params/turn/id"]),
         item_id: json_string(&event.raw, &["/params/itemId", "/params/item/id"]),
         text: codex_event_text(&event.raw),
@@ -999,6 +1006,8 @@ fn codex_event_kind(method: &str, approval_id: &str, raw: &Value) -> CodexEventK
         .and_then(|item| codex_thread_item_kind(&normalized_method, item))
     {
         kind
+    } else if normalized_method == "tengri/eventomitted" {
+        CodexEventKind::Warning
     } else if normalized_method == "error" || normalized_method.contains("error") {
         CodexEventKind::Error
     } else if normalized_method.contains("warning") || normalized_method.contains("notice") {
@@ -1870,6 +1879,17 @@ mod tests {
             codex_event_kind("configWarning", "", &json!({})),
             CodexEventKind::Warning
         );
+        assert_eq!(
+            codex_event_kind("tengri/eventOmitted", "", &json!({})),
+            CodexEventKind::Warning
+        );
+        let legacy_approval = codex_event(crate::guest::CodexEvent {
+            sequence: 7,
+            method: "execCommandApproval".to_owned(),
+            approval_id: "approval-legacy".to_owned(),
+            raw: json!({"params": {"conversationId": "thread-legacy"}}),
+        });
+        assert_eq!(legacy_approval.thread_id, "thread-legacy");
         assert_eq!(
             codex_event_text(&json!({
                 "params": {

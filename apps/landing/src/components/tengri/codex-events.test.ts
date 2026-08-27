@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
-import { appendCodexEvent, codexEventDisplayText, codexTranscriptFromThread, parseCodexEvent } from './codex-events'
+import {
+  appendCodexEvent,
+  codexApprovalDecisions,
+  codexEventDisplayText,
+  codexEventMatchesThread,
+  codexTranscriptFromThread,
+  parseCodexEvent,
+} from './codex-events'
 
 const event: TengriCodexEvent = {
   sequence: 7,
@@ -72,6 +79,21 @@ describe('Codex event replay', () => {
     expect(new TextEncoder().encode(combined?.text).byteLength).toBeLessThanOrEqual(512 << 10)
     expect(combined?.text).toEndWith('… output truncated …')
   })
+
+  test('never stores or coalesces raw reasoning content deltas', () => {
+    const raw = {
+      ...event,
+      kind: 'reasoning-summary' as const,
+      method: 'item/reasoning/textDelta',
+      text: 'private reasoning',
+      sequence: 1,
+    }
+    const summary = { ...raw, method: 'item/reasoning/summaryTextDelta', text: 'Public summary', sequence: 2 }
+
+    expect(appendCodexEvent([], raw)).toEqual([])
+    expect(appendCodexEvent(appendCodexEvent([], raw), summary)).toEqual([summary])
+    expect(codexEventDisplayText(raw)).toBe('')
+  })
 })
 
 describe('Codex event decoding', () => {
@@ -139,6 +161,26 @@ describe('Codex event decoding', () => {
         '- /var/tmp',
       ].join('\n'),
     )
+  })
+
+  test('scopes approvals to the active thread and exposes only advertised decisions', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
+    }
+
+    expect(codexEventMatchesThread(approval, 'thread-1')).toBe(true)
+    expect(codexEventMatchesThread({ ...approval, threadId: '' }, 'thread-1')).toBe(false)
+    expect(codexEventMatchesThread(approval, 'thread-2')).toBe(false)
+    expect(codexEventMatchesThread({ ...event, threadId: '' }, 'thread-1')).toBe(true)
+    expect(codexApprovalDecisions(approval)).toEqual(['approve-once', 'deny'])
+    expect(codexApprovalDecisions({ ...approval, rawJson: JSON.stringify({ params: {} }) })).toEqual([
+      'approve-once',
+      'approve-session',
+      'deny',
+    ])
   })
 
   test('renders token usage and rate-limit snapshots', () => {
