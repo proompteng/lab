@@ -85,6 +85,20 @@ describe('Tengri BFF action schema', () => {
         path: `${exactPreviewPath}é`,
       }).success,
     ).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'revoke-preview-session',
+        agentId: 'agent-123',
+        sessionId: 'abc123abc123abc123abc123',
+      }).success,
+    ).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({
+        action: 'revoke-preview-session',
+        agentId: 'agent-123',
+        sessionId: 'not-a-session-id',
+      }).success,
+    ).toBe(false)
   })
 
   test('requires absolute clean file paths and rejects undeclared action fields', () => {

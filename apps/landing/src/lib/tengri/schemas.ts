@@ -31,6 +31,7 @@ const previewPort = z
   .min(1024)
   .max(65535)
   .refine((value) => value !== 8080, 'Port 8080 is reserved for Nanoagent')
+const previewSessionId = z.string().regex(/^[a-z0-9]{24}$/)
 const previewPath = z
   .string()
   .startsWith('/')
@@ -112,4 +113,5 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     port: previewPort,
     path: previewPath,
   }),
+  z.strictObject({ action: z.literal('revoke-preview-session'), agentId, sessionId: previewSessionId }),
 ])

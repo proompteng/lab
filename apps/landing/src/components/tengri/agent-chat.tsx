@@ -30,7 +30,7 @@ import { runTengriAction } from './client'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
-export function AgentChat({ agentId }: { agentId: string }) {
+export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [threadId, setThreadId] = useState('')
@@ -108,7 +108,6 @@ export function AgentChat({ agentId }: { agentId: string }) {
   )
 
   useEffect(() => {
-    const controller = new AbortController()
     setAccount(null)
     loginIdRef.current = ''
     setLogin(null)
@@ -124,12 +123,17 @@ export function AgentChat({ agentId }: { agentId: string }) {
     const stored = readStoredThread(agentId)
     threadIdRef.current = stored
     setThreadId(stored)
-    void refreshAccount(controller.signal)
-    return () => controller.abort()
-  }, [agentId, refreshAccount])
+  }, [agentId])
 
   useEffect(() => {
-    if (!login || account?.authenticated) return
+    if (!active) return
+    const controller = new AbortController()
+    void refreshAccount(controller.signal)
+    return () => controller.abort()
+  }, [active, refreshAccount])
+
+  useEffect(() => {
+    if (!active || !login || account?.authenticated) return
     const expiresAt = Date.parse(login.expiresAt)
     if (!Number.isFinite(expiresAt)) {
       loginIdRef.current = ''
@@ -154,7 +158,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [account?.authenticated, login, refreshAccount])
+  }, [account?.authenticated, active, login, refreshAccount])
 
   const commitThreadState = useCallback(
     (thread: TengriCodexThread) => {
@@ -165,7 +169,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   )
 
   useEffect(() => {
-    if (!account?.authenticated || !threadId || threadReady) return
+    if (!active || !account?.authenticated || !threadId || threadReady) return
     const controller = new AbortController()
     void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
       .then((thread) => {
@@ -180,7 +184,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
         }
       })
     return () => controller.abort()
-  }, [account?.authenticated, agentId, commitThreadState, threadId, threadReady])
+  }, [account?.authenticated, active, agentId, commitThreadState, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
@@ -206,7 +210,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   }, [agentId, commitThreadState])
 
   useEffect(() => {
-    if (!accountChecked) return
+    if (!active || !accountChecked) return
     setEventStreamState('connecting')
     const source = new EventSource(
       `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
@@ -247,14 +251,15 @@ export function AgentChat({ agentId }: { agentId: string }) {
     source.onopen = () => setEventStreamState('connected')
     source.onerror = () => setEventStreamState('reconnecting')
     return () => source.close()
-  }, [accountChecked, agentId, recoverThreadState, refreshAccount])
+  }, [accountChecked, active, agentId, recoverThreadState, refreshAccount])
 
   useEffect(() => {
+    if (!active) return
     endRef.current?.scrollIntoView({
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
       block: 'end',
     })
-  }, [events, historyItems])
+  }, [active, events, historyItems])
 
   const historyIds = useMemo(() => new Set(historyItems.map((item) => item.id)), [historyItems])
   const renderedEvents = useMemo(

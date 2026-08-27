@@ -17,6 +17,7 @@ import {
   moveFile,
   readFile,
   resolveCodexApproval,
+  revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
   searchFiles,
@@ -156,6 +157,10 @@ export async function POST(request: Request) {
         break
       case 'preview-session':
         result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path)
+        break
+      case 'revoke-preview-session':
+        await revokePreviewSession(identity.subject, action.agentId, action.sessionId)
+        result = null
         break
     }
     return Response.json({ result }, { headers: noStoreHeaders() })

@@ -165,3 +165,4 @@ export type TengriAction =
         | 'deny'
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string }
+  | { action: 'revoke-preview-session'; agentId: string; sessionId: string }

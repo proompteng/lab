@@ -11,13 +11,14 @@ use axum::{
         Query, State, WebSocketUpgrade,
         ws::{Message as AxumMessage, rejection::WebSocketUpgradeRejection},
     },
-    http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
 use futures::{SinkExt, StreamExt};
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
+use rand::distr::{Alphanumeric, SampleString};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
 use tokio::{
@@ -111,6 +112,33 @@ const OPEN_PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
     .catch(() => {
       document.body.textContent = 'Preview ticket is missing or expired.';
     });
+})();
+"#;
+const PREVIEW_BRIDGE_SCRIPT: &str = r#"(() => {
+  const channel = 'tengri-preview-v1';
+  const match = window.location.hostname.match(/^tengri-([a-z0-9]{24})\./);
+  if (!match || window.parent === window) return;
+  const sessionId = match[1];
+  const send = (message) => window.parent.postMessage({ channel, sessionId, ...message }, '*');
+  const notify = (mode) => send({ type: 'navigation', mode, url: window.location.href });
+  for (const [method, mode] of [['pushState', 'push'], ['replaceState', 'replace']]) {
+    const original = window.history[method];
+    window.history[method] = function (...args) {
+      const result = Reflect.apply(original, this, args);
+      queueMicrotask(() => notify(mode));
+      return result;
+    };
+  }
+  window.addEventListener('pageshow', () => notify('load'));
+  window.addEventListener('popstate', () => notify('load'));
+  window.addEventListener('hashchange', () => notify('load'));
+  window.addEventListener('keydown', (event) => {
+    const key = event.key.toLowerCase();
+    if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || !['l', 'r', 't', 'w'].includes(key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    send({ type: 'shortcut', key });
+  }, true);
 })();
 "#;
 
@@ -329,6 +357,7 @@ pub fn router(state: GatewayState) -> Router {
         )
         .route("/_tengri/bootstrap", post(preview_bootstrap))
         .route("/_tengri/bootstrap.js", get(serve_preview_bootstrap_script))
+        .route("/_tengri/bridge.js", get(serve_preview_bridge_script))
         .fallback(preview_host_proxy)
         .with_state(state)
 }
@@ -435,11 +464,7 @@ async fn open_preview(
         Ok(input) => input,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid preview ticket").into_response(),
     };
-    let ticket = match state.tickets.consume(&input.token) {
-        Ok(ticket) => ticket,
-        Err(error) => return status_response(error.code(), error.message()),
-    };
-    let session = match state.tickets.create_preview_session(ticket) {
+    let session = match state.tickets.consume_preview(&input.token) {
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
@@ -541,6 +566,10 @@ async fn serve_preview_bootstrap_script(
         return StatusCode::NOT_FOUND.into_response();
     }
     script_response(PREVIEW_BOOTSTRAP_SCRIPT)
+}
+
+async fn serve_preview_bridge_script() -> axum::response::Response {
+    script_response(PREVIEW_BRIDGE_SCRIPT)
 }
 
 fn script_response(script: &'static str) -> axum::response::Response {
@@ -692,6 +721,7 @@ async fn proxy_http(
     request: Request<Body>,
 ) -> axum::response::Response {
     let (parts, body) = request.into_parts();
+    let request_method = parts.method.clone();
     let body = match to_bytes(body, MAX_PROXY_BODY).await {
         Ok(body) => body,
         Err(_) => {
@@ -739,13 +769,34 @@ async fn proxy_http(
         state.invalidate_preview_guest(&session.id).await;
     }
     let headers = upstream.headers().clone();
-    let stream = upstream.bytes_stream();
+    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
+    let (body, bridge_nonce) = if inject_bridge {
+        let bytes = match to_bytes(Body::from_stream(upstream.bytes_stream()), MAX_PROXY_BODY).await
+        {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    "preview response body is too large",
+                )
+                    .into_response();
+            }
+        };
+        match inject_preview_bridge(&bytes) {
+            Some((bytes, nonce)) => (Body::from(bytes), Some(nonce)),
+            None => (Body::from(bytes), None),
+        }
+    } else {
+        (Body::from_stream(upstream.bytes_stream()), None)
+    };
     let preview_origin = state.preview_origin.origin(&session.id);
     let default_frame_policy =
         default_preview_frame_policy(&headers, &state.preview_origin.desktop_origin);
     let mut response = Response::builder().status(status);
     for (name, value) in &headers {
-        if forward_response_header(name) {
+        if forward_response_header(name)
+            && !(bridge_nonce.is_some() && stale_after_bridge_injection(name))
+        {
             if name == header::SET_COOKIE {
                 if let Ok(value) = value.to_str()
                     && let Some(rewritten) = rewrite_guest_cookie(value)
@@ -762,8 +813,16 @@ async fn proxy_http(
                 }
             } else if name == HeaderName::from_static("content-security-policy") {
                 if let Ok(value) = value.to_str() {
-                    let rewritten =
-                        rewrite_frame_ancestors(value, &state.preview_origin.desktop_origin);
+                    let rewritten = bridge_nonce.as_deref().map_or_else(
+                        || rewrite_frame_ancestors(value, &state.preview_origin.desktop_origin),
+                        |nonce| {
+                            rewrite_preview_content_security_policy(
+                                value,
+                                &state.preview_origin.desktop_origin,
+                                nonce,
+                            )
+                        },
+                    );
                     if let Ok(value) = HeaderValue::from_str(&rewritten) {
                         response = response.header(name, value);
                     }
@@ -778,7 +837,7 @@ async fn proxy_http(
     }
     response = response.header(header::CACHE_CONTROL, "no-store");
     response
-        .body(Body::from_stream(stream))
+        .body(body)
         .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
@@ -1028,6 +1087,109 @@ fn rewrite_frame_ancestors(policy: &str, desktop_origin: &str) -> String {
     directives.join("; ")
 }
 
+fn rewrite_preview_content_security_policy(
+    policy: &str,
+    desktop_origin: &str,
+    nonce: &str,
+) -> String {
+    let nonce_source = format!("'nonce-{nonce}'");
+    let mut directives = policy
+        .split(';')
+        .map(str::trim)
+        .filter(|directive| {
+            !directive.is_empty()
+                && !directive
+                    .to_ascii_lowercase()
+                    .starts_with("frame-ancestors")
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let default_sources = directives.iter().find_map(|directive| {
+        let mut parts = directive.split_whitespace();
+        parts
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("default-src"))
+            .then(|| parts.map(str::to_owned).collect::<Vec<_>>())
+    });
+    let mut has_script_policy = false;
+    for directive in &mut directives {
+        let mut parts = directive.split_whitespace();
+        let Some(name) = parts.next() else { continue };
+        if !name.eq_ignore_ascii_case("script-src") && !name.eq_ignore_ascii_case("script-src-elem")
+        {
+            continue;
+        }
+        has_script_policy = true;
+        let mut sources = parts
+            .filter(|source| !source.eq_ignore_ascii_case("'none'"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !sources.iter().any(|source| source == &nonce_source) {
+            sources.push(nonce_source.clone());
+        }
+        *directive = format!("{name} {}", sources.join(" "));
+    }
+    if !has_script_policy && let Some(default_sources) = default_sources {
+        let mut sources = default_sources
+            .into_iter()
+            .filter(|source| !source.eq_ignore_ascii_case("'none'"))
+            .collect::<Vec<_>>();
+        sources.push(nonce_source);
+        directives.push(format!("script-src {}", sources.join(" ")));
+    }
+    directives.push(format!("frame-ancestors {desktop_origin}"));
+    directives.join("; ")
+}
+
+fn is_html_response(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/html"))
+}
+
+fn should_inject_preview_bridge(method: &Method, status: StatusCode, headers: &HeaderMap) -> bool {
+    method != Method::HEAD
+        && !status.is_informational()
+        && !matches!(
+            status,
+            StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+        )
+        && is_html_response(headers)
+        && !headers.contains_key(header::CONTENT_ENCODING)
+}
+
+fn inject_preview_bridge(body: &[u8]) -> Option<(Vec<u8>, String)> {
+    let html = std::str::from_utf8(body).ok()?;
+    let nonce = Alphanumeric.sample_string(&mut rand::rng(), 32);
+    let tag = format!(
+        "<script nonce=\"{nonce}\" src=\"/_tengri/bridge.js\" data-tengri-preview-bridge></script>"
+    );
+    let lower = html.to_ascii_lowercase();
+    let insertion = lower
+        .find("</head>")
+        .or_else(|| lower.find("</body>"))
+        .unwrap_or(html.len());
+    let mut injected = String::with_capacity(html.len() + tag.len());
+    injected.push_str(&html[..insertion]);
+    injected.push_str(&tag);
+    injected.push_str(&html[insertion..]);
+    Some((injected.into_bytes(), nonce))
+}
+
+fn stale_after_bridge_injection(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str().to_ascii_lowercase().as_str(),
+        "accept-ranges"
+            | "content-digest"
+            | "content-length"
+            | "content-md5"
+            | "digest"
+            | "etag"
+            | "last-modified"
+    )
+}
+
 fn default_preview_frame_policy(headers: &HeaderMap, desktop_origin: &str) -> Option<String> {
     (!headers.contains_key(header::CONTENT_SECURITY_POLICY))
         .then(|| format!("frame-ancestors {desktop_origin}"))
@@ -1037,6 +1199,7 @@ fn forward_request_header(name: &HeaderName) -> bool {
     !matches!(
         name.as_str().to_ascii_lowercase().as_str(),
         "authorization"
+            | "accept-encoding"
             | "connection"
             | "host"
             | "keep-alive"
@@ -1417,6 +1580,74 @@ mod tests {
             ),
             "default-src 'self'; script-src 'self'; frame-ancestors https://proompteng.ai"
         );
+    }
+
+    #[test]
+    fn preview_bridge_is_injected_with_a_nonce_and_relay_contract() {
+        let (body, nonce) = inject_preview_bridge(
+            b"<!doctype html><html><head><title>App</title></head><body></body></html>",
+        )
+        .expect("inject preview bridge");
+        let html = String::from_utf8(body).expect("UTF-8 HTML");
+        assert!(html.contains(&format!("nonce=\"{nonce}\"")));
+        assert!(html.contains("src=\"/_tengri/bridge.js\""));
+        assert!(
+            html.find("/_tengri/bridge.js").expect("bridge script")
+                < html.find("</head>").expect("head close")
+        );
+        assert!(PREVIEW_BRIDGE_SCRIPT.contains("tengri-preview-v1"));
+        assert!(PREVIEW_BRIDGE_SCRIPT.contains("pushState"));
+        assert!(PREVIEW_BRIDGE_SCRIPT.contains("stopImmediatePropagation"));
+    }
+
+    #[test]
+    fn preview_bridge_nonce_preserves_script_policy_and_frame_isolation() {
+        assert_eq!(
+            rewrite_preview_content_security_policy(
+                "default-src 'none'; script-src 'none'; script-src-elem https://cdn.example; frame-ancestors 'none'",
+                "https://proompteng.ai",
+                "nonce123",
+            ),
+            "default-src 'none'; script-src 'nonce-nonce123'; script-src-elem https://cdn.example 'nonce-nonce123'; frame-ancestors https://proompteng.ai",
+        );
+        assert_eq!(
+            rewrite_preview_content_security_policy(
+                "default-src 'self'",
+                "https://proompteng.ai",
+                "nonce456",
+            ),
+            "default-src 'self'; script-src 'self' 'nonce-nonce456'; frame-ancestors https://proompteng.ai",
+        );
+        assert!(!forward_request_header(&header::ACCEPT_ENCODING));
+        assert!(stale_after_bridge_injection(&header::CONTENT_LENGTH));
+    }
+
+    #[test]
+    fn preview_bridge_is_not_injected_into_responses_that_cannot_carry_a_body() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+        assert!(should_inject_preview_bridge(
+            &Method::GET,
+            StatusCode::OK,
+            &headers
+        ));
+        assert!(!should_inject_preview_bridge(
+            &Method::HEAD,
+            StatusCode::OK,
+            &headers
+        ));
+        for status in [
+            StatusCode::CONTINUE,
+            StatusCode::NO_CONTENT,
+            StatusCode::RESET_CONTENT,
+            StatusCode::NOT_MODIFIED,
+        ] {
+            assert!(!should_inject_preview_bridge(
+                &Method::GET,
+                status,
+                &headers
+            ));
+        }
     }
 
     #[test]
