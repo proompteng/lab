@@ -87,6 +87,25 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, {})
     },
+    resumeCodexThread(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      if (call.request.threadId === 'invalid-sequence') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"invalid-sequence"}}',
+          eventSequence: '-1',
+        })
+        return
+      }
+      callback(null, {
+        id: String(call.request.threadId),
+        rawJson: '{"thread":{"id":"thread-test"}}',
+        eventSequence: '42',
+      })
+    },
   })
   const port = await new Promise<number>((resolve, reject) => {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
@@ -199,6 +218,27 @@ describe('Tengri gRPC BFF transport', () => {
       agentId: 'agent-test',
       approvalId: 'approval-2',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
+    })
+  })
+
+  test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    const thread = await resumeCodexThread('github:42', 'agent-test', 'thread-test')
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
+    expect(thread).toEqual({
+      id: 'thread-test',
+      rawJson: '{"thread":{"id":"thread-test"}}',
+      eventSequence: 42,
+    })
+  })
+
+  test('rejects an invalid event cursor returned with a thread snapshot', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'invalid-sequence'))).toMatchObject({
+      message: 'Tengri control plane returned an invalid Codex event cursor',
+      status: 503,
     })
   })
 

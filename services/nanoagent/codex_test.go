@@ -53,6 +53,25 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 	}
 }
 
+func TestCodexResponseCapturesAtomicEventSequence(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	response := make(chan codexPendingResult, 1)
+	supervisor.pending["7"] = response
+
+	supervisor.publish("item/agentMessage/delta", "", json.RawMessage(`{"params":{"delta":"included"}}`))
+	supervisor.resolveResponse(codexRPCMessage{ID: json.RawMessage(`7`), Result: json.RawMessage(`{"thread":{"id":"thread-1"}}`)})
+	supervisor.publish("item/agentMessage/delta", "", json.RawMessage(`{"params":{"delta":"after-snapshot"}}`))
+
+	result := <-response
+	if result.eventSequence != 1 {
+		t.Fatalf("snapshot event sequence = %d, want 1", result.eventSequence)
+	}
+	if supervisor.sequence != 2 {
+		t.Fatalf("current event sequence = %d, want 2", supervisor.sequence)
+	}
+}
+
 func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	reader, writer := io.Pipe()
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
@@ -395,8 +414,8 @@ sleep 30
 	if err != nil {
 		t.Fatalf("restart device login: %v", err)
 	}
-	if !strings.Contains(string(result), `"loginId":"login-two"`) {
-		t.Fatalf("restarted login result = %s", result)
+	if !strings.Contains(string(result.result), `"loginId":"login-two"`) {
+		t.Fatalf("restarted login result = %s", result.result)
 	}
 	cancelRequest, err := os.ReadFile(marker)
 	if err != nil {
