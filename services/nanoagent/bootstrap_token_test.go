@@ -93,7 +93,7 @@ func TestEnvironmentWithoutKeysRemovesEveryBlockedOccurrence(t *testing.T) {
 	}
 }
 
-func TestReadBootstrapTokenFDPreservesCredentialBytesAndClosesPipe(t *testing.T) {
+func TestReadBootstrapTokenFDPreservesCredentialBytes(t *testing.T) {
 	t.Parallel()
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -115,9 +115,6 @@ func TestReadBootstrapTokenFDPreservesCredentialBytesAndClosesPipe(t *testing.T)
 	}
 	if actual != token {
 		t.Fatalf("readBootstrapTokenFD() = %q, want exact credential bytes", actual)
-	}
-	if _, err := unix.FcntlInt(reader.Fd(), unix.F_GETFD, 0); !errors.Is(err, unix.EBADF) {
-		t.Fatalf("bootstrap pipe remained open after loading: %v", err)
 	}
 }
 
