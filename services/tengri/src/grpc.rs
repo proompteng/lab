@@ -1199,10 +1199,9 @@ fn codex_event_text_unbounded(value: &Value) -> String {
         if let Some(structured) = value
             .pointer(pointer)
             .filter(|structured| !structured.is_null())
+            && let Ok(text) = serde_json::to_string_pretty(structured)
         {
-            if let Ok(text) = serde_json::to_string_pretty(structured) {
-                return text;
-            }
+            return text;
         }
     }
     if let Some(plan) = value.pointer("/params/plan").and_then(Value::as_array) {
