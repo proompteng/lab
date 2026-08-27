@@ -18,7 +18,7 @@ use thiserror::Error;
 use tracing::{error, info, warn};
 
 use crate::{
-    activity::{idle_deadline_passed, last_activity_at},
+    activity::{RESUME_STARTED_AT_ANNOTATION, idle_deadline_passed, last_activity_at},
     crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
     metrics,
     pod::{
@@ -186,26 +186,9 @@ async fn reconcile(
     };
     let status = derive_status(&microvm, &pod, &home_claim, now);
 
-    if status.phase == MicroVMPhase::Ready
-        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready)
-    {
-        let previous = microvm.status.as_ref().map(|value| value.phase);
-        let since = if previous == Some(MicroVMPhase::Sleeping) {
-            microvm
-                .status
-                .as_ref()
-                .and_then(|value| value.last_activity_at.as_deref())
-        } else {
-            Some(microvm.spec.created_at.as_str())
-        };
-        if let Some(millis) = since.and_then(|value| elapsed_millis(value, now)) {
-            if previous == Some(MicroVMPhase::Sleeping) {
-                metrics::global().observe_resume(millis);
-            } else {
-                metrics::global().observe_boot(millis);
-            }
-        }
-    }
+    let ready_transition = status.phase == MicroVMPhase::Ready
+        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
+    let latency = ready_transition.then(|| readiness_latency(&microvm, now));
     if status.phase == MicroVMPhase::Failed
         && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Failed)
     {
@@ -213,10 +196,53 @@ async fn reconcile(
     }
 
     if microvm.status.as_ref() != Some(&status) {
-        patch_status(&microvms, &microvm, status).await?;
+        patch_status(&microvms, &microvm, status.clone()).await?;
+    }
+    if let Some(latency) = latency {
+        match latency {
+            ReadinessLatency::Boot(millis) => metrics::global().observe_boot(millis),
+            ReadinessLatency::Resume(millis) => metrics::global().observe_resume(millis),
+        }
+    }
+    if status.phase == MicroVMPhase::Ready && resume_started_at(&microvm).is_some() {
+        clear_resume_started_at(&microvms, &microvm).await?;
     }
 
     Ok(Action::requeue(next_requeue(&microvm, now)))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReadinessLatency {
+    Boot(u64),
+    Resume(u64),
+}
+
+fn readiness_latency(microvm: &MicroVM, now: DateTime<Utc>) -> ReadinessLatency {
+    if let Some(started_at) = resume_started_at(microvm) {
+        return ReadinessLatency::Resume(elapsed_millis(started_at, now).unwrap_or_default());
+    }
+    ReadinessLatency::Boot(elapsed_millis(&microvm.spec.created_at, now).unwrap_or_default())
+}
+
+fn resume_started_at(microvm: &MicroVM) -> Option<&str> {
+    microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get(RESUME_STARTED_AT_ANNOTATION))
+        .map(String::as_str)
+}
+
+async fn clear_resume_started_at(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
+    let mut patch = json!({"metadata": {"annotations": {}}});
+    patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION] = serde_json::Value::Null;
+    api.patch(
+        &microvm.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
 }
 
 fn elapsed_millis(value: &str, now: DateTime<Utc>) -> Option<u64> {
@@ -814,6 +840,30 @@ mod tests {
             ..MicroVMStatus::default()
         });
         assert!(deadline_passed(&microvm.spec.expires_at, now));
+    }
+
+    #[test]
+    fn resume_latency_uses_the_persisted_wake_marker_after_booting_status() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now - chrono::Duration::hours(2));
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Booting,
+            ..MicroVMStatus::default()
+        });
+        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            RESUME_STARTED_AT_ANNOTATION.to_owned(),
+            (now - chrono::Duration::seconds(3)).to_rfc3339(),
+        )]));
+
+        assert_eq!(
+            readiness_latency(&microvm, now),
+            ReadinessLatency::Resume(3_000)
+        );
+        microvm.metadata.annotations = None;
+        assert_eq!(
+            readiness_latency(&microvm, now),
+            ReadinessLatency::Boot(7_200_000)
+        );
     }
 
     #[test]

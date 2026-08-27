@@ -363,15 +363,8 @@ impl GuestClient {
             let mut buffer = Vec::new();
             while let Some(chunk) = bytes.next().await {
                 buffer.extend_from_slice(&chunk?);
-                if buffer.len() > MAX_GUEST_STREAM_LINE_BYTES && !buffer.contains(&b'\n') {
-                    Err(GuestError::ResponseTooLarge(MAX_GUEST_STREAM_LINE_BYTES))?;
-                }
-                while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                    if newline > MAX_GUEST_STREAM_LINE_BYTES {
-                        Err(GuestError::ResponseTooLarge(MAX_GUEST_STREAM_LINE_BYTES))?;
-                    }
-                    let line = buffer.drain(..=newline).collect::<Vec<_>>();
-                    let line = std::str::from_utf8(&line[..line.len().saturating_sub(1)])
+                for line in drain_ndjson_lines(&mut buffer, MAX_GUEST_STREAM_LINE_BYTES)? {
+                    let line = std::str::from_utf8(&line)
                         .map_err(|_| GuestError::InvalidUtf8)?
                         .trim();
                     if !line.is_empty() {
@@ -388,6 +381,22 @@ impl GuestClient {
         };
         Ok(Box::pin(stream))
     }
+}
+
+fn drain_ndjson_lines(buffer: &mut Vec<u8>, limit: usize) -> Result<Vec<Vec<u8>>, GuestError> {
+    let mut lines = Vec::new();
+    while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+        if newline > limit {
+            return Err(GuestError::ResponseTooLarge(limit));
+        }
+        let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+        line.pop();
+        lines.push(line);
+    }
+    if buffer.len() > limit {
+        return Err(GuestError::ResponseTooLarge(limit));
+    }
+    Ok(lines)
 }
 
 async fn checked_response(response: reqwest::Response) -> Result<reqwest::Response, GuestError> {
@@ -449,6 +458,15 @@ mod tests {
             .into();
         assert!(matches!(
             bounded_response_body(streamed, 4).await,
+            Err(GuestError::ResponseTooLarge(4))
+        ));
+    }
+
+    #[test]
+    fn ndjson_limit_applies_to_remainder_after_complete_lines() {
+        let mut buffer = b"{}\n12345".to_vec();
+        assert!(matches!(
+            drain_ndjson_lines(&mut buffer, 4),
             Err(GuestError::ResponseTooLarge(4))
         ));
     }

@@ -13,7 +13,7 @@ use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 
 use crate::{
-    activity::{ActivityTracker, idle_deadline_passed},
+    activity::{ActivityTracker, RESUME_STARTED_AT_ANNOTATION, idle_deadline_passed},
     auth::{Authenticator, Principal, deterministic_agent_id},
     crd::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
@@ -139,18 +139,9 @@ impl ControlPlane {
             }
 
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            let patch = wake_patch(&agent, now);
             match api
-                .patch(
-                    id,
-                    &PatchParams::default(),
-                    &Patch::Merge(json!({
-                        "metadata": {"resourceVersion": agent.resource_version()},
-                        "spec": {
-                            "desiredState": MicroVMDesiredState::Running,
-                            "idleDeadline": (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                        }
-                    })),
-                )
+                .patch(id, &PatchParams::default(), &Patch::Merge(&patch))
                 .await
             {
                 Ok(_) => {
@@ -202,6 +193,23 @@ impl ControlPlane {
             .await
             .map_err(map_guest_error)
     }
+}
+
+fn wake_patch(agent: &MicroVM, now: DateTime<Utc>) -> Value {
+    let mut patch = json!({
+        "metadata": {"resourceVersion": agent.resource_version()},
+        "spec": {
+            "desiredState": MicroVMDesiredState::Running,
+            "idleDeadline": (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+        }
+    });
+    let resuming = agent.spec.desired_state == MicroVMDesiredState::Sleeping
+        || agent.status.as_ref().map(|status| status.phase) == Some(MicroVMPhase::Sleeping);
+    if resuming {
+        patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION] =
+            Value::String(now.to_rfc3339());
+    }
+    patch
 }
 
 fn agent_ready_for_guest(agent: &MicroVM) -> bool {
@@ -1477,6 +1485,39 @@ mod tests {
         assert!(agent_ready_for_guest(&agent));
         agent.status.as_mut().expect("status").guest_ready = false;
         assert!(!agent_ready_for_guest(&agent));
+    }
+
+    #[test]
+    fn waking_a_sleeping_agent_persists_the_resume_start_time() {
+        let now = Utc::now();
+        let mut agent = MicroVM::new(
+            "agent-sleeping",
+            MicroVMSpec {
+                display_name: "Sleeping agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Sleeping,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
+                idle_deadline: now.to_rfc3339(),
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
+            },
+        );
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Sleeping,
+            ..MicroVMStatus::default()
+        });
+
+        let patch = wake_patch(&agent, now);
+        assert_eq!(
+            patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION],
+            now.to_rfc3339()
+        );
+        assert_eq!(
+            patch["spec"]["desiredState"],
+            serde_json::json!(MicroVMDesiredState::Running)
+        );
     }
 
     #[test]
