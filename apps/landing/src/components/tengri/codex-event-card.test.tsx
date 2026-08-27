@@ -22,6 +22,22 @@ describe('Codex approval card', () => {
     expect(html).not.toContain('Approve for session')
   })
 
+  test('renders structured command approval choices explicitly', () => {
+    const html = renderToString(
+      createElement(CodexEventCard, {
+        approvalDecisions: ['approve-exec-policy-amendment', 'approve-network-policy-amendment', 'deny'],
+        approvalId: 'approval-1',
+        kind: 'approval',
+        onResolveApproval: () => undefined,
+        text: 'Proposed command and network policy changes',
+      }),
+    )
+
+    expect(html).toContain('Apply command policy')
+    expect(html).toContain('Apply network policy')
+    expect(html).toContain('Deny')
+  })
+
   test('renders an authoritative failed-turn message as an alert', () => {
     const html = renderToString(createElement(CodexEventCard, { kind: 'error', text: 'The turn failed' }))
 

@@ -98,7 +98,13 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('resolve-approval'),
     agentId,
     approvalId: codexId,
-    decision: z.enum(['approve-once', 'approve-session', 'deny']),
+    decision: z.enum([
+      'approve-once',
+      'approve-session',
+      'approve-exec-policy-amendment',
+      'approve-network-policy-amendment',
+      'deny',
+    ]),
   }),
   z.strictObject({
     action: z.literal('preview-session'),

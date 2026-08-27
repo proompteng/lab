@@ -7,7 +7,9 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexLoginCompletionId,
   codexLoginCompletionError,
+  codexReconciledActiveTurnId,
   codexTranscriptFromThread,
   parseCodexEvent,
 } from './codex-events'
@@ -158,6 +160,7 @@ describe('Codex event decoding', () => {
             reason: 'Needs network',
             command: ['git', 'fetch', 'origin', 'feature branch'],
             cwd: '/workspace',
+            proposedExecpolicyAmendment: ['git fetch'],
             networkApprovalContext: { host: 'api.github.com', protocol: 'https' },
             proposedNetworkPolicyAmendments: [
               { host: 'api.github.com', action: 'allow' },
@@ -187,6 +190,8 @@ describe('Codex event decoding', () => {
         'Needs network',
         "Command: git fetch origin 'feature branch'",
         'Working directory: /workspace',
+        'Proposed command policy:',
+        '- git fetch',
         'Network target: api.github.com (https)',
         'Proposed network policy:',
         '- allow api.github.com',
@@ -221,6 +226,20 @@ describe('Codex event decoding', () => {
     expect(codexEventMatchesThread(approval, 'thread-2')).toBe(false)
     expect(codexEventMatchesThread({ ...event, threadId: '' }, 'thread-1')).toBe(true)
     expect(codexApprovalDecisions(approval)).toEqual(['approve-once', 'deny'])
+    expect(
+      codexApprovalDecisions({
+        ...approval,
+        rawJson: JSON.stringify({
+          params: {
+            availableDecisions: [
+              { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git status'] } },
+              { applyNetworkPolicyAmendment: { network_policy_amendment: { host: 'github.com', action: 'allow' } } },
+              'decline',
+            ],
+          },
+        }),
+      }),
+    ).toEqual(['approve-exec-policy-amendment', 'approve-network-policy-amendment', 'deny'])
     expect(codexApprovalDecisions({ ...approval, rawJson: JSON.stringify({ params: {} }) })).toEqual([
       'approve-once',
       'approve-session',
@@ -268,6 +287,7 @@ describe('Codex event decoding', () => {
     }
 
     expect(codexLoginCompletionError(failedLogin)).toBe('device code expired')
+    expect(codexLoginCompletionId(failedLogin)).toBe('login-1')
     expect(
       codexLoginCompletionError({
         ...failedLogin,
@@ -276,6 +296,11 @@ describe('Codex event decoding', () => {
         rawJson: JSON.stringify({ params: { loginId: 'login-1', success: true, error: null } }),
       }),
     ).toBe('')
+  })
+
+  test('does not recover an active turn already completed by the event stream', () => {
+    expect(codexReconciledActiveTurnId('turn-1', new Set(['turn-1']))).toBe('')
+    expect(codexReconciledActiveTurnId('turn-2', new Set(['turn-1']))).toBe('turn-2')
   })
 
   test('decodes printable base64 command output without corrupting ordinary text', () => {

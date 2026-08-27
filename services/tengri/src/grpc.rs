@@ -828,6 +828,8 @@ impl MicroVmControlPlane for ControlPlane {
         {
             CodexApprovalDecision::ApproveOnce => "approveOnce",
             CodexApprovalDecision::ApproveSession => "approveSession",
+            CodexApprovalDecision::ApproveExecPolicyAmendment => "approveExecPolicyAmendment",
+            CodexApprovalDecision::ApproveNetworkPolicyAmendment => "approveNetworkPolicyAmendment",
             CodexApprovalDecision::Deny => "deny",
             CodexApprovalDecision::Unspecified => {
                 return Err(Status::invalid_argument("approval decision is required"));

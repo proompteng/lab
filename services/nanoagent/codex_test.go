@@ -626,9 +626,34 @@ func TestCommandApprovalHonorsAvailableDecisions(t *testing.T) {
 		t.Fatalf("deny = %#v, %v", denied, err)
 	}
 
-	cancelOnly := codexApproval{method: "item/commandExecution/requestApproval", decisions: map[string]string{"deny": "cancel"}}
+	cancelOnly := codexApproval{
+		method:    "item/commandExecution/requestApproval",
+		decisions: map[string]json.RawMessage{"deny": encodedCodexDecision("cancel")},
+	}
 	cancelled, err := codexApprovalResult(cancelOnly, "deny")
 	if err != nil || cancelled["decision"] != "cancel" {
 		t.Fatalf("cancel denial = %#v, %v", cancelled, err)
+	}
+
+	structured := codexApprovalDecisions(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`{"availableDecisions":[{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["git status"]}},{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"github.com","action":"allow"}}},"decline"]}`),
+	)
+	structuredApproval := codexApproval{method: "item/commandExecution/requestApproval", decisions: structured}
+	execPolicy, err := codexApprovalResult(structuredApproval, "approveExecPolicyAmendment")
+	if err != nil {
+		t.Fatalf("exec-policy amendment: %v", err)
+	}
+	execDecision := execPolicy["decision"].(map[string]any)
+	if _, found := execDecision["acceptWithExecpolicyAmendment"]; !found {
+		t.Fatalf("exec-policy decision = %#v", execDecision)
+	}
+	networkPolicy, err := codexApprovalResult(structuredApproval, "approveNetworkPolicyAmendment")
+	if err != nil {
+		t.Fatalf("network-policy amendment: %v", err)
+	}
+	networkDecision := networkPolicy["decision"].(map[string]any)
+	if _, found := networkDecision["applyNetworkPolicyAmendment"]; !found {
+		t.Fatalf("network-policy decision = %#v", networkDecision)
 	}
 }

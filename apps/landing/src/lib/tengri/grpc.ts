@@ -254,11 +254,18 @@ export async function resolveCodexApproval(
   subject: string,
   agentId: string,
   approvalId: string,
-  decision: 'approve-once' | 'approve-session' | 'deny',
+  decision:
+    | 'approve-once'
+    | 'approve-session'
+    | 'approve-exec-policy-amendment'
+    | 'approve-network-policy-amendment'
+    | 'deny',
 ) {
   const wireDecision = {
     'approve-once': 'CODEX_APPROVAL_DECISION_APPROVE_ONCE',
     'approve-session': 'CODEX_APPROVAL_DECISION_APPROVE_SESSION',
+    'approve-exec-policy-amendment': 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
+    'approve-network-policy-amendment': 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
     deny: 'CODEX_APPROVAL_DECISION_DENY',
   }[decision]
   await unary('resolveCodexApproval', { agentId, approvalId, decision: wireDecision }, subject)

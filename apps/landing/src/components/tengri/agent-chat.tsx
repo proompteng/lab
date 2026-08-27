@@ -17,7 +17,9 @@ import {
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexLoginCompletionId,
   codexLoginCompletionError,
+  codexReconciledActiveTurnId,
   codexTranscriptFromThread,
   parseCodexEvent,
   type CodexApprovalDecision,
@@ -44,6 +46,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>('connecting')
   const endRef = useRef<HTMLDivElement | null>(null)
   const completedTurns = useRef(new Set<string>())
+  const loginIdRef = useRef('')
   const threadIdRef = useRef('')
   const lastEventSequence = useRef(0)
   const replayRecoveryRef = useRef(false)
@@ -63,7 +66,10 @@ export function AgentChat({ agentId }: { agentId: string }) {
         const next = await runTengriAction<TengriCodexAccount>({ action: 'codex-account', agentId }, signal)
         if (signal?.aborted || !mountedRef.current) return null
         setAccount(next)
-        if (next.authenticated) setLogin(null)
+        if (next.authenticated) {
+          loginIdRef.current = ''
+          setLogin(null)
+        }
         if (clearError) setError('')
         return next
       } catch (cause) {
@@ -78,6 +84,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   useEffect(() => {
     const controller = new AbortController()
     setAccount(null)
+    loginIdRef.current = ''
     setLogin(null)
     setThreadReady(false)
     setActiveTurnId('')
@@ -99,6 +106,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
     if (!login || account?.authenticated) return
     const expiresAt = Date.parse(login.expiresAt)
     if (!Number.isFinite(expiresAt)) {
+      loginIdRef.current = ''
       setLogin(null)
       setError('Codex returned an invalid device-login deadline. Start a new login.')
       return
@@ -107,6 +115,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
     let timer = 0
     const refresh = async () => {
       if (Date.now() >= expiresAt) {
+        loginIdRef.current = ''
         setLogin(null)
         setError('The device code expired. Start a new Codex login.')
         return
@@ -121,13 +130,21 @@ export function AgentChat({ agentId }: { agentId: string }) {
     }
   }, [account?.authenticated, login, refreshAccount])
 
+  const commitThreadState = useCallback(
+    (thread: TengriCodexThread) => {
+      const activeTurn = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
+      setActiveTurnId(codexReconciledActiveTurnId(activeTurn, completedTurns.current))
+    },
+    [agentId],
+  )
+
   useEffect(() => {
     if (!account?.authenticated || !threadId || threadReady) return
     const controller = new AbortController()
     void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
       .then((thread) => {
         if (controller.signal.aborted) return
-        setActiveTurnId(commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems))
+        commitThreadState(thread)
         setThreadReady(true)
         setError('')
       })
@@ -137,7 +154,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
         }
       })
     return () => controller.abort()
-  }, [account?.authenticated, agentId, threadId, threadReady])
+  }, [account?.authenticated, agentId, commitThreadState, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
@@ -150,7 +167,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
         threadId: currentThread,
       })
       if (!mountedRef.current || threadIdRef.current !== currentThread) return
-      setActiveTurnId(commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems))
+      commitThreadState(thread)
       setThreadReady(true)
       setError('')
     } catch (cause) {
@@ -160,7 +177,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
     } finally {
       replayRecoveryRef.current = false
     }
-  }, [agentId])
+  }, [agentId, commitThreadState])
 
   useEffect(() => {
     if (!accountChecked) return
@@ -177,9 +194,17 @@ export function AgentChat({ agentId }: { agentId: string }) {
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       const currentThread = threadIdRef.current
       if (!codexEventMatchesThread(event, currentThread)) return
+      const loginCompletionId = codexLoginCompletionId(event)
+      if (
+        event.method.toLowerCase() === 'account/login/completed' &&
+        (!loginCompletionId || loginCompletionId !== loginIdRef.current)
+      ) {
+        return
+      }
       setEvents((current) => appendCodexEvent(current, event))
       if (event.method === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
+        loginIdRef.current = ''
         setLogin(null)
         void refreshAccount(undefined, !completionError).then((next) => {
           if (!next || next.authenticated || !mountedRef.current) return
@@ -257,7 +282,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId })
-    setActiveTurnId(commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems))
+    commitThreadState(thread)
     setThreadReady(true)
     return thread.id
   }
@@ -284,7 +309,9 @@ export function AgentChat({ agentId }: { agentId: string }) {
     setLoginBusy(true)
     setError('')
     try {
-      setLogin(await runTengriAction<TengriCodexLogin>({ action: 'codex-login', agentId }))
+      const next = await runTengriAction<TengriCodexLogin>({ action: 'codex-login', agentId })
+      loginIdRef.current = next.loginId
+      setLogin(next)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Codex device login could not be started')
     } finally {

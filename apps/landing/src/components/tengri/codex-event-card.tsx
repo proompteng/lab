@@ -60,6 +60,26 @@ export function CodexEventCard({
               primary={!approvalDecisions.includes('approve-once')}
             />
           ) : null}
+          {approvalDecisions.includes('approve-exec-policy-amendment') ? (
+            <ApprovalButton
+              disabled={resolvingApproval}
+              label="Apply command policy"
+              onClick={() => onResolveApproval('approve-exec-policy-amendment')}
+              primary={!approvalDecisions.includes('approve-once') && !approvalDecisions.includes('approve-session')}
+            />
+          ) : null}
+          {approvalDecisions.includes('approve-network-policy-amendment') ? (
+            <ApprovalButton
+              disabled={resolvingApproval}
+              label="Apply network policy"
+              onClick={() => onResolveApproval('approve-network-policy-amendment')}
+              primary={
+                !approvalDecisions.includes('approve-once') &&
+                !approvalDecisions.includes('approve-session') &&
+                !approvalDecisions.includes('approve-exec-policy-amendment')
+              }
+            />
+          ) : null}
           {approvalDecisions.includes('deny') ? (
             <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
           ) : null}

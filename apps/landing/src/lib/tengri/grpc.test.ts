@@ -80,6 +80,13 @@ beforeAll(async () => {
         contentType: 'application/octet-stream',
       })
     },
+    resolveCodexApproval(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {})
+    },
   })
   const port = await new Promise<number>((resolve, reject) => {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
@@ -175,6 +182,24 @@ describe('Tengri gRPC BFF transport', () => {
     } finally {
       process.env.TENGRI_INTERNAL_HMAC_SECRET = secret
     }
+  })
+
+  test('preserves structured command approval decisions across gRPC', async () => {
+    const { resolveCodexApproval } = await import('./grpc')
+
+    await resolveCodexApproval('github:42', 'agent-test', 'approval-1', 'approve-exec-policy-amendment')
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      approvalId: 'approval-1',
+      decision: 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
+    })
+
+    await resolveCodexApproval('github:42', 'agent-test', 'approval-2', 'approve-network-policy-amendment')
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      approvalId: 'approval-2',
+      decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
+    })
   })
 
   test('sanitizes upstream failures and treats verifier failures as service errors', async () => {

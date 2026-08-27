@@ -4,6 +4,13 @@ const MAX_CODEX_EVENTS = 500
 const MAX_EVENT_TEXT_BYTES = 512 << 10
 const TRUNCATION_MARKER = '\n… output truncated …'
 const DEFAULT_CODEX_APPROVAL_DECISIONS = ['approve-once', 'approve-session', 'deny'] as const
+const CODEX_APPROVAL_DECISION_ORDER = [
+  'approve-once',
+  'approve-session',
+  'approve-exec-policy-amendment',
+  'approve-network-policy-amendment',
+  'deny',
+] as const
 const CODEX_EVENT_KINDS = new Set<TengriCodexEventKind>([
   'approval',
   'assistant-text',
@@ -29,7 +36,7 @@ export type CodexTranscriptItem = {
   text: string
 }
 
-export type CodexApprovalDecision = (typeof DEFAULT_CODEX_APPROVAL_DECISIONS)[number]
+export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
 
 export function appendCodexEvent(current: TengriCodexEvent[], event: TengriCodexEvent) {
   if (isRawReasoningDelta(event)) return current
@@ -146,8 +153,15 @@ export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDe
     if (value === 'accept') decisions.add('approve-once')
     if (value === 'acceptForSession') decisions.add('approve-session')
     if (value === 'decline' || value === 'cancel') decisions.add('deny')
+    const structured = record(value)
+    if ('execpolicy_amendment' in record(structured.acceptWithExecpolicyAmendment)) {
+      decisions.add('approve-exec-policy-amendment')
+    }
+    if ('network_policy_amendment' in record(structured.applyNetworkPolicyAmendment)) {
+      decisions.add('approve-network-policy-amendment')
+    }
   }
-  return DEFAULT_CODEX_APPROVAL_DECISIONS.filter((decision) => decisions.has(decision))
+  return CODEX_APPROVAL_DECISION_ORDER.filter((decision) => decisions.has(decision))
 }
 
 export function codexEventMatchesThread(event: TengriCodexEvent, threadId: string) {
@@ -178,6 +192,15 @@ export function codexActiveTurnIdFromThread(rawJson: string) {
     // A malformed resume response cannot identify an active turn.
   }
   return ''
+}
+
+export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns: ReadonlySet<string>) {
+  return activeTurnId && !completedTurns.has(activeTurnId) ? activeTurnId : ''
+}
+
+export function codexLoginCompletionId(event: TengriCodexEvent) {
+  if (event.method.toLowerCase() !== 'account/login/completed') return ''
+  return boundedIdentifier(record(parseRawEvent(event.rawJson).params).loginId, 256)
 }
 
 export function codexLoginCompletionError(event: TengriCodexEvent) {
@@ -294,6 +317,7 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
   const cwd = string(params.cwd)
   const grantRoot = string(params.grantRoot)
   const fileChanges = approvalFileChangesText(params.fileChanges)
+  const execPolicyAmendment = execPolicyAmendmentText(params.proposedExecpolicyAmendment)
   const networkApproval = networkApprovalText(params.networkApprovalContext, params.proposedNetworkPolicyAmendments)
   const permissions = [
     permissionProfileText('Requested permissions', params.permissions),
@@ -304,6 +328,7 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
       reason,
       command && `Command: ${command}`,
       cwd && `Working directory: ${cwd}`,
+      execPolicyAmendment,
       networkApproval,
       grantRoot && `Requested write root: ${grantRoot}`,
       fileChanges,
@@ -312,6 +337,12 @@ function approvalDisplayText(params: Record<string, unknown>, eventText: string)
       .filter(Boolean)
       .join('\n'),
   )
+}
+
+function execPolicyAmendmentText(value: unknown) {
+  if (!Array.isArray(value)) return ''
+  const amendment = value.map(string).filter(Boolean)
+  return amendment.length > 0 ? ['Proposed command policy:', ...amendment.map((rule) => `- ${rule}`)].join('\n') : ''
 }
 
 function networkApprovalText(contextValue: unknown, amendmentsValue: unknown) {
