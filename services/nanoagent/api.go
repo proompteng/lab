@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	maxDirectoryEntries = 10_000
-	maxFileBytes        = 4 << 20
-	maxJSONBodyBytes    = ((maxFileBytes + 2) / 3 * 4) + (64 << 10)
+	maxDirectoryEntries             = 10_000
+	maxFileBytes                    = 4 << 20
+	maxJSONBodyBytes                = ((maxFileBytes + 2) / 3 * 4) + (64 << 10)
+	nanoagentAuthFailureHeader      = "X-Tengri-Nanoagent-Auth-Failure"
+	nanoagentAuthFailureHeaderValue = "1"
 )
 
 type apiConfig struct {
@@ -88,6 +90,7 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 		provided, found := strings.CutPrefix(authorization, "Bearer ")
 		if !found || subtle.ConstantTimeCompare([]byte(provided), []byte(server.bootstrapToken)) != 1 {
 			writer.Header().Set("WWW-Authenticate", "Bearer")
+			writer.Header().Set(nanoagentAuthFailureHeader, nanoagentAuthFailureHeaderValue)
 			writeAPIError(writer, http.StatusUnauthorized, "invalid Nanoagent credentials")
 			return
 		}

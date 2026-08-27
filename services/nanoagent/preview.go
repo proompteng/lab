@@ -12,6 +12,7 @@ import (
 var dangerousForwardHeaders = []string{
 	"Authorization",
 	"Forwarded",
+	nanoagentAuthFailureHeader,
 	"Proxy-Authorization",
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
@@ -54,6 +55,9 @@ func (server *apiServer) handlePreview(writer http.ResponseWriter, request *http
 		upstream.Header.Set("X-Tengri-Preview", "1")
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
+		// This marker is reserved for Nanoagent's own authentication middleware. Guest applications
+		// must not be able to spoof an authentication failure and evict Tengri's cached guest binding.
+		response.Header.Del(nanoagentAuthFailureHeader)
 		response.Header.Del("Server")
 		response.Header.Set("Cache-Control", "no-store")
 		return nil
