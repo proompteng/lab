@@ -18,6 +18,9 @@ unauthenticated.
 - `GET /v1/files/watch`: bounded, replayable filesystem events;
 - `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
 - `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
+- `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
+- `GET /v1/codex/events`: bounded, replayable Codex app-server events;
+- `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
 - `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
@@ -31,6 +34,11 @@ hosts, Kubernetes APIs, cluster addresses, LAN services, metadata endpoints, or 
 Terminal sessions use real PTYs, cap each agent at four sessions and four clients per session, and retain a bounded
 sequence-numbered output replay window for reconnects. The bootstrap credential is removed from child environments;
 resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group.
+
+Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
+ready, and restarts failed processes with bounded backoff. Device login and thread state persist under the private
+PVC-backed `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does
+not inject a shared `OPENAI_API_KEY`.
 
 ## Local validation
 

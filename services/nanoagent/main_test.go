@@ -111,6 +111,34 @@ func TestProbeHandlers(t *testing.T) {
 	}
 }
 
+func TestReadinessWaitsForCodexInitialization(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	server.codex = newCodexSupervisor("/usr/bin/false", t.TempDir())
+	handler := newHandler(server)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("uninitialized readiness status = %d", response.Code)
+	}
+
+	server.codex.mu.Lock()
+	close(server.codex.ready)
+	server.codex.mu.Unlock()
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("initialized readiness status = %d", response.Code)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("liveness status = %d", response.Code)
+	}
+}
+
 func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -154,14 +182,46 @@ func TestBeginShutdownClosesStreamingSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe to file events: %v", err)
 	}
+	server.codex = newCodexSupervisor("/usr/bin/false", server.workspace.realRoot)
+	_, codexEvents, err := server.codex.subscribe(0)
+	if err != nil {
+		t.Fatalf("subscribe to Codex events: %v", err)
+	}
 
 	server.beginShutdown()
 
 	if _, open := <-fileEvents; open {
 		t.Fatal("file event stream remained open during shutdown")
 	}
+	if _, open := <-codexEvents; open {
+		t.Fatal("Codex event stream remained open during shutdown")
+	}
 	if _, _, err := server.fileWatcher.subscribe(0, "/", ""); err == nil {
 		t.Fatal("file watcher accepted a subscription after shutdown")
+	}
+	if _, _, err := server.codex.subscribe(0); err == nil {
+		t.Fatal("Codex supervisor accepted a subscription after shutdown")
+	}
+}
+
+func TestNewAPIServerStartsCodexInConfiguredWorkspace(t *testing.T) {
+	root := t.TempDir()
+	server, err := newAPIServer(apiConfig{
+		bootstrapToken: "test-bootstrap-token",
+		codexBinary:    "/usr/bin/false",
+		startCodex:     true,
+		workspaceRoot:  root,
+	})
+	if err != nil {
+		t.Fatalf("newAPIServer() error = %v", err)
+	}
+	t.Cleanup(server.close)
+
+	if server.codex == nil {
+		t.Fatal("Codex supervisor was not configured")
+	}
+	if server.codex.cwd != server.workspace.realRoot {
+		t.Fatalf("Codex cwd = %q, want %q", server.codex.cwd, server.workspace.realRoot)
 	}
 }
 
@@ -170,6 +230,7 @@ func testAPIServer(t *testing.T) *apiServer {
 	root := t.TempDir()
 	server, err := newAPIServer(apiConfig{
 		bootstrapToken: "test-bootstrap-token",
+		codexBinary:    "/usr/bin/false",
 		homeRoot:       root,
 		workspaceRoot:  root,
 	})

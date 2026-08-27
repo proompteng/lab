@@ -69,11 +69,18 @@ func run(logger *slog.Logger) error {
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
+	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
+	if codexBinary == "" {
+		codexBinary = "codex"
+	}
+
 	api, err := newAPIServer(apiConfig{
 		bootstrapToken: bootstrapToken,
+		codexBinary:    codexBinary,
 		evidence:       current,
 		homeRoot:       homeRoot,
 		shell:          "/bin/bash",
+		startCodex:     true,
 		workspaceRoot:  workspaceRoot,
 	})
 	if err != nil {
@@ -220,9 +227,16 @@ func newHandler(api *apiServer) http.Handler {
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
 	}
+	ready := func(writer http.ResponseWriter, _ *http.Request) {
+		if api.codex != nil && !api.codex.isReady() {
+			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "starting"})
+			return
+		}
+		live(writer, nil)
+	}
 	mux.HandleFunc("GET /livez", live)
-	mux.HandleFunc("GET /readyz", live)
-	mux.HandleFunc("GET /healthz", live)
+	mux.HandleFunc("GET /readyz", ready)
+	mux.HandleFunc("GET /healthz", ready)
 	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
 }
