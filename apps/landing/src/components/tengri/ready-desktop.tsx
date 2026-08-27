@@ -1,6 +1,17 @@
 'use client'
 
-import { CheckCircle2, FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, Trash2, Wifi } from 'lucide-react'
+import {
+  CheckCircle2,
+  FileCode2,
+  Folder,
+  LoaderCircle,
+  LogOut,
+  Moon,
+  Settings,
+  SquareTerminal,
+  Trash2,
+  Wifi,
+} from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
@@ -21,6 +32,7 @@ import type { CodeOpenRequest } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
 import { FinderApp } from './finder-app'
+import { TerminalApp } from './terminal-app'
 
 export function ReadyDesktop({
   agent,
@@ -135,6 +147,10 @@ export function ReadyDesktop({
     [viewport],
   )
 
+  const openTerminal = useCallback(() => {
+    dispatch({ type: 'open', app: 'terminal', title: APP_TITLES.terminal, viewport: viewport() })
+  }, [viewport])
+
   const openActiveApp = useCallback(() => {
     const active = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
     if (active?.app === 'chrome') {
@@ -149,8 +165,12 @@ export function ReadyDesktop({
       openCode()
       return
     }
+    if (active?.app === 'terminal') {
+      openTerminal()
+      return
+    }
     openSettings()
-  }, [openChrome, openCode, openFinder, openSettings, windowState.activeWindowId, windowState.windows])
+  }, [openChrome, openCode, openFinder, openSettings, openTerminal, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
     if (codeDirty) {
@@ -192,6 +212,7 @@ export function ReadyDesktop({
   const codeRunning = windowState.windows.some((candidate) => candidate.app === 'code')
   const finderRunning = windowState.windows.some((candidate) => candidate.app === 'finder')
   const settingsRunning = windowState.windows.some((candidate) => candidate.app === 'settings')
+  const terminalRunning = windowState.windows.some((candidate) => candidate.app === 'terminal')
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeAppTitle = activeWindow ? APP_TITLES[activeWindow.app] : 'Tengri'
 
@@ -281,6 +302,8 @@ export function ReadyDesktop({
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : desktopWindow.app === 'code' ? (
                 <CodeEditor agentId={agent.id} onDirtyChange={handleCodeDirtyChange} request={codeRequest} />
+              ) : desktopWindow.app === 'terminal' ? (
+                <TerminalApp agentId={agent.id} />
               ) : (
                 <AgentSettings
                   agent={agent}
@@ -345,6 +368,21 @@ export function ReadyDesktop({
                   <FileCode2 aria-hidden="true" className="h-7 w-7 text-white" />
                 </span>
                 <DockIndicator running={codeRunning} />
+              </motion.button>
+              <motion.button
+                type="button"
+                aria-label="Open Terminal"
+                className="group relative flex flex-col items-center outline-none"
+                onClick={openTerminal}
+                whileHover={reducedMotion ? undefined : dockHoverAnimation}
+                whileTap={reducedMotion ? undefined : dockTapAnimation}
+                transition={dockTransition}
+              >
+                <DockTooltip label="Terminal" />
+                <span className="grid h-12 w-12 place-items-center rounded-[13px] border border-white/20 bg-gradient-to-br from-[#323844] to-[#11141a] shadow-[0_9px_22px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.22)]">
+                  <SquareTerminal aria-hidden="true" className="h-7 w-7 text-white" />
+                </span>
+                <DockIndicator running={terminalRunning} />
               </motion.button>
               <motion.button
                 type="button"
