@@ -15,6 +15,7 @@ import {
 
 export function ConfirmationDialog({
   busy,
+  confirmLabel = 'Delete Agent',
   description,
   error,
   onCancel,
@@ -23,6 +24,7 @@ export function ConfirmationDialog({
   title,
 }: {
   busy: boolean
+  confirmLabel?: string
   description: string
   error: string
   onCancel: () => void
@@ -77,7 +79,7 @@ export function ConfirmationDialog({
               onClick={onConfirm}
             >
               {busy ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}
-              Delete Agent
+              {confirmLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
         </div>
