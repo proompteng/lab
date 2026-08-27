@@ -83,7 +83,7 @@ describe('Tengri release workflows', () => {
     expect(validation).not.toContain('argocd/applicationsets/platform.yaml')
   })
 
-  it('reschedules manifest drift and guards every release-tool dependency', () => {
+  it('refreshes manifest drift without rebuilding promoted images and guards every release-tool dependency', () => {
     const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       on?: { pull_request?: { paths?: string[] }; push?: { paths?: string[] } }
     }
@@ -105,7 +105,7 @@ describe('Tengri release workflows', () => {
       'argocd/applicationsets/platform.yaml',
       'argocd/applications/proompteng/deployment.yaml',
     ]) {
-      expect(pushPaths).toContain(manifest)
+      expect(pushPaths).not.toContain(manifest)
     }
 
     const validationSteps = (release.jobs?.promote?.steps ?? []).filter((step) =>
@@ -140,6 +140,12 @@ describe('Tengri release workflows', () => {
     expect(revalidateIndex).toBe(createIndex - 1)
     expect(steps[revalidateIndex]?.run).toContain('git fetch origin main')
     expect(steps[revalidateIndex]?.run).toContain('services/tengri')
+    expect(steps[revalidateIndex]?.run).toContain('git checkout "$latest_main"')
+    expect(steps[revalidateIndex]?.run).toContain('argocd/applications/tengri/kustomization.yaml')
+    expect(steps[revalidateIndex]?.run).toContain('argocd/applicationsets/platform.yaml')
+    expect(steps[revalidateIndex]?.run).toContain('argocd/applications/proompteng/deployment.yaml')
+    expect(steps[revalidateIndex]?.run).toContain('bun packages/scripts/src/tengri/update-release.ts')
+    expect(steps[revalidateIndex]?.run).toContain('bun packages/scripts/src/tengri/validate-release.ts')
     expect(steps[createIndex]?.with?.['add-paths']).toContain('argocd/applications/proompteng/deployment.yaml')
   })
 })

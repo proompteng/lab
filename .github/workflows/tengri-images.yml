@@ -23,9 +23,6 @@ on:
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/package.json'
       - 'bun.lock'
-      - 'argocd/applications/tengri/kustomization.yaml'
-      - 'argocd/applicationsets/platform.yaml'
-      - 'argocd/applications/proompteng/deployment.yaml'
   workflow_dispatch:
 
 concurrency:
