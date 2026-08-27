@@ -52,15 +52,20 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
 ## Rollout
 
 1. Run the controller tests and generate the CRD.
-2. Build both multi-architecture images in CI and publish immutable digests to the private registry.
-3. Update the two digest references in `argocd/applications/tengri/kustomization.yaml` and confirm the required 1Password
+2. Merge controller source to `main`. The `Tengri controller` workflow builds natively on `arc-amd64` and `arc-arm64`,
+   publishes and signs `registry.ide-newton.ts.net/lab/tengri:sha-<commit>`, verifies both platforms, and records its
+   immutable digest in the workflow summary.
+3. Build Nanoagent through `.github/workflows/nanoagent.yaml`, then run the `Manual OCI Mirror` workflow with its signed
+   GHCR digest, `target_repository=nanoagent`, and an immutable source-derived tag. The mirror verifies both platforms
+   and preserves the source digest at `registry.ide-newton.ts.net/lab/nanoagent`.
+4. Update the two digest references in `argocd/applications/tengri/kustomization.yaml` and confirm the required 1Password
    fields exist.
-4. For the initial rollout, set the `tengri` entry in `argocd/applicationsets/platform.yaml` to `enabled: "true"` in
+5. For the initial rollout, set the `tengri` entry in `argocd/applicationsets/platform.yaml` to `enabled: "true"` in
    the same reviewed rollout PR or a reviewed follow-up. Until that enablement is merged, no Tengri Application,
    Deployment, or endpoint is expected to exist and the remaining live verification steps must not run.
-5. Merge the reviewed rollout PR and let the auto-reconciled Tengri Application deploy from `main`.
-6. Verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged node scheduling.
-7. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
+6. Merge the reviewed rollout PR and let the auto-reconciled Tengri Application deploy from `main`.
+7. Verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged node scheduling.
+8. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 
