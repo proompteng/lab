@@ -13,12 +13,16 @@ import { runTengriAction } from './client'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
+  parseTerminalCleanupState,
   parseTerminalControlFrame,
   parseTerminalOutputFrame,
   parseTerminalResumeState,
   safelyDisposeTerminal,
+  settleTerminalCreation,
+  terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
+  terminalResumeAttachment,
   terminalTicketProtocol,
   type TerminalResumeState,
 } from './terminal-protocol'
@@ -39,6 +43,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const instanceId = useId().replaceAll(/[^a-zA-Z0-9_-]/g, '')
   const storageKey = `tengri:terminal:${agentId}:${instanceId}`
+  const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
     message: 'Starting Terminal…',
@@ -71,8 +76,10 @@ export function TerminalApp({ agentId }: { agentId: string }) {
     let heartbeatTimer: number | null = null
     let resizeFrame: number | null = null
     let persistFrame: number | null = null
-    let lastPongAt = Date.now()
+    let lastHeartbeatTickAt = Date.now()
+    let waitingForPongSince: number | null = null
     let resizeObserver: ResizeObserver | null = null
+    let cleanupChecked = false
     let resumeChecked = false
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
@@ -92,16 +99,51 @@ export function TerminalApp({ agentId }: { agentId: string }) {
       }
     }
 
-    const persist = () => {
-      if (!session || disposed) return
+    const pendingCleanupIds = (): string[] => {
+      try {
+        return parseTerminalCleanupState(sessionStorage.getItem(cleanupStorageKey), agentId)?.sessionIds ?? []
+      } catch {
+        return []
+      }
+    }
+
+    const writePendingCleanupIds = (sessionIds: string[]) => {
+      try {
+        if (sessionIds.length === 0) sessionStorage.removeItem(cleanupStorageKey)
+        else sessionStorage.setItem(cleanupStorageKey, JSON.stringify({ agentId, sessionIds }))
+      } catch {
+        // Cleanup still proceeds immediately when storage is unavailable.
+      }
+    }
+
+    const recordPendingCleanup = (sessionId: string) => {
+      writePendingCleanupIds([...new Set([...pendingCleanupIds(), sessionId])])
+    }
+
+    const clearPendingCleanup = (sessionId: string) => {
+      writePendingCleanupIds(pendingCleanupIds().filter((candidate) => candidate !== sessionId))
+    }
+
+    const storeSession = (current: TengriTerminalSession, cleanupPending: boolean) => {
       try {
         sessionStorage.setItem(
           storageKey,
-          JSON.stringify({ agentId, sessionId: session.id, reconnectToken, sequence: lastSequence }),
+          JSON.stringify({
+            agentId,
+            sessionId: current.id,
+            reconnectToken,
+            sequence: lastSequence,
+            cleanupPending,
+          }),
         )
       } catch {
         // The PTY remains usable if private browsing disables session storage.
       }
+    }
+
+    const persist = () => {
+      if (!session || disposed) return
+      storeSession(session, false)
     }
 
     const schedulePersist = () => {
@@ -129,15 +171,35 @@ export function TerminalApp({ agentId }: { agentId: string }) {
 
     const startHeartbeat = (target: WebSocket) => {
       stopHeartbeat()
-      lastPongAt = Date.now()
+      lastHeartbeatTickAt = Date.now()
+      waitingForPongSince = null
       heartbeatTimer = window.setInterval(() => {
         if (disposed || socket !== target || target.readyState !== WebSocket.OPEN) return
-        if (Date.now() - lastPongAt > 45_000) {
+        const now = Date.now()
+        const action = terminalHeartbeatAction(now, lastHeartbeatTickAt, waitingForPongSince)
+        lastHeartbeatTickAt = now
+        if (action === 'close') {
           target.close(4_000, 'Terminal heartbeat timed out')
           return
         }
-        target.send('{"type":"ping"}')
+        if (action === 'ping') {
+          waitingForPongSince = now
+          target.send('{"type":"ping"}')
+        }
       }, 15_000)
+    }
+
+    const markAlive = () => {
+      waitingForPongSince = null
+    }
+
+    async function terminateAndClear(current: TengriTerminalSession, keepalive = false) {
+      await runTengriAction(
+        { action: 'terminate-terminal', agentId, terminalId: current.id },
+        keepalive ? { keepalive: true } : requestSignal(),
+      )
+      clearPendingCleanup(current.id)
+      clearStoredSession(current.id)
     }
 
     const terminalSize = () => normalizeTerminalSize(terminalRef.current?.cols ?? 120, terminalRef.current?.rows ?? 32)
@@ -160,6 +222,21 @@ export function TerminalApp({ agentId }: { agentId: string }) {
 
     async function ensureSession(terminal: Terminal): Promise<TengriTerminalSession> {
       if (session) return session
+      if (!cleanupChecked) {
+        const pending = pendingCleanupIds()
+        if (pending.length > 0) {
+          const sessions = await runTengriAction<TengriTerminalSession[]>(
+            { action: 'list-terminals', agentId },
+            requestSignal(),
+          )
+          for (const sessionId of pending) {
+            const existing = sessions.find((candidate) => candidate.id === sessionId)
+            if (existing) await terminateAndClear(existing)
+            else clearPendingCleanup(sessionId)
+          }
+        }
+        cleanupChecked = true
+      }
       if (!resumeChecked) {
         const stored = resumeState()
         if (stored) {
@@ -168,10 +245,13 @@ export function TerminalApp({ agentId }: { agentId: string }) {
             requestSignal(),
           )
           const existing = sessions.find((candidate) => candidate.id === stored.sessionId)
-          if (existing) {
+          if (existing && stored.cleanupPending) {
+            await terminateAndClear(existing)
+          } else if (existing) {
             session = existing
-            reconnectToken = stored.reconnectToken
-            lastSequence = stored.sequence
+            const restored = terminalResumeAttachment(stored, existing.attached)
+            reconnectToken = restored.reconnectToken
+            lastSequence = restored.sequence
           } else {
             clearStoredSession(stored.sessionId)
           }
@@ -180,9 +260,20 @@ export function TerminalApp({ agentId }: { agentId: string }) {
       }
       if (!session) {
         const { columns, rows } = normalizeTerminalSize(terminal.cols, terminal.rows)
-        session = await runTengriAction<TengriTerminalSession>(
-          { action: 'create-terminal', agentId, cwd: '/workspace', columns, rows },
-          requestSignal(),
+        session = await settleTerminalCreation(
+          runTengriAction<TengriTerminalSession>({
+            action: 'create-terminal',
+            agentId,
+            cwd: '/workspace',
+            columns,
+            rows,
+          }),
+          () => disposed,
+          async (created) => {
+            recordPendingCleanup(created.id)
+            storeSession(created, true)
+            await terminateAndClear(created, true).catch(() => undefined)
+          },
         )
         reconnectToken = ''
         lastSequence = 0
@@ -270,7 +361,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
           if (disposed || socket !== nextSocket || terminalEnded) return
           const frame = parseTerminalOutputFrame(data)
           if (!frame || frame.sequence <= lastSequence) return
-          lastPongAt = Date.now()
+          markAlive()
           lastSequence = frame.sequence
           terminal.write(frame.payload)
           schedulePersist()
@@ -282,20 +373,19 @@ export function TerminalApp({ agentId }: { agentId: string }) {
             nextSocket.close(1_002, 'Terminal ticket protocol was not acknowledged')
             return
           }
-          reconnectAttempt = 0
-          lastPongAt = Date.now()
-          updateConnection({ phase: 'connected', message: 'Connected', action: null })
           sendResize()
           startHeartbeat(nextSocket)
         })
         nextSocket.addEventListener('message', (event) => {
           if (disposed || socket !== nextSocket || terminalEnded) return
-          lastPongAt = Date.now()
+          markAlive()
           if (typeof event.data === 'string') {
             const control = parseTerminalControlFrame(event.data)
             if (!control) return
             if (control.type === 'ready') {
+              reconnectAttempt = 0
               reconnectToken = control.token
+              updateConnection({ phase: 'connected', message: 'Connected', action: null })
               schedulePersist()
             } else if (control.type === 'reset') {
               lastSequence = 0
@@ -304,7 +394,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
               terminal.write('\r\n\x1b[33m[Terminal output replay restarted]\x1b[0m\r\n')
               schedulePersist()
             } else if (control.type === 'pong') {
-              lastPongAt = Date.now()
+              markAlive()
             } else if (control.type === 'error') {
               const message = control.message || 'Terminal reported an error'
               updateConnection({ phase: 'error', message, action: 'reconnect' })
@@ -313,6 +403,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
               terminalEnded = true
               const current = session
               session = null
+              if (current) clearPendingCleanup(current.id)
               clearStoredSession(current?.id)
               stopHeartbeat()
               const message = control.exitCode === 0 ? 'Terminal exited' : `Terminal exited (${control.exitCode})`
@@ -529,14 +620,12 @@ export function TerminalApp({ agentId }: { agentId: string }) {
       safelyDisposeTerminal(terminal)
       const current = session
       if (current && !terminalEnded) {
-        clearStoredSession(current.id)
-        void runTengriAction(
-          { action: 'terminate-terminal', agentId, terminalId: current.id },
-          { keepalive: true },
-        ).catch(() => undefined)
+        recordPendingCleanup(current.id)
+        storeSession(current, true)
+        void terminateAndClear(current, true).catch(() => undefined)
       }
     }
-  }, [agentId, run, storageKey])
+  }, [agentId, cleanupStorageKey, run, storageKey])
 
   function find(direction: 'next' | 'previous') {
     const value = searchValue.trim()

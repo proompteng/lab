@@ -20,6 +20,19 @@ export type TerminalResumeState = {
   sessionId: string
   reconnectToken: string
   sequence: number
+  cleanupPending: boolean
+}
+
+export type TerminalCleanupState = {
+  agentId: string
+  sessionIds: string[]
+}
+
+export type TerminalHeartbeatAction = 'close' | 'ping' | 'wait'
+
+export type TerminalResumeAttachment = {
+  reconnectToken: string
+  sequence: number
 }
 
 export function normalizeTerminalSize(columns: number, rows: number): { columns: number; rows: number } {
@@ -124,7 +137,54 @@ export function parseTerminalResumeState(value: string | null, agentId: string):
     sessionId: state.sessionId,
     reconnectToken: state.reconnectToken,
     sequence: state.sequence,
+    cleanupPending: state.cleanupPending === true,
   }
+}
+
+export function parseTerminalCleanupState(value: string | null, agentId: string): TerminalCleanupState | null {
+  if (!value) return null
+  let candidate: unknown
+  try {
+    candidate = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+  const state = candidate as Record<string, unknown>
+  if (state.agentId !== agentId || !Array.isArray(state.sessionIds)) return null
+  const sessionIds = [...new Set(state.sessionIds)]
+  if (
+    sessionIds.length > 16 ||
+    sessionIds.some((sessionId) => typeof sessionId !== 'string' || !SESSION_ID.test(sessionId))
+  ) {
+    return null
+  }
+  return { agentId, sessionIds: sessionIds as string[] }
+}
+
+export function terminalHeartbeatAction(
+  now: number,
+  lastTickAt: number,
+  waitingForPongSince: number | null,
+): TerminalHeartbeatAction {
+  if (now - lastTickAt > 30_000) return 'ping'
+  if (waitingForPongSince === null) return 'ping'
+  return now - waitingForPongSince > 45_000 ? 'close' : 'wait'
+}
+
+export function terminalResumeAttachment(state: TerminalResumeState, attached: boolean): TerminalResumeAttachment {
+  return { reconnectToken: attached ? '' : state.reconnectToken, sequence: 0 }
+}
+
+export async function settleTerminalCreation<Session>(
+  creation: Promise<Session>,
+  isDisposed: () => boolean,
+  cleanup: (session: Session) => Promise<void>,
+): Promise<Session> {
+  const session = await creation
+  if (!isDisposed()) return session
+  await cleanup(session)
+  throw new DOMException('Terminal window closed', 'AbortError')
 }
 
 export function terminalReconnectDelay(attempt: number): number {

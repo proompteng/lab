@@ -4,11 +4,15 @@ import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
   parseTerminalControlFrame,
+  parseTerminalCleanupState,
   parseTerminalOutputFrame,
   parseTerminalResumeState,
   safelyDisposeTerminal,
+  settleTerminalCreation,
+  terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
+  terminalResumeAttachment,
   terminalTicketProtocol,
 } from './terminal-protocol'
 
@@ -64,7 +68,64 @@ describe('Tengri terminal protocol', () => {
       sequence: 12,
     })
     expect(parseTerminalResumeState(serialized, 'agent-a')?.sequence).toBe(12)
+    expect(parseTerminalResumeState(serialized, 'agent-a')?.cleanupPending).toBe(false)
     expect(parseTerminalResumeState(serialized, 'agent-b')).toBeNull()
+    expect(
+      parseTerminalResumeState(JSON.stringify({ ...JSON.parse(serialized), cleanupPending: true }), 'agent-a')
+        ?.cleanupPending,
+    ).toBe(true)
+  })
+
+  test('probes after a suspended heartbeat before timing out an unanswered ping', () => {
+    expect(terminalHeartbeatAction(60_000, 0, 1_000)).toBe('ping')
+    expect(terminalHeartbeatAction(15_000, 0, null)).toBe('ping')
+    expect(terminalHeartbeatAction(30_000, 15_000, 15_000)).toBe('wait')
+    expect(terminalHeartbeatAction(60_001, 60_000, 15_000)).toBe('close')
+  })
+
+  test('validates and deduplicates the agent cleanup registry', () => {
+    const value = JSON.stringify({
+      agentId: 'agent-a',
+      sessionIds: ['abcdefghijklmnopqrstuvwx', 'abcdefghijklmnopqrstuvwx'],
+    })
+    expect(parseTerminalCleanupState(value, 'agent-a')).toEqual({
+      agentId: 'agent-a',
+      sessionIds: ['abcdefghijklmnopqrstuvwx'],
+    })
+    expect(parseTerminalCleanupState(value, 'agent-b')).toBeNull()
+    expect(parseTerminalCleanupState('{"agentId":"agent-a","sessionIds":["bad"]}', 'agent-a')).toBeNull()
+  })
+
+  test('replays a fresh display and detaches duplicated tabs from the inherited token', () => {
+    const state = parseTerminalResumeState(
+      JSON.stringify({
+        agentId: 'agent-a',
+        sessionId: 'abcdefghijklmnopqrstuvwx',
+        reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+        sequence: 42,
+      }),
+      'agent-a',
+    )
+    if (!state) throw new Error('expected valid terminal state')
+    expect(terminalResumeAttachment(state, false)).toEqual({
+      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+      sequence: 0,
+    })
+    expect(terminalResumeAttachment(state, true)).toEqual({ reconnectToken: '', sequence: 0 })
+  })
+
+  test('cleans an accepted terminal when its window closes before creation returns', async () => {
+    const cleanup = mock(async () => undefined)
+    const session = { id: 'abcdefghijklmnopqrstuvwx' }
+    let failure: unknown
+    try {
+      await settleTerminalCreation(Promise.resolve(session), () => true, cleanup)
+    } catch (cause) {
+      failure = cause
+    }
+    expect(failure).toMatchObject({ name: 'AbortError' })
+    expect(cleanup).toHaveBeenCalledWith(session)
+    expect(await settleTerminalCreation(Promise.resolve(session), () => false, cleanup)).toBe(session)
   })
 
   test('bounds dimensions and reconnect backoff while neutralizing control text', () => {
