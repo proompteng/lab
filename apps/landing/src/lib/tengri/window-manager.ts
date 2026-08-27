@@ -71,10 +71,17 @@ export function initialWindowState(
   }
 }
 
+export function windowIdForOpen(state: WindowManagerState, app: TengriApp): string {
+  const existing = [...state.windows].filter((window) => window.app === app).sort((left, right) => right.z - left.z)[0]
+  if (existing) return existing.id
+  return `${app}-${nextAvailableWindowId(state.windows, state.nextWindowId)}`
+}
+
 export function windowReducer(state: WindowManagerState, action: WindowAction): WindowManagerState {
   if (action.type === 'hydrate') return sanitizeState(action.state, action.viewport)
   if (action.type === 'open') {
-    const existing = [...state.windows].filter((window) => window.app === action.app).sort((a, b) => b.z - a.z)[0]
+    const targetId = windowIdForOpen(state, action.app)
+    const existing = state.windows.find((window) => window.id === targetId)
     if (existing) return focusWindow(state, existing.id, existing.mode === 'minimized', action.viewport)
     return appendWindow(state, action.app, action.title, action.viewport)
   }

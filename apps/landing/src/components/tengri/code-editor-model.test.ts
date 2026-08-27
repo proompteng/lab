@@ -17,6 +17,7 @@ import {
   isCodePath,
   openEditorTab,
   renameEditorTab,
+  updateDirtyCodeWindows,
 } from './code-editor-model'
 
 describe('Code editor model', () => {
@@ -76,6 +77,16 @@ describe('Code editor model', () => {
 
     expect(queued).toEqual([first, second])
     expect(enqueueCodeOpenRequest(queued, first)).toBe(queued)
+  })
+
+  test('tracks dirty state independently for every Code window', () => {
+    const first = updateDirtyCodeWindows(new Set(), 'code-1', true)
+    const both = updateDirtyCodeWindows(first, 'code-2', true)
+    const secondOnly = updateDirtyCodeWindows(both, 'code-1', false)
+
+    expect([...both]).toEqual(['code-1', 'code-2'])
+    expect([...secondOnly]).toEqual(['code-2'])
+    expect(updateDirtyCodeWindows(secondOnly, 'code-2', true)).toBe(secondOnly)
   })
 
   test('scopes models and accessibility panels to their owning instance', () => {
