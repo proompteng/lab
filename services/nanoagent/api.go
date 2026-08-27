@@ -34,6 +34,7 @@ type apiServer struct {
 	codex            *codexSupervisor
 	evidence         evidence
 	fileWatcher      *fileWatcher
+	previewRequests  *previewRequestTracker
 	previewTransport http.RoundTripper
 	terminals        *terminalManager
 	workspace        workspace
@@ -66,6 +67,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 		bootstrapToken:   config.bootstrapToken,
 		evidence:         config.evidence,
 		fileWatcher:      files,
+		previewRequests:  newPreviewRequestTracker(),
 		previewTransport: transport,
 		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
 		workspace:        workspace,
@@ -83,6 +85,9 @@ func (server *apiServer) close() {
 }
 
 func (server *apiServer) beginShutdown() {
+	if server.previewRequests != nil {
+		server.previewRequests.close()
+	}
 	server.terminals.close()
 	_ = server.fileWatcher.close()
 	if server.codex != nil {
