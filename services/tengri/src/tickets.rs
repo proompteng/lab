@@ -18,11 +18,18 @@ const PENDING_TICKET_LIMIT: usize = 128;
 const PENDING_TICKET_LIMIT_PER_AGENT: usize = 16;
 const PREVIEW_SESSION_LIMIT: usize = 96;
 const PREVIEW_SESSION_LIMIT_PER_AGENT: usize = 16;
+const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 
 #[derive(Clone, Debug)]
 pub enum TicketScope {
-    Terminal { terminal_id: String },
-    Preview { port: u16, initial_path: String },
+    Terminal {
+        terminal_id: String,
+    },
+    Preview {
+        session_id: String,
+        port: u16,
+        initial_path: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +61,7 @@ pub struct TicketStore {
 
 #[derive(Debug)]
 pub struct IssuedTicket {
+    pub id: String,
     pub token: String,
     pub url: String,
     pub expires_at: String,
@@ -107,16 +115,20 @@ impl TicketStore {
         port: u16,
         initial_path: &str,
     ) -> Result<IssuedTicket, Status> {
-        self.issue(
+        let session_id = random_dns_label(PREVIEW_SESSION_LABEL_LENGTH);
+        let mut issued = self.issue(
             owner_hash,
             agent_id,
             TicketScope::Preview {
+                session_id: session_id.clone(),
                 port,
                 initial_path: initial_path.to_owned(),
             },
             "/v1/preview/open",
             Some('#'),
-        )
+        )?;
+        issued.id = session_id;
+        Ok(issued)
     }
 
     pub fn consume(&self, token: &str) -> Result<TicketRecord, Status> {
@@ -134,17 +146,46 @@ impl TicketStore {
         Ok(ticket)
     }
 
-    pub fn create_preview_session(
-        &self,
-        ticket: TicketRecord,
-    ) -> Result<PreviewSessionRecord, Status> {
-        let TicketScope::Preview { port, initial_path } = ticket.scope else {
+    pub fn consume_preview(&self, token: &str) -> Result<PreviewSessionRecord, Status> {
+        let mut tickets = self
+            .tickets
+            .lock()
+            .map_err(|_| Status::internal("ticket state is unavailable"))?;
+        let now = SystemTime::now();
+        tickets.retain(|_, ticket| ticket.expires_at > now);
+        let ticket = tickets.get(token).cloned().ok_or_else(|| {
+            Status::unauthenticated("ticket is invalid, expired, or already used")
+        })?;
+        let TicketScope::Preview {
+            session_id,
+            port,
+            initial_path,
+        } = ticket.scope
+        else {
             return Err(Status::permission_denied(
                 "ticket is not scoped to a preview",
             ));
         };
+        let mut previews = self
+            .previews
+            .lock()
+            .map_err(|_| Status::internal("preview state is unavailable"))?;
+        previews.retain(|_, active| active.expires_at > now);
+        if previews.len() >= PREVIEW_SESSION_LIMIT
+            || previews
+                .values()
+                .filter(|active| active.agent_id == ticket.agent_id)
+                .count()
+                >= PREVIEW_SESSION_LIMIT_PER_AGENT
+        {
+            tickets.remove(token);
+            return Err(Status::resource_exhausted(
+                "too many active preview sessions",
+            ));
+        }
+        tickets.remove(token);
         let session = PreviewSessionRecord {
-            id: random_dns_label(24),
+            id: session_id,
             token: self.signed_token(),
             owner_hash: ticket.owner_hash,
             agent_id: ticket.agent_id,
@@ -152,25 +193,39 @@ impl TicketStore {
             initial_path,
             expires_at: SystemTime::now() + PREVIEW_SESSION_LIFETIME,
         };
-        let mut previews = self
-            .previews
-            .lock()
-            .map_err(|_| Status::internal("preview state is unavailable"))?;
-        let now = SystemTime::now();
-        previews.retain(|_, active| active.expires_at > now);
-        if previews.len() >= PREVIEW_SESSION_LIMIT
-            || previews
-                .values()
-                .filter(|active| active.agent_id == session.agent_id)
-                .count()
-                >= PREVIEW_SESSION_LIMIT_PER_AGENT
-        {
-            return Err(Status::resource_exhausted(
-                "too many active preview sessions",
-            ));
-        }
         previews.insert(session.id.clone(), session.clone());
         Ok(session)
+    }
+
+    pub fn revoke_preview(
+        &self,
+        owner_hash: &str,
+        agent_id: &str,
+        session_id: &str,
+    ) -> Result<(), Status> {
+        self.tickets
+            .lock()
+            .map_err(|_| Status::internal("ticket state is unavailable"))?
+            .retain(|_, ticket| {
+                !(ticket.owner_hash == owner_hash
+                    && ticket.agent_id == agent_id
+                    && matches!(
+                        &ticket.scope,
+                        TicketScope::Preview {
+                            session_id: pending_id,
+                            ..
+                        } if pending_id == session_id
+                    ))
+            });
+        self.previews
+            .lock()
+            .map_err(|_| Status::internal("preview state is unavailable"))?
+            .retain(|id, session| {
+                !(id == session_id
+                    && session.owner_hash == owner_hash
+                    && session.agent_id == agent_id)
+            });
+        Ok(())
     }
 
     pub fn preview_session(&self, id: &str, token: &str) -> Result<PreviewSessionRecord, Status> {
@@ -262,6 +317,7 @@ impl TicketStore {
             },
         );
         Ok(IssuedTicket {
+            id: token.clone(),
             url: token_separator.map_or_else(
                 || format!("{}{path}", self.public_url),
                 |separator| format!("{}{path}{separator}{token}", self.public_url),
@@ -415,8 +471,9 @@ mod tests {
         assert_eq!(launch.query(), None);
         assert_eq!(launch.fragment(), Some(ticket.token.as_str()));
         let session = store
-            .create_preview_session(store.consume(&ticket.token).expect("consume"))
+            .consume_preview(&ticket.token)
             .expect("preview session");
+        assert_eq!(session.id, ticket.id);
         assert_eq!(session.id.len(), 24);
         assert_eq!(session.initial_path, "/dashboard?mode=dev");
         assert!(
@@ -425,6 +482,89 @@ mod tests {
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         );
+    }
+
+    #[test]
+    fn preview_revocation_is_owner_scoped_and_clears_pending_and_active_sessions() {
+        let owner = "a".repeat(64);
+        let store =
+            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
+        let pending = store
+            .issue_preview(&owner, "agent", 3000, "/pending")
+            .expect("pending preview");
+        store
+            .revoke_preview("different-owner", "agent", &pending.id)
+            .expect("wrong-owner revoke is idempotent");
+        let pending_session = store
+            .consume_preview(&pending.token)
+            .expect("wrong owner did not revoke preview");
+        store
+            .revoke_preview(&owner, "agent", &pending_session.id)
+            .expect("clean up wrong-owner proof");
+
+        let active = store
+            .issue_preview(&owner, "agent", 3000, "/active")
+            .expect("active preview");
+        let session = store
+            .consume_preview(&active.token)
+            .expect("create active preview");
+        assert_eq!(store.stats().expect("stats").previews, 1);
+        store
+            .revoke_preview(&owner, "agent", &session.id)
+            .expect("revoke active preview");
+        assert_eq!(store.stats().expect("stats").previews, 0);
+        assert!(store.preview_session(&session.id, &session.token).is_err());
+
+        let pending = store
+            .issue_preview(&owner, "agent", 3000, "/pending-again")
+            .expect("pending preview again");
+        store
+            .revoke_preview(&owner, "agent", &pending.id)
+            .expect("revoke pending preview");
+        assert!(store.consume_preview(&pending.token).is_err());
+    }
+
+    #[test]
+    fn preview_revocation_cannot_race_between_ticket_consumption_and_session_creation() {
+        use std::sync::Barrier;
+
+        let owner = "a".repeat(64);
+        let store =
+            TicketStore::new("https://tengri.example".to_owned(), "s".repeat(32)).expect("store");
+        for _ in 0..100 {
+            let issued = store
+                .issue_preview(&owner, "agent", 3000, "/race")
+                .expect("preview ticket");
+            let barrier = Arc::new(Barrier::new(3));
+            let consumed = std::thread::scope(|scope| {
+                let consume_store = store.clone();
+                let consume_barrier = barrier.clone();
+                let token = issued.token.clone();
+                let consume = scope.spawn(move || {
+                    consume_barrier.wait();
+                    consume_store.consume_preview(&token)
+                });
+                let revoke_store = store.clone();
+                let revoke_barrier = barrier.clone();
+                let session_id = issued.id.clone();
+                let owner = owner.clone();
+                let revoke = scope.spawn(move || {
+                    revoke_barrier.wait();
+                    revoke_store.revoke_preview(&owner, "agent", &session_id)
+                });
+                barrier.wait();
+                let consumed = consume.join().expect("consume thread");
+                revoke
+                    .join()
+                    .expect("revoke thread")
+                    .expect("revoke preview");
+                consumed
+            });
+            if let Ok(session) = consumed {
+                assert!(store.preview_session(&session.id, &session.token).is_err());
+            }
+            assert_eq!(store.stats().expect("stats").previews, 0);
+        }
     }
 
     #[test]
@@ -455,22 +595,15 @@ mod tests {
             let issued = previews
                 .issue_preview(&"a".repeat(64), "agent", 3000, "/")
                 .expect("preview ticket");
-            let ticket = previews
-                .consume(&issued.token)
-                .expect("consume preview ticket");
             previews
-                .create_preview_session(ticket)
+                .consume_preview(&issued.token)
                 .expect("preview within limit");
         }
         let issued = previews
             .issue_preview(&"a".repeat(64), "agent", 3000, "/")
             .expect("overflow preview ticket");
         let error = previews
-            .create_preview_session(
-                previews
-                    .consume(&issued.token)
-                    .expect("consume overflow ticket"),
-            )
+            .consume_preview(&issued.token)
             .expect_err("preview session limit");
         assert_eq!(error.code(), tonic::Code::ResourceExhausted);
     }

@@ -8,7 +8,7 @@ import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
 import { cn } from '@/lib/utils'
 import { APP_TITLES, initialWindowState, type Bounds, windowReducer } from '@/lib/tengri/window-manager'
-import { ChromeAgentWindow } from './chrome-agent-window'
+import { ChromeApp } from './chrome-app'
 import { runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
@@ -192,7 +192,7 @@ export function ReadyDesktop({
               window={desktopWindow}
             >
               {desktopWindow.app === 'chrome' ? (
-                <ChromeAgentWindow agentId={agent.id} />
+                <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
               ) : (
                 <AgentSettings
                   agent={agent}

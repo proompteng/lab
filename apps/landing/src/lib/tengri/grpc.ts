@@ -285,6 +285,10 @@ export async function issuePreviewSession(
   }
 }
 
+export async function revokePreviewSession(subject: string, agentId: string, sessionId: string) {
+  await unary('revokePreviewSession', { agentId, sessionId }, subject)
+}
+
 export function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
   return stream('watchCodexEvents', { agentId, afterSequence }, subject)
 }
