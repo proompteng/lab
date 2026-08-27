@@ -1,6 +1,7 @@
 'use client'
 
 import * as Dialog from '@radix-ui/react-dialog'
+import { zodResolver } from '@hookform/resolvers/zod'
 import {
   ArrowLeft,
   ArrowRight,
@@ -18,6 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useForm } from 'react-hook-form'
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -25,6 +27,7 @@ import type {
 } from 'react'
 
 import type { TengriFileEntry } from '@/lib/tengri/types'
+import { finderItemFormSchema, type FinderItemFormValues } from '@/schemas/finder-item'
 
 import { runTengriAction } from './client'
 import { ConfirmationDialog } from './confirmation-dialog'
@@ -71,9 +74,7 @@ export function FinderApp({
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [view, setView] = useState<FinderView>('list')
   const [query, setQuery] = useState('')
-  const [newFolder, setNewFolder] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [renameValue, setRenameValue] = useState('')
   const [renaming, setRenaming] = useState<TengriFileEntry | null>(null)
   const [quickLook, setQuickLook] = useState<QuickLookState | null>(null)
   const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(
@@ -82,10 +83,31 @@ export function FinderApp({
   const [loading, setLoading] = useState(true)
   const [watchState, setWatchState] = useState<'connected' | 'paused' | 'reconnecting'>('paused')
   const [error, setError] = useState('')
-  const [formError, setFormError] = useState('')
   const [deleteError, setDeleteError] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false)
+  const {
+    formState: { errors: createFolderErrors },
+    handleSubmit: handleCreateFolderSubmit,
+    register: registerCreateFolder,
+    reset: resetCreateFolder,
+    setError: setCreateFolderError,
+  } = useForm<FinderItemFormValues>({
+    defaultValues: { name: '' },
+    mode: 'onChange',
+    resolver: zodResolver(finderItemFormSchema),
+  })
+  const {
+    formState: { errors: renameErrors },
+    handleSubmit: handleRenameSubmit,
+    register: registerRename,
+    reset: resetRename,
+    setError: setRenameError,
+  } = useForm<FinderItemFormValues>({
+    defaultValues: { name: '' },
+    mode: 'onChange',
+    resolver: zodResolver(finderItemFormSchema),
+  })
   const contentRef = useRef<HTMLDivElement | null>(null)
   const entryRefs = useRef(new Map<string, HTMLElement>())
   const loadSequence = useRef(0)
@@ -103,6 +125,8 @@ export function FinderApp({
   const selectedEntries = entries.filter((entry) => selected.has(entry.path))
   const primarySelection = selectedEntries.length === 1 ? selectedEntries[0] : null
   const deletionTargets = finderDeletionTargets(selectedEntries)
+  const createFolderError = createFolderErrors.name?.message ?? createFolderErrors.root?.server?.message
+  const renameError = renameErrors.name?.message ?? renameErrors.root?.server?.message
   let watchLabel = 'Reconnecting…'
   if (watchState === 'connected') watchLabel = 'Live'
   else if (watchState === 'paused') watchLabel = 'Paused'
@@ -206,7 +230,8 @@ export function FinderApp({
       selectionAnchor.current = null
       setRenaming(null)
       setShowCreate(false)
-      setFormError('')
+      resetCreateFolder()
+      resetRename()
       setError('')
       if (normalized === path) {
         void latestLoad.current(false)
@@ -216,7 +241,7 @@ export function FinderApp({
       setHistory((current) => [...current.slice(0, historyIndex + 1), normalized])
       setHistoryIndex((index) => index + 1)
     },
-    [historyIndex, path],
+    [historyIndex, path, resetCreateFolder, resetRename],
   )
 
   const navigateHistory = useCallback(
@@ -231,10 +256,11 @@ export function FinderApp({
       selectionAnchor.current = null
       setRenaming(null)
       setShowCreate(false)
-      setFormError('')
+      resetCreateFolder()
+      resetRename()
       setError('')
     },
-    [history],
+    [history, resetCreateFolder, resetRename],
   )
 
   const activate = useCallback(
@@ -245,25 +271,26 @@ export function FinderApp({
     [navigate, onOpenFile],
   )
 
-  async function createFolder() {
-    const destination = finderChildPath(path, newFolder)
+  const createFolder = handleCreateFolderSubmit(async ({ name }) => {
+    const destination = finderChildPath(path, name)
     if (!destination) {
-      setFormError('Folder names cannot be empty or contain “/”')
+      setCreateFolderError('name', { message: 'Enter a valid folder name' })
       return
     }
     setActionBusy(true)
-    setFormError('')
     try {
       await runTengriAction({ action: 'create-directory', agentId, path: destination })
-      setNewFolder('')
+      resetCreateFolder()
       setShowCreate(false)
       await latestLoad.current(true)
     } catch (cause) {
-      setFormError(cause instanceof Error ? cause.message : 'Finder could not create this folder')
+      setCreateFolderError('root.server', {
+        message: cause instanceof Error ? cause.message : 'Finder could not create this folder',
+      })
     } finally {
       setActionBusy(false)
     }
-  }
+  })
 
   async function deleteSelected() {
     if (!deletionTargets.length) {
@@ -289,36 +316,40 @@ export function FinderApp({
 
   function beginRename(entry = primarySelection) {
     if (!entry || entry.path === FINDER_WORKSPACE_PATH) return
-    setFormError('')
+    setShowCreate(false)
+    resetCreateFolder()
+    resetRename({ name: entry.name })
     setRenaming(entry)
-    setRenameValue(entry.name)
   }
 
-  async function renameSelected() {
+  const renameSelected = handleRenameSubmit(async ({ name }) => {
     if (!renaming) return
-    const destinationPath = finderRenamePath(renaming.path, renameValue)
+    const destinationPath = finderRenamePath(renaming.path, name)
     if (!destinationPath) {
-      setFormError('Names cannot be empty or contain “/”, and the workspace root cannot be renamed.')
+      setRenameError('name', { message: 'Enter a valid name' })
       return
     }
     if (destinationPath === renaming.path) {
       setRenaming(null)
+      resetRename()
       return
     }
     setActionBusy(true)
-    setFormError('')
     try {
       await runTengriAction({ action: 'move-file', agentId, sourcePath: renaming.path, destinationPath })
       setSelected(new Set([destinationPath]))
       selectionAnchor.current = destinationPath
       setRenaming(null)
+      resetRename()
       await latestLoad.current(true)
     } catch (cause) {
-      setFormError(cause instanceof Error ? cause.message : 'Finder could not rename this item')
+      setRenameError('root.server', {
+        message: cause instanceof Error ? cause.message : 'Finder could not rename this item',
+      })
     } finally {
       setActionBusy(false)
     }
-  }
+  })
 
   function closeQuickLook() {
     quickLookAbort.current?.abort()
@@ -513,7 +544,8 @@ export function FinderApp({
             disabled={actionBusy}
             onClick={() => {
               setRenaming(null)
-              setFormError('')
+              resetRename()
+              resetCreateFolder()
               setShowCreate(true)
             }}
           >
@@ -594,20 +626,19 @@ export function FinderApp({
 
         {showCreate ? (
           <form
+            noValidate
             className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void createFolder()
-            }}
+            onSubmit={createFolder}
           >
             <Folder className="h-4 w-4 text-[#79b8ff]" />
             <input
               autoFocus
               aria-label="New folder name"
-              value={newFolder}
+              aria-describedby={createFolderError ? 'create-folder-name-error' : undefined}
+              aria-invalid={Boolean(createFolderError)}
               disabled={actionBusy}
-              onChange={(event) => setNewFolder(event.target.value)}
               placeholder="New folder name"
+              {...registerCreateFolder('name')}
               className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
             />
             <button
@@ -623,14 +654,14 @@ export function FinderApp({
               className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
               onClick={() => {
                 setShowCreate(false)
-                setFormError('')
+                resetCreateFolder()
               }}
             >
               Cancel
             </button>
-            {formError ? (
-              <span role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
-                {formError}
+            {createFolderError ? (
+              <span id="create-folder-name-error" role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
+                {createFolderError}
               </span>
             ) : null}
           </form>
@@ -638,23 +669,22 @@ export function FinderApp({
 
         {renaming ? (
           <form
+            noValidate
             className="flex items-center gap-2 border-b border-white/8 bg-[#2574e8]/10 px-4 py-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void renameSelected()
-            }}
+            onSubmit={renameSelected}
           >
             <Pencil className="h-4 w-4 text-[#79b8ff]" />
             <input
               autoFocus
               aria-label="Rename item"
-              value={renameValue}
+              aria-describedby={renameError ? 'rename-item-error' : undefined}
+              aria-invalid={Boolean(renameError)}
               disabled={actionBusy}
-              onChange={(event) => setRenameValue(event.target.value)}
               onFocus={(event) => {
                 const extension = renaming.directory ? -1 : event.currentTarget.value.lastIndexOf('.')
                 event.currentTarget.setSelectionRange(0, extension > 0 ? extension : event.currentTarget.value.length)
               }}
+              {...registerRename('name')}
               className="flex-1 rounded-md border border-white/12 bg-black/30 px-2 py-1 text-xs outline-none focus:border-[#79b8ff]/50"
             />
             <button
@@ -670,14 +700,14 @@ export function FinderApp({
               className="px-2 py-1 text-xs text-white/55 disabled:opacity-40"
               onClick={() => {
                 setRenaming(null)
-                setFormError('')
+                resetRename()
               }}
             >
               Cancel
             </button>
-            {formError ? (
-              <span role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
-                {formError}
+            {renameError ? (
+              <span id="rename-item-error" role="alert" className="min-w-0 flex-1 truncate text-xs text-red-200">
+                {renameError}
               </span>
             ) : null}
           </form>
