@@ -16,6 +16,7 @@ use crate::crd::{IDLE_MINUTES, MicroVM};
 
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
+pub const RESUME_STARTED_AT_ANNOTATION: &str = "runtime.proompteng.ai/resume-started-at";
 
 #[derive(Clone)]
 pub struct ActivityTracker {

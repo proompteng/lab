@@ -18,18 +18,21 @@ use thiserror::Error;
 use tracing::{error, info, warn};
 
 use crate::{
-    activity::{idle_deadline_passed, last_activity_at},
+    activity::{RESUME_STARTED_AT_ANNOTATION, idle_deadline_passed, last_activity_at},
     crd::{MicroVM, MicroVMCondition, MicroVMDesiredState, MicroVMPhase, MicroVMStatus},
+    metrics,
     pod::{
         FINALIZER_NAME, MANAGER_NAME, bootstrap_secret_name, build_pod, ensure_bootstrap_secret,
         ensure_pvc, pvc_name,
     },
+    tickets::TicketStore,
 };
 
 #[derive(Clone)]
 pub struct ControllerContext {
     pub client: Client,
     pub namespace: String,
+    pub tickets: TicketStore,
 }
 
 #[derive(Debug, Error)]
@@ -38,6 +41,8 @@ pub enum ReconcileError {
     Kubernetes(#[from] kube::Error),
     #[error("MicroVM {0} is missing a namespace")]
     MissingNamespace(String),
+    #[error("Tengri capability cleanup failed: {0}")]
+    TicketStore(String),
     #[error("timed out deleting owned resource {0}")]
     CleanupTimeout(String),
     #[error("failed waiting for owned resource deletion: {0}")]
@@ -80,7 +85,7 @@ async fn reconcile(
         if microvm.status.as_ref() != Some(&status) {
             patch_status(&microvms, &microvm, status).await?;
         }
-        cleanup(&context.client, &namespace, &microvm).await?;
+        cleanup(&context.client, &namespace, &microvm, &context.tickets).await?;
         let current = microvms.get(&name).await?;
         remove_finalizer(&microvms, &current).await?;
         return Ok(Action::await_change());
@@ -98,6 +103,7 @@ async fn reconcile(
     let now = Utc::now();
     if deadline_passed(&microvm.spec.expires_at, now) {
         info!(microvm = %name, "hard expiry reached; deleting MicroVM and persistent state");
+        metrics::global().record_expiry_deletion();
         microvms.delete(&name, &DeleteParams::default()).await?;
         return Ok(Action::await_change());
     }
@@ -109,6 +115,11 @@ async fn reconcile(
     }
 
     if microvm.spec.desired_state == MicroVMDesiredState::Sleeping {
+        context
+            .tickets
+            .remove_agent(&name)
+            .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
+        metrics::global().clear_pty_sessions(&name);
         // Sleeping is observable only after the Firecracker guest is gone. Waiting for
         // foreground deletion also prevents a resume from racing a terminating Pod.
         delete_and_wait(&pods, &name).await?;
@@ -175,11 +186,70 @@ async fn reconcile(
     };
     let status = derive_status(&microvm, &pod, &home_claim, now);
 
+    let ready_transition = status.phase == MicroVMPhase::Ready
+        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Ready);
+    let latency = ready_transition.then(|| readiness_latency(&microvm, now));
+    if status.phase == MicroVMPhase::Failed
+        && microvm.status.as_ref().map(|value| value.phase) != Some(MicroVMPhase::Failed)
+    {
+        metrics::global().record_guest_failure();
+    }
+
     if microvm.status.as_ref() != Some(&status) {
-        patch_status(&microvms, &microvm, status).await?;
+        patch_status(&microvms, &microvm, status.clone()).await?;
+    }
+    if let Some(latency) = latency {
+        match latency {
+            ReadinessLatency::Boot(millis) => metrics::global().observe_boot(millis),
+            ReadinessLatency::Resume(millis) => metrics::global().observe_resume(millis),
+        }
+    }
+    if status.phase == MicroVMPhase::Ready && resume_started_at(&microvm).is_some() {
+        clear_resume_started_at(&microvms, &microvm).await?;
     }
 
     Ok(Action::requeue(next_requeue(&microvm, now)))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReadinessLatency {
+    Boot(u64),
+    Resume(u64),
+}
+
+fn readiness_latency(microvm: &MicroVM, now: DateTime<Utc>) -> ReadinessLatency {
+    if let Some(started_at) = resume_started_at(microvm) {
+        return ReadinessLatency::Resume(elapsed_millis(started_at, now).unwrap_or_default());
+    }
+    ReadinessLatency::Boot(elapsed_millis(&microvm.spec.created_at, now).unwrap_or_default())
+}
+
+fn resume_started_at(microvm: &MicroVM) -> Option<&str> {
+    microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get(RESUME_STARTED_AT_ANNOTATION))
+        .map(String::as_str)
+}
+
+async fn clear_resume_started_at(api: &Api<MicroVM>, microvm: &MicroVM) -> Result<(), kube::Error> {
+    let mut patch = json!({"metadata": {"annotations": {}}});
+    patch["metadata"]["annotations"][RESUME_STARTED_AT_ANNOTATION] = serde_json::Value::Null;
+    api.patch(
+        &microvm.name_any(),
+        &PatchParams::default(),
+        &Patch::Merge(&patch),
+    )
+    .await?;
+    Ok(())
+}
+
+fn elapsed_millis(value: &str, now: DateTime<Utc>) -> Option<u64> {
+    let started = DateTime::parse_from_rfc3339(value)
+        .ok()?
+        .with_timezone(&Utc);
+    u64::try_from((now - started).num_milliseconds().max(0)).ok()
 }
 
 fn error_policy(
@@ -195,7 +265,12 @@ async fn cleanup(
     client: &Client,
     namespace: &str,
     microvm: &MicroVM,
+    tickets: &TicketStore,
 ) -> Result<(), ReconcileError> {
+    tickets
+        .remove_agent(&microvm.name_any())
+        .map_err(|error| ReconcileError::TicketStore(error.to_string()))?;
+    metrics::global().clear_pty_sessions(&microvm.name_any());
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let secrets: Api<Secret> = Api::namespaced(client.clone(), namespace);
     let claims: Api<PersistentVolumeClaim> = Api::namespaced(client.clone(), namespace);
@@ -765,6 +840,30 @@ mod tests {
             ..MicroVMStatus::default()
         });
         assert!(deadline_passed(&microvm.spec.expires_at, now));
+    }
+
+    #[test]
+    fn resume_latency_uses_the_persisted_wake_marker_after_booting_status() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now - chrono::Duration::hours(2));
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Booting,
+            ..MicroVMStatus::default()
+        });
+        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            RESUME_STARTED_AT_ANNOTATION.to_owned(),
+            (now - chrono::Duration::seconds(3)).to_rfc3339(),
+        )]));
+
+        assert_eq!(
+            readiness_latency(&microvm, now),
+            ReadinessLatency::Resume(3_000)
+        );
+        microvm.metadata.annotations = None;
+        assert_eq!(
+            readiness_latency(&microvm, now),
+            ReadinessLatency::Boot(7_200_000)
+        );
     }
 
     #[test]
