@@ -198,9 +198,20 @@ export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns
   return activeTurnId && !completedTurns.has(activeTurnId) ? activeTurnId : ''
 }
 
-export function codexLoginCompletionId(event: TengriCodexEvent) {
-  if (event.method.toLowerCase() !== 'account/login/completed') return ''
-  return boundedIdentifier(record(parseRawEvent(event.rawJson).params).loginId, 256)
+export function codexLoginCompletionMatches(event: TengriCodexEvent, activeLoginId: string) {
+  if (event.method.toLowerCase() !== 'account/login/completed' || !activeLoginId) return false
+  const params = record(parseRawEvent(event.rawJson).params)
+  if (params.loginId === null) return true
+  return boundedIdentifier(params.loginId, 256) === activeLoginId
+}
+
+export function codexAccountRefreshIsCurrent(
+  requestGeneration: number,
+  currentGeneration: number,
+  expectedLoginId: string,
+  activeLoginId: string,
+) {
+  return requestGeneration === currentGeneration && (!expectedLoginId || expectedLoginId === activeLoginId)
 }
 
 export function codexLoginCompletionError(event: TengriCodexEvent) {

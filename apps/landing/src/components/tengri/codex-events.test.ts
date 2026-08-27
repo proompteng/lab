@@ -2,13 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import type { TengriCodexEvent } from '@/lib/tengri/types'
 import {
   appendCodexEvent,
+  codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
-  codexLoginCompletionId,
   codexLoginCompletionError,
+  codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
   codexTranscriptFromThread,
   parseCodexEvent,
@@ -287,7 +288,14 @@ describe('Codex event decoding', () => {
     }
 
     expect(codexLoginCompletionError(failedLogin)).toBe('device code expired')
-    expect(codexLoginCompletionId(failedLogin)).toBe('login-1')
+    expect(codexLoginCompletionMatches(failedLogin, 'login-1')).toBe(true)
+    expect(codexLoginCompletionMatches(failedLogin, 'login-2')).toBe(false)
+    expect(
+      codexLoginCompletionMatches(
+        { ...failedLogin, rawJson: JSON.stringify({ params: { loginId: null, success: false } }) },
+        'login-2',
+      ),
+    ).toBe(true)
     expect(
       codexLoginCompletionError({
         ...failedLogin,
@@ -301,6 +309,12 @@ describe('Codex event decoding', () => {
   test('does not recover an active turn already completed by the event stream', () => {
     expect(codexReconciledActiveTurnId('turn-1', new Set(['turn-1']))).toBe('')
     expect(codexReconciledActiveTurnId('turn-2', new Set(['turn-1']))).toBe('turn-2')
+  })
+
+  test('applies only the newest account refresh for the active login attempt', () => {
+    expect(codexAccountRefreshIsCurrent(2, 2, 'login-2', 'login-2')).toBe(true)
+    expect(codexAccountRefreshIsCurrent(1, 2, 'login-2', 'login-2')).toBe(false)
+    expect(codexAccountRefreshIsCurrent(3, 3, 'login-1', 'login-2')).toBe(false)
   })
 
   test('decodes printable base64 command output without corrupting ordinary text', () => {
