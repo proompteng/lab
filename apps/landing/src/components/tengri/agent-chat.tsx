@@ -12,13 +12,14 @@ import type {
 import { CodexEventCard } from './codex-event-card'
 import {
   appendCodexEvent,
+  codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexEventDisplayText,
   codexEventMatchesThread,
   codexEventShouldRender,
-  codexLoginCompletionId,
   codexLoginCompletionError,
+  codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
   codexTranscriptFromThread,
   parseCodexEvent,
@@ -45,6 +46,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
   const [error, setError] = useState('')
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>('connecting')
   const endRef = useRef<HTMLDivElement | null>(null)
+  const accountRefreshGeneration = useRef(0)
   const completedTurns = useRef(new Set<string>())
   const loginIdRef = useRef('')
   const threadIdRef = useRef('')
@@ -61,10 +63,23 @@ export function AgentChat({ agentId }: { agentId: string }) {
   }, [])
 
   const refreshAccount = useCallback(
-    async (signal?: AbortSignal, clearError = true) => {
+    async (signal?: AbortSignal, clearError = true, expectedLoginId = '') => {
+      if (expectedLoginId && loginIdRef.current !== expectedLoginId) return null
+      const generation = ++accountRefreshGeneration.current
       try {
         const next = await runTengriAction<TengriCodexAccount>({ action: 'codex-account', agentId }, signal)
-        if (signal?.aborted || !mountedRef.current) return null
+        if (
+          signal?.aborted ||
+          !mountedRef.current ||
+          !codexAccountRefreshIsCurrent(
+            generation,
+            accountRefreshGeneration.current,
+            expectedLoginId,
+            loginIdRef.current,
+          )
+        ) {
+          return null
+        }
         setAccount(next)
         if (next.authenticated) {
           loginIdRef.current = ''
@@ -73,7 +88,18 @@ export function AgentChat({ agentId }: { agentId: string }) {
         if (clearError) setError('')
         return next
       } catch (cause) {
-        if (signal?.aborted || !mountedRef.current) return null
+        if (
+          signal?.aborted ||
+          !mountedRef.current ||
+          !codexAccountRefreshIsCurrent(
+            generation,
+            accountRefreshGeneration.current,
+            expectedLoginId,
+            loginIdRef.current,
+          )
+        ) {
+          return null
+        }
         setError(cause instanceof Error ? cause.message : 'Codex account unavailable')
         return null
       }
@@ -120,7 +146,7 @@ export function AgentChat({ agentId }: { agentId: string }) {
         setError('The device code expired. Start a new Codex login.')
         return
       }
-      await refreshAccount(undefined, false)
+      await refreshAccount(undefined, false, login.loginId)
       if (!stopped) timer = window.setTimeout(() => void refresh(), 2_500)
     }
     timer = window.setTimeout(() => void refresh(), 2_500)
@@ -194,10 +220,9 @@ export function AgentChat({ agentId }: { agentId: string }) {
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       const currentThread = threadIdRef.current
       if (!codexEventMatchesThread(event, currentThread)) return
-      const loginCompletionId = codexLoginCompletionId(event)
       if (
         event.method.toLowerCase() === 'account/login/completed' &&
-        (!loginCompletionId || loginCompletionId !== loginIdRef.current)
+        !codexLoginCompletionMatches(event, loginIdRef.current)
       ) {
         return
       }
