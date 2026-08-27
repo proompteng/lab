@@ -236,7 +236,7 @@ func newHandler(api *apiServer) http.Handler {
 	}
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
-	mux.HandleFunc("GET /healthz", ready)
+	mux.HandleFunc("GET /healthz", live)
 	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
 }

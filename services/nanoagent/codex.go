@@ -71,6 +71,11 @@ type codexApproval struct {
 	resolving   bool
 }
 
+type codexProcessGeneration struct {
+	ready   chan struct{}
+	failure error
+}
+
 type codexSupervisor struct {
 	binary      string
 	cwd         string
@@ -82,7 +87,7 @@ type codexSupervisor struct {
 	mu             sync.Mutex
 	command        *exec.Cmd
 	stdin          io.WriteCloser
-	ready          chan struct{}
+	generation     *codexProcessGeneration
 	pending        map[string]chan codexPendingResult
 	approvals      map[string]codexApproval
 	activeLoginID  string
@@ -99,7 +104,7 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 		binary:        binary,
 		cwd:           cwd,
 		writePermit:   make(chan struct{}, 1),
-		ready:         make(chan struct{}),
+		generation:    newCodexProcessGeneration(),
 		pending:       make(map[string]chan codexPendingResult),
 		approvals:     make(map[string]codexApproval),
 		subscriptions: make(map[uint64]codexSubscription),
@@ -109,17 +114,27 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	return supervisor
 }
 
+func newCodexProcessGeneration() *codexProcessGeneration {
+	return &codexProcessGeneration{ready: make(chan struct{})}
+}
+
 func (supervisor *codexSupervisor) start() {
 	go supervisor.run()
 }
 
 func (supervisor *codexSupervisor) isReady() bool {
+	if supervisor.closed.Load() {
+		return false
+	}
 	supervisor.mu.Lock()
-	ready := supervisor.ready
+	generation := supervisor.generation
 	supervisor.mu.Unlock()
 	select {
-	case <-ready:
-		return true
+	case <-generation.ready:
+		supervisor.mu.Lock()
+		ready := supervisor.generation == generation && generation.failure == nil && supervisor.stdin != nil
+		supervisor.mu.Unlock()
+		return ready && !supervisor.closed.Load()
 	default:
 		return false
 	}
@@ -129,6 +144,7 @@ func (supervisor *codexSupervisor) run() {
 	backoff := time.Second
 	for !supervisor.closed.Load() {
 		if err := supervisor.runProcess(); err != nil && !supervisor.closed.Load() {
+			supervisor.failProcess(err)
 			supervisor.publish("error", "", map[string]any{
 				"method": "error",
 				"params": map[string]string{"message": "Codex app-server is restarting"},
@@ -198,24 +214,21 @@ func (supervisor *codexSupervisor) runProcess() error {
 	if err != nil {
 		killProcessGroup(command)
 		_ = command.Wait()
-		supervisor.failProcess(err)
 		return fmt.Errorf("initialize Codex app-server: %w", err)
 	}
 	if err := supervisor.writeMessage(map[string]any{"method": "initialized"}); err != nil {
 		killProcessGroup(command)
 		_ = command.Wait()
-		supervisor.failProcess(err)
 		return fmt.Errorf("acknowledge Codex app-server initialization: %w", err)
 	}
 	supervisor.mu.Lock()
-	closeSignal(supervisor.ready)
+	closeSignal(supervisor.generation.ready)
 	supervisor.mu.Unlock()
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
 	if waitErr != nil {
 		processErr = fmt.Errorf("Codex app-server exited: %w", waitErr)
 	}
-	supervisor.failProcess(processErr)
 	return processErr
 }
 
@@ -226,7 +239,8 @@ func (supervisor *codexSupervisor) close() {
 	close(supervisor.shutdown)
 	supervisor.mu.Lock()
 	command := supervisor.command
-	closeSignal(supervisor.ready)
+	supervisor.generation.failure = errors.New("Codex app-server is shutting down")
+	closeSignal(supervisor.generation.ready)
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	for id, subscription := range supervisor.subscriptions {
@@ -306,22 +320,23 @@ func (supervisor *codexSupervisor) request(
 	params json.RawMessage,
 	waitReady bool,
 ) (json.RawMessage, error) {
+	var generation *codexProcessGeneration
 	if waitReady {
 		supervisor.mu.Lock()
-		ready := supervisor.ready
+		generation = supervisor.generation
 		supervisor.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-supervisor.shutdown:
-			return nil, errors.New("Codex app-server is shutting down")
-		case <-ready:
+		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
+			return nil, err
 		}
 	}
 	id := supervisor.requestID.Add(1)
 	key := fmt.Sprintf("%d", id)
 	response := make(chan codexPendingResult, 1)
 	supervisor.mu.Lock()
+	if waitReady && (supervisor.generation != generation || generation.failure != nil) {
+		supervisor.mu.Unlock()
+		return nil, errors.New("Codex app-server restarted before the request could be sent")
+	}
 	supervisor.pending[key] = response
 	stdin := supervisor.stdin
 	supervisor.mu.Unlock()
@@ -348,6 +363,26 @@ func (supervisor *codexSupervisor) request(
 			return nil, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
 		}
 		return result.result, nil
+	}
+}
+
+func (supervisor *codexSupervisor) waitForGeneration(
+	ctx context.Context,
+	generation *codexProcessGeneration,
+) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-supervisor.shutdown:
+		return errors.New("Codex app-server is shutting down")
+	case <-generation.ready:
+		supervisor.mu.Lock()
+		failure := generation.failure
+		supervisor.mu.Unlock()
+		if failure != nil {
+			return fmt.Errorf("Codex app-server generation failed: %w", failure)
+		}
+		return nil
 	}
 }
 
@@ -721,8 +756,9 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	supervisor.mu.Lock()
 	supervisor.command = nil
 	supervisor.stdin = nil
-	closeSignal(supervisor.ready)
-	supervisor.ready = make(chan struct{})
+	supervisor.generation.failure = err
+	closeSignal(supervisor.generation.ready)
+	supervisor.generation = newCodexProcessGeneration()
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)

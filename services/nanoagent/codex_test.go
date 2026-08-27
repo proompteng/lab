@@ -73,17 +73,26 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	}
 }
 
-func TestCodexFailedStartupReleasesCurrentGenerationWaiters(t *testing.T) {
+func TestCodexFailedStartupReturnsFailureToCurrentGenerationWaiters(t *testing.T) {
 	t.Parallel()
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
-	waitingOn := supervisor.ready
+	waitingOn := supervisor.generation
+	failure := errors.New("initialization failed")
 
-	supervisor.failProcess(errors.New("initialization failed"))
+	supervisor.failProcess(failure)
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := supervisor.waitForGeneration(ctx, waitingOn); !errors.Is(err, failure) {
+		t.Fatalf("failed generation waiter error = %v, want initialization failure", err)
+	}
+	if supervisor.generation == waitingOn {
+		t.Fatal("failed process generation was not replaced")
+	}
 	select {
-	case <-waitingOn:
-	case <-time.After(time.Second):
-		t.Fatal("failed startup abandoned waiters on the previous readiness generation")
+	case <-supervisor.generation.ready:
+		t.Fatal("replacement process generation was released before initialization")
+	default:
 	}
 	if supervisor.isReady() {
 		t.Fatal("replacement process generation was reported ready before initialization")

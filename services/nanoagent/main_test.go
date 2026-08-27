@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -115,6 +116,11 @@ func TestReadinessWaitsForCodexInitialization(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
 	server.codex = newCodexSupervisor("/usr/bin/false", t.TempDir())
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
 	handler := newHandler(server)
 
 	response := httptest.NewRecorder()
@@ -122,9 +128,17 @@ func TestReadinessWaitsForCodexInitialization(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("uninitialized readiness status = %d", response.Code)
 	}
+	for _, path := range []string{"/livez", "/healthz"} {
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("uninitialized liveness status for %s = %d", path, response.Code)
+		}
+	}
 
 	server.codex.mu.Lock()
-	close(server.codex.ready)
+	server.codex.stdin = writer
+	close(server.codex.generation.ready)
 	server.codex.mu.Unlock()
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -132,11 +146,6 @@ func TestReadinessWaitsForCodexInitialization(t *testing.T) {
 		t.Fatalf("initialized readiness status = %d", response.Code)
 	}
 
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/livez", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("liveness status = %d", response.Code)
-	}
 }
 
 func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
