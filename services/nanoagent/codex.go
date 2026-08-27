@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	codexEventBufferSize  = 2_048
-	codexEventBufferBytes = 16 << 20
-	codexEventMaxBytes    = 2 << 20
-	codexSubscriberLimit  = 8
+	codexEventBufferSize      = 2_048
+	codexEventBufferBytes     = 16 << 20
+	codexEventMaxBytes        = 2 << 20
+	codexProtocolLineMaxBytes = 8 << 20
+	codexSubscriberLimit      = 8
+	codexApprovalWriteTimeout = 15 * time.Second
 )
 
 type codexCallRequest struct {
@@ -396,23 +398,73 @@ func (supervisor *codexSupervisor) readMessages(
 	generation *codexProcessGeneration,
 	reader io.Reader,
 ) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64<<10), 8<<20)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		var message codexRPCMessage
-		if json.Unmarshal(line, &message) != nil {
-			continue
+	supervisor.readMessagesWithLimit(command, generation, reader, codexProtocolLineMaxBytes)
+}
+
+func (supervisor *codexSupervisor) readMessagesWithLimit(
+	command *exec.Cmd,
+	generation *codexProcessGeneration,
+	reader io.Reader,
+	lineLimit int,
+) {
+	buffered := bufio.NewReaderSize(reader, 64<<10)
+	for {
+		line, size, oversized, readErr := readBoundedCodexLine(buffered, lineLimit)
+		if oversized {
+			supervisor.publish("tengri/eventOmitted", "", codexOversizedProtocolMessage(size))
+		} else if len(bytes.TrimSpace(line)) > 0 {
+			var message codexRPCMessage
+			if json.Unmarshal(line, &message) == nil {
+				if len(message.ID) > 0 && message.Method == "" {
+					supervisor.resolveResponse(message)
+				} else if message.Method != "" {
+					supervisor.handleServerMessage(generation, message, line)
+				}
+			}
 		}
-		if len(message.ID) > 0 && message.Method == "" {
-			supervisor.resolveResponse(message)
-			continue
-		}
-		if message.Method != "" {
-			supervisor.handleServerMessage(generation, message, line)
+		if readErr != nil {
+			break
 		}
 	}
 	killProcessGroup(command)
+}
+
+func readBoundedCodexLine(reader *bufio.Reader, limit int) ([]byte, int, bool, error) {
+	if limit <= 0 {
+		return nil, 0, false, errors.New("Codex protocol line limit must be positive")
+	}
+	line := make([]byte, 0, min(limit, reader.Size()))
+	size := 0
+	oversized := false
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		size += len(fragment)
+		if !oversized {
+			if len(line)+len(fragment) > limit {
+				line = nil
+				oversized = true
+			} else {
+				line = append(line, fragment...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		line = bytes.TrimSuffix(line, []byte{'\n'})
+		line = bytes.TrimSuffix(line, []byte{'\r'})
+		return line, size, oversized, err
+	}
+}
+
+func codexOversizedProtocolMessage(size int) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"method": "tengri/eventOmitted",
+		"params": map[string]any{
+			"message": "Codex protocol message exceeded the bounded input limit and was omitted",
+			"bytes":   size,
+		},
+	})
+	return raw
 }
 
 func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
@@ -451,7 +503,12 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		approvalID = normalizeRequestID(message.ID)
 		switch message.Method {
 		case "currentTime/read":
-			_ = supervisor.respondRawForGeneration(generation, message.ID, map[string]any{"currentTimeAt": time.Now().Unix()})
+			_ = supervisor.respondRawForGeneration(
+				context.Background(),
+				generation,
+				message.ID,
+				map[string]any{"currentTimeAt": time.Now().Unix()},
+			)
 			return
 		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "execCommandApproval", "applyPatchApproval":
 			supervisor.mu.Lock()
@@ -512,7 +569,7 @@ func (supervisor *codexSupervisor) isCurrentGeneration(generation *codexProcessG
 	return generation != nil && supervisor.generation == generation && generation.failure == nil
 }
 
-func (supervisor *codexSupervisor) resolveApproval(id, decision string) error {
+func (supervisor *codexSupervisor) resolveApproval(ctx context.Context, id, decision string) error {
 	supervisor.mu.Lock()
 	approval, found := supervisor.approvals[id]
 	if found && approval.resolving {
@@ -532,7 +589,9 @@ func (supervisor *codexSupervisor) resolveApproval(id, decision string) error {
 		supervisor.resetApproval(id, approval)
 		return err
 	}
-	if err := supervisor.respondRawForGeneration(approval.generation, approval.rawID, result); err != nil {
+	writeContext, cancel := context.WithTimeout(ctx, codexApprovalWriteTimeout)
+	defer cancel()
+	if err := supervisor.respondRawForGeneration(writeContext, approval.generation, approval.rawID, result); err != nil {
 		supervisor.resetApproval(id, approval)
 		return err
 	}
@@ -640,11 +699,13 @@ func (supervisor *codexSupervisor) finishApproval(id string, approval codexAppro
 }
 
 func (supervisor *codexSupervisor) respondRawForGeneration(
+	ctx context.Context,
 	generation *codexProcessGeneration,
 	id json.RawMessage,
 	result any,
 ) error {
 	return supervisor.writeMessageForGeneration(
+		ctx,
 		generation,
 		map[string]any{"id": json.RawMessage(id), "result": result},
 	)
@@ -655,13 +716,18 @@ func (supervisor *codexSupervisor) respondErrorForGeneration(
 	id json.RawMessage,
 	message string,
 ) {
-	_ = supervisor.writeMessageForGeneration(generation, map[string]any{
-		"id":    json.RawMessage(id),
-		"error": map[string]any{"code": -32_000, "message": message},
-	})
+	_ = supervisor.writeMessageForGeneration(
+		context.Background(),
+		generation,
+		map[string]any{
+			"id":    json.RawMessage(id),
+			"error": map[string]any{"code": -32_000, "message": message},
+		},
+	)
 }
 
 func (supervisor *codexSupervisor) writeMessageForGeneration(
+	ctx context.Context,
 	generation *codexProcessGeneration,
 	value any,
 ) error {
@@ -679,7 +745,7 @@ func (supervisor *codexSupervisor) writeMessageForGeneration(
 	if stdin == nil {
 		return errors.New("Codex app-server is unavailable")
 	}
-	return supervisor.writeToProcess(context.Background(), generation, stdin, append(message, '\n'))
+	return supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 }
 
 func (supervisor *codexSupervisor) writeMessage(value any) error {
@@ -940,7 +1006,7 @@ func (server *apiServer) handleCodexApproval(writer http.ResponseWriter, request
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	if err := server.codex.resolveApproval(request.PathValue("id"), input.Decision); err != nil {
+	if err := server.codex.resolveApproval(request.Context(), request.PathValue("id"), input.Decision); err != nil {
 		writeAPIError(writer, http.StatusNotFound, err.Error())
 		return
 	}

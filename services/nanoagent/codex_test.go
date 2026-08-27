@@ -125,7 +125,7 @@ func TestCodexFailedStartupReturnsFailureToCurrentGenerationWaiters(t *testing.T
 func TestApprovalResolutionRejectsUnknownApproval(t *testing.T) {
 	t.Parallel()
 	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
-	if err := supervisor.resolveApproval("missing", "approveOnce"); err == nil {
+	if err := supervisor.resolveApproval(context.Background(), "missing", "approveOnce"); err == nil {
 		t.Fatal("resolveApproval() accepted an unknown request")
 	}
 }
@@ -158,7 +158,7 @@ func TestApprovalResponseCannotCrossProcessGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("approval result: %v", err)
 	}
-	if err := supervisor.respondRawForGeneration(failedGeneration, approval.rawID, result); err == nil {
+	if err := supervisor.respondRawForGeneration(context.Background(), failedGeneration, approval.rawID, result); err == nil {
 		t.Fatal("failed generation approval was written to the replacement process")
 	}
 	if replacement.Len() != 0 {
@@ -172,6 +172,55 @@ func TestApprovalResponseCannotCrossProcessGenerations(t *testing.T) {
 	supervisor.mu.Unlock()
 	if current.generation != supervisor.generation || current.method != "item/fileChange/requestApproval" {
 		t.Fatalf("old approval mutated replacement request: %#v", current)
+	}
+}
+
+func TestCodexMessageReaderContinuesAfterOversizedLine(t *testing.T) {
+	t.Parallel()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	valid := `{"method":"item/agentMessage/delta","params":{"delta":"ok"}}`
+	input := strings.Repeat("x", 257) + "\n" + valid + "\n"
+
+	supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(input), 256)
+
+	if len(supervisor.buffer) != 2 {
+		t.Fatalf("Codex event count = %d, want oversized warning and following event", len(supervisor.buffer))
+	}
+	if supervisor.buffer[0].Method != "tengri/eventOmitted" {
+		t.Fatalf("oversized protocol event = %q", supervisor.buffer[0].Method)
+	}
+	if supervisor.buffer[1].Method != "item/agentMessage/delta" {
+		t.Fatalf("event after oversized line = %q", supervisor.buffer[1].Method)
+	}
+}
+
+func TestApprovalCancellationRestartsBlockedProcessWriter(t *testing.T) {
+	t.Parallel()
+	reader, writer := io.Pipe()
+	supervisor := newCodexSupervisor("/usr/bin/false", t.TempDir())
+	supervisor.stdin = writer
+	supervisor.approvals["9"] = codexApproval{
+		generation: supervisor.generation,
+		method:     "applyPatchApproval",
+		decisions:  defaultCodexApprovalDecisions(),
+		rawID:      json.RawMessage(`9`),
+	}
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := supervisor.resolveApproval(ctx, "9", "approveOnce")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked approval error = %v, want deadline exceeded", err)
+	}
+	select {
+	case <-supervisor.writePermit:
+		supervisor.writePermit <- struct{}{}
+	case <-time.After(time.Second):
+		t.Fatal("canceled approval retained the process write permit")
 	}
 }
 
