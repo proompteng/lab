@@ -209,7 +209,9 @@ func newTerminalManager(workspace workspace, shell string, home string) *termina
 
 func resolveTerminalShell(configured string) string {
 	if shell := strings.TrimSpace(configured); shell != "" {
-		return shell
+		if resolved, err := exec.LookPath(shell); err == nil {
+			return resolved
+		}
 	}
 	for _, candidate := range []string{"bash", "sh"} {
 		if shell, err := exec.LookPath(candidate); err == nil {
@@ -566,12 +568,7 @@ func (session *terminalSession) attach(connection *websocket.Conn, token string,
 		"bufferEnd":   bufferEnd,
 	})
 	messages := []terminalMessage{{messageType: websocket.MessageText, payload: ready}}
-	resetReason := ""
-	if since > bufferEnd {
-		resetReason = "invalid_cursor"
-	} else if since > 0 && since < bufferStart {
-		resetReason = "buffer_miss"
-	}
+	resetReason := terminalReplayResetReason(since, bufferStart, bufferEnd)
 	if resetReason != "" {
 		reset, _ := json.Marshal(map[string]any{
 			"type":        "reset",
@@ -597,6 +594,16 @@ func (session *terminalSession) attach(connection *websocket.Conn, token string,
 		previous.close(websocket.StatusNormalClosure, "Reconnected")
 	}
 	return attached, nil
+}
+
+func terminalReplayResetReason(since, bufferStart, bufferEnd uint32) string {
+	if since > bufferEnd {
+		return "invalid_cursor"
+	}
+	if since > 0 && since < bufferStart && bufferStart-since > 1 {
+		return "buffer_miss"
+	}
+	return ""
 }
 
 func (session *terminalSession) detach(connection *terminalConnection) {

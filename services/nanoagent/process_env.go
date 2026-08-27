@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-const bootstrapTokenEnvironmentKey = "MICROVM_BOOTSTRAP_TOKEN"
-
 func childEnvironment(extra ...string) []string {
 	return childProcessEnvironment(os.Environ(), extra...)
 }
@@ -23,7 +21,7 @@ func childProcessEnvironment(source []string, extra ...string) []string {
 	for _, item := range source {
 		key, _, found := strings.Cut(item, "=")
 		_, overridden := overrides[key]
-		if found && (key == bootstrapTokenEnvironmentKey || overridden) {
+		if found && (key == bootstrapTokenEnvironmentKey || key == bootstrapTokenFDEnvironmentKey || overridden) {
 			continue
 		}
 		environment = append(environment, item)

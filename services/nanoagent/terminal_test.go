@@ -54,8 +54,33 @@ func TestTerminalManagerFallsBackToAvailablePOSIXShell(t *testing.T) {
 	}
 	t.Setenv("PATH", directory)
 
-	if resolved := resolveTerminalShell(""); resolved != shell {
+	if resolved := resolveTerminalShell(filepath.Join(directory, "missing-bash")); resolved != shell {
 		t.Fatalf("resolveTerminalShell() = %q, want %q", resolved, shell)
+	}
+}
+
+func TestTerminalReplayResetReasonPreservesContiguousCursor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		since       uint32
+		bufferStart uint32
+		bufferEnd   uint32
+		want        string
+	}{
+		{name: "initial replay", since: 0, bufferStart: 7, bufferEnd: 9},
+		{name: "contiguous cursor", since: 6, bufferStart: 7, bufferEnd: 9},
+		{name: "retained cursor", since: 7, bufferStart: 7, bufferEnd: 9},
+		{name: "buffer gap", since: 5, bufferStart: 7, bufferEnd: 9, want: "buffer_miss"},
+		{name: "future cursor", since: 10, bufferStart: 7, bufferEnd: 9, want: "invalid_cursor"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := terminalReplayResetReason(test.since, test.bufferStart, test.bufferEnd); actual != test.want {
+				t.Fatalf("terminalReplayResetReason() = %q, want %q", actual, test.want)
+			}
+		})
 	}
 }
 
