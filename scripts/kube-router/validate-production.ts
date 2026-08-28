@@ -262,7 +262,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
     `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')}`,
     '} | sort -u',
-    'kubectl get namespace tengri',
+    'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
@@ -386,7 +386,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     'set -euo pipefail',
     "printf '%s\\n' hermes",
-    'kubectl get namespace tengri',
+    'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',

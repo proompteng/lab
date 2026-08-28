@@ -97,6 +97,28 @@ test('rejects bypassing the live namespace preflight', async () => {
   )
 })
 
+test('rejects an unscoped optional Tengri namespace check in the preflight hook', async () => {
+  const files = copy(await loadProductionFiles())
+  files.preflightHook = files.preflightHook.replace(
+    'kubectl -n kube-system get namespace tengri',
+    'kubectl get namespace tengri',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.preflightHook}: missing production invariant "kubectl -n kube-system get namespace tengri"`,
+  )
+})
+
+test('rejects an unscoped optional Tengri namespace check in the coverage probe', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace(
+    'kubectl -n kube-system get namespace tengri',
+    'kubectl get namespace tengri',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.coverageProbe}: missing production invariant "kubectl -n kube-system get namespace tengri"`,
+  )
+})
+
 test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
