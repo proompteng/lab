@@ -295,7 +295,7 @@ describe('opening-drive momentum strategy', () => {
     )
   })
 
-  test('fails closed before decision when a symbol lacks range-completion evidence', () => {
+  test('reports not-ready before decision when a symbol lacks range-completion evidence', () => {
     const rows = makeRows()
     const failure = error(
       verifyIntradaySnapshot(request, {
@@ -305,7 +305,7 @@ describe('opening-drive momentum strategy', () => {
     )
 
     expect(failure).toMatchObject({
-      reason: 'coverage',
+      reason: 'not-ready',
       message: 'intraday snapshot lacks a per-symbol range-completion bar',
       facts: { symbol: 'AMD' },
     })

@@ -5,6 +5,8 @@ import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycle } from '../cycle'
 import { fixtureRuntime } from '../app-test-support'
+import { operationalError } from '../errors'
+import { IntradaySnapshotFailure } from '../market-data'
 import type { Policy } from '../risk'
 import { ObserveDecisionAwaitingSignal, decisionBuildError } from './decision-builder'
 import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
@@ -20,6 +22,35 @@ test('maps an expected armed-entry wait to a non-terminal decision outcome', () 
   )
 
   expect(error).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
+})
+
+test('keeps an incomplete intraday archive retryable without weakening malformed-data failures', () => {
+  const incomplete = decisionBuildError(
+    operationalError({
+      component: 'market-data',
+      operation: 'load-intraday',
+      message: 'intraday snapshot lacks a per-symbol range-completion bar',
+      cause: new IntradaySnapshotFailure({
+        reason: 'not-ready',
+        message: 'intraday snapshot lacks a per-symbol range-completion bar',
+        facts: { symbol: 'AMD', eventAt: '2026-08-27T13:34:00.000Z' },
+      }),
+    }),
+  )
+  const malformed = decisionBuildError(
+    operationalError({
+      component: 'market-data',
+      operation: 'load-intraday',
+      message: 'intraday snapshot duplicates a one-minute bar',
+      cause: new IntradaySnapshotFailure({
+        reason: 'coverage',
+        message: 'intraday snapshot duplicates a one-minute bar',
+      }),
+    }),
+  )
+
+  expect(incomplete).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
+  expect(malformed).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'market-data' })
 })
 
 test('an every-session mutation rejects the multi-session strategy before reconciliation or decision I/O', async () => {
