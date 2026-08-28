@@ -427,6 +427,86 @@ func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
 	}
 }
 
+func TestWatchFilesRoutesPairedRenameThroughSymlinkedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	t.Parallel()
+	server := testAPIServer(t)
+	actual := filepath.Join(server.workspace.realRoot, "actual")
+	if err := os.Mkdir(actual, 0o750); err != nil {
+		t.Fatalf("create actual directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(actual, "source.txt"), []byte("source"), 0o640); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
+		t.Fatalf("create parent symlink: %v", err)
+	}
+
+	streamServer := httptest.NewServer(server.authenticatedRoutes())
+	defer streamServer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		streamServer.URL+"/v1/files/watch?path=%2Falias",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create watch request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	response, err := streamServer.Client().Do(request)
+	if err != nil {
+		t.Fatalf("watch files: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("watch status = %d body = %s", response.StatusCode, body)
+	}
+
+	body, err := json.Marshal(moveFileRequest{
+		SourcePath:      "/alias/source.txt",
+		DestinationPath: "/alias/moved.txt",
+	})
+	if err != nil {
+		t.Fatalf("marshal move request: %v", err)
+	}
+	moveResponse := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+	if moveResponse.Code != http.StatusOK {
+		t.Fatalf("move status = %d body = %s", moveResponse.Code, moveResponse.Body.String())
+	}
+
+	result := make(chan struct {
+		event fileEvent
+		err   error
+	}, 1)
+	go func() {
+		var event fileEvent
+		decodeErr := json.NewDecoder(response.Body).Decode(&event)
+		result <- struct {
+			event fileEvent
+			err   error
+		}{event: event, err: decodeErr}
+	}()
+	select {
+	case decoded := <-result:
+		if decoded.err != nil {
+			t.Fatalf("decode watch event: %v", decoded.err)
+		}
+		if decoded.event.Kind != "renamed" ||
+			decoded.event.PreviousPath != "/alias/source.txt" ||
+			decoded.event.Path != "/alias/moved.txt" {
+			t.Fatalf("watch event = %#v, want logical paired rename", decoded.event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for paired rename on the canonical symlink watch")
+	}
+}
+
 func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires additional privileges on Windows")
