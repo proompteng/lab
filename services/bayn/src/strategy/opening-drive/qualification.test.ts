@@ -794,7 +794,10 @@ describe('opening-drive after-cost qualification', () => {
 
     expect(
       error(replayOpeningDriveSession({ ...input, exit }, protocol, defaultOpeningDriveQualificationPolicy)),
-    ).toMatchObject({ reason: 'snapshot-binding', symbol: 'AMD' })
+    ).toMatchObject({
+      reason: 'snapshot-binding',
+      message: 'intraday snapshot failed authoritative row verification',
+    })
   })
 
   test('rejects a stale opening quote before constructing the qualification benchmark', () => {

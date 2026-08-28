@@ -459,7 +459,7 @@ describe('opening-drive momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-window' })
   })
 
-  test('uses the highest Kafka offset when trade timestamps tie', () => {
+  test('rejects conflicting same-partition payloads when trade timestamps tie', () => {
     const protocol = success(decodeDefaultOpeningDriveProtocol())
     const rows = makeRows()
     const amdTrade = rows.trades.find((trade) => trade.symbol === 'AMD')
@@ -481,10 +481,11 @@ describe('opening-drive momentum strategy', () => {
     const tiedSnapshot = verifyIntradaySnapshot({ ...request, archiveWatermarks }, tiedRows)
     if (Result.isFailure(tiedSnapshot)) throw new Error(JSON.stringify(tiedSnapshot.failure))
     const market = tiedSnapshot.success
-    const decision = success(decideOpeningDrive({ snapshot: market, session }, protocol))
-
-    expect(decision.selectedSymbols).not.toContain('AMD')
-    expect(decision.signals.find((signal) => signal.symbol === 'AMD')?.rejectionReasons).toContain('breakout')
+    expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
+      reason: 'snapshot-coverage',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: latest intraday timestamp has conflicting market payloads',
+    })
   })
 
   test('rejects latest-trade timestamp ties across Kafka partitions', () => {
@@ -533,7 +534,8 @@ describe('opening-drive momentum strategy', () => {
 
     expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
       reason: 'snapshot-coverage',
-      symbol: 'AMD',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: latest intraday timestamp has conflicting market payloads',
     })
   })
 
@@ -584,7 +586,8 @@ describe('opening-drive momentum strategy', () => {
 
     expect(error(decideOpeningDrive({ snapshot: market, session }, protocol))).toMatchObject({
       reason: 'snapshot-coverage',
-      symbol: 'AMD',
+      message:
+        'opening-drive snapshot failed authoritative re-verification: latest intraday timestamp has conflicting market payloads',
     })
   })
 
