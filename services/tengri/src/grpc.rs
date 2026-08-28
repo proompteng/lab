@@ -626,7 +626,6 @@ impl MicroVmControlPlane for ControlPlane {
             let failed_creation_id = creation_id.clone();
             let creation = detached_terminal_creation(
                 async move {
-                    let _creation_guard = creation_guard;
                     create_guest
                         .create_terminal(&creation_id, &cwd, columns, rows)
                         .await
@@ -654,6 +653,7 @@ impl MicroVmControlPlane for ControlPlane {
                     }
                     Err(map_guest_error(error))
                 },
+                creation_guard,
             )
             .await?;
             return Ok(Response::new(terminal_session(creation.session)));
@@ -2422,10 +2422,11 @@ fn terminal_creation_failure_is_definitive(error: &GuestError) -> bool {
     matches!(error, GuestError::Api { .. })
 }
 
-async fn detached_terminal_creation<C, S, SF, F, FF>(
+async fn detached_terminal_creation<C, S, SF, F, FF, R>(
     creation: C,
     on_success: S,
     on_failure: F,
+    retained_until_settled: R,
 ) -> Result<GuestTerminalCreation, Status>
 where
     C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
@@ -2433,6 +2434,7 @@ where
     SF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
     F: FnOnce(GuestError) -> FF + Send + 'static,
     FF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
+    R: Send + 'static,
 {
     let (result_sender, result_receiver) = oneshot::channel();
     tokio::spawn(async move {
@@ -2440,6 +2442,7 @@ where
             Ok(creation) => on_success(creation).await,
             Err(error) => on_failure(error).await,
         };
+        drop(retained_until_settled);
         let _ = result_sender.send(result);
     });
 
@@ -3561,6 +3564,7 @@ mod tests {
             async { Ok(legacy_guest_terminal_creation("terminal-unconfirmed")) },
             |creation| async move { Ok(creation) },
             |error| async move { Err(map_guest_error(error)) },
+            (),
         )
         .await
         .expect("terminal creation");
@@ -3573,6 +3577,61 @@ mod tests {
                 .expect("cleanup result"),
             "legacy-grpc-test"
         );
+    }
+
+    #[tokio::test]
+    async fn mixed_version_creation_lock_is_held_through_identity_persistence() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let creation_guard = manager.lock_creation("agent-legacy").await;
+        let (persistence_started_sender, persistence_started_receiver) = oneshot::channel();
+        let (persistence_release_sender, persistence_release_receiver) = oneshot::channel();
+        let creation = tokio::spawn(detached_terminal_creation(
+            async { Ok(legacy_guest_terminal_creation("terminal-created")) },
+            move |creation| async move {
+                persistence_started_sender
+                    .send(())
+                    .expect("persistence started receiver");
+                persistence_release_receiver
+                    .await
+                    .expect("persistence release");
+                Ok(creation)
+            },
+            |error| async move { Err(map_guest_error(error)) },
+            creation_guard,
+        ));
+
+        persistence_started_receiver
+            .await
+            .expect("identity persistence started");
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(25),
+                manager.lock_creation("agent-legacy"),
+            )
+            .await
+            .is_err(),
+            "another legacy create must remain blocked while identity persistence is in flight",
+        );
+
+        persistence_release_sender
+            .send(())
+            .expect("persistence receiver");
+        creation
+            .await
+            .expect("creation task")
+            .expect("terminal creation");
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            manager.lock_creation("agent-legacy"),
+        )
+        .await
+        .expect("creation lock releases after identity persistence");
     }
 
     #[tokio::test]
@@ -3700,6 +3759,7 @@ mod tests {
             },
             |creation| async move { Ok(creation) },
             |error| async move { Err(map_guest_error(error)) },
+            (),
         ));
         started_receiver.await.expect("creation started");
         handler.abort();
@@ -3999,6 +4059,7 @@ mod tests {
                 }
                 Err(map_guest_error(error))
             },
+            (),
         ));
         let (request, response) = handle
             .next_request()

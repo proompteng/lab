@@ -571,7 +571,7 @@ impl GuestClient {
         {
             return Ok(TerminalCreation {
                 session,
-                created: true,
+                created: false,
             });
         }
         Err(original_error)
@@ -632,7 +632,7 @@ impl GuestClient {
                 {
                     return Ok(TerminalCreation {
                         session,
-                        created: true,
+                        created: false,
                     });
                 }
                 Err(error)
@@ -1082,7 +1082,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_creation_reconciles_after_the_guest_response_times_out() {
+    async fn terminal_creation_reconciliation_does_not_claim_a_new_session() {
         const CREATION_ID: &str = "terminal-creation-timeout";
         let created = Arc::new(AtomicBool::new(false));
         let creation_state = Arc::clone(&created);
@@ -1108,27 +1108,23 @@ mod tests {
                         Some(CREATION_ID)
                     );
                     created.store(true, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    (StatusCode::CREATED, Json(terminal_json(CREATION_ID)))
+                    (StatusCode::CREATED, "unreadable terminal response")
                 }
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
-            .expect("bind Nanoagent response-timeout fixture");
+            .expect("bind Nanoagent reconciliation fixture");
         let address = listener
             .local_addr()
-            .expect("Nanoagent response-timeout address");
+            .expect("Nanoagent reconciliation address");
         let server = tokio::spawn(async move {
             axum::serve(listener, router)
                 .await
-                .expect("serve Nanoagent response-timeout fixture");
+                .expect("serve Nanoagent reconciliation fixture");
         });
         let client = GuestClient {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_millis(25))
-                .build()
-                .expect("short-timeout HTTP client"),
+            http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
             token: "test-bootstrap-token".to_owned(),
             agent_id: "agent-response-timeout".to_owned(),
@@ -1140,9 +1136,48 @@ mod tests {
             .await
             .expect("created terminal is reconciled after its response times out");
 
-        assert!(creation.created);
+        assert!(!creation.created);
         assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
         assert_eq!(creation.session.creation_id, CREATION_ID);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciles_a_lost_replay_without_recounting_it() {
+        const CREATION_ID: &str = "terminal-creation-replay";
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(|| async {
+                Json(serde_json::json!({
+                    "sessions": [terminal_json(CREATION_ID)]
+                }))
+            })
+            .post(|| async { (StatusCode::OK, "unreadable terminal replay") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent replay fixture");
+        let address = listener.local_addr().expect("Nanoagent replay address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent replay fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+            agent_id: "agent-replayed-response".to_owned(),
+            terminal_identities: TerminalIdentityRegistry::default(),
+        };
+
+        let replay = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("existing terminal is reconciled after its replay response is lost");
+
+        assert!(!replay.created);
+        assert_eq!(replay.session.creation_id, CREATION_ID);
         server.abort();
     }
 
