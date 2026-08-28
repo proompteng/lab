@@ -34,6 +34,7 @@ const (
 	terminalCleanupDelay = 2 * time.Second
 	terminalQueueDepth   = 128
 	outputFrameType      = byte(1)
+	terminalSessionEnv   = "TENGRI_TERMINAL_SESSION"
 )
 
 type terminalSessionView struct {
@@ -158,23 +159,35 @@ func (connection *terminalConnection) abort() {
 }
 
 type terminalSession struct {
-	id               string
-	creationID       string
-	cwd              string
-	createdAt        time.Time
-	lastActivityAt   time.Time
-	command          *exec.Cmd
-	processSessionID int
-	terminal         *os.File
-	mu               sync.Mutex
-	ioMu             sync.Mutex
-	sequence         uint32
-	bufferBytes      int
-	buffer           []terminalChunk
-	connections      map[string]*terminalConnection
-	closed           bool
-	processExited    chan struct{}
-	outputDrained    chan struct{}
+	id                     string
+	creationID             string
+	cwd                    string
+	createdAt              time.Time
+	lastActivityAt         time.Time
+	command                *exec.Cmd
+	processSessionID       int
+	processLeaderStartTime uint64
+	processLeaderPIDFD     *os.File
+	processLeaderPIDFDOnce sync.Once
+	processCleanupOnce     sync.Once
+	processCleanupDone     chan struct{}
+	terminal               *os.File
+	mu                     sync.Mutex
+	ioMu                   sync.Mutex
+	sequence               uint32
+	bufferBytes            int
+	buffer                 []terminalChunk
+	connections            map[string]*terminalConnection
+	closing                bool
+	closed                 bool
+	processExited          chan struct{}
+	outputDrained          chan struct{}
+}
+
+type processIdentity struct {
+	processID int
+	sessionID int
+	startTime uint64
 }
 
 type terminalManager struct {
@@ -187,8 +200,10 @@ type terminalManager struct {
 	stopOnce  sync.Once
 	closed    bool
 
-	signalProcessSession func(int, syscall.Signal) error
-	cleanupDelay         time.Duration
+	procRoot      string
+	killProcess   func(int, syscall.Signal) error
+	signalProcess func(string, processIdentity, syscall.Signal) error
+	cleanupDelay  time.Duration
 }
 
 func newTerminalManager(workspace workspace, shell string, home string) *terminalManager {
@@ -198,13 +213,15 @@ func newTerminalManager(workspace workspace, shell string, home string) *termina
 		home = workspace.root
 	}
 	manager := &terminalManager{
-		workspace:            workspace,
-		shell:                shell,
-		home:                 home,
-		sessions:             make(map[string]*terminalSession),
-		stop:                 make(chan struct{}),
-		signalProcessSession: signalTerminalProcessSession,
-		cleanupDelay:         terminalCleanupDelay,
+		workspace:     workspace,
+		shell:         shell,
+		home:          home,
+		sessions:      make(map[string]*terminalSession),
+		stop:          make(chan struct{}),
+		procRoot:      "/proc",
+		killProcess:   syscall.Kill,
+		signalProcess: signalPinnedProcessIdentity,
+		cleanupDelay:  terminalCleanupDelay,
 	}
 	go manager.reapIdle()
 	return manager
@@ -281,25 +298,47 @@ func (manager *terminalManager) create(creationID, cwd string, columns, rows uin
 		"HOME="+manager.home,
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
-		"TENGRI_TERMINAL_SESSION="+id,
+		terminalSessionEnv+"="+id,
 	)
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: columns, Rows: rows})
 	if err != nil {
 		return terminalSessionView{}, false, err
 	}
+	processLeaderPIDFD, err := pinProcessIdentity(command.Process.Pid)
+	if err != nil {
+		_ = terminal.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return terminalSessionView{}, false, fmt.Errorf("pin terminal process identity: %w", err)
+	}
+	procRoot := manager.procRoot
+	if procRoot == "" {
+		procRoot = "/proc"
+	}
+	processLeaderStartTime, startTimeErr := processStartTime(procRoot, command.Process.Pid)
+	if startTimeErr != nil && processLeaderPIDFD != nil {
+		_ = processLeaderPIDFD.Close()
+		_ = terminal.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return terminalSessionView{}, false, fmt.Errorf("read terminal process identity: %w", startTimeErr)
+	}
 	now := time.Now().UTC()
 	session := &terminalSession{
-		id:               id,
-		creationID:       creationID,
-		cwd:              manager.workspace.displayPath(resolved),
-		createdAt:        now,
-		lastActivityAt:   now,
-		command:          command,
-		processSessionID: command.Process.Pid,
-		terminal:         terminal,
-		connections:      make(map[string]*terminalConnection),
-		processExited:    make(chan struct{}),
-		outputDrained:    make(chan struct{}),
+		id:                     id,
+		creationID:             creationID,
+		cwd:                    manager.workspace.displayPath(resolved),
+		createdAt:              now,
+		lastActivityAt:         now,
+		command:                command,
+		processSessionID:       command.Process.Pid,
+		processLeaderStartTime: processLeaderStartTime,
+		processLeaderPIDFD:     processLeaderPIDFD,
+		processCleanupDone:     make(chan struct{}),
+		terminal:               terminal,
+		connections:            make(map[string]*terminalConnection),
+		processExited:          make(chan struct{}),
+		outputDrained:          make(chan struct{}),
 	}
 	manager.sessions[id] = session
 	go manager.readOutput(session)
@@ -343,7 +382,7 @@ func (manager *terminalManager) terminate(id string) bool {
 
 func (manager *terminalManager) terminateSession(session *terminalSession, reason string) {
 	session.mu.Lock()
-	if session.closed {
+	if session.closed || session.closing {
 		session.mu.Unlock()
 		return
 	}
@@ -361,22 +400,55 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 	_ = session.terminal.Close()
 }
 
-func (manager *terminalManager) cleanupProcessSession(session *terminalSession) {
+func (manager *terminalManager) cleanupProcessSession(session *terminalSession) <-chan struct{} {
+	session.processCleanupOnce.Do(func() {
+		if session.processCleanupDone == nil {
+			session.processCleanupDone = make(chan struct{})
+		}
+		manager.startProcessSessionCleanup(session)
+	})
+	return session.processCleanupDone
+}
+
+func (manager *terminalManager) startProcessSessionCleanup(session *terminalSession) {
+	finish := func() {
+		close(session.processCleanupDone)
+	}
 	sessionID := session.processSessionID
 	if sessionID <= 0 && session.command != nil && session.command.Process != nil {
 		sessionID = session.command.Process.Pid
 	}
 	if sessionID <= 0 {
+		finish()
+		return
+	}
+	if session.processLeaderStartTime == 0 {
+		manager.startProcessGroupCleanup(sessionID, finish)
 		return
 	}
 
-	signalSession := manager.signalProcessSession
-	if signalSession == nil {
-		signalSession = signalTerminalProcessSession
+	procRoot := manager.procRoot
+	if procRoot == "" {
+		procRoot = "/proc"
 	}
-	if err := signalSession(sessionID, syscall.SIGTERM); err != nil && session.command != nil && session.command.Process != nil {
-		_ = session.command.Process.Signal(syscall.SIGTERM)
+	signalProcess := manager.signalProcess
+	if signalProcess == nil {
+		signalProcess = signalPinnedProcessIdentity
 	}
+	processes, err := originalProcessSession(
+		procRoot,
+		sessionID,
+		session.processLeaderStartTime,
+		session.id,
+		nil,
+	)
+	if err != nil || len(processes) == 0 {
+		finish()
+		return
+	}
+	_ = signalProcessIdentities(processes, syscall.SIGTERM, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcess(procRoot, identity, signal)
+	})
 
 	delay := manager.cleanupDelay
 	if delay <= 0 {
@@ -386,10 +458,47 @@ func (manager *terminalManager) cleanupProcessSession(session *terminalSession) 
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
-		if err := signalSession(sessionID, syscall.SIGKILL); err != nil && session.command != nil && session.command.Process != nil {
-			_ = session.command.Process.Kill()
+		remaining, err := originalProcessSession(
+			procRoot,
+			sessionID,
+			session.processLeaderStartTime,
+			session.id,
+			processes,
+		)
+		if err == nil {
+			_ = signalProcessIdentities(remaining, syscall.SIGKILL, func(identity processIdentity, signal syscall.Signal) error {
+				return signalProcess(procRoot, identity, signal)
+			})
 		}
+		finish()
 	}()
+}
+
+func (manager *terminalManager) startProcessGroupCleanup(sessionID int, finish func()) {
+	killProcess := manager.killProcess
+	if killProcess == nil {
+		killProcess = syscall.Kill
+	}
+	_ = killProcess(-sessionID, syscall.SIGTERM)
+	delay := manager.cleanupDelay
+	if delay <= 0 {
+		delay = terminalCleanupDelay
+	}
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+		_ = killProcess(-sessionID, syscall.SIGKILL)
+		finish()
+	}()
+}
+
+func (session *terminalSession) releaseProcessIdentity() {
+	session.processLeaderPIDFDOnce.Do(func() {
+		if session.processLeaderPIDFD != nil {
+			_ = session.processLeaderPIDFD.Close()
+		}
+	})
 }
 
 func (manager *terminalManager) readOutput(session *terminalSession) {
@@ -408,8 +517,27 @@ func (manager *terminalManager) readOutput(session *terminalSession) {
 }
 
 func (manager *terminalManager) waitForExit(session *terminalSession) {
+	if session.processLeaderPIDFD != nil {
+		defer session.releaseProcessIdentity()
+		if err := waitForPinnedProcessExit(session.processLeaderPIDFD); err == nil {
+			close(session.processExited)
+			manager.beginProcessExit(session)
+			<-manager.cleanupProcessSession(session)
+			_ = session.terminal.Close()
+			manager.drainTerminalOutput(session)
+			err = session.command.Wait()
+			manager.finishExitedSession(session, terminalExitPayload(err))
+			return
+		}
+	}
+
 	err := session.command.Wait()
 	close(session.processExited)
+	manager.drainTerminalOutput(session)
+	manager.finishExitedSession(session, terminalExitPayload(err))
+}
+
+func (manager *terminalManager) drainTerminalOutput(session *terminalSession) {
 	select {
 	case <-session.outputDrained:
 	case <-time.After(2 * time.Second):
@@ -419,6 +547,9 @@ func (manager *terminalManager) waitForExit(session *terminalSession) {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func terminalExitPayload(err error) []byte {
 	exitCode := 0
 	if err != nil {
 		var exitError *exec.ExitError
@@ -429,10 +560,10 @@ func (manager *terminalManager) waitForExit(session *terminalSession) {
 		}
 	}
 	payload, _ := json.Marshal(map[string]any{"type": "exit", "exitCode": exitCode})
-	manager.finishExitedSession(session, payload)
+	return payload
 }
 
-func (manager *terminalManager) finishExitedSession(session *terminalSession, exitPayload []byte) {
+func (manager *terminalManager) beginProcessExit(session *terminalSession) {
 	manager.mu.Lock()
 	if manager.sessions[session.id] == session {
 		delete(manager.sessions, session.id)
@@ -440,11 +571,19 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	manager.mu.Unlock()
 
 	session.mu.Lock()
+	session.closing = true
+	session.mu.Unlock()
+}
+
+func (manager *terminalManager) finishExitedSession(session *terminalSession, exitPayload []byte) {
+	manager.beginProcessExit(session)
+	session.mu.Lock()
 	if session.closed {
 		session.mu.Unlock()
 		_ = session.terminal.Close()
 		return
 	}
+	session.closing = true
 	session.closed = true
 	connections := make([]*terminalConnection, 0, len(session.connections))
 	for _, connection := range session.connections {
@@ -558,7 +697,7 @@ func (session *terminalSession) attach(connection *websocket.Conn, token string,
 	}
 	attached := newTerminalConnection(connection, token)
 	session.mu.Lock()
-	if session.closed {
+	if session.closed || session.closing {
 		session.mu.Unlock()
 		attached.close(websocket.StatusNormalClosure, "Terminal session is closed")
 		return nil, errors.New("terminal session is closed")
@@ -639,7 +778,7 @@ func (session *terminalSession) input(payload []byte) {
 		return
 	}
 	session.mu.Lock()
-	if session.closed {
+	if session.closed || session.closing {
 		session.mu.Unlock()
 		return
 	}
@@ -655,7 +794,7 @@ func (session *terminalSession) resize(columns, rows uint16) {
 	columns = clampTerminalDimension(columns, 120, 20, 400)
 	rows = clampTerminalDimension(rows, 32, 6, 200)
 	session.mu.Lock()
-	if session.closed {
+	if session.closed || session.closing {
 		session.mu.Unlock()
 		return
 	}
@@ -672,7 +811,7 @@ func (session *terminalSession) signal(name string) error {
 		return err
 	}
 	session.mu.Lock()
-	if session.closed || session.command.Process == nil {
+	if session.closed || session.closing || session.command.Process == nil {
 		session.mu.Unlock()
 		return errors.New("terminal session is closed")
 	}
@@ -718,74 +857,180 @@ func terminalForegroundProcessGroup(terminal *os.File) (int, error) {
 	return processGroup, nil
 }
 
-func signalTerminalProcessSession(sessionID int, signal syscall.Signal) error {
-	return signalProcessSession("/proc", sessionID, signal, syscall.Kill)
+func processIDsInSession(procRoot string, sessionID int) ([]int, error) {
+	identities, err := processIdentitiesInSession(procRoot, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	processIDs := make([]int, 0, len(identities))
+	for _, identity := range identities {
+		processIDs = append(processIDs, identity.processID)
+	}
+	return processIDs, nil
 }
 
-func signalProcessSession(
+func originalProcessSession(
 	procRoot string,
 	sessionID int,
-	signal syscall.Signal,
-	kill func(int, syscall.Signal) error,
-) error {
-	processIDs, err := processIDsInSession(procRoot, sessionID)
-	if err != nil || len(processIDs) == 0 {
-		return kill(-sessionID, signal)
+	leaderStartTime uint64,
+	terminalSessionID string,
+	known []processIdentity,
+) ([]processIdentity, error) {
+	if sessionID <= 0 || leaderStartTime == 0 || terminalSessionID == "" {
+		return nil, errors.New("terminal process identity is unavailable")
 	}
-
-	var firstError error
-	for _, processID := range processIDs {
-		if processID == sessionID {
-			continue
+	identities, err := processIdentitiesInSession(procRoot, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	authenticated := false
+	for _, identity := range identities {
+		if identity.processID == sessionID && identity.startTime != leaderStartTime {
+			return nil, errors.New("terminal process session ID was reused")
 		}
-		if err := kill(processID, signal); err != nil && !errors.Is(err, syscall.ESRCH) && firstError == nil {
-			firstError = err
+		if identity.processID == sessionID ||
+			processHasTerminalSessionID(procRoot, identity.processID, terminalSessionID) ||
+			containsProcessIdentity(known, identity) {
+			authenticated = true
 		}
 	}
-	if err := kill(sessionID, signal); err != nil && !errors.Is(err, syscall.ESRCH) && firstError == nil {
-		firstError = err
+	if !authenticated {
+		return nil, nil
 	}
-	return firstError
+	// A Linux session ID remains attached to every member of that session. Once any original member authenticates
+	// the session, include every member: descendants may legitimately replace or sanitize their environment.
+	return identities, nil
 }
 
-func processIDsInSession(procRoot string, sessionID int) ([]int, error) {
+func containsProcessIdentity(identities []processIdentity, candidate processIdentity) bool {
+	for _, identity := range identities {
+		if identity.processID == candidate.processID &&
+			identity.sessionID == candidate.sessionID &&
+			identity.startTime == candidate.startTime {
+			return true
+		}
+	}
+	return false
+}
+
+func processHasTerminalSessionID(procRoot string, processID int, terminalSessionID string) bool {
+	contents, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(processID), "environ"))
+	if err != nil {
+		return false
+	}
+	want := terminalSessionEnv + "=" + terminalSessionID
+	for _, entry := range strings.Split(string(contents), "\x00") {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}
+
+func processIdentitiesInSession(procRoot string, sessionID int) ([]processIdentity, error) {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
 		return nil, err
 	}
-	processIDs := make([]int, 0)
+	identities := make([]processIdentity, 0)
 	for _, entry := range entries {
 		processID, err := strconv.Atoi(entry.Name())
 		if err != nil || processID <= 0 {
 			continue
 		}
-		contents, err := os.ReadFile(filepath.Join(procRoot, entry.Name(), "stat"))
+		identity, err := readProcessIdentity(procRoot, processID)
 		if err != nil {
 			continue
 		}
-		processSessionID, err := parseProcSessionID(contents)
-		if err == nil && processSessionID == sessionID {
-			processIDs = append(processIDs, processID)
+		if identity.sessionID == sessionID {
+			identities = append(identities, identity)
 		}
 	}
-	sort.Ints(processIDs)
-	return processIDs, nil
+	sort.Slice(identities, func(left, right int) bool {
+		return identities[left].processID < identities[right].processID
+	})
+	return identities, nil
 }
 
-func parseProcSessionID(contents []byte) (int, error) {
+func processStartTime(procRoot string, processID int) (uint64, error) {
+	identity, err := readProcessIdentity(procRoot, processID)
+	if err != nil {
+		return 0, err
+	}
+	return identity.startTime, nil
+}
+
+func readProcessIdentity(procRoot string, processID int) (processIdentity, error) {
+	contents, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(processID), "stat"))
+	if err != nil {
+		return processIdentity{}, err
+	}
+	sessionID, startTime, err := parseProcIdentity(contents)
+	if err != nil {
+		return processIdentity{}, err
+	}
+	return processIdentity{processID: processID, sessionID: sessionID, startTime: startTime}, nil
+}
+
+func parseProcIdentity(contents []byte) (int, uint64, error) {
 	closingParenthesis := strings.LastIndexByte(string(contents), ')')
 	if closingParenthesis < 0 || closingParenthesis+1 >= len(contents) {
-		return 0, errors.New("invalid proc stat command field")
+		return 0, 0, errors.New("invalid proc stat command field")
 	}
 	fields := strings.Fields(string(contents[closingParenthesis+1:]))
-	if len(fields) < 4 {
-		return 0, errors.New("invalid proc stat process fields")
+	if len(fields) < 20 {
+		return 0, 0, errors.New("invalid proc stat process fields")
 	}
 	sessionID, err := strconv.Atoi(fields[3])
 	if err != nil || sessionID <= 0 {
-		return 0, errors.New("invalid proc stat session ID")
+		return 0, 0, errors.New("invalid proc stat session ID")
 	}
-	return sessionID, nil
+	startTime, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil || startTime == 0 {
+		return 0, 0, errors.New("invalid proc stat start time")
+	}
+	return sessionID, startTime, nil
+}
+
+func signalProcessIdentities(
+	identities []processIdentity,
+	signal syscall.Signal,
+	signalProcess func(processIdentity, syscall.Signal) error,
+) error {
+	var firstError error
+	for _, identity := range identities {
+		if identity.processID == identity.sessionID {
+			continue
+		}
+		if err := signalProcess(identity, signal); err != nil && firstError == nil {
+			firstError = err
+		}
+	}
+	for _, identity := range identities {
+		if identity.processID != identity.sessionID {
+			continue
+		}
+		if err := signalProcess(identity, signal); err != nil && firstError == nil {
+			firstError = err
+		}
+	}
+	return firstError
+}
+
+func signalProcessIdentity(
+	procRoot string,
+	identity processIdentity,
+	signal syscall.Signal,
+	kill func(int, syscall.Signal) error,
+) error {
+	current, err := readProcessIdentity(procRoot, identity.processID)
+	if err != nil || current.sessionID != identity.sessionID || current.startTime != identity.startTime {
+		return nil
+	}
+	if err := kill(identity.processID, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
 }
 
 func terminalSignal(name string) (syscall.Signal, error) {

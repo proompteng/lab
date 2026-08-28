@@ -27,6 +27,18 @@ func TestTerminalOutputFrameIncludesTypeSequenceAndPayload(t *testing.T) {
 	}
 }
 
+func TestTerminalAppendPreservesOutputWhileSessionIsClosing(t *testing.T) {
+	t.Parallel()
+	session := &terminalSession{
+		closing:     true,
+		connections: make(map[string]*terminalConnection),
+	}
+	session.append([]byte("final output"))
+	if len(session.buffer) != 1 || string(session.buffer[0].data) != "final output" {
+		t.Fatalf("closing terminal buffer = %#v, want final output", session.buffer)
+	}
+}
+
 func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -651,20 +663,14 @@ func TestTerminalSignalTargetsForegroundProcessGroup(t *testing.T) {
 func TestProcessIDsInSessionParsesProcStatWithComplexCommandNames(t *testing.T) {
 	procRoot := t.TempDir()
 	for _, fixture := range []struct {
-		pid     string
+		pid     int
 		session int
+		start   uint64
 	}{
-		{pid: "101", session: 77},
-		{pid: "102", session: 88},
+		{pid: 101, session: 77, start: 1001},
+		{pid: 102, session: 88, start: 1002},
 	} {
-		directory := filepath.Join(procRoot, fixture.pid)
-		if err := os.Mkdir(directory, 0o700); err != nil {
-			t.Fatalf("create proc fixture: %v", err)
-		}
-		stat := fmt.Sprintf("%s (shell ) worker) S 1 2 %d 0 0 0\n", fixture.pid, fixture.session)
-		if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
-			t.Fatalf("write proc fixture: %v", err)
-		}
+		writeProcStatFixture(t, procRoot, fixture.pid, fixture.session, fixture.start, "shell ) worker")
 	}
 
 	processIDs, err := processIDsInSession(procRoot, 77)
@@ -679,34 +685,249 @@ func TestProcessIDsInSessionParsesProcStatWithComplexCommandNames(t *testing.T) 
 func TestTerminalCleanupSignalsEveryProcessInTheSession(t *testing.T) {
 	procRoot := t.TempDir()
 	for _, fixture := range []struct {
-		pid     string
+		pid     int
 		session int
+		start   uint64
 	}{
-		{pid: "700", session: 700},
-		{pid: "701", session: 700},
-		{pid: "702", session: 700},
-		{pid: "800", session: 800},
+		{pid: 700, session: 700, start: 1700},
+		{pid: 701, session: 700, start: 1701},
+		{pid: 702, session: 700, start: 1702},
+		{pid: 800, session: 800, start: 1800},
 	} {
-		directory := filepath.Join(procRoot, fixture.pid)
-		if err := os.Mkdir(directory, 0o700); err != nil {
-			t.Fatalf("create proc fixture: %v", err)
-		}
-		stat := fmt.Sprintf("%s (terminal process) S 1 2 %d 0 0 0\n", fixture.pid, fixture.session)
-		if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
-			t.Fatalf("write proc fixture: %v", err)
+		writeProcStatFixture(t, procRoot, fixture.pid, fixture.session, fixture.start, "terminal process")
+		if fixture.session == 700 && fixture.pid != 702 {
+			writeProcEnvironmentFixture(t, procRoot, fixture.pid, "terminal-session")
 		}
 	}
 
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
 	var signaled []int
-	err := signalProcessSession(procRoot, 700, syscall.SIGTERM, func(pid int, _ syscall.Signal) error {
-		signaled = append(signaled, pid)
-		return nil
+	err = signalProcessIdentities(processes, syscall.SIGTERM, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		})
 	})
 	if err != nil {
-		t.Fatalf("signalProcessSession() error = %v", err)
+		t.Fatalf("signalProcessIdentities() error = %v", err)
 	}
 	if got, want := fmt.Sprint(signaled), "[701 702 700]"; got != want {
 		t.Fatalf("signaled process IDs = %s, want %s", got, want)
+	}
+}
+
+func TestTerminalCleanupFallsBackToProcessGroupWithoutProcIdentity(t *testing.T) {
+	t.Parallel()
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 2)
+	manager := &terminalManager{
+		killProcess: func(processID int, signal syscall.Signal) error {
+			signals <- signalEvent{processID: processID, signal: signal}
+			return nil
+		},
+		cleanupDelay: time.Millisecond,
+	}
+	session := &terminalSession{id: "terminal-session", processSessionID: 700}
+	done := manager.cleanupProcessSession(session)
+	for _, expectedSignal := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		select {
+		case actual := <-signals:
+			if actual.processID != -700 || actual.signal != expectedSignal {
+				t.Fatalf("fallback cleanup signal = %#v, want process group -700 signal %v", actual, expectedSignal)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for process-group cleanup signal")
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("process-group cleanup did not complete")
+	}
+}
+
+func TestOriginalProcessSessionRejectsReusedLeader(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err == nil || !strings.Contains(err.Error(), "reused") {
+		t.Fatalf("originalProcessSession() error = %v, want reused-session error", err)
+	}
+	if len(processes) != 0 {
+		t.Fatalf("originalProcessSession() = %#v, want no replacement processes", processes)
+	}
+}
+
+func TestSignalProcessIdentitiesSkipsReusedProcesses(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
+
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+	var signaled []int
+	err = signalProcessIdentities(processes, syscall.SIGKILL, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(processID int, _ syscall.Signal) error {
+			signaled = append(signaled, processID)
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("signalProcessIdentities() error = %v", err)
+	}
+	if len(signaled) != 0 {
+		t.Fatalf("signalProcessIdentities() signaled replacement processes %v", signaled)
+	}
+}
+
+func TestOriginalProcessSessionSkipsReusedLeaderlessSession(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+
+	processes, err := originalProcessSession(procRoot, 700, 1700, "terminal-session", nil)
+	if err != nil {
+		t.Fatalf("originalProcessSession() error = %v", err)
+	}
+	if len(processes) != 0 {
+		t.Fatalf("originalProcessSession() = %#v, want no replacement processes", processes)
+	}
+}
+
+func TestDelayedTerminalCleanupSkipsReusedProcessIDs(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+
+	terminal, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open terminal fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = terminal.Close() })
+
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 4)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
+		},
+		cleanupDelay: 25 * time.Millisecond,
+	}
+	session := &terminalSession{
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		terminal:               terminal,
+		connections:            make(map[string]*terminalConnection),
+	}
+	manager.sessions[session.id] = session
+
+	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+	for _, expectedProcessID := range []int{701, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGTERM {
+				t.Fatalf("initial cleanup signal = %#v, want process %d SIGTERM", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for initial cleanup signal")
+		}
+	}
+
+	writeProcStatFixture(t, procRoot, 700, 700, 2700, "replacement terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 2701, "replacement child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
+	select {
+	case actual := <-signals:
+		t.Fatalf("delayed cleanup signaled reused process: %#v", actual)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestDelayedTerminalCleanupRescansForNewSessionMembers(t *testing.T) {
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "original terminal")
+	writeProcStatFixture(t, procRoot, 701, 700, 1701, "original child")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
+	writeProcEnvironmentFixture(t, procRoot, 701, "terminal-session")
+
+	type signalEvent struct {
+		processID int
+		signal    syscall.Signal
+	}
+	signals := make(chan signalEvent, 8)
+	manager := &terminalManager{
+		sessions: make(map[string]*terminalSession),
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
+		},
+		cleanupDelay: 25 * time.Millisecond,
+	}
+	session := &terminalSession{
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		connections:            make(map[string]*terminalConnection),
+	}
+
+	manager.cleanupProcessSession(session)
+	for _, expectedProcessID := range []int{701, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGTERM {
+				t.Fatalf("initial cleanup signal = %#v, want process %d SIGTERM", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for initial cleanup signal")
+		}
+	}
+
+	if err := os.RemoveAll(filepath.Join(procRoot, "701")); err != nil {
+		t.Fatalf("remove exited child fixture: %v", err)
+	}
+	writeProcStatFixture(t, procRoot, 702, 700, 1702, "late sanitized survivor")
+	for _, expectedProcessID := range []int{702, 700} {
+		select {
+		case actual := <-signals:
+			if actual.processID != expectedProcessID || actual.signal != syscall.SIGKILL {
+				t.Fatalf("delayed cleanup signal = %#v, want process %d SIGKILL", actual, expectedProcessID)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for delayed cleanup signal")
+		}
 	}
 }
 
@@ -718,23 +939,30 @@ func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
 	t.Cleanup(func() { _ = terminal.Close() })
 
 	type signalEvent struct {
-		sessionID int
+		processID int
 		signal    syscall.Signal
 	}
+	procRoot := t.TempDir()
+	writeProcStatFixture(t, procRoot, 700, 700, 1700, "terminal process")
+	writeProcEnvironmentFixture(t, procRoot, 700, "terminal-session")
 	signals := make(chan signalEvent, 2)
 	manager := &terminalManager{
 		sessions: make(map[string]*terminalSession),
-		signalProcessSession: func(sessionID int, signal syscall.Signal) error {
-			signals <- signalEvent{sessionID: sessionID, signal: signal}
-			return nil
+		procRoot: procRoot,
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
 		},
 		cleanupDelay: time.Millisecond,
 	}
 	session := &terminalSession{
-		id:               "terminal-session",
-		processSessionID: 700,
-		terminal:         terminal,
-		connections:      make(map[string]*terminalConnection),
+		id:                     "terminal-session",
+		processSessionID:       700,
+		processLeaderStartTime: 1700,
+		terminal:               terminal,
+		connections:            make(map[string]*terminalConnection),
 	}
 	manager.sessions[session.id] = session
 
@@ -743,8 +971,8 @@ func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
 	for _, expected := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
 		select {
 		case actual := <-signals:
-			if actual.sessionID != 700 {
-				t.Fatalf("process session ID = %d, want 700", actual.sessionID)
+			if actual.processID != 700 {
+				t.Fatalf("process ID = %d, want 700", actual.processID)
 			}
 			if actual.signal != expected {
 				t.Fatalf("cleanup signal = %v, want %v", actual.signal, expected)
@@ -761,5 +989,38 @@ func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
 	session.mu.Unlock()
 	if !closed {
 		t.Fatal("naturally exited terminal was not closed")
+	}
+}
+
+func writeProcStatFixture(t *testing.T, procRoot string, processID, sessionID int, startTime uint64, command string) {
+	t.Helper()
+	directory := filepath.Join(procRoot, strconv.Itoa(processID))
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create proc fixture: %v", err)
+	}
+	fields := make([]string, 20)
+	for index := range fields {
+		fields[index] = "0"
+	}
+	fields[0] = "S"
+	fields[1] = "1"
+	fields[2] = "2"
+	fields[3] = strconv.Itoa(sessionID)
+	fields[19] = strconv.FormatUint(startTime, 10)
+	stat := fmt.Sprintf("%d (%s) %s\n", processID, command, strings.Join(fields, " "))
+	if err := os.WriteFile(filepath.Join(directory, "stat"), []byte(stat), 0o600); err != nil {
+		t.Fatalf("write proc fixture: %v", err)
+	}
+}
+
+func writeProcEnvironmentFixture(t *testing.T, procRoot string, processID int, terminalSessionID string) {
+	t.Helper()
+	directory := filepath.Join(procRoot, strconv.Itoa(processID))
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create proc fixture: %v", err)
+	}
+	environment := "PATH=/usr/bin\x00" + terminalSessionEnv + "=" + terminalSessionID + "\x00"
+	if err := os.WriteFile(filepath.Join(directory, "environ"), []byte(environment), 0o600); err != nil {
+		t.Fatalf("write proc environment fixture: %v", err)
 	}
 }
