@@ -262,6 +262,27 @@ spec:
     }
   })
 
+  it('rejects repository and revision overrides hidden in a YAML merge key', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '                enabled: "false"',
+        '                <<: {repoURL: https://github.com/example/fork.git, targetRevision: unverified}\n                enabled: "false"',
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must not use YAML merge keys')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('must not use YAML merge keys')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
   it('rejects a base Deployment image that the verified digest selector cannot replace', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')

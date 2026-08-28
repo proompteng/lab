@@ -121,6 +121,9 @@ function assertTengriApplicationTarget(block: string) {
   if (application.name !== 'tengri') {
     throw new Error('Tengri ApplicationSet entry must be named tengri')
   }
+  if (Object.hasOwn(application, '<<')) {
+    throw new Error('Tengri ApplicationSet entry must not use YAML merge keys')
+  }
   for (const [field, expected] of Object.entries(tengriApplicationTarget)) {
     const actual = application[field]
     if (actual !== expected) {
