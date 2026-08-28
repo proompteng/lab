@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import YAML from 'yaml'
+import YAML, { isMap, isSeq } from 'yaml'
 
 import { repoRoot } from '../shared/cli'
 
@@ -85,39 +85,46 @@ function parseKustomization(contents: string) {
 }
 
 function findTengriApplicationBlock(contents: string) {
-  const startMatch = /^\s*- name: tengri\s*$/m.exec(contents)
-  if (!startMatch) {
-    throw new Error('Platform ApplicationSet does not contain a Tengri entry')
+  const document = YAML.parseDocument(contents, { keepSourceTokens: true })
+  if (document.errors.length > 0) {
+    throw new Error(`Platform ApplicationSet is not valid YAML: ${document.errors[0].message}`)
   }
-  const start = startMatch.index
-  const afterStart = start + startMatch[0].length
-  const nextEntry = /^\s*- name: [a-z0-9-]+\s*$/m.exec(contents.slice(afterStart))
-  const end = nextEntry ? afterStart + nextEntry.index : contents.length
-  const block = contents.slice(start, end)
-  assertTengriApplicationTarget(block)
-  const enabledMatches = [...block.matchAll(/^\s*enabled:\s*"(true|false)"\s*$/gm)]
-  if (enabledMatches.length !== 1) {
-    throw new Error(`Tengri ApplicationSet entry must contain one enabled flag, found ${enabledMatches.length}`)
+
+  const generators = document.getIn(['spec', 'generators', 0, 'matrix', 'generators'], true)
+  if (!isSeq(generators)) {
+    throw new Error('Platform ApplicationSet must contain the expected matrix generators')
   }
-  return { start, end, block, enabled: enabledMatches[0][1] === 'true' }
+
+  const matches = generators.items.flatMap((generator) => {
+    if (!isMap(generator)) return []
+    const elements = generator.getIn(['list', 'elements'], true)
+    if (!isSeq(elements)) return []
+    return elements.items.filter((entry) => isMap(entry) && entry.get('name') === 'tengri')
+  })
+  if (matches.length !== 1) {
+    throw new Error(`Platform ApplicationSet must contain exactly one Tengri entry, found ${matches.length}`)
+  }
+  const entry = matches[0]
+  const application = entry.toJSON() as Record<string, unknown>
+  assertTengriApplicationTarget(application)
+
+  const enabledNode = entry.get('enabled', true)
+  const enabled = entry.get('enabled')
+  if (enabled !== 'true' && enabled !== 'false') {
+    throw new Error('Tengri ApplicationSet entry must contain one quoted true or false enabled flag')
+  }
+  if (!enabledNode?.range) {
+    throw new Error('Tengri ApplicationSet enabled flag does not have a mutable source range')
+  }
+
+  return {
+    enabled: enabled === 'true',
+    enabledStart: enabledNode.range[0],
+    enabledEnd: enabledNode.range[1],
+  }
 }
 
-function assertTengriApplicationTarget(block: string) {
-  const lines = block.split('\n')
-  const indentation = Math.min(
-    ...lines.filter((line) => line.trim() !== '').map((line) => line.length - line.trimStart().length),
-  )
-  const parsed = YAML.parse(lines.map((line) => line.slice(Math.min(indentation, line.length))).join('\n')) as unknown
-  if (
-    !Array.isArray(parsed) ||
-    parsed.length !== 1 ||
-    typeof parsed[0] !== 'object' ||
-    parsed[0] === null ||
-    Array.isArray(parsed[0])
-  ) {
-    throw new Error('Tengri ApplicationSet entry must be exactly one YAML mapping')
-  }
-  const application = parsed[0] as Record<string, unknown>
+function assertTengriApplicationTarget(application: Record<string, unknown>) {
   if (application.name !== 'tengri') {
     throw new Error('Tengri ApplicationSet entry must be named tengri')
   }
@@ -314,13 +321,7 @@ export function updateTengriRelease(
   )
 
   const application = findTengriApplicationBlock(originalApplicationSet)
-  const nextBlock = replaceExactlyOnce(
-    application.block,
-    /(^\s*enabled:)\s*"(?:true|false)"\s*$/m,
-    '$1 "true"',
-    'Tengri enabled flag',
-  )
-  const nextApplicationSet = `${originalApplicationSet.slice(0, application.start)}${nextBlock}${originalApplicationSet.slice(application.end)}`
+  const nextApplicationSet = `${originalApplicationSet.slice(0, application.enabledStart)}"true"${originalApplicationSet.slice(application.enabledEnd)}`
   const nextBffDeployment = replaceBffEndpoint(originalBffDeployment)
 
   // Validate all mutations in memory before writing any file.
