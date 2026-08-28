@@ -808,7 +808,8 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   schema_version: record.schemaVersion,
 })
 
-const eventPayloadKey = (record: IntradayQuote | IntradayTrade): string => `${record.symbol}\u0000${record.eventAt}`
+const eventPayloadKey = (record: IntradayQuote | IntradayTrade): string =>
+  `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`
 
 const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
   records: readonly T[],

@@ -690,6 +690,40 @@ describe('immutable intraday market snapshot', () => {
     })
   })
 
+  test('groups tied payload variants by canonical instant across fractional precision', () => {
+    const rows = makeRows()
+    const firstQuote = rows.quotes[0]
+    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
+    const forgedRequest: IntradaySnapshotRequest = {
+      ...request,
+      archiveWatermarks: request.archiveWatermarks.map((watermark) =>
+        watermark.sourceTopic === quotesTopic ? { ...watermark, inclusiveLastOffset: '15' } : watermark,
+      ),
+    }
+    const forgedRows = {
+      ...rows,
+      archiveWatermarks: rows.archiveWatermarks.map((watermark) =>
+        watermark.source_topic === quotesTopic ? { ...watermark, inclusive_last_offset: '15' } : watermark,
+      ),
+      quotes: [
+        ...rows.quotes,
+        {
+          ...firstQuote,
+          event_at: '2026-08-18T13:35:15.000000000Z',
+          source_offset: '15',
+          bid_price: '99.50',
+          ask_price: '99.52',
+        },
+      ],
+    }
+    const forged = success(verifyIntradaySnapshot(forgedRequest, forgedRows))
+
+    expect(error(reverifyIntradayMarketSnapshot(forged))).toMatchObject({
+      reason: 'ordering',
+      message: 'latest intraday timestamp has conflicting market payloads',
+    })
+  })
+
   test('binds a materialized archive version and rejects non-final or post-version records', () => {
     const rows = makeRows()
     const finalBar = rows.bars.at(-1)
