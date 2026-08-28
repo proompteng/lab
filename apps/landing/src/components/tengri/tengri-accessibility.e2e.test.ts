@@ -93,10 +93,19 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
   await expect(tabs).toHaveCount(2)
   await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
 
+  const seriousContrastViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
+    (violation) => violation.impact === 'critical' || violation.impact === 'serious',
+  )
+  expect(seriousContrastViolations).toEqual([])
+
   await tabs.nth(1).focus()
   await page.keyboard.press('ArrowLeft')
   await expect(tabs.nth(0)).toBeFocused()
   await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+
+  await page.keyboard.press('Delete')
+  await expect(tablist.getByRole('tab')).toHaveCount(1)
+  await expect(tablist.getByRole('tab')).toBeFocused()
 
   await page.keyboard.press('Delete')
   await expect(tablist.getByRole('tab')).toHaveCount(1)

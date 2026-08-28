@@ -160,9 +160,10 @@ export function ChromeApp({ active: applicationActive = true, agentId }: { activ
                 onKeyDown={(event) => {
                   if (event.key === 'Delete') {
                     event.preventDefault()
-                    const nextTab = state.tabs[index + 1] ?? state.tabs[index - 1]
+                    const nextTabId =
+                      state.tabs[index + 1]?.id ?? state.tabs[index - 1]?.id ?? `tab-${state.nextTabNumber}`
                     dispatch({ type: 'close', id: tab.id })
-                    if (nextTab) focusChromeTab(nextTab.id)
+                    focusChromeTab(nextTabId)
                     return
                   }
 
