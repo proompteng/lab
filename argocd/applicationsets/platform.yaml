@@ -139,7 +139,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
                 ignoreDifferences:
                   - group: ""
                     kind: ConfigMap

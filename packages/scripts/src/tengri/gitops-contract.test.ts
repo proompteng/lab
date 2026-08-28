@@ -33,7 +33,7 @@ type IngressRoute = {
 
 type NetworkPolicy = {
   kind?: string
-  metadata?: { name?: string }
+  metadata?: { name?: string; annotations?: Record<string, string> }
   spec?: {
     ingress?: Array<{
       from?: Array<{ namespaceSelector?: { matchLabels?: Record<string, string> } }>
@@ -58,6 +58,18 @@ test('Tengri can watch Secret and PVC deletion to completion', () => {
   )
 
   expect(cleanupRule?.verbs).toEqual(['delete', 'get', 'list', 'patch', 'watch'])
+})
+
+test('Tengri network isolation survives Application deletion', () => {
+  const policies = networkPolicies.filter((document) => document.kind === 'NetworkPolicy')
+  expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
+    'tengri-control-plane',
+    'tengri-default-deny',
+    'tengri-microvm-guests',
+  ])
+  for (const policy of policies) {
+    expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
+  }
 })
 
 test('public control and preview traffic use isolated Services and routes', () => {
