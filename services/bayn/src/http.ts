@@ -986,12 +986,20 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_cycle_latest_fill_timestamp_seconds Latest current-cycle broker-fill observation time.',
           '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
           `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
-          '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
-          '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
-          `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber((executionFunnel.maximumOrderAcknowledgementLatencyMs ?? 0) / 1_000)}`,
-          '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
-          '# TYPE bayn_cycle_fill_latency_seconds gauge',
-          `bayn_cycle_fill_latency_seconds ${prometheusNumber((executionFunnel.maximumFillLatencyMs ?? 0) / 1_000)}`,
+          ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
+                `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# TYPE bayn_cycle_fill_latency_seconds gauge',
+                `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
+              ]),
           ...(executionFunnel.positionSnapshotObservedAt === null ||
           executionFunnel.positionCount === null ||
           executionFunnel.grossExposureMicros === null ||

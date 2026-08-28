@@ -500,6 +500,25 @@ describe('Bayn HTTP pure decisions', () => {
     expect(flatPositionSnapshotMetrics).toContain('bayn_broker_position_count 0')
     expect(flatPositionSnapshotMetrics).toContain('bayn_broker_gross_exposure_dollars 0.000000')
 
+    const missingLatencyMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            maximumOrderAcknowledgementLatencyMs: null,
+            maximumFillLatencyMs: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingLatencyMetrics).not.toContain('bayn_cycle_order_acknowledgement_latency_seconds ')
+    expect(missingLatencyMetrics).not.toContain('bayn_cycle_fill_latency_seconds ')
+
     const restrictedMetrics = renderPrometheusMetrics(
       {
         ...realized,
