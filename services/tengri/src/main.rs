@@ -7,9 +7,10 @@ mod grpc;
 mod guest;
 mod metrics;
 mod pod;
+mod runtime_secret;
 mod tickets;
 
-use std::{env, net::SocketAddr, time::Duration};
+use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 
 use activity::ActivityTracker;
 use anyhow::Context as _;
@@ -20,6 +21,7 @@ use grpc::{
     proto::micro_vm_control_plane_server::MicroVmControlPlaneServer,
 };
 use kube::Client;
+use runtime_secret::RuntimeSecretSnapshot;
 use tokio::{net::TcpListener, signal, sync::watch, time::timeout};
 use tonic::transport::Server;
 use tracing::{info, warn};
@@ -30,6 +32,7 @@ const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
 const DEFAULT_GATEWAY_ADDRESS: &str = "0.0.0.0:8080";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
 const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
+const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,12 +58,21 @@ async fn main() -> anyhow::Result<()> {
     let default_image = required_env("TENGRI_DEFAULT_IMAGE")?;
     let internal_hmac_secret = required_env("TENGRI_INTERNAL_HMAC_SECRET")?;
     let ticket_signing_secret = required_env("TENGRI_TICKET_SIGNING_SECRET")?;
+    let runtime_secret_directory = env_value("TENGRI_RUNTIME_SECRET_DIRECTORY").map(PathBuf::from);
+    let runtime_secret_pod_name = runtime_secret_directory
+        .as_ref()
+        .map(|_| required_env("TENGRI_POD_NAME"))
+        .transpose()?;
+    let runtime_secret_snapshot =
+        RuntimeSecretSnapshot::new(&internal_hmac_secret, &ticket_signing_secret);
     let public_url = required_env("TENGRI_PUBLIC_URL")?;
     let preview_url_template = required_env("TENGRI_PREVIEW_URL_TEMPLATE")?;
     let desktop_origin = required_env("TENGRI_DESKTOP_ORIGIN")?;
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
+    let runtime_secret_client = client.clone();
+    let runtime_secret_namespace = namespace.clone();
     let activity = ActivityTracker::new(client.clone(), namespace.clone());
     let service = ControlPlane::new(
         client.clone(),
@@ -121,16 +133,39 @@ async fn main() -> anyhow::Result<()> {
             .context("serve HTTP and WebSocket gateway")
     });
 
+    let mut runtime_secret_task = tokio::spawn(async move {
+        match (runtime_secret_directory, runtime_secret_pod_name) {
+            (Some(directory), Some(pod_name)) => {
+                runtime_secret::watch(
+                    directory,
+                    runtime_secret_snapshot,
+                    RUNTIME_SECRET_POLL_INTERVAL,
+                )
+                .await;
+                runtime_secret::replace_pod(
+                    runtime_secret_client,
+                    &runtime_secret_namespace,
+                    &pod_name,
+                )
+                .await?;
+                anyhow::bail!("runtime secret changed; Pod replacement requested")
+            }
+            _ => std::future::pending::<anyhow::Result<()>>().await,
+        }
+    });
+
     info!(%listen_address, %gateway_address, %namespace, ?architecture, "Tengri control plane ready");
     let result = tokio::select! {
         () = shutdown_signal() => Ok(()),
         result = &mut controller_task => task_result("controller", result),
         result = &mut grpc_task => task_result("gRPC server", result),
         result = &mut gateway_task => task_result("HTTP gateway", result),
+        result = &mut runtime_secret_task => task_result("runtime secret watcher", result),
     };
 
     let _ = shutdown_tx.send(true);
     controller_task.abort();
+    runtime_secret_task.abort();
     let _ = timeout(Duration::from_secs(5), async {
         if !grpc_task.is_finished() {
             let _ = grpc_task.await;

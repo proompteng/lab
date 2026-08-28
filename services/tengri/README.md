@@ -23,6 +23,11 @@ authentication outage by publishing `new,current` in the same 1Password field fi
 the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
 bundle, remove the previous key. More than two keys are rejected.
 
+The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
+into its environment and, without logging either value, deletes only its own control-plane Pod when an ExternalSecret
+refresh changes them. The Deployment then creates a replacement Pod with the refreshed environment; no manual restart
+or cluster-wide reloader is required.
+
 Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
 `tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
 controller restarts. The singleton serializes nonce updates before entering the Kubernetes compare-and-swap loop, and
