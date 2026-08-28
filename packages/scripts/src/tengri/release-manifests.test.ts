@@ -89,6 +89,8 @@ spec:
                   operator: NotIn
                   values: ["false", "False", "0"]
   template:
+    metadata:
+      name: '{{ .name }}{{ .suffix }}'
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       source:
@@ -326,6 +328,28 @@ spec:
       expect(() => validateTengriRelease(paths)).toThrow('must use one verified source and must not define sources')
       expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
         'must use one verified source and must not define sources',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an application template that does not produce the canonical name', () => {
+    for (const replacement of ["      name: 'other'\n", '']) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace("      name: '{{ .name }}{{ .suffix }}'\n", replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('template must name applications')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'template must name applications',
       )
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)

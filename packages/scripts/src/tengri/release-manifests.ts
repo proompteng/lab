@@ -51,6 +51,7 @@ const expectedRepositoryTemplate =
 const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
 const expectedPathTemplate = '{{ .path }}'
 const expectedProjectTemplate = '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+const expectedApplicationNameTemplate = '{{ .name }}{{ .suffix }}'
 export const TENGRI_APPLICATION_TEMPLATE_PATCH = `{{- if .annotations }}
 metadata:
   annotations:
@@ -255,6 +256,9 @@ function findTengriApplicationBlock(contents: string) {
   const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
   assertSelectorAdmitsTengri(selector, application)
 
+  if (document.getIn(['spec', 'template', 'metadata', 'name']) !== expectedApplicationNameTemplate) {
+    throw new Error(`Tengri ApplicationSet template must name applications ${expectedApplicationNameTemplate}`)
+  }
   if (document.getIn(['spec', 'template', 'spec', 'sources'], true) !== undefined) {
     throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
   }
