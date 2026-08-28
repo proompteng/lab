@@ -78,6 +78,7 @@ export function ReadyDesktop({
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [desktopId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
   const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
@@ -530,6 +531,7 @@ export function ReadyDesktop({
               ) : desktopWindow.app === 'terminal' ? (
                 <TerminalApp
                   agentId={agent.id}
+                  desktopId={desktopId}
                   registerCloseHandler={registerTerminalCloseHandler}
                   windowId={desktopWindow.id}
                 />

@@ -40,10 +40,12 @@ const claimedTerminalSessionIds = new Set<string>()
 
 export function TerminalApp({
   agentId,
+  desktopId,
   registerCloseHandler,
   windowId,
 }: {
   agentId: string
+  desktopId: string
   registerCloseHandler: (windowId: string, handler: () => void) => () => void
   windowId: string
 }) {
@@ -52,8 +54,8 @@ export function TerminalApp({
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const reconnectNowRef = useRef<() => void>(() => undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const creationId = terminalCreationId(agentId, windowId)
-  const storageKey = `tengri:terminal:${agentId}:${windowId}`
+  const creationId = terminalCreationId(agentId, desktopId, windowId)
+  const storageKey = `tengri:terminal:${agentId}:${desktopId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
@@ -107,7 +109,7 @@ export function TerminalApp({
 
     const resumeState = (): TerminalResumeState | null => {
       try {
-        return parseTerminalResumeState(sessionStorage.getItem(storageKey), agentId)
+        return parseTerminalResumeState(sessionStorage.getItem(storageKey), agentId, desktopId)
       } catch {
         return null
       }
@@ -144,6 +146,7 @@ export function TerminalApp({
           storageKey,
           JSON.stringify({
             agentId,
+            desktopId,
             sessionId: current.id,
             reconnectToken,
             sequence: lastSequence,
