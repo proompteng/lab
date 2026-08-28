@@ -75,6 +75,27 @@ describe('Nix rollout report', () => {
     ])
   })
 
+  it('reports dedicated workflow images without treating them as deferred Nix migrations', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'tengri',
+          class: 'workflow-image',
+          repoImages: [
+            'registry.ide-newton.ts.net/lab/tengri@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            'registry.ide-newton.ts.net/lab/nanoagent@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          ],
+          workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
+          deferredReason: 'dedicated multi-architecture release workflow',
+        }),
+      ]),
+    })
+
+    expect(report.workflowImages.map((candidate) => candidate.name)).toEqual(['tengri'])
+    expect(report.deferredApps).toEqual([])
+    expect(formatNixRolloutReportMarkdown(report)).toContain('| tengri | registry.ide-newton.ts.net/lab/tengri@sha256:')
+  })
+
   it('validates provided release contracts and maps them to Nix image apps when required', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([
