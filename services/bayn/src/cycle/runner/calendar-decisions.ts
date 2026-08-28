@@ -206,14 +206,16 @@ export const selectNextExecutionSession = Pipeable.dual(2, selectNextExecutionSe
 
 export const selectIntradayExecutionSession = (
   observation: MarketCalendarObservation,
-  executionPolicy: Extract<
-    CycleExecutionPolicy,
-    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
-  >,
+  executionPolicy:
+    | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }>
+    | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }>,
   observedAt: string,
 ): MarketCalendarSession | undefined =>
   observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
-    const cutoffAt = Date.parse(session.openAt) + executionPolicy.submissionCutoffAfterOpenMs
+    const cutoffAt =
+      executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+        ? Date.parse(session.openAt) + executionPolicy.submissionCutoffAfterOpenMs
+        : Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     if (!Number.isFinite(cutoffAt) || Date.parse(observedAt) >= cutoffAt) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
@@ -260,16 +262,29 @@ const makeDueCycleDraftDataFirst = (
 
 export const makeDueCycleDraft = Pipeable.dual(3, makeDueCycleDraftDataFirst)
 
-export interface IntradayCycleCandidate {
+interface IntradayCycleCandidateCommon {
   readonly qualificationRunId: string
-  readonly strategyName: 'opening-drive-momentum'
   readonly strategyProtocolHash: string
   readonly accountId: string
-  readonly executionPolicy: Extract<
-    CycleExecutionPolicy,
-    { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
-  >
 }
+
+export type IntradayCycleCandidate = IntradayCycleCandidateCommon &
+  (
+    | {
+        readonly strategyName: 'opening-drive-momentum'
+        readonly executionPolicy: Extract<
+          CycleExecutionPolicy,
+          { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }
+        >
+      }
+    | {
+        readonly strategyName: 'intraday-momentum'
+        readonly executionPolicy: Extract<
+          CycleExecutionPolicy,
+          { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
+        >
+      }
+  )
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,

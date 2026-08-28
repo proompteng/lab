@@ -296,20 +296,35 @@ const interpretCycleAuthoritySelection = <R>(
 const discoverIntradayCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
-  if (
-    context.strategyName !== 'opening-drive-momentum' ||
-    context.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v2'
-  ) {
+  const candidate =
+    context.strategyName === 'opening-drive-momentum' &&
+    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
+      ? {
+          qualificationRunId: context.qualificationRunId,
+          strategyName: context.strategyName,
+          strategyProtocolHash: context.strategyProtocolHash,
+          accountId: context.accountId,
+          executionPolicy: context.executionPolicy,
+        }
+      : context.strategyName === 'intraday-momentum' &&
+          context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
+        ? {
+            qualificationRunId: context.qualificationRunId,
+            strategyName: context.strategyName,
+            strategyProtocolHash: context.strategyProtocolHash,
+            accountId: context.accountId,
+            executionPolicy: context.executionPolicy,
+          }
+        : undefined
+  if (candidate === undefined) {
     return Effect.fail(
       runnerError({
         operation: 'configure',
         failure: 'invalid-config',
-        message: 'intraday discovery requires the opening-drive strategy and its post-open execution policy',
+        message: 'intraday discovery requires an exact strategy and session-relative execution-policy pairing',
       }),
     )
   }
-  const strategyName = context.strategyName
-  const executionPolicy = context.executionPolicy
   return Effect.gen(function* () {
     const observedAt = yield* currentIsoTime
     const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
@@ -326,7 +341,7 @@ const discoverIntradayCyclePass = <R>(
         }),
       ),
     )
-    const executionSession = selectIntradayExecutionSession(calendar.value, executionPolicy, observedAt)
+    const executionSession = selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
     if (executionSession === undefined) {
       return yield* runnerError({
         operation: 'select-session',
@@ -334,19 +349,7 @@ const discoverIntradayCyclePass = <R>(
         message: 'broker calendar has no session whose intraday entry cutoff remains open',
       })
     }
-    const draft = yield* Effect.fromResult(
-      makeIntradayCycleDraft(
-        {
-          qualificationRunId: context.qualificationRunId,
-          strategyName,
-          strategyProtocolHash: context.strategyProtocolHash,
-          accountId: context.accountId,
-          executionPolicy,
-        },
-        calendar.value,
-        executionSession,
-      ),
-    ).pipe(
+    const draft = yield* Effect.fromResult(makeIntradayCycleDraft(candidate, calendar.value, executionSession)).pipe(
       Effect.mapError((cause) =>
         runnerError({
           operation: 'build-cycle',
@@ -403,7 +406,9 @@ export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
   context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
-  context.strategyName === 'opening-drive-momentum'
+  context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3' ||
+  context.strategyName === 'opening-drive-momentum' ||
+  context.strategyName === 'intraday-momentum'
     ? discoverIntradayCyclePass(context)
     : pipe(
         MarketData,

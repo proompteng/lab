@@ -177,6 +177,14 @@ interface IntradayExecutionSessionWindowInput {
   readonly submissionCutoffAfterOpenMs: number
 }
 
+interface RollingIntradayExecutionSessionWindowInput {
+  readonly executionSessionDate: string
+  readonly planningBrokerState: PlanningBrokerStateBinding
+  readonly calendar: CalendarIdentity
+  readonly warmupAfterOpenMs: number
+  readonly submissionCutoffBeforeCloseMs: number
+}
+
 interface LegacyIntradayExecutionSessionWindowInput {
   readonly signal: SignalBinding
   readonly planningBrokerState: PlanningBrokerStateBinding
@@ -438,6 +446,31 @@ const deriveIntradayExecutionSessionWindow = (
     ),
   )
 
+const deriveRollingIntradayExecutionSessionWindow = (
+  input: RollingIntradayExecutionSessionWindowInput,
+): Result.Result<ExecutionSessionWindow, ExecutionSessionBindingFailure> =>
+  Result.flatMap(validateCalendarHash(input.calendar), () =>
+    Result.flatMap(validateCalendarRangeAndExecutionSession(input.calendar, input.executionSessionDate), () =>
+      Result.flatMap(validateCalendarSessions(input.calendar), () =>
+        Result.flatMap(selectExactExecutionSession(input.calendar, input.executionSessionDate), (executionSession) => {
+          const submissionCutoffAfterOpenMs =
+            Date.parse(executionSession.closeAt) -
+            Date.parse(executionSession.openAt) -
+            input.submissionCutoffBeforeCloseMs
+          return Result.map(
+            deriveIntradaySubmissionWindow(
+              executionSession,
+              input.planningBrokerState,
+              input.warmupAfterOpenMs,
+              submissionCutoffAfterOpenMs,
+            ),
+            (submissionWindow) => ({ executionSession, ...submissionWindow }),
+          )
+        }),
+      ),
+    ),
+  )
+
 const deriveLegacyIntradayExecutionSessionWindow = (
   input: LegacyIntradayExecutionSessionWindowInput,
 ): Result.Result<ExecutionSessionWindow, ExecutionSessionBindingFailure> =>
@@ -666,26 +699,47 @@ const bindDecodedExecutionSession = (
   input: DecodedBindExecutionSessionInput,
 ): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure> => {
   if ('executionSessionDate' in input) {
-    if (input.executionModel.schemaVersion !== 'bayn.execution-model.v4') {
+    if (
+      input.executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
+      input.executionModel.schemaVersion !== 'bayn.execution-model.v5'
+    ) {
       return Result.fail(bindFailure('decode', 'an exact execution session requires the intraday execution model'))
     }
     const executionModel = input.executionModel
     return Result.flatMap(
-      deriveIntradayExecutionSessionWindow({
-        executionSessionDate: input.executionSessionDate,
-        planningBrokerState: input.planningBrokerState,
-        calendar: input.calendar,
-        decisionAfterOpenMs: executionModel.order.decisionAfterOpenMs,
-        submissionCutoffAfterOpenMs: executionModel.order.submissionCutoffAfterOpenMs,
-      }),
+      executionModel.schemaVersion === 'bayn.execution-model.v4'
+        ? deriveIntradayExecutionSessionWindow({
+            executionSessionDate: input.executionSessionDate,
+            planningBrokerState: input.planningBrokerState,
+            calendar: input.calendar,
+            decisionAfterOpenMs: executionModel.order.decisionAfterOpenMs,
+            submissionCutoffAfterOpenMs: executionModel.order.submissionCutoffAfterOpenMs,
+          })
+        : deriveRollingIntradayExecutionSessionWindow({
+            executionSessionDate: input.executionSessionDate,
+            planningBrokerState: input.planningBrokerState,
+            calendar: input.calendar,
+            warmupAfterOpenMs: executionModel.order.warmupAfterOpenMs,
+            submissionCutoffBeforeCloseMs: executionModel.order.submissionCutoffBeforeCloseMs,
+          }),
       (window) => {
+        const decisionAfterOpenMs =
+          executionModel.schemaVersion === 'bayn.execution-model.v4'
+            ? executionModel.order.decisionAfterOpenMs
+            : executionModel.order.warmupAfterOpenMs
+        const submissionCutoffAfterOpenMs =
+          executionModel.schemaVersion === 'bayn.execution-model.v4'
+            ? executionModel.order.submissionCutoffAfterOpenMs
+            : Date.parse(window.executionSession.closeAt) -
+              Date.parse(window.executionSession.openAt) -
+              executionModel.order.submissionCutoffBeforeCloseMs
         const material = {
           schemaVersion: 'bayn.execution-session-binding.v3',
           planningBrokerState: input.planningBrokerState,
           calendar: input.calendar,
           ...window,
-          decisionAfterOpenMs: executionModel.order.decisionAfterOpenMs,
-          submissionCutoffAfterOpenMs: executionModel.order.submissionCutoffAfterOpenMs,
+          decisionAfterOpenMs,
+          submissionCutoffAfterOpenMs,
         } as const
         return Result.flatMap(
           Result.mapError(canonicalHashV1Result(material), (cause) =>
@@ -730,6 +784,9 @@ const bindDecodedExecutionSession = (
         )
       },
     )
+  }
+  if (input.executionModel.schemaVersion === 'bayn.execution-model.v5') {
+    return Result.fail(bindFailure('decode', 'rolling intraday execution requires an exact execution session'))
   }
   const executionModel = input.executionModel
   return Result.flatMap(
@@ -891,10 +948,12 @@ const validateCycleExecutionPolicy = (
   input: DecodedBindCycleExecutionSessionInput,
   binding: ExecutionSessionBinding,
 ): Result.Result<void, ExecutionSessionBindingFailure> => {
-  const intraday = input.executionModel.schemaVersion === 'bayn.execution-model.v4'
-  const expectedPolicyVersion = intraday
-    ? 'bayn.autonomous-cycle-execution-policy.v2'
-    : 'bayn.autonomous-cycle-execution-policy.v1'
+  const expectedPolicyVersion =
+    input.executionModel.schemaVersion === 'bayn.execution-model.v5'
+      ? 'bayn.autonomous-cycle-execution-policy.v3'
+      : input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+        ? 'bayn.autonomous-cycle-execution-policy.v2'
+        : 'bayn.autonomous-cycle-execution-policy.v1'
   if (input.cycle.identity.executionPolicy.schemaVersion !== expectedPolicyVersion) {
     return Result.fail(
       bindCycleFailure('cycle-policy', 'execution-session binding and cycle policy versions do not match', {
@@ -957,8 +1016,39 @@ const validateCycleExecutionPolicy = (
       )
     }
   } else if (
+    binding.schemaVersion === 'bayn.execution-session-binding.v3' &&
+    input.executionModel.schemaVersion === 'bayn.execution-model.v5' &&
+    input.cycle.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
+  ) {
+    const observedCutoffBeforeCloseMs =
+      Date.parse(binding.executionSession.closeAt) -
+      Date.parse(binding.executionSession.openAt) -
+      binding.submissionCutoffAfterOpenMs
+    const mismatch = [
+      {
+        field: 'warmupAfterOpenMs',
+        expected: input.cycle.identity.executionPolicy.warmupAfterOpenMs,
+        observed: binding.decisionAfterOpenMs,
+      },
+      {
+        field: 'submissionCutoffBeforeCloseMs',
+        expected: input.cycle.identity.executionPolicy.submissionCutoffBeforeCloseMs,
+        observed: observedCutoffBeforeCloseMs,
+      },
+    ].find(({ expected, observed }) => expected !== observed)
+    if (mismatch !== undefined) {
+      return Result.fail(
+        bindCycleFailure(
+          'cycle-policy',
+          'execution-session binding does not match the durable cycle execution policy',
+          { cycleId: input.cycle.identity.cycleId, ...mismatch },
+        ),
+      )
+    }
+  } else if (
     binding.schemaVersion === 'bayn.execution-session-binding.v1' &&
     input.executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
+    input.executionModel.schemaVersion !== 'bayn.execution-model.v5' &&
     input.cycle.identity.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v1'
   ) {
     const observed = binding.submissionCutoffLeadMinutes * 60_000

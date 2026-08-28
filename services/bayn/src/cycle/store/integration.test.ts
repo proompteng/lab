@@ -101,6 +101,10 @@ import {
 } from '../../shadow-decision-contract'
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from '../../strategy/intraday-momentum'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'
@@ -998,6 +1002,40 @@ const makeIntradayDraft = (
   const window = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, executionPolicy))
   const draft = Result.getOrThrow(makeCycleDraft(identity, window))
   if (!isIntradayCycleDraft(draft)) return expect.unreachable('expected an intraday cycle draft')
+  return draft
+}
+
+const makeFullSessionIntradayDraft = (
+  accountId = 'paper-account-full-session-intraday',
+  qualificationRunId = '4'.repeat(64),
+): IntradayCycleDraft => {
+  const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  const executionCalendar = Result.getOrThrow(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date: '2026-03-09',
+      openAt: '2026-03-09T13:30:00.000Z',
+      closeAt: '2026-03-09T20:00:00.000Z',
+    }),
+  )
+  const identity = Result.getOrThrow(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'intraday-momentum',
+      qualificationRunId,
+      strategyProtocolHash: canonicalHashV1(defaultIntradayMomentumProtocolDocument),
+      accountId,
+      executionSessionDate: executionCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: executionCalendar.executionCalendarSource,
+      executionCalendarHash: executionCalendar.executionCalendarHash,
+      executionPolicy,
+    }),
+  )
+  const window = Result.getOrThrow(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = Result.getOrThrow(makeCycleDraft(identity, window))
+  if (!isIntradayCycleDraft(draft)) return expect.unreachable('expected a full-session intraday cycle draft')
   return draft
 }
 
@@ -3038,6 +3076,72 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v2',
       submission_cutoff_before_open_ms: null,
       submission_cutoff_after_open_ms: 1_800_000,
+    })
+  })
+
+  test('persists and recovers full-session intraday policy bounds without rewriting historical cycles', async () => {
+    const draft = makeFullSessionIntradayDraft()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const receipt = yield* store.acquire(draft, '2026-03-09T17:00:00.000Z')
+        const authoritySlot = yield* store.readAuthoritySlot({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+          executionSessionDate: draft.identity.executionSessionDate,
+        })
+        const sql = yield* PgClient.PgClient
+        const [row] = yield* sql<{
+          schema_version: string
+          execution_policy_schema_version: string
+          submission_window_ms: number
+          submission_cutoff_before_open_ms: number | null
+          submission_cutoff_after_open_ms: number | null
+          warmup_after_open_ms: number | null
+          submission_cutoff_before_close_ms: number | null
+        }>`
+          SELECT
+            schema_version,
+            execution_policy_schema_version,
+            submission_window_ms,
+            submission_cutoff_before_open_ms,
+            submission_cutoff_after_open_ms,
+            warmup_after_open_ms,
+            submission_cutoff_before_close_ms
+          FROM autonomous_cycles
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `
+        return { authoritySlot, receipt, row }
+      }),
+    )
+
+    expect(observed.receipt).toMatchObject({
+      created: true,
+      cycle: {
+        schemaVersion: 'bayn.autonomous-cycle.v3',
+        identity: {
+          strategyName: 'intraday-momentum',
+          executionPolicy: {
+            schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+            warmupAfterOpenMs: 1_800_000,
+            submissionCutoffBeforeCloseMs: 3_600_000,
+          },
+        },
+        window: {
+          submissionOpenAt: '2026-03-09T14:00:00.000Z',
+          submissionCutoffAt: '2026-03-09T19:00:00.000Z',
+        },
+      },
+    })
+    expect(observed.authoritySlot).toEqual(Option.some(observed.receipt.cycle))
+    expect(observed.row).toEqual({
+      schema_version: 'bayn.autonomous-cycle.v3',
+      execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v3',
+      submission_window_ms: 18_000_000,
+      submission_cutoff_before_open_ms: null,
+      submission_cutoff_after_open_ms: null,
+      warmup_after_open_ms: 1_800_000,
+      submission_cutoff_before_close_ms: 3_600_000,
     })
   })
 

@@ -177,6 +177,7 @@ export const CycleExecutionModelSchema = Schema.Union([
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
   ExecutionModelV4Schema,
+  ExecutionModelV5Schema,
 ])
 export const ExecutionModelSchema = Schema.Union([
   ExecutionModelV1Schema,

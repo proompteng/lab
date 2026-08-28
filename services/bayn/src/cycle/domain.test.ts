@@ -30,6 +30,7 @@ import { canonicalHashV1 } from '../hash'
 import type { SignalSessionRow } from '../market-data'
 import { strictParseOptions } from '../schemas'
 import { openingDriveExecutionModel } from '../strategy/opening-drive'
+import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum'
 import type { IsoDate } from '../types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -198,6 +199,50 @@ describe('autonomous cycle identity and calendar', () => {
     expect(
       Result.isFailure(makeCycleDraft({ ...identity, schemaVersion: 'bayn.autonomous-cycle-identity.v1' }, window)),
     ).toBeTrue()
+  })
+
+  test('derives a full-session rolling cycle from actual regular and early-close session bounds', () => {
+    const policy = makeCycleExecutionPolicyFromModelSuccess(intradayMomentumExecutionModel)
+    if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+      throw new Error('intraday momentum execution must derive the session-relative v3 cycle policy')
+    }
+    const regularCalendar = executionCalendar()
+    const earlyCloseCalendar = executionCalendar({
+      ...springDstSession,
+      closeAt: '2026-03-09T17:00:00.000Z',
+    })
+    const identity = makeCycleIdentitySuccess({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      strategyName: 'intraday-momentum',
+      qualificationRunId,
+      strategyProtocolHash,
+      accountId: 'paper-account-1',
+      executionSessionDate: regularCalendar.executionSessionDate,
+      executionCalendarSchemaVersion: regularCalendar.executionCalendarSchemaVersion,
+      executionCalendarSource: regularCalendar.executionCalendarSource,
+      executionCalendarHash: regularCalendar.executionCalendarHash,
+      executionPolicy: policy,
+    })
+    const regularWindow = makeIntradayCycleWindowSuccess(regularCalendar, policy)
+    const earlyCloseWindow = makeIntradayCycleWindowSuccess(earlyCloseCalendar, policy)
+
+    expect(policy).toMatchObject({
+      strategyExecutionModelHash: canonicalHashV1(intradayMomentumExecutionModel),
+      warmupAfterOpenMs: 1_800_000,
+      submissionCutoffBeforeCloseMs: 3_600_000,
+    })
+    expect(regularWindow).toMatchObject({
+      submissionOpenAt: '2026-03-09T14:00:00.000Z',
+      submissionCutoffAt: '2026-03-09T19:00:00.000Z',
+    })
+    expect(earlyCloseWindow).toMatchObject({
+      submissionOpenAt: '2026-03-09T14:00:00.000Z',
+      submissionCutoffAt: '2026-03-09T16:00:00.000Z',
+    })
+    expect(makeCycleDraftSuccess(identity, regularWindow)).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle.v3',
+      identity: { strategyName: 'intraday-momentum' },
+    })
   })
 
   test('derives stable identities from all Signal, execution-calendar, account, and policy inputs', () => {
