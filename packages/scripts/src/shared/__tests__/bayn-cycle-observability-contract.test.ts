@@ -308,7 +308,7 @@ describe('Bayn cycle operations alert contract', () => {
         'max by (reason) (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max by (phase) (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'min(bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_cycle_snapshot_bound{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_cycle_snapshot_bound{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
         'max by (status, reason) (bayn_cycle_target_plan_info{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
@@ -347,6 +347,7 @@ describe('Bayn cycle operations alert contract', () => {
         ?.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
     ).toBe(true)
     for (const metric of [
+      'bayn_cycle_snapshot_bound',
       'bayn_cycle_decision_market_data_records',
       'bayn_cycle_order_acknowledgement_latency_seconds',
       'bayn_cycle_fill_latency_seconds',
