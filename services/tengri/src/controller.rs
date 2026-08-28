@@ -545,7 +545,13 @@ async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<
         .get_opt(pod_name)
         .await?
         .as_ref()
-        .is_some_and(|pod| is_controlled_by_microvm(pod, microvm) && pod_is_ready(pod)))
+        .is_some_and(|pod| pod_is_usable(pod, microvm)))
+}
+
+fn pod_is_usable(pod: &Pod, microvm: &MicroVM) -> bool {
+    pod.meta().deletion_timestamp.is_none()
+        && is_controlled_by_microvm(pod, microvm)
+        && pod_is_ready(pod)
 }
 
 fn is_terminal_provisioning_error(error: &kube::Error) -> bool {
@@ -1253,6 +1259,32 @@ mod tests {
         );
 
         assert!(!check.await.expect("guest check task").expect("Pod lookup"));
+    }
+
+    #[test]
+    fn terminating_owned_ready_pod_is_not_a_usable_guest() {
+        let now = Utc::now();
+        let microvm = test_microvm(now);
+        let pod: Pod = serde_json::from_value(json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "agent",
+                "namespace": "tengri",
+                "deletionTimestamp": now.to_rfc3339(),
+                "ownerReferences": [{
+                    "apiVersion": "runtime.proompteng.ai/v1alpha1",
+                    "kind": "MicroVM",
+                    "name": "agent",
+                    "uid": "microvm-uid",
+                    "controller": true,
+                }],
+            },
+            "status": {"conditions": [{"status": "True", "type": "Ready"}]},
+        }))
+        .expect("terminating ready Pod");
+
+        assert!(!pod_is_usable(&pod, &microvm));
     }
 
     #[tokio::test]
