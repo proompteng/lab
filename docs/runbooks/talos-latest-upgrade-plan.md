@@ -59,9 +59,10 @@ The accepted r4 release produced these immutable inputs:
    `ghcr.io/proompteng/talos-extensions:v1.13.9`, and signed that immutable catalog digest.
 4. It built and signed independent `ryzen-amd64`, `turin-amd64`, and `altra-arm64` installer receipts. These prove
    that every architecture-specific extension combination can be assembled.
-5. `.github/workflows/nanoagent.yaml` publishes and signs the shell-capable `linux/amd64` and `linux/arm64`
-   Nanoagent image.
-6. GitOps canary images must use the published Nanoagent digest, never a mutable tag.
+5. `.github/workflows/nanoagent.yaml` validates Nanoagent only. The `Tengri images` workflow publishes and signs the
+   shell-capable `linux/amd64` and `linux/arm64` Nanoagent image together with Tengri, and `Tengri release` carries both
+   verified digests into one generated promotion PR.
+6. GitOps canary images must use the immutable Nanoagent digest from that release contract, never a mutable tag.
 
 `.github/workflows/kata-firecracker-extension.yaml` is now validation-only and cannot publish. The accepted r4
 receipts remain authoritative for installed nodes. Future extension publication must use

@@ -7,6 +7,7 @@ on:
     branches:
       - main
     types:
+      - requested
       - completed
 
 concurrency:
@@ -20,9 +21,12 @@ jobs:
   invalidate-stale-promotion:
     if: >-
       ${{
-        github.event.workflow_run.conclusion != 'success' &&
         github.event.workflow_run.head_branch == 'main' &&
-        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+        (
+          github.event.action == 'requested' ||
+          (github.event.action == 'completed' && github.event.workflow_run.conclusion != 'success')
+        )
       }}
     runs-on: arc-arm64
     timeout-minutes: 5
@@ -30,10 +34,12 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Close a promotion superseded by a failed newer build
+      - name: Close a promotion superseded by a newer build
         env:
-          FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUILD_ACTION: ${{ github.event.action }}
+          BUILD_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPERSEDING_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           promotion="$(gh pr list \
@@ -50,12 +56,12 @@ jobs:
           promoted_source="$(jq -r \
             '.[0].body // "" | (try capture("- Source: `(?<sha>[0-9a-f]{40})`").sha catch "")' \
             <<<"$promotion")"
-          if [[ -z "$promoted_source" || "$promoted_source" == "$FAILED_SHA" ]]; then
+          if [[ -z "$promoted_source" || "$promoted_source" == "$SUPERSEDING_SHA" ]]; then
             exit 0
           fi
 
           comparison="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/compare/${promoted_source}...${FAILED_SHA}" \
+            "repos/${GITHUB_REPOSITORY}/compare/${promoted_source}...${SUPERSEDING_SHA}" \
             --jq .status)"
           if [[ "$comparison" != ahead ]]; then
             exit 0
@@ -63,7 +69,7 @@ jobs:
 
           gh pr close "$pr_number" \
             --repo "$GITHUB_REPOSITORY" \
-            --comment "Closing this promotion because the newer Tengri image build at ${FAILED_SHA} did not succeed. A successful build from that revision or a descendant must publish and verify a replacement promotion."
+            --comment "Closing this promotion because the newer Tengri image build at ${SUPERSEDING_SHA} superseded its release contract (event: ${BUILD_ACTION}, conclusion: ${BUILD_CONCLUSION:-pending}). A successful build from that revision or a descendant must publish and verify a replacement promotion."
 
   promote:
     if: >-
@@ -136,7 +142,8 @@ jobs:
             packages/scripts/package.json \
             bun.lock \
             .github/workflows/tengri-images.yml \
-            .github/workflows/tengri-release.yml
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
 
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tengri-images.yml@refs/heads/main"
           for entry in "tengri:${tengri_digest}" "nanoagent:${nanoagent_digest}"; do
@@ -178,7 +185,8 @@ jobs:
             packages/scripts/package.json \
             bun.lock \
             .github/workflows/tengri-images.yml \
-            .github/workflows/tengri-release.yml
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
           git checkout "$main_head" -- \
             argocd/applications/tengri/deployment.yaml \
             argocd/applications/tengri/kustomization.yaml \
@@ -210,7 +218,8 @@ jobs:
             packages/scripts/package.json \
             bun.lock \
             .github/workflows/tengri-images.yml \
-            .github/workflows/tengri-release.yml
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
 
           git checkout "$latest_main" -- \
             argocd/applications/tengri/deployment.yaml \

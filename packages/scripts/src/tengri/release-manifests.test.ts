@@ -110,6 +110,63 @@ describe('Tengri release manifests', () => {
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('updates only the proompteng container endpoint', () => {
+    const paths = fixture()
+    writeFileSync(
+      paths.bffDeploymentPath,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: proompteng
+          env:
+            - name: TENGRI_GRPC_ENDPOINT
+              value: ""
+        - name: sidecar
+          env:
+            - name: TENGRI_GRPC_ENDPOINT
+              value: sidecar.internal:50051
+`,
+    )
+
+    updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)
+
+    const deployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    expect(deployment).toContain(`value: ${TENGRI_GRPC_ENDPOINT}`)
+    expect(deployment).toContain('value: sidecar.internal:50051')
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('does not accept a sidecar endpoint in place of the proompteng endpoint', () => {
+    const paths = fixture()
+    writeFileSync(
+      paths.bffDeploymentPath,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: proompteng
+          env: []
+        - name: sidecar
+          env:
+            - name: TENGRI_GRPC_ENDPOINT
+              value: ${TENGRI_GRPC_ENDPOINT}
+`,
+    )
+
+    expect(() => validateTengriRelease(paths)).toThrow(
+      'Proompteng deployment must contain one literal TENGRI_GRPC_ENDPOINT, found 0',
+    )
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'Proompteng deployment must contain one literal TENGRI_GRPC_ENDPOINT, found 0',
+    )
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
   it('rejects enabled placeholders and partial bootstrap state', () => {
     const enabledPlaceholders = fixture(ZERO_DIGEST, ZERO_DIGEST, true)
     expect(() => validateTengriRelease(enabledPlaceholders)).toThrow('cannot reference a bootstrap zero digest')

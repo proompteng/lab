@@ -11,6 +11,8 @@ const releasePath = resolve(repositoryRoot, '.github/workflows/tengri-release.ym
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 const tengriReadmePath = resolve(repositoryRoot, 'services/tengri/README.md')
+const tengriOperationsPath = resolve(repositoryRoot, 'docs/tengri/operations.md')
+const talosUpgradePath = resolve(repositoryRoot, 'docs/runbooks/talos-latest-upgrade-plan.md')
 
 describe('Tengri release workflows', () => {
   it('connects promotion to the image workflow release contract', () => {
@@ -18,23 +20,31 @@ describe('Tengri release workflows', () => {
     const releaseSource = readFileSync(releasePath, 'utf8')
     const images = YAML.parse(imagesSource) as { name?: string }
     const release = YAML.parse(releaseSource) as {
-      on?: { workflow_run?: { workflows?: string[]; branches?: string[] } }
+      on?: { workflow_run?: { workflows?: string[]; branches?: string[]; types?: string[] } }
     }
 
     expect(images.name).toBe('Tengri images')
     expect(release.on?.workflow_run?.workflows).toEqual(['Tengri images'])
     expect(release.on?.workflow_run?.branches).toEqual(['main'])
+    expect(release.on?.workflow_run?.types).toEqual(['requested', 'completed'])
     expect(imagesSource).toContain('name: tengri-release-contract')
     expect(releaseSource).toContain('name: tengri-release-contract')
   })
 
   it('documents the publisher and generated promotion handoff', () => {
     const readme = readFileSync(tengriReadmePath, 'utf8')
+    const operations = readFileSync(tengriOperationsPath, 'utf8')
+    const talosUpgrade = readFileSync(talosUpgradePath, 'utf8')
 
     expect(readme).toContain('`Tengri images`')
     expect(readme).toContain('`Tengri release`')
     expect(readme).toContain('generated promotion PR')
     expect(readme).not.toContain('Roll out only through the `Tengri controller` workflow')
+    expect(operations).toContain('`Tengri images`')
+    expect(operations).toContain('`Tengri release`')
+    expect(operations).not.toContain('`Manual OCI Mirror`')
+    expect(talosUpgrade).toContain('`.github/workflows/nanoagent.yaml` validates Nanoagent only')
+    expect(talosUpgrade).toContain('`Tengri images` workflow publishes and signs')
   })
 
   it('builds and signs both native architectures from one source revision', () => {
@@ -109,7 +119,9 @@ describe('Tengri release workflows', () => {
     expect(validation).toContain('services/tengri')
     expect(validation).toContain('services/nanoagent')
     expect(validation).toContain('packages/scripts/src/tengri')
-    expect(validation).not.toContain('argocd/applications/tengri')
+    expect(validation).toContain('argocd/applications/tengri/crd.yaml')
+    expect(validation).not.toContain('argocd/applications/tengri/kustomization.yaml')
+    expect(validation).not.toContain('argocd/applications/tengri/deployment.yaml')
     expect(validation).not.toContain('argocd/applications/kata')
     expect(validation).not.toContain('argocd/applicationsets/platform.yaml')
   })
@@ -126,7 +138,12 @@ describe('Tengri release workflows', () => {
     }
     const pullRequestPaths = images.on?.pull_request?.paths ?? []
     const pushPaths = images.on?.push?.paths ?? []
-    const dependencies = ['packages/scripts/src/shared/cli.ts', 'packages/scripts/package.json', 'bun.lock']
+    const dependencies = [
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/package.json',
+      'bun.lock',
+      'argocd/applications/tengri/crd.yaml',
+    ]
     for (const dependency of dependencies) {
       expect(pullRequestPaths).toContain(dependency)
       expect(pushPaths).toContain(dependency)
@@ -197,7 +214,7 @@ describe('Tengri release workflows', () => {
     expect(steps[createIndex]?.with?.body).not.toContain('The application remains absent')
   })
 
-  it('closes an older promotion when a newer image build does not succeed', () => {
+  it('closes an older promotion when a newer image build starts or fails', () => {
     const releaseSource = readFileSync(releasePath, 'utf8')
     const release = YAML.parse(releaseSource) as {
       jobs?: {
@@ -209,13 +226,15 @@ describe('Tengri release workflows', () => {
       }
     }
     const invalidation = release.jobs?.['invalidate-stale-promotion']
-    const closeStep = invalidation?.steps?.find((step) => step.name?.includes('failed newer build'))
+    const closeStep = invalidation?.steps?.find((step) => step.name?.includes('superseded by a newer build'))
 
+    expect(invalidation?.if).toContain("github.event.action == 'requested'")
+    expect(invalidation?.if).toContain("github.event.action == 'completed'")
     expect(invalidation?.if).toContain("github.event.workflow_run.conclusion != 'success'")
     expect(invalidation?.permissions?.['pull-requests']).toBe('write')
     expect(closeStep?.run).toContain('--head codex/tengri-release')
     expect(closeStep?.run).toContain('capture("- Source: `(?<sha>[0-9a-f]{40})`")')
-    expect(closeStep?.run).toContain('compare/${promoted_source}...${FAILED_SHA}')
+    expect(closeStep?.run).toContain('compare/${promoted_source}...${SUPERSEDING_SHA}')
     expect(closeStep?.run).toContain('[[ "$comparison" != ahead ]]')
     expect(closeStep?.run).toContain('gh pr close "$pr_number"')
   })

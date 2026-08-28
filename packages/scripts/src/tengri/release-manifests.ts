@@ -98,12 +98,18 @@ function findTengriApplicationBlock(contents: string) {
 
 function parseBffEndpoint(contents: string) {
   const parsed = YAML.parse(contents) as {
-    spec?: { template?: { spec?: { containers?: Array<{ env?: Array<{ name?: string; value?: string }> }> } } }
+    spec?: {
+      template?: {
+        spec?: { containers?: Array<{ name?: string; env?: Array<{ name?: string; value?: string }> }> }
+      }
+    }
   }
-  const endpoints =
-    parsed.spec?.template?.spec?.containers
-      ?.flatMap((container) => container.env ?? [])
-      .filter((entry) => entry.name === 'TENGRI_GRPC_ENDPOINT') ?? []
+  const containers =
+    parsed.spec?.template?.spec?.containers?.filter((container) => container.name === 'proompteng') ?? []
+  if (containers.length !== 1) {
+    throw new Error(`Proompteng deployment must contain exactly one proompteng container, found ${containers.length}`)
+  }
+  const endpoints = containers[0]?.env?.filter((entry) => entry.name === 'TENGRI_GRPC_ENDPOINT') ?? []
   if (endpoints.length !== 1 || typeof endpoints[0]?.value !== 'string') {
     throw new Error(`Proompteng deployment must contain one literal TENGRI_GRPC_ENDPOINT, found ${endpoints.length}`)
   }
@@ -112,6 +118,68 @@ function parseBffEndpoint(contents: string) {
     throw new Error(`Proompteng deployment contains an unexpected Tengri endpoint: ${endpoint}`)
   }
   return endpoint
+}
+
+function findProomptengContainerBlock(contents: string) {
+  const lines = contents.split('\n')
+  const containerSections = lines.flatMap((line, index) => {
+    const match = /^(\s*)containers:\s*(?:#.*)?$/.exec(line)
+    return match ? [{ index, indentation: match[1].length }] : []
+  })
+  if (containerSections.length !== 1) {
+    throw new Error(
+      `Proompteng deployment must contain exactly one containers section, found ${containerSections.length}`,
+    )
+  }
+
+  const section = containerSections[0]
+  const itemIndentation = section.indentation + 2
+  const itemPattern = new RegExp(
+    `^ {${itemIndentation}}- name:\\s*(?:"proompteng"|'proompteng'|proompteng)\\s*(?:#.*)?$`,
+  )
+  let sectionEnd = lines.length
+  for (let index = section.index + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    const indentation = line.length - line.trimStart().length
+    if (indentation <= section.indentation) {
+      sectionEnd = index
+      break
+    }
+  }
+
+  const starts: number[] = []
+  for (let index = section.index + 1; index < sectionEnd; index += 1) {
+    if (itemPattern.test(lines[index])) starts.push(index)
+  }
+  if (starts.length !== 1) {
+    throw new Error(`Proompteng deployment must contain one mutable proompteng container block, found ${starts.length}`)
+  }
+
+  const start = starts[0]
+  let end = sectionEnd
+  const siblingPattern = new RegExp(`^ {${itemIndentation}}-\\s+`)
+  for (let index = start + 1; index < sectionEnd; index += 1) {
+    if (siblingPattern.test(lines[index])) {
+      end = index
+      break
+    }
+  }
+  return { lines, start, end }
+}
+
+function replaceBffEndpoint(contents: string) {
+  parseBffEndpoint(contents)
+  const { lines, start, end } = findProomptengContainerBlock(contents)
+  const block = lines.slice(start, end).join('\n')
+  const nextBlock = replaceExactlyOnce(
+    block,
+    /(^\s*- name: TENGRI_GRPC_ENDPOINT\s*\n(?:^\s*#.*\n)*^\s*value:)\s*(?:"[^"]*"|'[^']*'|[^\s#]+)\s*$/m,
+    `$1 ${TENGRI_GRPC_ENDPOINT}`,
+    'Tengri BFF endpoint in the proompteng container',
+  )
+  lines.splice(start, end - start, ...nextBlock.split('\n'))
+  return lines.join('\n')
 }
 
 function assertTengriDeploymentImage(contents: string) {
@@ -209,12 +277,7 @@ export function updateTengriRelease(
     'Tengri enabled flag',
   )
   const nextApplicationSet = `${originalApplicationSet.slice(0, application.start)}${nextBlock}${originalApplicationSet.slice(application.end)}`
-  const nextBffDeployment = replaceExactlyOnce(
-    originalBffDeployment,
-    /(^\s*- name: TENGRI_GRPC_ENDPOINT\s*\n(?:^\s*#.*\n)*^\s*value:)\s*(?:"[^"]*"|'[^']*'|[^\s#]+)\s*$/m,
-    `$1 ${TENGRI_GRPC_ENDPOINT}`,
-    'Tengri BFF endpoint',
-  )
+  const nextBffDeployment = replaceBffEndpoint(originalBffDeployment)
 
   // Validate all mutations in memory before writing any file.
   const parsed = parseKustomization(nextKustomization)
