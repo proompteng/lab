@@ -1257,6 +1257,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 48, name: 'research_reconciliation_rearm' },
       { migration_id: 49, name: 'preserve_reconciliation_cycle' },
       { migration_id: 50, name: 'preserve_failure_rearm_cycle' },
+      { migration_id: 51, name: 'position_snapshot_ingestion_order' },
     ])
   })
 
