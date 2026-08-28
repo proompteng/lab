@@ -117,8 +117,9 @@ export function MenuBar({
     const current = menuNames.indexOf(currentMenu)
     const next = menuNames[(current + delta + menuNames.length) % menuNames.length]
     if (!next) return
-    onMenuChange(menuOpen ? next : null)
-    focusMenu(next)
+    const isMenuOpen = menuOpen !== null
+    onMenuChange(isMenuOpen ? next : null)
+    if (!isMenuOpen) focusMenu(next)
   }
 
   return (
