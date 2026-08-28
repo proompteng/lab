@@ -2051,18 +2051,36 @@ impl ProvisionalTerminalLeaseManager {
         let clear_agent_id = agent_id.to_owned();
         let clear_creation_id = creation_id.to_owned();
         self.creation_intents
-            .clear_tracked(agent_id, creation_id, move |tracked| async move {
-                if tracked {
-                    manager
-                        .patch_creation_annotation(&clear_agent_id, &clear_creation_id, None)
-                        .await
-                        .map_err(map_kube_error)?;
-                    manager
-                        .terminal_identities
-                        .remove_creation(&clear_agent_id, &clear_creation_id);
-                }
-                Ok(())
-            })
+            .clear_tracked(
+                agent_id,
+                creation_id,
+                PROVISIONAL_TERMINAL_CLEANUP_RETRY,
+                move |tracked| {
+                    let manager = manager.clone();
+                    let clear_agent_id = clear_agent_id.clone();
+                    let clear_creation_id = clear_creation_id.clone();
+                    async move {
+                        if tracked {
+                            match manager
+                                .patch_creation_annotation(
+                                    &clear_agent_id,
+                                    &clear_creation_id,
+                                    None,
+                                )
+                                .await
+                            {
+                                Ok(()) => {}
+                                Err(error) if kube_resource_is_absent(&error) => {}
+                                Err(error) => return Err(map_kube_error(error)),
+                            }
+                            manager
+                                .terminal_identities
+                                .remove_creation(&clear_agent_id, &clear_creation_id);
+                        }
+                        Ok(())
+                    }
+                },
+            )
             .await
     }
 
@@ -2241,6 +2259,7 @@ enum ProvisionalTerminalLease {
     Creating(Uuid),
     AwaitingTicket(Uuid),
     Expiring(Uuid),
+    Clearing(Uuid),
 }
 
 #[derive(Clone, Default)]
@@ -2288,27 +2307,39 @@ impl ProvisionalTerminalLeaseRegistry {
         let registry = self.clone();
         let cleanup_terminal_id = terminal_id.to_owned();
         tokio::spawn(async move {
-            sleep(timeout).await;
-            loop {
-                let should_cleanup = {
-                    let mut leases = registry.leases.lock().await;
-                    match leases.get(&key).copied() {
-                        Some(ProvisionalTerminalLease::Creating(current)) if current == token => {
-                            false
+            if creating {
+                loop {
+                    let creation_settled = {
+                        let leases = registry.leases.lock().await;
+                        match leases.get(&key).copied() {
+                            Some(ProvisionalTerminalLease::Creating(current))
+                                if current == token =>
+                            {
+                                false
+                            }
+                            Some(ProvisionalTerminalLease::AwaitingTicket(current))
+                                if current == token =>
+                            {
+                                true
+                            }
+                            _ => return,
                         }
-                        Some(ProvisionalTerminalLease::AwaitingTicket(current))
-                            if current == token =>
-                        {
-                            leases.insert(key.clone(), ProvisionalTerminalLease::Expiring(token));
-                            true
-                        }
-                        _ => return,
+                    };
+                    if creation_settled {
+                        break;
                     }
-                };
-                if should_cleanup {
-                    break;
+                    sleep(retry_delay).await;
                 }
-                sleep(retry_delay).await;
+            }
+            sleep(timeout).await;
+            {
+                let mut leases = registry.leases.lock().await;
+                match leases.get(&key).copied() {
+                    Some(ProvisionalTerminalLease::AwaitingTicket(current)) if current == token => {
+                        leases.insert(key.clone(), ProvisionalTerminalLease::Expiring(token));
+                    }
+                    _ => return,
+                }
             }
 
             loop {
@@ -2356,6 +2387,9 @@ impl ProvisionalTerminalLeaseRegistry {
             Some(ProvisionalTerminalLease::Expiring(_)) => Err(Status::not_found(
                 "terminal session expired before creation completed",
             )),
+            Some(ProvisionalTerminalLease::Clearing(_)) => Err(Status::not_found(
+                "terminal creation is being cleared after a definitive failure",
+            )),
             None => Ok(()),
         }
     }
@@ -2383,6 +2417,11 @@ impl ProvisionalTerminalLeaseRegistry {
                     "terminal session expired before ticket issuance",
                 ));
             }
+            Some(ProvisionalTerminalLease::Clearing(_)) => {
+                return Err(Status::not_found(
+                    "terminal creation failed before ticket issuance",
+                ));
+            }
             _ => {}
         }
         let tracked = leases.contains_key(&key);
@@ -2395,18 +2434,55 @@ impl ProvisionalTerminalLeaseRegistry {
         &self,
         agent_id: &str,
         terminal_id: &str,
-        action: I,
+        retry_delay: Duration,
+        mut action: I,
     ) -> Result<(), Status>
     where
-        I: FnOnce(bool) -> IF,
+        I: FnMut(bool) -> IF,
         IF: Future<Output = Result<(), Status>>,
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
-        let mut leases = self.leases.lock().await;
-        let tracked = leases.contains_key(&key);
-        action(tracked).await?;
-        leases.remove(&key);
-        Ok(())
+        let token = {
+            let mut leases = self.leases.lock().await;
+            let token = match leases.get(&key).copied() {
+                Some(ProvisionalTerminalLease::Creating(token))
+                | Some(ProvisionalTerminalLease::AwaitingTicket(token))
+                | Some(ProvisionalTerminalLease::Expiring(token))
+                | Some(ProvisionalTerminalLease::Clearing(token)) => Some(token),
+                None => None,
+            };
+            if let Some(token) = token {
+                leases.insert(key.clone(), ProvisionalTerminalLease::Clearing(token));
+            }
+            token
+        };
+        let Some(token) = token else {
+            return action(false).await;
+        };
+
+        loop {
+            match action(true).await {
+                Ok(()) => {
+                    let mut leases = self.leases.lock().await;
+                    if matches!(
+                        leases.get(&key),
+                        Some(ProvisionalTerminalLease::Clearing(current)) if *current == token
+                    ) {
+                        leases.remove(&key);
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id,
+                        terminal_id,
+                        %error,
+                        "failed to clear a definitive terminal creation failure; retrying"
+                    );
+                    sleep(retry_delay).await;
+                }
+            }
+        }
     }
 
     async fn clear(&self, agent_id: &str, terminal_id: &str) -> bool {
@@ -3685,6 +3761,127 @@ mod tests {
                 .await
                 .expect("delayed cleanup timeout")
                 .expect("delayed cleanup result")
+        );
+    }
+
+    #[tokio::test]
+    async fn ticket_timeout_starts_after_terminal_creation_settles() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .register_with_state(
+                "agent-legacy",
+                "legacy-grpc-ticket-window",
+                Duration::from_millis(200),
+                Duration::from_millis(5),
+                true,
+                move |creation_id| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        cleanup_sender.send(creation_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        registry
+            .settle_creation("agent-legacy", "legacy-grpc-ticket-window", || async {
+                Ok(())
+            })
+            .await
+            .expect("terminal creation settlement");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(100), cleanup_receiver.recv())
+                .await
+                .ok()
+                .flatten(),
+            None,
+            "the pre-creation interval must not consume the ticket-confirmation window",
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(200), cleanup_receiver.recv())
+                .await
+                .expect("cleanup after the post-creation ticket window")
+                .expect("cleanup result"),
+            "legacy-grpc-ticket-window",
+        );
+    }
+
+    #[tokio::test]
+    async fn definitive_failure_clear_retries_after_leaving_creating_state() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        registry
+            .register_with_state(
+                "agent-legacy",
+                "legacy-grpc-definitive-failure",
+                Duration::from_secs(60),
+                Duration::from_millis(1),
+                true,
+                |_| async { true },
+            )
+            .await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let clear_attempts = attempts.clone();
+        let first_attempt_started = Arc::new(tokio::sync::Notify::new());
+        let clear_started = first_attempt_started.clone();
+        let first_attempt_release = Arc::new(tokio::sync::Notify::new());
+        let clear_release = first_attempt_release.clone();
+        let clear_registry = registry.clone();
+        let clear = tokio::spawn(async move {
+            clear_registry
+                .clear_tracked(
+                    "agent-legacy",
+                    "legacy-grpc-definitive-failure",
+                    Duration::from_millis(1),
+                    move |tracked| {
+                        let clear_attempts = clear_attempts.clone();
+                        let clear_started = clear_started.clone();
+                        let clear_release = clear_release.clone();
+                        async move {
+                            assert!(tracked);
+                            if clear_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                                clear_started.notify_one();
+                                clear_release.notified().await;
+                                return Err(Status::unavailable("transient Kubernetes failure"));
+                            }
+                            Ok(())
+                        }
+                    },
+                )
+                .await
+        });
+
+        first_attempt_started.notified().await;
+        assert!(matches!(
+            registry
+                .leases
+                .lock()
+                .await
+                .get(&(
+                    "agent-legacy".to_owned(),
+                    "legacy-grpc-definitive-failure".to_owned(),
+                ))
+                .copied(),
+            Some(ProvisionalTerminalLease::Clearing(_)),
+        ));
+        first_attempt_release.notify_one();
+        clear
+            .await
+            .expect("definitive failure clear task")
+            .expect("retried definitive failure clear");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert!(
+            registry
+                .leases
+                .lock()
+                .await
+                .get(&(
+                    "agent-legacy".to_owned(),
+                    "legacy-grpc-definitive-failure".to_owned(),
+                ))
+                .is_none(),
         );
     }
 
