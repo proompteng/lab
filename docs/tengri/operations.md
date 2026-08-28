@@ -51,21 +51,17 @@ Exact failure reasons are published in CR status. Do not infer success from a cr
 
 ## Rollout
 
-1. Run the controller tests and generate the CRD.
-2. Merge controller source to `main`. The `Tengri controller` workflow builds natively on `arc-amd64` and `arc-arm64`,
-   publishes and signs `registry.ide-newton.ts.net/lab/tengri:sha-<commit>`, verifies both platforms, and records its
-   immutable digest in the workflow summary.
-3. Build Nanoagent through `.github/workflows/nanoagent.yaml`, then run the `Manual OCI Mirror` workflow with its signed
-   GHCR digest, `target_repository=nanoagent`, and an immutable source-derived tag. The mirror verifies both platforms
-   and preserves the source digest at `registry.ide-newton.ts.net/lab/nanoagent`.
-4. Update the two digest references in `argocd/applications/tengri/kustomization.yaml` and confirm the required 1Password
-   fields exist.
-5. For the initial rollout, set the `tengri` entry in `argocd/applicationsets/platform.yaml` to `enabled: "true"` in
-   the same reviewed rollout PR or a reviewed follow-up. Until that enablement is merged, no Tengri Application,
-   Deployment, or endpoint is expected to exist and the remaining live verification steps must not run.
-6. Merge the reviewed rollout PR and let the auto-reconciled Tengri Application deploy from `main`.
-7. Verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and unchanged node scheduling.
-8. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
+1. Run the controller and Nanoagent tests and verify both generated CRD copies.
+2. Merge controller, guest, CRD, or release-tool changes to `main`. `Tengri images` validates both services and CRDs,
+   builds native `linux/amd64` and `linux/arm64` images, publishes and signs both multi-architecture indexes, and emits
+   one immutable `tengri-release-contract` for that source revision.
+3. `Tengri release` verifies the contract, indexes, signatures, and current `main`, then opens one generated promotion
+   PR that pins both digests and enables the Tengri ApplicationSet entry and BFF endpoint atomically. A newer relevant
+   build immediately invalidates an older open promotion.
+4. Review and merge the generated promotion PR; never hand-edit image digests or use the retired manual mirror path.
+5. Let Argo reconcile from `main`, then verify the controller Deployment, Service endpoints, `/livez`, `/readyz`, and
+   unchanged node scheduling.
+6. Run the bounded Firecracker acceptance path: create one authenticated agent, prove `runtimeClassName: kata-fc`,
    guest kernel isolation, fresh-image pull, interactive PTY, persistent file round trip, Codex event, and localhost
    preview WebSocket/HMR.
 

@@ -38,13 +38,16 @@ MicroVM Pods and PVCs continue running; this rollout does not modify a `MicroVM`
 Clients reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a
 truthful service-unavailable response and must be retried.
 
-Roll out only through the `Tengri controller` workflow and Argo reconciliation. On `main`, the workflow builds native
-`linux/amd64` and `linux/arm64` images, publishes a signed multi-architecture index at
-`registry.ide-newton.ts.net/lab/tengri:sha-<commit>`, and writes the immutable digest to its job summary:
+Roll out only through the `Tengri images` publisher, the generated `Tengri release` promotion PR, and Argo
+reconciliation. On `main`, `Tengri images` validates both services, builds native `linux/amd64` and `linux/arm64`
+images, publishes signed multi-architecture indexes at `registry.ide-newton.ts.net/lab/{tengri,nanoagent}:sha-<commit>`,
+and uploads their immutable digests in the `tengri-release-contract` artifact. `Tengri release` verifies that contract,
+both OCI indexes, and both signatures, then opens one atomic promotion PR that pins both digests and enables the
+ApplicationSet and BFF together:
 
-1. Merge the controller source and wait for both native image builds, index verification, and keyless signature
-   verification to pass.
-2. Pin the published digest in a reviewed GitOps follow-up; never deploy a mutable tag.
+1. Merge the controller or guest source and wait for `Tengri images` validation, both native builds, index publication,
+   and keyless signature verification to pass.
+2. Review and merge the generated promotion PR; never hand-edit a mutable tag into GitOps.
 3. Confirm Argo starts one `tengri` Deployment replacement and does not reconcile guest Pods, PVCs, or nodes.
 4. From a configured `galactic-lan` client, verify the replacement and its control path:
 
