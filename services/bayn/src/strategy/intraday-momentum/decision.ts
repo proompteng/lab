@@ -236,7 +236,7 @@ const validateSnapshot = (
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
-    if (bars[0]?.eventAt !== manifest.rangeStartAt) {
+    if (bars[0] === undefined || compareIntradayInstants(bars[0].eventAt, manifest.rangeStartAt) !== 0) {
       return fail('snapshot-coverage', 'intraday symbol lacks the complete rolling lookback baseline', { symbol })
     }
     for (const records of [

@@ -39,6 +39,8 @@ interface FixtureOptions {
   readonly observedLagMs?: number
   readonly spreadBps?: number
   readonly displayedSize?: number
+  readonly baselineEventAt?: string
+  readonly evidenceEventAt?: string
   readonly omitFirstBarFor?: string
   readonly sourceTopics?: {
     readonly bars: string
@@ -92,7 +94,7 @@ const marketContextAt = (options: FixtureOptions) => {
       market_session: 'regular',
       delay_class: defaultIntradayMomentumProtocolDocument.delayClass,
       symbol,
-      event_at: instant(rangeStart + minute * 60_000),
+      event_at: minute === 0 ? (options.baselineEventAt ?? instant(rangeStart)) : instant(rangeStart + minute * 60_000),
       ingested_at: instant(rangeStart + (minute + 1) * 60_000),
       source_topic: sourceTopics.bars,
       source_partition: '0',
@@ -123,8 +125,8 @@ const marketContextAt = (options: FixtureOptions) => {
       market_session: 'regular',
       delay_class: defaultIntradayMomentumProtocolDocument.delayClass,
       symbol,
-      event_at: instant(quoteEventAt),
-      ingested_at: instant(quoteEventAt + 100),
+      event_at: options.evidenceEventAt ?? instant(quoteEventAt),
+      ingested_at: options.evidenceEventAt ?? instant(quoteEventAt + 100),
       source_topic: sourceTopics.quotes,
       source_partition: '0',
       source_offset: String(quoteOffset++),
@@ -147,8 +149,8 @@ const marketContextAt = (options: FixtureOptions) => {
       market_session: 'regular',
       delay_class: defaultIntradayMomentumProtocolDocument.delayClass,
       symbol,
-      event_at: instant(quoteEventAt),
-      ingested_at: instant(quoteEventAt + 100),
+      event_at: options.evidenceEventAt ?? instant(quoteEventAt),
+      ingested_at: options.evidenceEventAt ?? instant(quoteEventAt + 100),
       source_topic: sourceTopics.trades,
       source_partition: '0',
       source_offset: String(tradeOffset++),
@@ -461,6 +463,41 @@ describe('intraday momentum strategy', () => {
         ),
       ),
     ).toMatchObject({ reason: 'snapshot-coverage', symbol: 'AMD' })
+  })
+
+  test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          baselineEventAt: '2026-08-18T17:40:00.000000000Z',
+          returnBps: qualifyingReturns,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AMD', 'AVGO', 'NVDA'])
+  })
+
+  test('emits schema-valid signals from nanosecond quote and trade timestamps', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          evidenceEventAt: '2026-08-18T18:00:01.500999999Z',
+          returnBps: qualifyingReturns,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.signals[0]?.quoteObservedAt).toBe('2026-08-18T18:00:01.500999999Z')
+    expect(
+      Schema.decodeUnknownResult(IntradayMomentumTargetPortfolioSchema, strictParseOptions)(decision),
+    ).toMatchObject({ _tag: 'Success' })
   })
 
   test('exposes one pure INTRADAY definition', () => {

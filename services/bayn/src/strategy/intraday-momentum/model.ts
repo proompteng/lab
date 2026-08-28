@@ -9,6 +9,7 @@ import {
   SymbolSchema,
   UnitIntervalSchema,
   UtcInstantSchema,
+  UtcOrderTimestampSchema,
 } from '../../schemas'
 import type { IsoDate } from '../../types'
 import type { StrategyDefinition, TargetPortfolio } from '../core'
@@ -31,6 +32,8 @@ const IntradayMomentumRejectionReasonSchema = Schema.Literals([
   'market-data-freshness',
 ])
 
+const IntradayEvidenceTimestampSchema = Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema])
+
 export const IntradayMomentumSignalSchema = Schema.Struct({
   symbol: SymbolSchema,
   referencePriceMicros: PositiveMicrosSchema,
@@ -38,9 +41,9 @@ export const IntradayMomentumSignalSchema = Schema.Struct({
   rangeLowPriceMicros: PositiveMicrosSchema,
   bidPriceMicros: PositiveMicrosSchema,
   askPriceMicros: PositiveMicrosSchema,
-  quoteObservedAt: UtcInstantSchema,
+  quoteObservedAt: IntradayEvidenceTimestampSchema,
   confirmationTradePriceMicros: PositiveMicrosSchema,
-  confirmationTradeObservedAt: UtcInstantSchema,
+  confirmationTradeObservedAt: IntradayEvidenceTimestampSchema,
   lookbackReturnBps: Schema.Int,
   breakoutBps: Schema.Int,
   rangeLocationPpm: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 })),
