@@ -7,6 +7,7 @@ const scriptsWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/scripts-ci.yml', import.meta.url),
   'utf8',
 )
+const tengriWorkflow = readFileSync(new URL('../../../../../.github/workflows/tengri.yaml', import.meta.url), 'utf8')
 
 describe('landing browser validation workflow', () => {
   test('installs Chromium and runs the co-located Tengri Playwright suite', () => {
@@ -31,5 +32,13 @@ describe('landing browser validation workflow', () => {
 
     expect(pullRequestTrigger).toContain("'.github/workflows/pull-request.yml'")
     expect(pullRequestTrigger).toContain("'.github/workflows/scripts-ci.yml'")
+  })
+
+  test('does not duplicate pull-request browser validation', () => {
+    const trigger = tengriWorkflow.match(/on:\n[\s\S]*?\n\nconcurrency:/)?.[0]
+
+    expect(trigger).toContain('push:')
+    expect(trigger).toContain('workflow_dispatch:')
+    expect(trigger).not.toContain('pull_request:')
   })
 })
