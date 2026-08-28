@@ -34,46 +34,44 @@ func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
-	t.Cleanup(manager.close)
+	// Capacity admission depends only on manager state; do not make it depend on concurrent PTY allocation.
+	manager := &terminalManager{workspace: workspace, sessions: make(map[string]*terminalSession)}
 	for index := 0; index < maxTerminalSessions; index++ {
-		if _, _, err := manager.create(fmt.Sprintf("terminal-creation-%02d", index), "/", 80, 24); err != nil {
-			t.Fatalf("create terminal %d: %v", index, err)
-		}
+		id := fmt.Sprintf("terminal-session-%02d", index)
+		manager.sessions[id] = &terminalSession{id: id}
 	}
 	if _, _, err := manager.create("terminal-creation-overflow", "/", 80, 24); err == nil || !strings.Contains(err.Error(), "four") {
 		t.Fatalf("fifth terminal error = %v", err)
 	}
 }
 
-func TestTerminalManagerCreatesIdempotentlyBeforeEnforcingCapacity(t *testing.T) {
+func TestTerminalManagerReturnsIdempotentSessionBeforeEnforcingCapacity(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	workspace, err := newWorkspace(root)
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
 	}
-	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
-	t.Cleanup(manager.close)
-
-	first, created, err := manager.create("terminal-creation-stable", "/", 80, 24)
-	if err != nil {
-		t.Fatalf("create terminal: %v", err)
+	// Idempotent lookup must win before any filesystem or PTY work is attempted.
+	manager := &terminalManager{workspace: workspace, sessions: make(map[string]*terminalSession)}
+	stable := &terminalSession{
+		id:          "terminal-session-stable",
+		creationID:  "terminal-creation-stable",
+		cwd:         "/",
+		connections: make(map[string]*terminalConnection),
 	}
-	if !created {
-		t.Fatal("first terminal creation was not reported as created")
-	}
+	manager.sessions[stable.id] = stable
 	for index := 1; index < maxTerminalSessions; index++ {
-		if _, _, err := manager.create(fmt.Sprintf("terminal-creation-%02d", index), "/", 80, 24); err != nil {
-			t.Fatalf("fill terminal %d: %v", index, err)
-		}
+		id := fmt.Sprintf("terminal-session-%02d", index)
+		manager.sessions[id] = &terminalSession{id: id}
 	}
 	replayed, replayCreated, err := manager.create("terminal-creation-stable", "/different", 200, 50)
 	if err != nil {
 		t.Fatalf("replay terminal creation: %v", err)
 	}
-	if replayed.ID != first.ID || replayed.CreationID != first.CreationID {
-		t.Fatalf("idempotent create = %#v, want %#v", replayed, first)
+	want := stable.view()
+	if replayed.ID != want.ID || replayed.CreationID != want.CreationID {
+		t.Fatalf("idempotent create = %#v, want %#v", replayed, want)
 	}
 	if replayCreated {
 		t.Fatal("idempotent terminal replay was reported as a new creation")
