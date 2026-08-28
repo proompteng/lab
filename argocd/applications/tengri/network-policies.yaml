@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: tengri-default-deny
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
@@ -10,6 +12,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: tengri-control-plane
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   podSelector:
     matchLabels:
@@ -88,6 +92,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: tengri-microvm-guests
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   podSelector:
     matchLabels:
