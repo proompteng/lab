@@ -132,7 +132,49 @@ impl TerminalIdentityRegistry {
             .insert(session_id.to_owned(), creation_id.to_owned());
     }
 
-    fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
+    pub(crate) fn restore_legacy_creation(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+        cwd: &str,
+        existing_session_ids: &[String],
+        terminal_id: Option<&str>,
+    ) {
+        let mut state = self.state();
+        let identities = state.agents.entry(agent_id.to_owned()).or_default();
+        if let Some(terminal_id) = terminal_id {
+            identities.pending.remove(creation_id);
+            identities
+                .creation_ids
+                .insert(terminal_id.to_owned(), creation_id.to_owned());
+            return;
+        }
+        identities.pending.insert(
+            creation_id.to_owned(),
+            PendingLegacyCreation {
+                existing_session_ids: existing_session_ids.iter().cloned().collect(),
+                cwd: cwd.to_owned(),
+            },
+        );
+    }
+
+    pub(crate) fn remove_creation(&self, agent_id: &str, creation_id: &str) {
+        let mut state = self.state();
+        let remove_agent = if let Some(identities) = state.agents.get_mut(agent_id) {
+            identities.pending.remove(creation_id);
+            identities
+                .creation_ids
+                .retain(|_, stored_creation_id| stored_creation_id != creation_id);
+            identities.creation_ids.is_empty() && identities.pending.is_empty()
+        } else {
+            false
+        };
+        if remove_agent {
+            state.agents.remove(agent_id);
+        }
+    }
+
+    pub(crate) fn reconcile(&self, agent_id: &str, sessions: &mut [TerminalSession]) {
         let mut state = self.state();
         let Some(identities) = state.agents.get_mut(agent_id) else {
             return;

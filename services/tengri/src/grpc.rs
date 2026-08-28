@@ -621,6 +621,9 @@ impl MicroVmControlPlane for ControlPlane {
             let cwd = request.cwd.clone();
             let columns = request.columns;
             let rows = request.rows;
+            let failed_provisional_terminal_leases = provisional_terminal_leases.clone();
+            let failed_agent_id = request.agent_id.clone();
+            let failed_creation_id = creation_id.clone();
             let creation = detached_terminal_creation(
                 async move {
                     let _creation_guard = creation_guard;
@@ -642,6 +645,14 @@ impl MicroVmControlPlane for ControlPlane {
                         )
                         .await?;
                     Ok(creation)
+                },
+                move |error| async move {
+                    if terminal_creation_failure_is_definitive(&error) {
+                        failed_provisional_terminal_leases
+                            .clear_creation(&failed_agent_id, &failed_creation_id)
+                            .await?;
+                    }
+                    Err(map_guest_error(error))
                 },
             )
             .await?;
@@ -1760,6 +1771,13 @@ impl ProvisionalTerminalLeaseManager {
                     .await;
             }
             for intent in recoverable_provisional_terminal_creation_intents(&agent, now) {
+                self.terminal_identities.restore_legacy_creation(
+                    &intent.agent_id,
+                    &intent.creation_id,
+                    &intent.record.cwd,
+                    &intent.record.existing_session_ids,
+                    intent.record.terminal_id.as_deref(),
+                );
                 self.schedule_creation(
                     &intent.agent_id,
                     &intent.creation_id,
@@ -2022,6 +2040,26 @@ impl ProvisionalTerminalLeaseManager {
                 .map_err(map_kube_error)?;
         }
         Ok(())
+    }
+
+    async fn clear_creation(&self, agent_id: &str, creation_id: &str) -> Result<(), Status> {
+        let manager = self.clone();
+        let clear_agent_id = agent_id.to_owned();
+        let clear_creation_id = creation_id.to_owned();
+        self.creation_intents
+            .issue_and_confirm(agent_id, creation_id, move |tracked| async move {
+                if tracked {
+                    manager
+                        .patch_creation_annotation(&clear_agent_id, &clear_creation_id, None)
+                        .await
+                        .map_err(map_kube_error)?;
+                    manager
+                        .terminal_identities
+                        .remove_creation(&clear_agent_id, &clear_creation_id);
+                }
+                Ok(())
+            })
+            .await
     }
 
     async fn patch_annotation(
@@ -2323,20 +2361,27 @@ impl ProvisionalTerminalLeaseRegistry {
     }
 }
 
-async fn detached_terminal_creation<C, S, SF>(
+fn terminal_creation_failure_is_definitive(error: &GuestError) -> bool {
+    matches!(error, GuestError::Api { .. })
+}
+
+async fn detached_terminal_creation<C, S, SF, F, FF>(
     creation: C,
     on_success: S,
+    on_failure: F,
 ) -> Result<GuestTerminalCreation, Status>
 where
     C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
     S: FnOnce(GuestTerminalCreation) -> SF + Send + 'static,
     SF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
+    F: FnOnce(GuestError) -> FF + Send + 'static,
+    FF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
 {
     let (result_sender, result_receiver) = oneshot::channel();
     tokio::spawn(async move {
         let result = match creation.await {
             Ok(creation) => on_success(creation).await,
-            Err(error) => Err(map_guest_error(error)),
+            Err(error) => on_failure(error).await,
         };
         let _ = result_sender.send(result);
     });
@@ -3408,6 +3453,7 @@ mod tests {
         let creation = detached_terminal_creation(
             async { Ok(legacy_guest_terminal_creation("terminal-unconfirmed")) },
             |creation| async move { Ok(creation) },
+            |error| async move { Err(map_guest_error(error)) },
         )
         .await
         .expect("terminal creation");
@@ -3492,6 +3538,7 @@ mod tests {
                 Ok(legacy_guest_terminal_creation("terminal-canceled-handler"))
             },
             |creation| async move { Ok(creation) },
+            |error| async move { Err(map_guest_error(error)) },
         ));
         started_receiver.await.expect("creation started");
         handler.abort();
@@ -3639,5 +3686,214 @@ mod tests {
                 .expect("recovered creation cleanup result"),
             creation_id
         );
+    }
+
+    #[tokio::test]
+    async fn restart_restores_legacy_identity_before_ticket_confirmation() {
+        let now = Utc::now();
+        let creation_id = "legacy-grpc-fedcba9876543210fedcba9876543210";
+        let terminal_id = "terminal-created";
+        let record = provisional_creation_record(
+            now + chrono::Duration::minutes(1),
+            vec!["terminal-existing".to_owned()],
+            Some(terminal_id),
+        );
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            provisional_terminal_creation_annotation_key(creation_id)
+                .expect("creation intent annotation key"),
+            serde_json::to_string(&record).expect("creation record JSON"),
+        )]));
+
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let terminal_identities = TerminalIdentityRegistry::default();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            terminal_identities.clone(),
+        );
+        let recovery_manager = manager.clone();
+        let recovery = tokio::spawn(async move { recovery_manager.recover().await });
+        let (request, response) = handle.next_request().await.expect("MicroVM list request");
+        assert_eq!(request.method(), http::Method::GET);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms"
+        );
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&json!({
+                        "apiVersion": "runtime.proompteng.ai/v1alpha1",
+                        "kind": "MicroVMList",
+                        "metadata": {},
+                        "items": [agent.clone()]
+                    }))
+                    .expect("MicroVM list JSON"),
+                ))
+                .expect("MicroVM list response"),
+        );
+        recovery
+            .await
+            .expect("recovery task")
+            .expect("creation intent recovery");
+
+        let mut sessions = vec![guest_terminal_session(terminal_id, "", "/workspace")];
+        terminal_identities.reconcile("agent-legacy", &mut sessions);
+        assert_eq!(sessions[0].creation_id, creation_id);
+
+        let confirmation_manager = manager.clone();
+        let confirmed_creation_id = sessions[0].creation_id.clone();
+        let confirmation = tokio::spawn(async move {
+            confirmation_manager
+                .issue_and_confirm("agent-legacy", terminal_id, &confirmed_creation_id, || {
+                    Ok("terminal-ticket")
+                })
+                .await
+        });
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("creation intent confirmation patch");
+        let body: Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("confirmation patch body"),
+        )
+        .expect("confirmation patch JSON");
+        let key = provisional_terminal_creation_annotation_key(creation_id)
+            .expect("creation intent annotation key");
+        assert_eq!(body["metadata"]["annotations"][key], Value::Null);
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&agent).expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM confirmation response"),
+        );
+        assert_eq!(
+            confirmation
+                .await
+                .expect("confirmation task")
+                .expect("ticket confirmation"),
+            "terminal-ticket"
+        );
+    }
+
+    #[tokio::test]
+    async fn definitive_legacy_terminal_limit_failure_clears_intent_before_retry() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let terminal_identities = TerminalIdentityRegistry::default();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            terminal_identities.clone(),
+        );
+        let now = Utc::now();
+        let failed_creation_id = "legacy-grpc-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let record = provisional_creation_record(
+            now + chrono::Duration::minutes(1),
+            vec!["terminal-existing".to_owned()],
+            None,
+        );
+        terminal_identities.restore_legacy_creation(
+            "agent-legacy",
+            failed_creation_id,
+            &record.cwd,
+            &record.existing_session_ids,
+            None,
+        );
+        manager
+            .schedule_creation(
+                "agent-legacy",
+                failed_creation_id,
+                Duration::from_secs(60),
+                record,
+            )
+            .await;
+
+        let failed_manager = manager.clone();
+        let failure = tokio::spawn(detached_terminal_creation(
+            async {
+                Err(GuestError::Api {
+                    status: reqwest::StatusCode::CONFLICT,
+                    message: "at most four terminal sessions are allowed".to_owned(),
+                })
+            },
+            |creation| async move { Ok(creation) },
+            move |error| async move {
+                if terminal_creation_failure_is_definitive(&error) {
+                    failed_manager
+                        .clear_creation("agent-legacy", failed_creation_id)
+                        .await?;
+                }
+                Err(map_guest_error(error))
+            },
+        ));
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("failed creation intent clear patch");
+        let body: Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("creation clear patch body"),
+        )
+        .expect("creation clear patch JSON");
+        let key = provisional_terminal_creation_annotation_key(failed_creation_id)
+            .expect("creation intent annotation key");
+        assert_eq!(body["metadata"]["annotations"][key], Value::Null);
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&provisional_terminal_test_agent(now))
+                        .expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM creation clear response"),
+        );
+        let error = failure
+            .await
+            .expect("failure task")
+            .expect_err("terminal limit must fail");
+        assert_eq!(error.code(), tonic::Code::AlreadyExists);
+        assert!(
+            !manager
+                .creation_intents
+                .issue_and_confirm("agent-legacy", failed_creation_id, |tracked| async move {
+                    Ok(tracked)
+                })
+                .await
+                .expect("cleared intent check")
+        );
+
+        let retry_creation_id = "legacy-grpc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        terminal_identities.restore_legacy_creation(
+            "agent-legacy",
+            retry_creation_id,
+            "/workspace",
+            &["terminal-existing".to_owned()],
+            None,
+        );
+        let mut retry_sessions = vec![
+            guest_terminal_session("terminal-existing", "", "/workspace"),
+            guest_terminal_session("terminal-retry", "", "/workspace"),
+        ];
+        terminal_identities.reconcile("agent-legacy", &mut retry_sessions);
+        assert_eq!(retry_sessions[1].creation_id, retry_creation_id);
+        assert!(!terminal_creation_failure_is_definitive(
+            &GuestError::InvalidUtf8
+        ));
     }
 }
