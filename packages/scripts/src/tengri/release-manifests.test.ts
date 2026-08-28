@@ -307,6 +307,68 @@ spec:
     }
   })
 
+  it('rejects additional top-level generators without mutating release manifests', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '  template:\n',
+        `    - list:
+        elements:
+          - name: tengri-shadow
+            path: argocd/applications/tengri
+            namespace: tengri
+  template:
+`,
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must contain exactly one verified top-level matrix generator')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must contain exactly one verified top-level matrix generator',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects rollout strategies that can hold the verified release', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '  generators:\n',
+        `  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: name
+              operator: In
+              values: [tengri]
+          maxUpdate: 0
+  generators:
+`,
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must not define a rollout strategy')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must not define a rollout strategy',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
   it('rejects multi-source application templates without mutating release manifests', () => {
     const sourceLists = [
       '      sources: []\n',

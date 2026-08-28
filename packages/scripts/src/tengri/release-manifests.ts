@@ -209,8 +209,16 @@ function findTengriApplicationBlock(contents: string) {
   ) {
     throw new Error('Tengri ApplicationSet must enable Go templating with missingkey=error')
   }
+  if (document.getIn(['spec', 'strategy'], true) !== undefined) {
+    throw new Error('Tengri ApplicationSet must not define a rollout strategy that can hold the verified release')
+  }
 
-  const matrix = document.getIn(['spec', 'generators', 0, 'matrix'], true)
+  const topLevelGenerators = document.getIn(['spec', 'generators'], true)
+  if (!isSeq(topLevelGenerators) || topLevelGenerators.items.length !== 1) {
+    throw new Error('Platform ApplicationSet must contain exactly one verified top-level matrix generator')
+  }
+  const topLevelGenerator = topLevelGenerators.items[0]
+  const matrix = isMap(topLevelGenerator) ? topLevelGenerator.get('matrix', true) : undefined
   if (!isMap(matrix)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generator')
   }
