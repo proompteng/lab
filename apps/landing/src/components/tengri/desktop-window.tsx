@@ -239,14 +239,14 @@ function resetTransientStyles(element: HTMLDivElement | null) {
 function resizeHandleClass(edge: ResizeEdge) {
   const shared = 'z-20 touch-none'
   const classes: Record<ResizeEdge, string> = {
-    n: '-top-1 left-3 right-3 h-2 cursor-n-resize',
-    s: '-bottom-1 left-3 right-3 h-2 cursor-s-resize',
-    e: 'top-3 -right-1 bottom-3 w-2 cursor-e-resize',
-    w: 'top-3 -left-1 bottom-3 w-2 cursor-w-resize',
-    ne: '-top-1 -right-1 h-4 w-4 cursor-ne-resize',
-    nw: '-top-1 -left-1 h-4 w-4 cursor-nw-resize',
-    se: '-right-1 -bottom-1 h-4 w-4 cursor-se-resize',
-    sw: '-bottom-1 -left-1 h-4 w-4 cursor-sw-resize',
+    n: 'top-0 left-3 right-3 h-2 cursor-n-resize',
+    s: 'bottom-0 left-3 right-3 h-2 cursor-s-resize',
+    e: 'top-3 right-0 bottom-3 w-2 cursor-e-resize',
+    w: 'top-3 bottom-3 left-0 w-2 cursor-w-resize',
+    ne: 'top-0 right-0 h-4 w-4 cursor-ne-resize',
+    nw: 'top-0 left-0 h-4 w-4 cursor-nw-resize',
+    se: 'right-0 bottom-0 h-4 w-4 cursor-se-resize',
+    sw: 'bottom-0 left-0 h-4 w-4 cursor-sw-resize',
   }
   return `${shared} ${classes[edge]}`
 }
