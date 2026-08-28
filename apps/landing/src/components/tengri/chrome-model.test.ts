@@ -212,20 +212,25 @@ describe('Tengri Chrome addresses', () => {
   })
 
   test('accepts only fragment-ticketed HTTPS preview launch URLs', () => {
-    expect(safePreviewLaunchUrl('https://tengri.example/v1/preview/open#one-use.ticket')).toBe(
-      'https://tengri.example/v1/preview/open#one-use.ticket',
+    const ticket = `${'a'.repeat(48)}.${'b'.repeat(43)}`
+    const productionOrigin = 'https://tengri.example'
+    expect(safePreviewLaunchUrl(`${productionOrigin}/v1/preview/open#${ticket}`, productionOrigin)).toBe(
+      `${productionOrigin}/v1/preview/open#${ticket}`,
     )
-    expect(safePreviewLaunchUrl('http://localhost/v1/preview/open#local-ticket')).toBe(
-      'http://localhost/v1/preview/open#local-ticket',
+    expect(safePreviewLaunchUrl(`http://localhost/v1/preview/open#${ticket}`, 'http://localhost')).toBe(
+      `http://localhost/v1/preview/open#${ticket}`,
     )
     for (const value of [
       'javascript:alert(1)',
-      'http://tengri.example/v1/preview/open#ticket',
+      `http://tengri.example/v1/preview/open#${ticket}`,
       'https://tengri.example/v1/preview/open',
-      'https://user:secret@tengri.example/v1/preview/open#ticket',
-      'https://tengri.example/not-preview#ticket',
+      `https://user:secret@tengri.example/v1/preview/open#${ticket}`,
+      `https://tengri.example/not-preview#${ticket}`,
+      `https://tengri.example/v1/preview/open?redirect=1#${ticket}`,
+      'https://tengri.example/v1/preview/open#too.short',
+      `https://attacker.example/v1/preview/open#${ticket}`,
     ]) {
-      expect(safePreviewLaunchUrl(value)).toBe('')
+      expect(safePreviewLaunchUrl(value, productionOrigin)).toBe('')
     }
   })
 })

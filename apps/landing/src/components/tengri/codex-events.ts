@@ -205,6 +205,14 @@ export function codexEventContinuesRestoredItem(
   )
 }
 
+export function codexEventSupersedesRestoredItem(
+  event: TengriCodexEvent,
+  restoredItem: CodexTranscriptItem | undefined,
+  restoredHistorySequence: number,
+) {
+  return Boolean(restoredItem && event.itemId === restoredItem.id && event.sequence > restoredHistorySequence)
+}
+
 export function reconcileCodexEventsWithRestoredHistory(
   current: TengriCodexEvent[],
   restoredHistory: ReadonlyMap<string, CodexTranscriptItem>,

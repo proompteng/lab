@@ -56,10 +56,15 @@ const sourceEntries = [
   },
 ]
 
+const previewTicket = `${'a'.repeat(48)}.${'b'.repeat(43)}`
+
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
   extraFiles?: typeof workspaceEntries
+  holdReplayResume?: boolean
+  resumeThreadDelayMs?: number
+  resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
 }
 
@@ -67,6 +72,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
+  let resumeThreadRequests = 0
+  let resumeThreadResponses = 0
+  let releaseHeldResume = () => {}
+  let markHeldResumeStarted = () => {}
+  const heldResume = new Promise<void>((resolve) => {
+    releaseHeldResume = resolve
+  })
+  const heldResumeStarted = new Promise<void>((resolve) => {
+    markHeldResumeStarted = resolve
+  })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   let terminalSessions: Record<string, unknown>[] = []
   const contents = new Map<string, string>([
@@ -84,6 +99,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     localStorage.clear()
     const NativeEventSource = window.EventSource
     const eventSourceState = { fileClosed: 0, fileOpened: 0 }
+    const eventSources: HealthyEventSource[] = []
     Object.defineProperty(window, '__tengriTestEventSources', {
       configurable: true,
       value: eventSourceState,
@@ -95,6 +111,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       readonly CLOSED = 2
       readonly CONNECTING = 0
       readonly OPEN = 1
+      closed = false
       readonly readyState = 1
       readonly url: string
       readonly withCredentials = false
@@ -107,11 +124,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         super()
         this.url = String(url)
         this.tracksFiles = new URL(this.url, window.location.href).pathname === '/api/tengri/files/events'
+        eventSources.push(this)
         if (this.tracksFiles) eventSourceState.fileOpened += 1
         queueMicrotask(() => this.onopen?.(new Event('open')))
       }
 
       close() {
+        this.closed = true
         if (this.tracksFiles) eventSourceState.fileClosed += 1
       }
     }
@@ -124,6 +143,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       },
     })
     Object.defineProperty(window, 'EventSource', { configurable: true, value: SelectiveEventSource })
+    Object.defineProperty(window, '__tengriEventSources', { configurable: true, value: eventSources })
   })
   await page.routeWebSocket('ws://127.0.0.1:8080/**', (socket) => {
     let ready = false
@@ -150,11 +170,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   await page.route('**/api/tengri', async (route) => {
     const request = route.request()
     if (request.method() === 'GET') {
+      const previewGatewayOrigin = 'http://localhost:8080'
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
           authConfigured: true,
           controlPlaneConfigured: true,
+          previewGatewayOrigin,
           authenticated,
           user: authenticated ? user : null,
           agents: authenticated && agent ? [agent] : [],
@@ -241,7 +263,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       case 'preview-session':
         result = {
           id: 'preview-1',
-          launchUrl: `${new URL(request.url()).origin}/v1/preview/open#ticket.signature`,
+          launchUrl: `http://localhost:8080/v1/preview/open#${previewTicket}`,
           expiresAt: '2026-08-26T12:34:30.000Z',
         }
         break
@@ -249,7 +271,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         result = { authenticated: true, email: 'ada@example.test', plan: 'pro' }
         break
       case 'create-thread':
-        result = { id: 'thread-1', rawJson: '{}' }
+        result = { id: 'thread-1', rawJson: '{}', eventSequence: 0 }
         break
       case 'list-terminals':
         result = terminalSessions
@@ -279,7 +301,20 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'resume-thread':
-        result = { id: action.threadId, rawJson: '{"items":[]}' }
+        resumeThreadRequests += 1
+        if (options.holdReplayResume && resumeThreadRequests === 2) {
+          markHeldResumeStarted()
+          await heldResume
+        }
+        if (options.resumeThreadDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.resumeThreadDelayMs))
+        }
+        resumeThreadResponses += 1
+        result = {
+          id: action.threadId,
+          rawJson: options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}',
+          eventSequence: 0,
+        }
         break
       case 'send-turn':
         result = { id: 'turn-1', threadId: action.threadId }
@@ -301,12 +336,34 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) })
   })
 
-  return { actions, getAgent: () => agent }
+  return {
+    actions,
+    getAgent: () => agent,
+    getResumeThreadResponseCount: () => resumeThreadResponses,
+    releaseHeldResume,
+    waitForHeldResume: () => heldResumeStarted,
+  }
 }
 
 function parentPath(path: string) {
   const separator = path.lastIndexOf('/')
   return separator <= 0 ? '/' : path.slice(0, separator)
+}
+
+function emitCodexEvent(page: Page, event: Record<string, unknown>) {
+  return page.evaluate((payload) => {
+    const source = (
+      window as typeof window & {
+        __tengriEventSources?: Array<{
+          closed: boolean
+          onmessage: ((event: MessageEvent) => void) | null
+          url: string
+        }>
+      }
+    ).__tengriEventSources?.find((candidate) => !candidate.closed && candidate.url.includes('/api/tengri/events?'))
+    if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
+    source.onmessage(new MessageEvent('message', { data: JSON.stringify(payload) }))
+  }, event)
 }
 
 async function resizeWindow(
@@ -597,7 +654,7 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
     chrome.getByRole('button', { name: 'Open current preview in browser' }).click(),
   ])
   await expect.poll(previewSessionCount).toBe(previewCountBeforeExternalOpen + 1)
-  await expect(external).toHaveURL(/\/v1\/preview\/open#ticket\.signature$/)
+  await expect(external).toHaveURL(`http://localhost:8080/v1/preview/open#${previewTicket}`)
   await expect(external.getByText('Live microVM preview')).toBeVisible()
   await external.close()
 })
@@ -658,6 +715,83 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(deleteDialog).toBeVisible()
   await deleteDialog.getByRole('button', { name: 'Delete Agent' }).click()
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+})
+
+test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadDelayMs: 400,
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+  await page.goto('/')
+
+  const prompt = page.getByRole('textbox', { name: /Message your agent|Steer the current turn/ })
+  await prompt.fill('Continue with the current turn.')
+  await prompt.press('Enter')
+
+  await expect
+    .poll(() =>
+      mock.actions.some(
+        (action) =>
+          action.action === 'steer-turn' &&
+          action.threadId === 'thread-active' &&
+          action.turnId === 'turn-active' &&
+          action.text === 'Continue with the current turn.',
+      ),
+    )
+    .toBe(true)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+})
+
+test('does not resurrect a turn completed while replay recovery is in flight', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    holdReplayResume: true,
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+  await page.goto('/')
+  await expect(page.getByLabel('Steer the current turn')).toBeVisible()
+  const initialResumeResponses = mock.getResumeThreadResponseCount()
+
+  await emitCodexEvent(page, {
+    sequence: 10,
+    kind: 'warning',
+    method: 'tengri/replayWarning',
+    threadId: 'thread-active',
+    turnId: '',
+    itemId: '',
+    text: 'Replay window exceeded',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  await mock.waitForHeldResume()
+  await emitCodexEvent(page, {
+    sequence: 11,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-active',
+    turnId: 'turn-active',
+    itemId: '',
+    text: '',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+  mock.releaseHeldResume()
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBeGreaterThan(initialResumeResponses)
+  await expect(page.getByLabel('Message your agent')).toBeVisible()
+
+  const prompt = page.getByLabel('Message your agent')
+  await prompt.fill('Start the next turn.')
+  await prompt.press('Enter')
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'send-turn' && action.text === 'Start the next turn.'))
+    .toBe(true)
+  expect(mock.actions.some((action) => action.action === 'steer-turn')).toBe(false)
 })
 
 test('supports desktop window shortcuts, independent windows, drag, and eight-edge resize behavior', async ({

@@ -56,6 +56,7 @@ async function mockReadyDesktop(page: Page) {
         body: JSON.stringify({
           authConfigured: true,
           controlPlaneConfigured: true,
+          previewGatewayOrigin: 'http://localhost:8080',
           authenticated: true,
           user: { id: '424242', name: 'Ada Lovelace', email: 'ada@example.test', image: null },
           agents: [readyAgent],

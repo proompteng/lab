@@ -33,7 +33,7 @@ export function buildContentSecurityPolicy(options: BrowserSecurityPolicyOptions
   const frames = ["'self'"]
   if (gatewayOrigin) frames.push(gatewayOrigin)
   if (previewFrameSource) frames.push(previewFrameSource)
-  if (options.development) frames.push('http://localhost:*', 'http://127.0.0.1:*')
+  if (options.development) frames.push('http://localhost:*', 'http://127.0.0.1:*', 'http://*.localhost:*')
 
   return [
     "default-src 'self'",
