@@ -2,7 +2,7 @@
 
 import { FileCode2, Folder, LoaderCircle, Moon, Settings, SquareTerminal } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useReducer, useRef, useState } from 'react'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
@@ -70,6 +70,15 @@ export function ReadyDesktop({
       height: rect?.height ?? Math.max(0, globalThis.innerHeight - 30),
     }
   }, [])
+
+  useLayoutEffect(() => {
+    const measuredViewport = viewport()
+    dispatch({
+      type: 'hydrate',
+      state: initialWindowState(measuredViewport, ['finder', 'chrome']),
+      viewport: measuredViewport,
+    })
+  }, [viewport])
 
   const closeWindow = useCallback(
     (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
