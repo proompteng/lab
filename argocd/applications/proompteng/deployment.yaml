@@ -18,8 +18,16 @@ spec:
       labels:
         app: proompteng
     spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       nodeSelector:
         kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: proompteng
           image: registry.ide-newton.ts.net/lab/proompteng
@@ -31,9 +39,63 @@ spec:
               cpu: "200m"
               memory: "256Mi"
           ports:
-            - containerPort: 3000
+            - name: http
+              containerPort: 3000
+              protocol: TCP
           env:
             - name: NEXT_PUBLIC_CONVEX_URL
               value: https://convex.proompteng.ai
             - name: LANDING_CMS_URL
               value: https://cms.proompteng.ai
+            - name: BETTER_AUTH_URL
+              value: https://proompteng.ai
+            - name: TENGRI_GRPC_ENDPOINT
+              # The release promotion enables this endpoint atomically with
+              # the Tengri ApplicationSet entry and immutable image digests.
+              value: ""
+            - name: TENGRI_GRPC_TLS
+              value: "false"
+            - name: TENGRI_BFF_SECRET_DIR
+              value: /var/run/secrets/tengri-bff
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/landing/.next/cache
+            - name: tengri-bff
+              mountPath: /var/run/secrets/tengri-bff
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tengri-bff
+          secret:
+            secretName: tengri-bff

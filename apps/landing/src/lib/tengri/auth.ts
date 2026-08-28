@@ -1,21 +1,27 @@
 import 'server-only'
 
+import { createHash } from 'node:crypto'
 import { betterAuth } from 'better-auth'
 import type { TengriUser } from '@/lib/tengri/types'
 import { githubSubjectId } from './identity'
+import { readTengriBffSecret } from './runtime-secrets'
 
 type AuthEnvironment = ReturnType<typeof requiredAuthEnvironment>
 type BetterAuth = ReturnType<typeof createTengriAuth>
 
 let authInstance: BetterAuth | null | undefined
+let authConfigurationHash: string | undefined
 
 export function isTengriAuthConfigured() {
   return requiredAuthEnvironment().configured
 }
 
 export function getTengriAuth(): BetterAuth | null {
-  if (authInstance !== undefined) return authInstance
   const environment = requiredAuthEnvironment()
+  const configurationHash = hashAuthEnvironment(environment)
+  if (authInstance !== undefined && configurationHash === authConfigurationHash) return authInstance
+
+  authConfigurationHash = configurationHash
   if (!environment.configured) {
     authInstance = null
     return authInstance
@@ -95,9 +101,9 @@ export async function getTengriIdentity(headers: Headers): Promise<{ subject: st
 
 function requiredAuthEnvironment() {
   const baseUrl = process.env.BETTER_AUTH_URL?.trim() || 'http://localhost:3000'
-  const secret = process.env.BETTER_AUTH_SECRET?.trim() || ''
-  const githubClientId = process.env.GITHUB_CLIENT_ID?.trim() || ''
-  const githubClientSecret = process.env.GITHUB_CLIENT_SECRET?.trim() || ''
+  const secret = readTengriBffSecret('BETTER_AUTH_SECRET')
+  const githubClientId = readTengriBffSecret('GITHUB_CLIENT_ID')
+  const githubClientSecret = readTengriBffSecret('GITHUB_CLIENT_SECRET')
   return {
     baseUrl,
     secret,
@@ -105,4 +111,16 @@ function requiredAuthEnvironment() {
     githubClientSecret,
     configured: secret.length >= 32 && githubClientId.length > 0 && githubClientSecret.length > 0,
   }
+}
+
+function hashAuthEnvironment(environment: AuthEnvironment) {
+  return createHash('sha256')
+    .update(environment.baseUrl)
+    .update('\0')
+    .update(environment.secret)
+    .update('\0')
+    .update(environment.githubClientId)
+    .update('\0')
+    .update(environment.githubClientSecret)
+    .digest('hex')
 }

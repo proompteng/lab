@@ -28,7 +28,8 @@ import ./bun-workspace-service.nix {
     "services/tengri/proto"
   ];
   buildCommands = [
-    "bun --cwd=apps/landing run build"
+    "bun --cwd=apps/landing run prebuild"
+    "(cd apps/landing && node node_modules/next/dist/bin/next build --webpack)"
   ];
   runtimeInstallPhase = ''
     cp -R "$TMPDIR/work/apps/landing/.next/standalone/." "$out/app/"
