@@ -20,8 +20,8 @@ pub(crate) struct RuntimeSecretSnapshot {
 impl RuntimeSecretSnapshot {
     pub(crate) fn new(internal_hmac: &str, ticket_signing: &str) -> Self {
         Self {
-            internal_hmac: internal_hmac.as_bytes().to_vec(),
-            ticket_signing: ticket_signing.as_bytes().to_vec(),
+            internal_hmac: normalize(internal_hmac),
+            ticket_signing: normalize(ticket_signing),
         }
     }
 }
@@ -68,9 +68,14 @@ pub(crate) async fn replace_pod(
 }
 
 async fn read_key(directory: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
-    fs::read(directory.join(name))
+    fs::read_to_string(directory.join(name))
         .await
         .with_context(|| format!("read projected runtime secret key {name}"))
+        .map(|value| normalize(&value))
+}
+
+fn normalize(value: &str) -> Vec<u8> {
+    value.trim().as_bytes().to_vec()
 }
 
 #[cfg(test)]
@@ -106,10 +111,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn matching_projection_remains_healthy() {
+    async fn normalized_matching_projection_remains_healthy() {
         let directory = TestDirectory::new().await;
-        directory.write(INTERNAL_HMAC_FILE, "current-hmac").await;
-        directory.write(TICKET_SIGNING_FILE, "current-ticket").await;
+        directory
+            .write(INTERNAL_HMAC_FILE, "  current-hmac\n")
+            .await;
+        directory
+            .write(TICKET_SIGNING_FILE, "current-ticket\n\n")
+            .await;
 
         let result = tokio::time::timeout(
             Duration::from_millis(30),
