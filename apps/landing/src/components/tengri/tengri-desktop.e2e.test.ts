@@ -644,7 +644,9 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
 })
 
-test('preserves terminal identity on reload and isolates a duplicated desktop tab', async ({ page }) => {
+test('preserves terminal identity on reload and BFCache restore while isolating a duplicated desktop tab', async ({
+  page,
+}) => {
   const terminalStore: TerminalStore = { sessions: [] }
   const originalMock = await mockTengri(page, { terminalStore })
   await page.goto('/')
@@ -666,6 +668,11 @@ test('preserves terminal identity on reload and isolates a duplicated desktop ta
     page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
   ).toBeVisible()
   expect(originalMock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(1)
+
+  await page.evaluate(() => {
+    globalThis.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    globalThis.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+  })
 
   const inheritedSessionStorage = await page.evaluate(() => Object.entries(sessionStorage))
   const duplicate = await page.context().newPage()

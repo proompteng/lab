@@ -76,7 +76,7 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
     release: () => {},
     releaseTimer: null,
   }
-  let handlePageHide: () => void = () => {}
+  let handlePageHide: (event: PageTransitionEvent) => void = () => {}
   const storageKey = `tengri:desktop:${agentId}`
   let storedId = ''
   try {
@@ -123,8 +123,10 @@ function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
       resolve()
     }
   })
-  handlePageHide = () => lease.release()
-  globalThis.addEventListener('pagehide', handlePageHide, { once: true })
+  handlePageHide = (event) => {
+    if (!event.persisted) lease.release()
+  }
+  globalThis.addEventListener('pagehide', handlePageHide)
   claimIdentity(storedId || newDesktopId())
   return lease
 }
