@@ -257,7 +257,7 @@ describe('immutable intraday market snapshot', () => {
       ),
     ).toMatchObject({
       _tag: 'IntradaySnapshotFailure',
-      reason: 'coverage',
+      reason: 'not-ready',
       message: 'intraday snapshot lacks a per-symbol range-completion bar',
       facts: {
         symbol: 'AMD',
@@ -607,10 +607,10 @@ describe('immutable intraday market snapshot', () => {
     const rows = makeRows()
     const staleQuotes = rows.quotes.map((quote) => ({ ...quote, event_at: '2026-08-18T13:33:00.000Z' }))
     expect(error(verifyIntradaySnapshot(request, { ...rows, quotes: staleQuotes }))).toMatchObject({
-      reason: 'freshness',
+      reason: 'not-ready',
     })
     expect(error(verifyIntradaySnapshot(request, { ...rows, trades: rows.trades.slice(1) }))).toMatchObject({
-      reason: 'freshness',
+      reason: 'not-ready',
     })
     expect(
       error(
@@ -620,7 +620,7 @@ describe('immutable intraday market snapshot', () => {
         }),
       ),
     ).toMatchObject({
-      reason: 'freshness',
+      reason: 'not-ready',
     })
   })
 
