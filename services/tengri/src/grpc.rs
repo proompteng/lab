@@ -641,6 +641,7 @@ impl MicroVmControlPlane for ControlPlane {
                             &completion_creation_id,
                             creation_record,
                             &creation.session.id,
+                            LEGACY_TERMINAL_TICKET_TIMEOUT,
                         )
                         .await?;
                     Ok(creation)
@@ -1737,7 +1738,12 @@ impl ProvisionalTerminalLeaseManager {
         creation_id: &str,
         mut record: ProvisionalTerminalCreationRecord,
         terminal_id: &str,
+        timeout: Duration,
     ) -> Result<(), Status> {
+        record.expires_at = (Utc::now()
+            + chrono::Duration::from_std(timeout)
+                .map_err(|_| Status::internal("terminal lease duration is invalid"))?)
+        .to_rfc3339();
         record.terminal_id = Some(terminal_id.to_owned());
         let serialized = serde_json::to_string(&record).map_err(|error| {
             Status::internal(format!(
@@ -1904,6 +1910,7 @@ impl ProvisionalTerminalLeaseManager {
         creation_id: &str,
         record: &ProvisionalTerminalCreationRecord,
     ) -> bool {
+        let _creation_guard = self.lock_creation(agent_id).await;
         let guest = match GuestClient::for_agent_with_terminal_identities(
             self.client.clone(),
             &self.namespace,
@@ -3496,6 +3503,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persisted_ticket_deadline_refreshes_when_terminal_creation_settles() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
+        let timeout = Duration::from_secs(60);
+        let original_record = provisional_creation_record(
+            Utc::now() - chrono::Duration::minutes(1),
+            vec!["terminal-existing".to_owned()],
+            None,
+        );
+        manager
+            .schedule_creation(
+                "agent-legacy",
+                creation_id,
+                timeout,
+                original_record.clone(),
+                true,
+            )
+            .await;
+
+        let settled_after = Utc::now();
+        let settlement_manager = manager.clone();
+        let settlement = tokio::spawn(async move {
+            settlement_manager
+                .record_terminal_id(
+                    "agent-legacy",
+                    creation_id,
+                    original_record,
+                    "terminal-created",
+                    timeout,
+                )
+                .await
+        });
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("settled creation intent patch");
+        let body: Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("settled creation patch body"),
+        )
+        .expect("settled creation patch JSON");
+        let key = provisional_terminal_creation_annotation_key(creation_id)
+            .expect("creation intent annotation key");
+        let serialized = body["metadata"]["annotations"][&key]
+            .as_str()
+            .expect("serialized settled creation record");
+        let record: ProvisionalTerminalCreationRecord =
+            serde_json::from_str(serialized).expect("settled creation record JSON");
+        let refreshed_expiry = DateTime::parse_from_rfc3339(&record.expires_at)
+            .expect("refreshed expiry")
+            .with_timezone(&Utc);
+        assert_eq!(record.terminal_id.as_deref(), Some("terminal-created"));
+        assert!(
+            refreshed_expiry >= settled_after + chrono::Duration::seconds(59),
+            "a restart after slow creation must retain the full ticket-confirmation window",
+        );
+
+        let mut recovered_agent = provisional_terminal_test_agent(settled_after);
+        recovered_agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            key,
+            serialized.to_owned(),
+        )]));
+        let restart_at = settled_after + chrono::Duration::seconds(30);
+        let recovered =
+            recoverable_provisional_terminal_creation_intents(&recovered_agent, restart_at);
+        assert_eq!(recovered.len(), 1);
+        assert!(recovered[0].delay >= Duration::from_secs(29));
+
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&recovered_agent).expect("MicroVM response JSON"),
+                ))
+                .expect("settled creation patch response"),
+        );
+        settlement
+            .await
+            .expect("settlement task")
+            .expect("settled creation persistence");
+    }
+
+    #[tokio::test]
     async fn persisted_terminal_identity_is_not_reintroduced_after_ticket_confirmation() {
         let registry = ProvisionalTerminalLeaseRegistry::default();
         registry
@@ -3614,6 +3714,78 @@ mod tests {
                 .map(|session| session.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["terminal-existing", "terminal-explicit"]
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_legacy_cleanup_waits_for_a_mixed_version_retry() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let terminal_identities = TerminalIdentityRegistry::default();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            terminal_identities.clone(),
+        );
+        let stale_creation_id = "legacy-grpc-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let retry_creation_id = "legacy-grpc-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let record = provisional_creation_record(
+            Utc::now() - chrono::Duration::seconds(1),
+            vec!["terminal-existing".to_owned()],
+            None,
+        );
+        terminal_identities.restore_legacy_creation(
+            "agent-legacy",
+            stale_creation_id,
+            &record.cwd,
+            &record.existing_session_ids,
+            None,
+        );
+
+        let retry_guard = manager.lock_creation("agent-legacy").await;
+        let cleanup_manager = manager.clone();
+        let cleanup_record = record.clone();
+        let cleanup = tokio::spawn(async move {
+            cleanup_manager
+                .cleanup_creation_once("agent-legacy", stale_creation_id, &cleanup_record)
+                .await
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), handle.next_request())
+                .await
+                .is_err(),
+            "stale cleanup must not inspect Kubernetes or guest state during a retry",
+        );
+
+        terminal_identities.restore_legacy_creation(
+            "agent-legacy",
+            retry_creation_id,
+            "/workspace",
+            &["terminal-existing".to_owned()],
+            Some("terminal-retry"),
+        );
+        drop(retry_guard);
+        let (request, _response) =
+            tokio::time::timeout(Duration::from_secs(1), handle.next_request())
+                .await
+                .expect("cleanup resumes after retry settlement")
+                .expect("MicroVM lookup request");
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-legacy"
+        );
+        cleanup.abort();
+
+        let mut sessions = vec![
+            guest_terminal_session("terminal-existing", "", "/workspace"),
+            guest_terminal_session("terminal-retry", "", "/workspace"),
+        ];
+        terminal_identities.reconcile("agent-legacy", &mut sessions);
+        assert_eq!(sessions[1].creation_id, retry_creation_id);
+        assert_eq!(
+            provisional_terminal_cleanup_id(&sessions, stale_creation_id, &record),
+            Ok(None),
+            "the stale cleanup must not claim the retry's valid terminal",
         );
     }
 
