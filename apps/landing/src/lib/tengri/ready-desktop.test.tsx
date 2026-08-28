@@ -46,7 +46,7 @@ describe('Tengri ready desktop', () => {
     expect(html).toContain('Chrome window')
     expect(html).toContain('Finder window')
     expect(html).toContain('Workspace')
-    expect(html).toContain('value="/"')
+    expect(html).toContain('value="/workspace"')
     expect(html).toContain('tengri://agent')
     expect(html).toContain('Checking Codex login')
     expect(html).toContain('Open Chrome')
