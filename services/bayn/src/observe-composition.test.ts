@@ -104,6 +104,7 @@ import {
   mutationIntentReconciliationDelayMs,
   executionSubmitExpiresAt,
   executionMutationSubmissionAllowed,
+  isExecutionCycleReconciledFlat,
   executionCycleHasFilledIntent,
   executionClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
@@ -1712,6 +1713,36 @@ describe('OBSERVE runtime composition', () => {
         },
       ),
     ).toEqual({ _tag: 'Complete' })
+  })
+
+  test('completes an already-flat cycle without constructing a close plan', () => {
+    const flat = {
+      report: {
+        reconciliation: { status: ReconciliationStatus.Exact },
+        metrics: { accountingExact: true },
+      },
+      brokerState: {
+        positions: [],
+        orders: [{ status: OrderStatus.Canceled }],
+        unknownOrderCount: 0,
+      },
+      riskContext: { unknownMutationCount: 0 },
+    } as const
+
+    expect(isExecutionCycleReconciledFlat(flat)).toBe(true)
+    expect(
+      isExecutionCycleReconciledFlat({
+        ...flat,
+        brokerState: { ...flat.brokerState, orders: [{ status: OrderStatus.Pending }] },
+      }),
+    ).toBe(false)
+    expect(
+      isExecutionCycleReconciledFlat({
+        ...flat,
+        brokerState: { ...flat.brokerState, positions: [{ quantityMicros: '1' }] },
+      }),
+    ).toBe(false)
+    expect(isExecutionCycleReconciledFlat({ ...flat, riskContext: { unknownMutationCount: 1 } })).toBe(false)
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {

@@ -21,7 +21,7 @@ import {
   executionMandateFailureRestrictionPrefix,
 } from '../execution/mandate'
 import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
-import { IntentState, TerminalOutcome } from '../execution/contracts'
+import { IntentState, OrderStatus, ReconciliationStatus, TerminalOutcome } from '../execution/contracts'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -213,6 +213,32 @@ export const decideExecutionCycleCloseDocument = (
   return { _tag: 'Bind', document }
 }
 
+const terminalOrderStatuses = new Set<OrderStatus>([
+  OrderStatus.Filled,
+  OrderStatus.Canceled,
+  OrderStatus.Expired,
+  OrderStatus.Rejected,
+])
+
+export const isExecutionCycleReconciledFlat = (facts: {
+  readonly report: {
+    readonly reconciliation: { readonly status: ReconciliationStatus }
+    readonly metrics: { readonly accountingExact: boolean }
+  }
+  readonly brokerState: {
+    readonly positions: readonly { readonly quantityMicros: string }[]
+    readonly orders: readonly { readonly status: OrderStatus }[]
+    readonly unknownOrderCount: number
+  }
+  readonly riskContext: { readonly unknownMutationCount: number }
+}): boolean =>
+  facts.report.reconciliation.status === ReconciliationStatus.Exact &&
+  facts.report.metrics.accountingExact &&
+  facts.riskContext.unknownMutationCount === 0 &&
+  facts.brokerState.unknownOrderCount === 0 &&
+  countOpenPositions(facts.brokerState.positions) === 0 &&
+  facts.brokerState.orders.every(({ status }) => terminalOrderStatuses.has(status))
+
 type ExecutionCycleClosureResult =
   | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
@@ -242,13 +268,19 @@ const ensureExecutionCycleClosure = (
       })
     }
     if (existing === undefined) {
+      const closeReconciliation = yield* reconcile.pipe(
+        Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
+      )
+      if (isExecutionCycleReconciledFlat(closeReconciliation)) {
+        return { _tag: 'Complete', observedAt }
+      }
       const document = yield* buildClosingExecutionCycleDecision({
         input,
         preparation,
         policy,
         cycle,
         entryDocument,
-        reconcile,
+        reconcile: Effect.succeed(closeReconciliation),
         closeExpiresAt: closeWindow.expiresAt,
       })
       const decision = decideExecutionCycleCloseDocument(document)

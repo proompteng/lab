@@ -70,6 +70,7 @@ export type {
 export {
   decideExecutionCycleCloseDocument,
   executionMutationSubmissionAllowed,
+  isExecutionCycleReconciledFlat,
   prepareNextMutationIntent,
   terminalizeBlockedExecutionCycle,
 } from './observe-composition/execution-cycle'
