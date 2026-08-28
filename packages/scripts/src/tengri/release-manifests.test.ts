@@ -19,6 +19,7 @@ function fixture(tengri = ZERO_DIGEST, nanoagent = ZERO_DIGEST, enabled = false,
   const kustomizationPath = join(directory, 'kustomization.yaml')
   const applicationSetPath = join(directory, 'platform.yaml')
   const bffDeploymentPath = join(directory, 'deployment.yaml')
+  const tengriDeploymentPath = join(directory, 'tengri-deployment.yaml')
   writeFileSync(
     kustomizationPath,
     `apiVersion: kustomize.config.k8s.io/v1beta1
@@ -69,7 +70,19 @@ spec:
               value: ${bffEnabled ? TENGRI_GRPC_ENDPOINT : '""'}
 `,
   )
-  return { directory, kustomizationPath, applicationSetPath, bffDeploymentPath }
+  writeFileSync(
+    tengriDeploymentPath,
+    `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: tengri
+          image: registry.ide-newton.ts.net/lab/tengri
+`,
+  )
+  return { directory, kustomizationPath, applicationSetPath, bffDeploymentPath, tengriDeploymentPath }
 }
 
 describe('Tengri release manifests', () => {
@@ -137,6 +150,34 @@ describe('Tengri release manifests', () => {
   it('reads only the Tengri ApplicationSet entry', () => {
     const paths = fixture(tengriDigest, nanoagentDigest, true)
     expect(readTengriRelease(paths).enabled).toBe(true)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects a base Deployment image that the verified digest selector cannot replace', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.tengriDeploymentPath,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: tengri
+          image: registry.ide-newton.ts.net/lab/unverified
+`,
+    )
+
+    expect(() => validateTengriRelease(paths)).toThrow('Tengri Deployment image must be')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'Tengri Deployment image must be',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(beforeApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
     rmSync(paths.directory, { recursive: true, force: true })
   })
 })

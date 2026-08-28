@@ -10,6 +10,7 @@ const controllerPath = resolve(repositoryRoot, '.github/workflows/tengri-control
 const releasePath = resolve(repositoryRoot, '.github/workflows/tengri-release.yml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
+const tengriReadmePath = resolve(repositoryRoot, 'services/tengri/README.md')
 
 describe('Tengri release workflows', () => {
   it('connects promotion to the image workflow release contract', () => {
@@ -21,10 +22,19 @@ describe('Tengri release workflows', () => {
     }
 
     expect(images.name).toBe('Tengri images')
-    expect(release.on?.workflow_run?.workflows).toEqual([images.name])
+    expect(release.on?.workflow_run?.workflows).toEqual(['Tengri images'])
     expect(release.on?.workflow_run?.branches).toEqual(['main'])
     expect(imagesSource).toContain('name: tengri-release-contract')
     expect(releaseSource).toContain('name: tengri-release-contract')
+  })
+
+  it('documents the publisher and generated promotion handoff', () => {
+    const readme = readFileSync(tengriReadmePath, 'utf8')
+
+    expect(readme).toContain('`Tengri images`')
+    expect(readme).toContain('`Tengri release`')
+    expect(readme).toContain('generated promotion PR')
+    expect(readme).not.toContain('Roll out only through the `Tengri controller` workflow')
   })
 
   it('builds and signs both native architectures from one source revision', () => {
@@ -157,11 +167,13 @@ describe('Tengri release workflows', () => {
 
     expect(refreshIndex).toBeGreaterThan(-1)
     expect(refreshIndex).toBeLessThan(pinIndex)
+    expect(steps[refreshIndex]?.run).toContain('argocd/applications/tengri/deployment.yaml')
     expect(pinIndex).toBeLessThan(revalidateIndex)
     expect(revalidateIndex).toBe(createIndex - 1)
     expect(steps[revalidateIndex]?.run).toContain('git fetch origin main')
     expect(steps[revalidateIndex]?.run).toContain('services/tengri')
     expect(steps[revalidateIndex]?.run).toContain('git checkout "$latest_main"')
+    expect(steps[revalidateIndex]?.run).toContain('argocd/applications/tengri/deployment.yaml')
     expect(steps[revalidateIndex]?.run).toContain('argocd/applications/tengri/kustomization.yaml')
     expect(steps[revalidateIndex]?.run).toContain('argocd/applicationsets/platform.yaml')
     expect(steps[revalidateIndex]?.run).toContain('argocd/applications/proompteng/deployment.yaml')

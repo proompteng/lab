@@ -132,6 +132,7 @@ jobs:
             .github/workflows/tengri-images.yml \
             .github/workflows/tengri-release.yml
           git checkout "$main_head" -- \
+            argocd/applications/tengri/deployment.yaml \
             argocd/applications/tengri/kustomization.yaml \
             argocd/applicationsets/platform.yaml \
             argocd/applications/proompteng/deployment.yaml
@@ -163,6 +164,7 @@ jobs:
             .github/workflows/tengri-release.yml
 
           git checkout "$latest_main" -- \
+            argocd/applications/tengri/deployment.yaml \
             argocd/applications/tengri/kustomization.yaml \
             argocd/applicationsets/platform.yaml \
             argocd/applications/proompteng/deployment.yaml

@@ -14,6 +14,7 @@ const digestPattern = /^sha256:[0-9a-f]{64}$/
 const defaultKustomizationPath = 'argocd/applications/tengri/kustomization.yaml'
 const defaultApplicationSetPath = 'argocd/applicationsets/platform.yaml'
 const defaultBffDeploymentPath = 'argocd/applications/proompteng/deployment.yaml'
+const defaultTengriDeploymentPath = 'argocd/applications/tengri/deployment.yaml'
 
 export type TengriRelease = {
   tengriDigest: string
@@ -26,6 +27,7 @@ export type TengriReleasePaths = {
   kustomizationPath?: string
   applicationSetPath?: string
   bffDeploymentPath?: string
+  tengriDeploymentPath?: string
 }
 
 const absolutePath = (path: string) => (path.startsWith('/') ? path : resolve(repoRoot, path))
@@ -112,13 +114,28 @@ function parseBffEndpoint(contents: string) {
   return endpoint
 }
 
+function assertTengriDeploymentImage(contents: string) {
+  const parsed = YAML.parse(contents) as {
+    spec?: { template?: { spec?: { containers?: Array<{ name?: string; image?: string }> } } }
+  }
+  const containers = parsed.spec?.template?.spec?.containers?.filter((container) => container.name === 'tengri') ?? []
+  if (containers.length !== 1) {
+    throw new Error(`Tengri Deployment must contain exactly one tengri container, found ${containers.length}`)
+  }
+  if (containers[0]?.image !== TENGRI_IMAGE) {
+    throw new Error(`Tengri Deployment image must be ${TENGRI_IMAGE}, got ${containers[0]?.image ?? 'missing'}`)
+  }
+}
+
 export function readTengriRelease(paths: TengriReleasePaths = {}): TengriRelease {
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
   const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
+  const tengriDeploymentPath = absolutePath(paths.tengriDeploymentPath ?? defaultTengriDeploymentPath)
   const images = parseKustomization(readFileSync(kustomizationPath, 'utf8'))
   const application = findTengriApplicationBlock(readFileSync(applicationSetPath, 'utf8'))
   const bffEndpoint = parseBffEndpoint(readFileSync(bffDeploymentPath, 'utf8'))
+  assertTengriDeploymentImage(readFileSync(tengriDeploymentPath, 'utf8'))
   return { ...images, enabled: application.enabled, bffEnabled: bffEndpoint === TENGRI_GRPC_ENDPOINT }
 }
 
@@ -165,9 +182,11 @@ export function updateTengriRelease(
   const kustomizationPath = absolutePath(paths.kustomizationPath ?? defaultKustomizationPath)
   const applicationSetPath = absolutePath(paths.applicationSetPath ?? defaultApplicationSetPath)
   const bffDeploymentPath = absolutePath(paths.bffDeploymentPath ?? defaultBffDeploymentPath)
+  const tengriDeploymentPath = absolutePath(paths.tengriDeploymentPath ?? defaultTengriDeploymentPath)
   const originalKustomization = readFileSync(kustomizationPath, 'utf8')
   const originalApplicationSet = readFileSync(applicationSetPath, 'utf8')
   const originalBffDeployment = readFileSync(bffDeploymentPath, 'utf8')
+  assertTengriDeploymentImage(readFileSync(tengriDeploymentPath, 'utf8'))
 
   let nextKustomization = replaceExactlyOnce(
     originalKustomization,
