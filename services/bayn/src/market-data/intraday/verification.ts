@@ -559,7 +559,7 @@ const validateBarCoverage = (
   for (const symbol of request.universe) {
     if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
       return Result.fail(
-        failure('coverage', 'intraday snapshot lacks a per-symbol range-completion bar', {
+        failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
           symbol,
           eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
         }),
@@ -648,14 +648,14 @@ const latestQuotes = (
     const trade = latestTrades[symbol]
     if (quote === undefined || intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
       return Result.fail(
-        failure('freshness', 'intraday snapshot lacks a post-range quote for every symbol', {
+        failure('not-ready', 'intraday snapshot lacks a post-range quote for every symbol', {
           symbol,
         }),
       )
     }
     if (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
       return Result.fail(
-        failure('freshness', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
+        failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
       )
     }
     for (const evidence of [quote, trade]) {

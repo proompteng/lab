@@ -144,6 +144,7 @@ export type IntradaySnapshotFailureReason =
   | 'ordering'
   | 'coverage'
   | 'freshness'
+  | 'not-ready'
   | 'watermark'
   | 'lineage'
   | 'hash'

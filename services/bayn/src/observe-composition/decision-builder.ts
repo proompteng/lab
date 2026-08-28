@@ -24,7 +24,7 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { MarketData, type MarketDataService } from '../market-data'
+import { IntradaySnapshotFailure, MarketData, type MarketDataService } from '../market-data'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -352,6 +352,9 @@ const operationalDecisionFailure = (
 export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecisionBuildError => {
   switch (cause._tag) {
     case 'OperationalError':
+      if (cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready') {
+        return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+      }
       return new CycleDecisionBuildError({
         failure: operationalDecisionFailure(cause.component),
         message: cause.message,
