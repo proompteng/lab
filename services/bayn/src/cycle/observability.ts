@@ -349,6 +349,8 @@ export interface CycleExecutionFunnelObservation {
   readonly orderCount: number
   readonly openOrderCount: number
   readonly filledOrderCount: number
+  /** Distinct broker orders with at least one durable fill, independent of latest order status. */
+  readonly executedOrderCount: number
   readonly canceledOrderCount: number
   readonly expiredOrderCount: number
   readonly rejectedOrderCount: number

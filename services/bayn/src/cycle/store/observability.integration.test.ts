@@ -1348,7 +1348,8 @@ describePostgres('PostgreSQL cycle observability projection', () => {
 
     expect(projection.execution).toMatchObject({
       orderCount: 3,
-      filledOrderCount: 2,
+      filledOrderCount: 1,
+      executedOrderCount: 2,
       canceledOrderCount: 1,
       expiredOrderCount: 1,
       latestOrderAt: '2026-04-08T13:33:00.000Z',

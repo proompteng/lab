@@ -86,6 +86,7 @@ const CycleExecutionFunnelObservationRowSchema = Schema.Struct({
   orderCount: NonNegativeIntegerSchema,
   openOrderCount: NonNegativeIntegerSchema,
   filledOrderCount: NonNegativeIntegerSchema,
+  executedOrderCount: NonNegativeIntegerSchema,
   canceledOrderCount: NonNegativeIntegerSchema,
   expiredOrderCount: NonNegativeIntegerSchema,
   rejectedOrderCount: NonNegativeIntegerSchema,
@@ -776,7 +777,8 @@ const makeCycleObservability = Effect.gen(function* () {
                 SELECT count(*)::integer FROM latest_cycle_orders
                 WHERE status IN ('NEW', 'PARTIALLY_FILLED', 'PENDING')
               ),
-              'filledOrderCount', (SELECT count(DISTINCT broker_order_id)::integer FROM cycle_fills),
+              'filledOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'FILLED'),
+              'executedOrderCount', (SELECT count(DISTINCT broker_order_id)::integer FROM cycle_fills),
               'canceledOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'CANCELED'),
               'expiredOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'EXPIRED'),
               'rejectedOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'REJECTED'),

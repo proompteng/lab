@@ -1455,7 +1455,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO FILLS",
+              "noValue": "NO ACCOUNTED FILLS",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1503,7 +1503,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO FILLS",
+              "noValue": "NO ACCOUNTED FILLS",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1551,7 +1551,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO FILLS",
+              "noValue": "NO ACCOUNTED FILLS",
               "unit": "currencyUSD"
             },
             "overrides": []

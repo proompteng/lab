@@ -407,6 +407,7 @@ describe('Bayn HTTP pure decisions', () => {
           orderCount: 2,
           openOrderCount: 0,
           filledOrderCount: 2,
+          executedOrderCount: 2,
           canceledOrderCount: 0,
           expiredOrderCount: 0,
           rejectedOrderCount: 0,
