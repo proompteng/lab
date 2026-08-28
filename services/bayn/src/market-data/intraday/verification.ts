@@ -808,6 +808,22 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   schema_version: record.schemaVersion,
 })
 
+const eventPayloadKey = (record: IntradayQuote | IntradayTrade): string => `${record.symbol}\u0000${record.eventAt}`
+
+const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
+  records: readonly T[],
+  payload: (record: T) => readonly number[],
+): ReadonlyMap<string, number> => {
+  const variants = new Map<string, Set<string>>()
+  for (const record of records) {
+    const key = eventPayloadKey(record)
+    const observed = variants.get(key) ?? new Set<string>()
+    observed.add(JSON.stringify(payload(record)))
+    variants.set(key, observed)
+  }
+  return new Map([...variants].map(([key, observed]) => [key, observed.size]))
+}
+
 /**
  * Re-enters an already materialized snapshot through the authoritative row
  * verifier. This is intentionally stronger than rehashing caller-provided
@@ -819,6 +835,13 @@ export const reverifyIntradayMarketSnapshot = (
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const { manifest } = snapshot
+    const quotePayloadVariants = payloadVariantCounts(snapshot.quotes, (quote) => [
+      quote.bidPrice,
+      quote.bidSize,
+      quote.askPrice,
+      quote.askSize,
+    ])
+    const tradePayloadVariants = payloadVariantCounts(snapshot.trades, (trade) => [trade.price, trade.size])
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -855,7 +878,7 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       quotes: snapshot.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
-        latest_payload_variants: '1',
+        latest_payload_variants: String(quotePayloadVariants.get(eventPayloadKey(quote)) ?? 0),
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
@@ -863,7 +886,7 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       trades: snapshot.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
-        latest_payload_variants: '1',
+        latest_payload_variants: String(tradePayloadVariants.get(eventPayloadKey(trade)) ?? 0),
         price: trade.price,
         size: trade.size,
       })),
