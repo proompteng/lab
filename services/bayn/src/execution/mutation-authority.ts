@@ -1102,9 +1102,9 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
-  const transmit = (intent: Intent) =>
+  const transmit = (intent: Intent, closeOnly: boolean) =>
     dependencies
-      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
+      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent, closeOnly))
       .pipe(
         Effect.mapError((cause) =>
           cause instanceof BrokerMutationError
@@ -1112,14 +1112,14 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
             : mutationAuthorizationError('final broker submit authorization failed', cause),
         ),
       )
-  const submit = (intent: Intent) => {
+  const submit = (intent: Intent, closeOnly = false) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
       return Effect.fail(
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    return transmit(intent)
+    return transmit(intent, closeOnly)
   }
 
   return {

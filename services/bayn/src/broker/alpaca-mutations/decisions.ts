@@ -490,12 +490,15 @@ const validateMarketOrderRequest = (
   return Result.succeed({ common, notional: notional.success, quantity: quantity.success })
 }
 
-export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+export const orderRequestBody = (
+  intent: OrderRequestIntent,
+  closeOnly = false,
+): Result.Result<OrderRequestBody, OrderRequestError> => {
   if (intent.orderType === DomainOrderType.Limit) return limitIocOrderRequestBody(intent)
   const validated = validateMarketOrderRequest(intent)
   if (Result.isFailure(validated)) return Result.fail(validated.failure)
   const { common, notional, quantity } = validated.success
-  if (intent.side === DomainSide.Sell) {
+  if (intent.side === DomainSide.Sell || closeOnly) {
     return Result.succeed({ ...common, qty: microsToDecimal(quantity) })
   }
   const brokerNotional = alpacaBuyNotionalMicros(notional.toString())
@@ -559,9 +562,9 @@ export const compatibleOrderRequestBody = (
   )
 }
 
-export const submitBody = (intent: Intent): Result.Result<OrderRequestBody, OrderRequestError> =>
+export const submitBody = (intent: Intent, closeOnly = false): Result.Result<OrderRequestBody, OrderRequestError> =>
   intent.state === IntentState.IoStarted
-    ? orderRequestBody(intent)
+    ? orderRequestBody(intent, closeOnly)
     : Result.fail(
         new OrderRequestError({
           failure: 'invalid-intent-state',
@@ -582,6 +585,7 @@ const submitRequestHash = (body: OrderRequestBody): Result.Result<string, Broker
 const prepareSubmitDataFirst = (
   input: unknown,
   expectedAccountId: string,
+  closeOnly = false,
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
   const decoded = decodeIntent(input)
   if (Result.isFailure(decoded)) {
@@ -598,7 +602,7 @@ const prepareSubmitDataFirst = (
       }),
     )
   }
-  const body = submitBody(intent)
+  const body = submitBody(intent, closeOnly)
   if (Result.isFailure(body)) {
     return Result.fail(
       invalidRequest({
@@ -615,7 +619,7 @@ const prepareSubmitDataFirst = (
   }))
 }
 
-export const prepareSubmit = Pipeable.dual(2, prepareSubmitDataFirst)
+export const prepareSubmit = prepareSubmitDataFirst
 
 export const cancelRequestHash = (brokerOrderId: string): string =>
   canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })
