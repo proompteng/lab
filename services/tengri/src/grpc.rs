@@ -1726,7 +1726,7 @@ impl ProvisionalTerminalLeaseManager {
         self.patch_creation_annotation(agent_id, creation_id, Some(&serialized))
             .await
             .map_err(map_kube_error)?;
-        self.schedule_creation(agent_id, creation_id, timeout, record.clone())
+        self.schedule_creation(agent_id, creation_id, timeout, record.clone(), true)
             .await;
         Ok(record)
     }
@@ -1750,7 +1750,7 @@ impl ProvisionalTerminalLeaseManager {
         let patch_agent_id = key_agent_id.clone();
         let patch_creation_id = key_creation_id.clone();
         self.creation_intents
-            .while_tracked(&key_agent_id, &key_creation_id, move || async move {
+            .settle_creation(&key_agent_id, &key_creation_id, move || async move {
                 manager
                     .patch_creation_annotation(
                         &patch_agent_id,
@@ -1784,6 +1784,7 @@ impl ProvisionalTerminalLeaseManager {
                     &intent.creation_id,
                     intent.delay,
                     intent.record,
+                    false,
                 )
                 .await;
             }
@@ -1815,16 +1816,18 @@ impl ProvisionalTerminalLeaseManager {
         creation_id: &str,
         timeout: Duration,
         record: ProvisionalTerminalCreationRecord,
+        creating: bool,
     ) {
         let cleanup = self.clone();
         let cleanup_agent_id = agent_id.to_owned();
         let cleanup_record = record.clone();
         self.creation_intents
-            .register(
+            .register_with_state(
                 agent_id,
                 creation_id,
                 timeout,
                 PROVISIONAL_TERMINAL_CLEANUP_RETRY,
+                creating,
                 move |creation_id| {
                     let cleanup = cleanup.clone();
                     let agent_id = cleanup_agent_id.clone();
@@ -2048,7 +2051,7 @@ impl ProvisionalTerminalLeaseManager {
         let clear_agent_id = agent_id.to_owned();
         let clear_creation_id = creation_id.to_owned();
         self.creation_intents
-            .issue_and_confirm(agent_id, creation_id, move |tracked| async move {
+            .clear_tracked(agent_id, creation_id, move |tracked| async move {
                 if tracked {
                     manager
                         .patch_creation_annotation(&clear_agent_id, &clear_creation_id, None)
@@ -2235,6 +2238,7 @@ fn provisional_terminal_creation_annotation_key(creation_id: &str) -> Option<Str
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProvisionalTerminalLease {
+    Creating(Uuid),
     AwaitingTicket(Uuid),
     Expiring(Uuid),
 }
@@ -2251,6 +2255,22 @@ impl ProvisionalTerminalLeaseRegistry {
         terminal_id: &str,
         timeout: Duration,
         retry_delay: Duration,
+        cleanup: C,
+    ) where
+        C: FnMut(String) -> CF + Send + 'static,
+        CF: Future<Output = bool> + Send + 'static,
+    {
+        self.register_with_state(agent_id, terminal_id, timeout, retry_delay, false, cleanup)
+            .await;
+    }
+
+    async fn register_with_state<C, CF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        timeout: Duration,
+        retry_delay: Duration,
+        creating: bool,
         mut cleanup: C,
     ) where
         C: FnMut(String) -> CF + Send + 'static,
@@ -2258,29 +2278,37 @@ impl ProvisionalTerminalLeaseRegistry {
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
         let token = Uuid::new_v4();
-        self.leases
-            .lock()
-            .await
-            .insert(key.clone(), ProvisionalTerminalLease::AwaitingTicket(token));
+        let state = if creating {
+            ProvisionalTerminalLease::Creating(token)
+        } else {
+            ProvisionalTerminalLease::AwaitingTicket(token)
+        };
+        self.leases.lock().await.insert(key.clone(), state);
 
         let registry = self.clone();
         let cleanup_terminal_id = terminal_id.to_owned();
         tokio::spawn(async move {
             sleep(timeout).await;
-            let should_cleanup = {
-                let mut leases = registry.leases.lock().await;
-                if matches!(
-                    leases.get(&key).copied(),
-                    Some(ProvisionalTerminalLease::AwaitingTicket(current)) if current == token
-                ) {
-                    leases.insert(key.clone(), ProvisionalTerminalLease::Expiring(token));
-                    true
-                } else {
-                    false
+            loop {
+                let should_cleanup = {
+                    let mut leases = registry.leases.lock().await;
+                    match leases.get(&key).copied() {
+                        Some(ProvisionalTerminalLease::Creating(current)) if current == token => {
+                            false
+                        }
+                        Some(ProvisionalTerminalLease::AwaitingTicket(current))
+                            if current == token =>
+                        {
+                            leases.insert(key.clone(), ProvisionalTerminalLease::Expiring(token));
+                            true
+                        }
+                        _ => return,
+                    }
+                };
+                if should_cleanup {
+                    break;
                 }
-            };
-            if !should_cleanup {
-                return;
+                sleep(retry_delay).await;
             }
 
             loop {
@@ -2306,7 +2334,7 @@ impl ProvisionalTerminalLeaseRegistry {
         });
     }
 
-    async fn while_tracked<I, IF>(
+    async fn settle_creation<I, IF>(
         &self,
         agent_id: &str,
         terminal_id: &str,
@@ -2317,8 +2345,13 @@ impl ProvisionalTerminalLeaseRegistry {
         IF: Future<Output = Result<(), Status>>,
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
-        let leases = self.leases.lock().await;
-        match leases.get(&key) {
+        let mut leases = self.leases.lock().await;
+        match leases.get(&key).copied() {
+            Some(ProvisionalTerminalLease::Creating(token)) => {
+                let result = action().await;
+                leases.insert(key, ProvisionalTerminalLease::AwaitingTicket(token));
+                result
+            }
             Some(ProvisionalTerminalLease::AwaitingTicket(_)) => action().await,
             Some(ProvisionalTerminalLease::Expiring(_)) => Err(Status::not_found(
                 "terminal session expired before creation completed",
@@ -2339,18 +2372,41 @@ impl ProvisionalTerminalLeaseRegistry {
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
         let mut leases = self.leases.lock().await;
-        if matches!(
-            leases.get(&key),
-            Some(ProvisionalTerminalLease::Expiring(_))
-        ) {
-            return Err(Status::not_found(
-                "terminal session expired before ticket issuance",
-            ));
+        match leases.get(&key) {
+            Some(ProvisionalTerminalLease::Creating(_)) => {
+                return Err(Status::failed_precondition(
+                    "terminal creation has not completed",
+                ));
+            }
+            Some(ProvisionalTerminalLease::Expiring(_)) => {
+                return Err(Status::not_found(
+                    "terminal session expired before ticket issuance",
+                ));
+            }
+            _ => {}
         }
         let tracked = leases.contains_key(&key);
         let issued = issue(tracked).await?;
         leases.remove(&key);
         Ok(issued)
+    }
+
+    async fn clear_tracked<I, IF>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        action: I,
+    ) -> Result<(), Status>
+    where
+        I: FnOnce(bool) -> IF,
+        IF: Future<Output = Result<(), Status>>,
+    {
+        let key = (agent_id.to_owned(), terminal_id.to_owned());
+        let mut leases = self.leases.lock().await;
+        let tracked = leases.contains_key(&key);
+        action(tracked).await?;
+        leases.remove(&key);
+        Ok(())
     }
 
     async fn clear(&self, agent_id: &str, terminal_id: &str) -> bool {
@@ -2544,7 +2600,7 @@ fn map_guest_error(error: GuestError) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
@@ -3375,7 +3431,7 @@ mod tests {
         let writes = Arc::new(AtomicUsize::new(0));
         let tracked_writes = writes.clone();
         registry
-            .while_tracked("agent-legacy", "legacy-grpc-confirmed", move || {
+            .settle_creation("agent-legacy", "legacy-grpc-confirmed", move || {
                 let tracked_writes = tracked_writes.clone();
                 async move {
                     tracked_writes.fetch_add(1, Ordering::SeqCst);
@@ -3392,7 +3448,7 @@ mod tests {
             .expect("ticket confirmation");
         let confirmed_writes = writes.clone();
         registry
-            .while_tracked("agent-legacy", "legacy-grpc-confirmed", move || {
+            .settle_creation("agent-legacy", "legacy-grpc-confirmed", move || {
                 let confirmed_writes = confirmed_writes.clone();
                 async move {
                     confirmed_writes.fetch_add(1, Ordering::SeqCst);
@@ -3516,6 +3572,60 @@ mod tests {
                 .expect("cleanup timeout")
                 .expect("cleanup result"),
             "legacy-grpc-test"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_waits_for_delayed_terminal_creation_to_settle() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        let settled = Arc::new(AtomicBool::new(false));
+        let cleanup_settled = settled.clone();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .register_with_state(
+                "agent-legacy",
+                "legacy-grpc-delayed",
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                true,
+                move |_| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    let cleanup_settled = cleanup_settled.clone();
+                    async move {
+                        cleanup_sender
+                            .send(cleanup_settled.load(Ordering::SeqCst))
+                            .expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(cleanup_receiver.try_recv().is_err());
+        assert!(matches!(
+            registry
+                .leases
+                .lock()
+                .await
+                .get(&("agent-legacy".to_owned(), "legacy-grpc-delayed".to_owned()))
+                .copied(),
+            Some(ProvisionalTerminalLease::Creating(_))
+        ));
+
+        let settled_for_action = settled.clone();
+        registry
+            .settle_creation("agent-legacy", "legacy-grpc-delayed", move || async move {
+                settled_for_action.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .expect("delayed creation settlement");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("delayed cleanup timeout")
+                .expect("delayed cleanup result")
         );
     }
 
@@ -3868,6 +3978,7 @@ mod tests {
                 failed_creation_id,
                 Duration::from_secs(60),
                 record,
+                true,
             )
             .await;
 
