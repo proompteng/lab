@@ -289,15 +289,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     }
   }
   const preflightRole = roles.find((role) => role.metadata?.name === 'kube-router-policy-preflight')
-  const hasExactReadRule = (apiGroup: string, resource: string): boolean =>
+  const hasExactReadRule = (apiGroup: string, resource: string, verbs = ['get', 'list']): boolean =>
     (preflightRole?.rules ?? []).some(
       (rule: YamlObject) =>
         JSON.stringify(sortedStrings(rule.apiGroups)) === JSON.stringify([apiGroup]) &&
         JSON.stringify(sortedStrings(rule.resources)) === JSON.stringify([resource]) &&
-        JSON.stringify(sortedStrings(rule.verbs)) === JSON.stringify(['get', 'list']),
+        JSON.stringify(sortedStrings(rule.verbs)) === JSON.stringify(sortedStrings(verbs)),
     )
-  if (!hasExactReadRule('', 'pods') || !hasExactReadRule('networking.k8s.io', 'networkpolicies')) {
-    failures.push(`${productionPaths.rbac}: preflight must read policy state and retired-selector Pod matches`)
+  if (
+    !hasExactReadRule('', 'pods') ||
+    !hasExactReadRule('networking.k8s.io', 'networkpolicies') ||
+    !hasExactReadRule('', 'namespaces', ['get'])
+  ) {
+    failures.push(
+      `${productionPaths.rbac}: preflight must read namespaces, policy state, and retired-selector Pod matches`,
+    )
   }
   requireTerms(failures, productionPaths.rbac, files.rbac, [
     '- endpointslices',

@@ -220,7 +220,18 @@ test('rejects a preflight that cannot prove the retired selector matches no Pods
     'rules:\n  - apiGroups:\n      - networking.k8s.io',
   )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.rbac}: preflight must read policy state and retired-selector Pod matches`,
+    `${productionPaths.rbac}: preflight must read namespaces, policy state, and retired-selector Pod matches`,
+  )
+})
+
+test('rejects a preflight that cannot determine whether optional Tengri policies are live', async () => {
+  const files = copy(await loadProductionFiles())
+  files.rbac = files.rbac.replace(
+    /  - apiGroups:\n      - ""\n    resources:\n      - namespaces\n    verbs:\n      - get\n/,
+    '',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.rbac}: preflight must read namespaces, policy state, and retired-selector Pod matches`,
   )
 })
 
