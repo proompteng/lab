@@ -19,10 +19,27 @@ spec:
   routes:
     - kind: Rule
       syntax: v3
-      match: (Host(`tengri.proompteng.ai`) && (Path(`/v1/terminal/ws`) || Path(`/v1/preview/open`) || Path(`/_tengri/open-preview.js`))) || HostRegexp(`^tengri-[a-z0-9]{24}\.proompteng\.ai$`)
+      match: Host(`tengri.proompteng.ai`) && (Path(`/v1/terminal/ws`) || Path(`/v1/preview/open`) || Path(`/_tengri/open-preview.js`))
       middlewares:
         - name: tengri-rate-limit
       services:
         - name: tengri-gateway
           port: 8080
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tengri-preview
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      syntax: v3
+      match: HostRegexp(`^tengri-[a-z0-9]{24}\.proompteng\.ai$`)
+      middlewares:
+        - name: tengri-rate-limit
+      services:
+        - name: tengri-preview
+          port: 8081
   tls: {}

@@ -340,7 +340,7 @@ impl PreviewOrigin {
     }
 }
 
-pub fn router(state: GatewayState) -> Router {
+pub fn control_router(state: GatewayState) -> Router {
     Router::new()
         .route("/livez", get(|| async { StatusCode::NO_CONTENT }))
         .route("/readyz", get(readiness))
@@ -355,6 +355,11 @@ pub fn router(state: GatewayState) -> Router {
             "/_tengri/open-preview.js",
             get(serve_open_preview_bootstrap_script),
         )
+        .with_state(state)
+}
+
+pub fn preview_router(state: GatewayState) -> Router {
+    Router::new()
         .route("/_tengri/bootstrap", post(preview_bootstrap))
         .route("/_tengri/bootstrap.js", get(serve_preview_bootstrap_script))
         .route("/_tengri/bridge.js", get(serve_preview_bridge_script))
@@ -1242,6 +1247,7 @@ fn nanoagent_auth_failed(status: StatusCode, headers: &HeaderMap) -> bool {
 mod tests {
     use super::*;
     use kube::client::Body as KubeBody;
+    use tower::ServiceExt as _;
 
     fn test_gateway_state(client: Client) -> GatewayState {
         let tickets = TicketStore::new(
@@ -1258,6 +1264,69 @@ mod tests {
             "https://proompteng.ai".to_owned(),
         )
         .expect("gateway state")
+    }
+
+    async fn router_response(router: Router, path: &str, host: &str) -> Response<Body> {
+        router
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(header::HOST, host)
+                    .body(Body::empty())
+                    .expect("gateway request"),
+            )
+            .await
+            .expect("gateway response")
+    }
+
+    #[tokio::test]
+    async fn control_and_preview_listeners_do_not_share_reserved_routes() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let state = test_gateway_state(Client::new(service, "tengri"));
+        let preview_host = "tengri-a1b2c3d4e5f6a1b2c3d4e5f6.proompteng.ai";
+
+        let control_liveness = router_response(
+            control_router(state.clone()),
+            "/livez",
+            "tengri.proompteng.ai",
+        )
+        .await;
+        assert_eq!(control_liveness.status(), StatusCode::NO_CONTENT);
+
+        for control_path in [
+            "/livez",
+            "/readyz",
+            "/healthz",
+            "/metrics",
+            "/v1/terminal/ws",
+            "/v1/preview/open",
+            "/_tengri/open-preview.js",
+        ] {
+            let response =
+                router_response(preview_router(state.clone()), control_path, preview_host).await;
+            assert_eq!(response.status(), StatusCode::OK, "{control_path}");
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE),
+                Some(&HeaderValue::from_static("text/html; charset=utf-8")),
+                "{control_path}",
+            );
+        }
+
+        let control_preview_script = router_response(
+            control_router(state.clone()),
+            "/_tengri/bootstrap.js",
+            "tengri.proompteng.ai",
+        )
+        .await;
+        assert_eq!(control_preview_script.status(), StatusCode::NOT_FOUND);
+
+        let preview_script =
+            router_response(preview_router(state), "/_tengri/bootstrap.js", preview_host).await;
+        assert_eq!(preview_script.status(), StatusCode::OK);
+        assert_eq!(
+            preview_script.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/javascript; charset=utf-8"))
+        );
     }
 
     async fn readiness_for_kubernetes_responses(

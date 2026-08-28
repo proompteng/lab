@@ -2580,6 +2580,7 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "tower",
  "tower-test",
  "tracing",
  "tracing-subscriber",

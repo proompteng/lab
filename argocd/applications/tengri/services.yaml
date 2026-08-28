@@ -30,3 +30,20 @@ spec:
       port: 8080
       targetPort: gateway
       protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tengri-preview
+  labels:
+    app.kubernetes.io/name: tengri
+    app.kubernetes.io/component: preview
+spec:
+  selector:
+    app.kubernetes.io/name: tengri
+    app.kubernetes.io/component: control-plane
+  ports:
+    - name: http
+      port: 8081
+      targetPort: preview
+      protocol: TCP
