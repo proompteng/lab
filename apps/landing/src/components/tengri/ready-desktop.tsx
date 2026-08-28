@@ -289,8 +289,9 @@ export function ReadyDesktop({
               />
               <span className="max-w-36 truncate">{agent.displayName}</span>
             </span>
-            <span aria-label={connectionWarning ? 'Connection degraded' : 'Connected'}>
+            <span title={connectionWarning ? 'Connection degraded' : 'Connected'}>
               <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
+              <span className="sr-only">{connectionWarning ? 'Connection degraded' : 'Connected'}</span>
             </span>
             <span className="hidden max-w-32 truncate md:inline">{user.name || 'GitHub user'}</span>
             <time className="tabular-nums" dateTime={clock?.toISOString()}>

@@ -428,6 +428,19 @@ describe('torghut build-push workflow', () => {
     expect(pullRequestWorkflow.slice(jobEnv, landingStep)).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY:')
   })
 
+  it('runs the landing Playwright accessibility suite in pull-request validation', () => {
+    const landingStep = pullRequestWorkflow.indexOf('- name: Run landing validation')
+    const validationStep = pullRequestWorkflow.indexOf('- name: Run selected validation')
+    const landingValidation = pullRequestWorkflow.slice(landingStep, validationStep)
+    const browserInstall = landingValidation.indexOf('bunx playwright install --with-deps chromium')
+    const accessibilitySuite = landingValidation.indexOf('bun run --cwd apps/landing test:e2e')
+
+    expect(landingStep).toBeGreaterThan(-1)
+    expect(validationStep).toBeGreaterThan(landingStep)
+    expect(browserInstall).toBeGreaterThan(-1)
+    expect(accessibilitySuite).toBeGreaterThan(browserInstall)
+  })
+
   it('gates release manifest-only CI on digest-pinned multi-arch image contracts', () => {
     const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
     const buildContractStep = ciWorkflow.indexOf('name: Verify source image digest contract', releaseManifestJob)

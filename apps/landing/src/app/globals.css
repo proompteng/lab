@@ -17,52 +17,6 @@
 }
 
 @layer utilities {
-  .terminal-squircle-shell {
-    --terminal-titlebar-bg: 41 46 66;
-    --terminal-titlebar-text: 192 202 245;
-    --terminal-window-bg-top: 36 40 59;
-    --terminal-window-bg-bottom: 31 35 53;
-    --terminal-shell-border: 84 92 126;
-    --terminal-shell-border-alpha: 0.42;
-    --terminal-text-primary: 192 202 245;
-    --terminal-text-secondary: 169 177 214;
-    --terminal-text-faint: 115 122 162;
-    --terminal-text-dim: 86 95 137;
-    --terminal-text-green: 158 206 106;
-    --terminal-text-cyan: 125 207 255;
-    --terminal-text-blue: 122 162 247;
-    --terminal-text-purple: 187 154 247;
-    --terminal-text-magenta: 187 154 247;
-    --terminal-text-red: 247 118 142;
-    --terminal-text-orange: 255 158 100;
-    --terminal-text-yellow: 224 175 104;
-    --terminal-accent-ripple-a: 122 162 247;
-    --terminal-accent-ripple-b: 187 154 247;
-    --terminal-accent-ripple-c: 125 207 255;
-    --terminal-top-left-radius: clamp(0.9rem, 1.55vw, 1.25rem);
-    --terminal-top-right-radius: clamp(0.82rem, 1.32vw, 1.12rem);
-    --terminal-bottom-right-radius: clamp(0.78rem, 1.18vw, 1rem);
-    --terminal-bottom-left-radius: clamp(0.8rem, 1.22vw, 1.06rem);
-    --terminal-squircle-h-radius: 1.28rem;
-    --terminal-squircle-v-radius: 1.18rem;
-    border-radius: var(--terminal-top-left-radius) var(--terminal-top-right-radius) var(--terminal-bottom-right-radius)
-      var(--terminal-bottom-left-radius) / var(--terminal-squircle-h-radius) var(--terminal-squircle-h-radius)
-      var(--terminal-squircle-v-radius) var(--terminal-squircle-v-radius);
-    border: 1px solid rgb(var(--terminal-shell-border) / var(--terminal-shell-border-alpha));
-    background: linear-gradient(
-      180deg,
-      rgb(var(--terminal-window-bg-top) / 0.72) 0%,
-      rgb(var(--terminal-window-bg-bottom) / 0.58) 100%
-    );
-    color: rgb(var(--terminal-titlebar-text));
-    box-shadow:
-      inset 0 1px 0 rgb(169 177 214 / 0.22),
-      inset 0 -1px 0 rgb(27 30 45 / 0.5),
-      0 0 0 1px rgb(59 66 97 / 0.35),
-      0 38px 90px -46px rgb(0 0 0 / 0.78);
-    backdrop-filter: blur(20px) saturate(1.12);
-  }
-
   .font-display {
     font-family:
       var(--font-space-grotesk, 'Space Grotesk'), 'Space Grotesk', var(--font-jetbrains-mono, 'JetBrains Mono'),
@@ -71,12 +25,6 @@
 
   .font-inter {
     font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
-  }
-
-  .font-terminal {
-    font-family:
-      var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      'Liberation Mono', 'Courier New', monospace;
   }
 
   .animate-hero-glow {
