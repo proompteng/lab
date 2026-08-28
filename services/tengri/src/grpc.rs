@@ -651,6 +651,10 @@ impl MicroVmControlPlane for ControlPlane {
                         failed_provisional_terminal_leases
                             .clear_creation(&failed_agent_id, &failed_creation_id)
                             .await?;
+                    } else {
+                        failed_provisional_terminal_leases
+                            .settle_ambiguous_creation(&failed_agent_id, &failed_creation_id)
+                            .await?;
                     }
                     Err(map_guest_error(error))
                 },
@@ -1798,6 +1802,16 @@ impl ProvisionalTerminalLeaseManager {
         Ok(())
     }
 
+    async fn settle_ambiguous_creation(
+        &self,
+        agent_id: &str,
+        creation_id: &str,
+    ) -> Result<(), Status> {
+        self.creation_intents
+            .settle_creation(agent_id, creation_id, || async { Ok(()) })
+            .await
+    }
+
     async fn schedule(&self, agent_id: &str, terminal_id: &str, timeout: Duration) {
         let cleanup = self.clone();
         let cleanup_agent_id = agent_id.to_owned();
@@ -1976,7 +1990,7 @@ impl ProvisionalTerminalLeaseManager {
             }
         }
 
-        match self
+        let cleared = match self
             .patch_creation_annotation(agent_id, creation_id, None)
             .await
         {
@@ -1991,7 +2005,12 @@ impl ProvisionalTerminalLeaseManager {
                 );
                 false
             }
+        };
+        if cleared {
+            self.terminal_identities
+                .remove_creation(agent_id, creation_id);
         }
+        cleared
     }
 
     async fn issue_and_confirm<T, I>(
@@ -3309,6 +3328,30 @@ mod tests {
         }
     }
 
+    fn kube_not_found_response(name: &str) -> HttpResponse<KubeBody> {
+        HttpResponse::builder()
+            .status(HttpStatusCode::NOT_FOUND)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(KubeBody::from(
+                serde_json::to_vec(&json!({
+                    "apiVersion": "v1",
+                    "kind": "Status",
+                    "metadata": {},
+                    "status": "Failure",
+                    "message": format!("microvms.runtime.proompteng.ai {name} not found"),
+                    "reason": "NotFound",
+                    "details": {
+                        "name": name,
+                        "group": "runtime.proompteng.ai",
+                        "kind": "microvms"
+                    },
+                    "code": 404
+                }))
+                .expect("Kubernetes not-found response JSON"),
+            ))
+            .expect("Kubernetes not-found response")
+    }
+
     #[test]
     fn legacy_terminal_cleanup_finds_the_unique_session_created_after_the_snapshot() {
         let creation_id = "legacy-grpc-0123456789abcdef0123456789abcdef";
@@ -3790,6 +3833,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_cleanup_removes_a_restored_legacy_identity() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let terminal_identities = TerminalIdentityRegistry::default();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            terminal_identities.clone(),
+        );
+        let creation_id = "legacy-grpc-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let record = provisional_creation_record(
+            Utc::now() - chrono::Duration::seconds(1),
+            vec!["terminal-existing".to_owned()],
+            None,
+        );
+        terminal_identities.restore_legacy_creation(
+            "agent-legacy",
+            creation_id,
+            &record.cwd,
+            &record.existing_session_ids,
+            None,
+        );
+
+        let cleanup_manager = manager.clone();
+        let cleanup_record = record.clone();
+        let cleanup = tokio::spawn(async move {
+            cleanup_manager
+                .cleanup_creation_once("agent-legacy", creation_id, &cleanup_record)
+                .await
+        });
+        let (request, response) = handle.next_request().await.expect("MicroVM lookup request");
+        assert_eq!(request.method(), http::Method::GET);
+        response.send_response(kube_not_found_response("agent-legacy"));
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("creation annotation clear request");
+        assert_eq!(request.method(), http::Method::PATCH);
+        response.send_response(kube_not_found_response("agent-legacy"));
+        assert!(cleanup.await.expect("cleanup task"));
+
+        let mut later_sessions = vec![guest_terminal_session("terminal-later", "", "/workspace")];
+        terminal_identities.reconcile("agent-legacy", &mut later_sessions);
+        assert!(
+            later_sessions[0].creation_id.is_empty(),
+            "a cleared identity must not claim a later legacy terminal",
+        );
+    }
+
+    #[tokio::test]
     async fn legacy_terminal_without_a_ticket_is_cleaned_up_after_the_handler_returns() {
         let registry = ProvisionalTerminalLeaseRegistry::default();
         let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -3933,6 +4026,47 @@ mod tests {
                 .await
                 .expect("delayed cleanup timeout")
                 .expect("delayed cleanup result")
+        );
+    }
+
+    #[tokio::test]
+    async fn ambiguous_creation_failure_starts_timed_cleanup() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        manager
+            .creation_intents
+            .register_with_state(
+                "agent-legacy",
+                "legacy-grpc-ambiguous",
+                Duration::from_millis(10),
+                Duration::from_millis(1),
+                true,
+                move |creation_id| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        cleanup_sender.send(creation_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        manager
+            .settle_ambiguous_creation("agent-legacy", "legacy-grpc-ambiguous")
+            .await
+            .expect("ambiguous creation settlement");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("ambiguous cleanup timeout")
+                .expect("ambiguous cleanup result"),
+            "legacy-grpc-ambiguous",
         );
     }
 
