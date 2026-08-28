@@ -369,6 +369,48 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects selectors that filter the matrix before the verified application selector', () => {
+    const selectorPlacements = [
+      [
+        '  template:\n',
+        `      selector:
+        matchLabels:
+          enabled: never
+  template:
+`,
+        'top-level matrix generator must not define a selector',
+      ],
+      [
+        '          - list:\n              elements:\n              - name: kata',
+        `            selector:
+              matchLabels:
+                cluster: other
+          - list:
+              elements:
+              - name: kata`,
+        'cluster generator must not define a selector',
+      ],
+    ] as const
+
+    for (const [expected, replacement, message] of selectorPlacements) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(expected, replacement),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow(message)
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(message)
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects multi-source application templates without mutating release manifests', () => {
     const sourceLists = [
       '      sources: []\n',

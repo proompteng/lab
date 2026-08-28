@@ -218,6 +218,9 @@ function findTengriApplicationBlock(contents: string) {
     throw new Error('Platform ApplicationSet must contain exactly one verified top-level matrix generator')
   }
   const topLevelGenerator = topLevelGenerators.items[0]
+  if (isMap(topLevelGenerator) && topLevelGenerator.has('selector')) {
+    throw new Error('Tengri ApplicationSet top-level matrix generator must not define a selector')
+  }
   const matrix = isMap(topLevelGenerator) ? topLevelGenerator.get('matrix', true) : undefined
   if (!isMap(matrix)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generator')
@@ -234,6 +237,9 @@ function findTengriApplicationBlock(contents: string) {
   const applicationGenerator = generators.items[1]
   if (!isMap(clusterGenerator) || !isMap(applicationGenerator)) {
     throw new Error('Platform ApplicationSet matrix generators must be list generators')
+  }
+  if (clusterGenerator.has('selector')) {
+    throw new Error('Tengri ApplicationSet cluster generator must not define a selector')
   }
   if (
     matrix.has('template') ||
