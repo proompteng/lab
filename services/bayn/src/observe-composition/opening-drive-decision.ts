@@ -148,6 +148,7 @@ export const executionMarketDataBinding = (
       universeSymbolHash: snapshot.manifest.universeSymbolHash,
       ...(snapshot.manifest.universe === undefined ? {} : { universe: snapshot.manifest.universe }),
       symbols: snapshot.manifest.symbols,
+      ...(snapshot.manifest.purpose === undefined ? {} : { purpose: snapshot.manifest.purpose }),
       feed: snapshot.manifest.feed,
       delayClass: snapshot.manifest.delayClass,
       sourceTopics: snapshot.manifest.sourceTopics,

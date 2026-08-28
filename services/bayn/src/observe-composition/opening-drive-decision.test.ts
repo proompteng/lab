@@ -382,6 +382,31 @@ describe('opening-drive runtime decision boundary', () => {
       quotesContentHash: snapshot.manifest.quotesContentHash,
       tradesContentHash: snapshot.manifest.tradesContentHash,
     })
+
+    const rows = makeSnapshotRows()
+    const liquidationSnapshot = success(
+      verifyIntradaySnapshot(
+        { ...snapshotRequest, symbols: ['AMD'], purpose: 'LIQUIDATION' },
+        {
+          ...rows,
+          bars: [],
+          quotes: rows.quotes.filter(
+            (row) => typeof row === 'object' && row !== null && 'symbol' in row && row.symbol === 'AMD',
+          ),
+          trades: [],
+        },
+      ),
+    )
+    expect(success(executionMarketDataBinding(liquidationSnapshot))).toMatchObject({
+      purpose: 'LIQUIDATION',
+      symbols: ['AMD'],
+      barCount: 0,
+      quoteCount: 1,
+      tradeCount: 0,
+      contentHash: liquidationSnapshot.manifest.contentHash,
+      snapshotId: liquidationSnapshot.manifest.snapshotId,
+    })
+
     expect(success(closeBidPrices(snapshot, ['AMD', 'AMD']))).toEqual({ AMD: '100120000' })
     expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-prices' })
 

@@ -61,6 +61,7 @@ const ExecutionMarketDataBindingBase = Schema.Struct({
   universeSymbolHash: Sha256Schema,
   universe: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  purpose: Schema.optionalKey(Schema.Literal('LIQUIDATION')),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
   delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
   sourceTopics: Schema.Struct({
@@ -71,9 +72,9 @@ const ExecutionMarketDataBindingBase = Schema.Struct({
   archiveWatermarks: Schema.Array(ExecutionArchiveWatermarkSchema).check(Schema.isMinLength(1)),
   maximumQuoteAgeMs: PositiveIntegerSchema,
   minimumWatermarkLagMs: NonNegativeIntegerSchema,
-  barCount: PositiveIntegerSchema,
+  barCount: NonNegativeIntegerSchema,
   quoteCount: PositiveIntegerSchema,
-  tradeCount: PositiveIntegerSchema,
+  tradeCount: NonNegativeIntegerSchema,
   barsContentHash: Sha256Schema,
   quotesContentHash: Sha256Schema,
   tradesContentHash: Sha256Schema,
@@ -110,6 +111,12 @@ const marketDataBindingIssues = (
       binding.symbols.some((symbol) => !universe.includes(symbol)))
   ) {
     issues.push({ path: ['symbols'], issue: 'must be a subset of the canonical bound universe' })
+  }
+  if (binding.purpose !== 'LIQUIDATION' && binding.barCount === 0) {
+    issues.push({ path: ['barCount'], issue: 'must be positive outside liquidation' })
+  }
+  if (binding.purpose !== 'LIQUIDATION' && binding.tradeCount === 0) {
+    issues.push({ path: ['tradeCount'], issue: 'must be positive outside liquidation' })
   }
   const watermarks = binding.archiveWatermarks
   const lineage = binding.lineage
