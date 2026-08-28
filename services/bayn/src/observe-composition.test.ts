@@ -1070,6 +1070,32 @@ describe('OBSERVE runtime composition', () => {
     ).toEqual({ kind: 'fractional', symbols: ['AAPL'] })
   })
 
+  test('closes external opening-drive holdings before its persisted target scope', () => {
+    const positions = [
+      { symbol: 'AMD', quantityMicros: '1000000' },
+      { symbol: 'TSLA', quantityMicros: '1000000' },
+    ]
+    const scope = {
+      _tag: 'opening-drive' as const,
+      universe: ['AMD'],
+      symbols: ['AMD', 'TSLA'],
+    }
+
+    expect(selectClosingSymbolPass(positions, scope)).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => symbol === 'AMD'),
+        scope,
+      ),
+    ).toEqual({
+      kind: 'legacy',
+      symbols: ['AMD', 'TSLA'],
+    })
+  })
+
   test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
     const intent: Intent = {
       schemaVersion: 'bayn.paper-intent.v3',
@@ -3500,6 +3526,17 @@ describe('OBSERVE runtime composition', () => {
       quantityMicros: '1000000',
       marketValueMicros: '100000000',
     }
+    const wholeOutOfUniversePosition: Position = {
+      ...outOfUniversePosition,
+      quantityMicros: '1000000',
+      marketValueMicros: '100005000',
+    }
+    const externalPass = await Effect.runPromise(
+      buildClosePositionsProgram([wholePosition, wholeOutOfUniversePosition], {
+        ...input,
+        intradayMarketData: unusedArchive,
+      }),
+    )
     const fractionalPass = await Effect.runPromise(buildClosePositionsProgram([openPosition, wholePosition]))
     const wholePass = await Effect.runPromise(buildClosePositionsProgram([wholePosition]))
     const unavailable = new IntradaySnapshotFailure({
@@ -3628,6 +3665,29 @@ describe('OBSERVE runtime composition', () => {
             orderType: OrderType.Market,
             timeInForce: TimeInForce.Day,
             quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(externalPass).toMatchObject({
+      dispatchable: true,
+      bindings: {
+        executionMarketData: {
+          schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
+          symbols: ['TSLA'],
+          positions: [{ symbol: 'TSLA', quantityMicros: '1000000' }],
+        },
+      },
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        targets: [{ symbol: 'TSLA' }],
+        intentTargets: [
+          {
+            symbol: 'TSLA',
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '1000000',
           },
         ],
       },

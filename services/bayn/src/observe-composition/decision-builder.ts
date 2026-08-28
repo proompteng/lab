@@ -1558,6 +1558,11 @@ const recoverExecutionSession = (
 
 type ClosingSymbolScope =
   | { readonly _tag: 'current-intraday'; readonly universe: readonly string[] }
+  | {
+      readonly _tag: 'opening-drive'
+      readonly universe: readonly string[]
+      readonly symbols: readonly string[]
+    }
   | { readonly _tag: 'legacy'; readonly symbols: readonly string[] }
 
 export type ClosingSymbolPass = {
@@ -1573,7 +1578,7 @@ export const selectClosingSymbolPass = (
     .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
     .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
 
-  if (scope._tag === 'current-intraday') {
+  if (scope._tag !== 'legacy') {
     const universe = new Set(scope.universe)
     const externalSymbols = activePositions.filter(({ symbol }) => !universe.has(symbol)).map(({ symbol }) => symbol)
     if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
@@ -1581,9 +1586,10 @@ export const selectClosingSymbolPass = (
     const fractionalSymbols = activePositions
       .filter(({ quantityMicros }) => BigInt(quantityMicros) % 1_000_000n !== 0n)
       .map(({ symbol }) => symbol)
-    return fractionalSymbols.length > 0
-      ? { kind: 'fractional', symbols: fractionalSymbols }
-      : { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
+    if (fractionalSymbols.length > 0) return { kind: 'fractional', symbols: fractionalSymbols }
+    return scope._tag === 'current-intraday'
+      ? { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
+      : { kind: 'legacy', symbols: scope.symbols }
   }
 
   const fractionalSymbols = activePositions
@@ -1635,11 +1641,24 @@ export const buildClosingExecutionCycleDecision = (
             Effect.map((definition) => definition.parameters),
           )
         : undefined
+    const openingDriveParameters =
+      preparation.executionModel.schemaVersion === 'bayn.execution-model.v4'
+        ? yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            Effect.map((definition) => definition.parameters),
+          )
+        : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
-      intradayParameters === undefined
-        ? { _tag: 'legacy', symbols: legacyCloseSymbols }
-        : { _tag: 'current-intraday', universe: intradayParameters.universe },
+      intradayParameters !== undefined
+        ? { _tag: 'current-intraday', universe: intradayParameters.universe }
+        : openingDriveParameters !== undefined
+          ? {
+              _tag: 'opening-drive',
+              universe: openingDriveParameters.universe,
+              symbols: legacyCloseSymbols,
+            }
+          : { _tag: 'legacy', symbols: legacyCloseSymbols },
     )
     const symbols = closingPass.symbols
     const requiresFractionalClose = closingPass.kind === 'fractional'
