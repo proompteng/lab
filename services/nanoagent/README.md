@@ -64,3 +64,7 @@ NANOAGENT_HOME=/tmp/nanoagent-home \
 NANOAGENT_WORKSPACE=/tmp/nanoagent-home/workspace \
 go run .
 ```
+
+The Nanoagent workflow runs the focused Go validation. Tengri's image workflow then builds native `linux/amd64` and
+`linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
+`registry.ide-newton.ts.net/lab/nanoagent` by immutable digest, and updates both GitOps digests atomically.

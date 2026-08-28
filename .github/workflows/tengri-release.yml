@@ -1,0 +1,292 @@
+name: Tengri release
+
+on:
+  workflow_run:
+    workflows:
+      - Tengri images
+    branches:
+      - main
+    types:
+      - requested
+      - completed
+
+concurrency:
+  group: tengri-release-promotion
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  invalidate-stale-promotion:
+    if: >-
+      ${{
+        github.event.workflow_run.head_branch == 'main' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+        (
+          github.event.action == 'requested' ||
+          (github.event.action == 'completed' && github.event.workflow_run.conclusion != 'success')
+        )
+      }}
+    runs-on: arc-arm64
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Close a promotion superseded by a newer build
+        env:
+          BUILD_ACTION: ${{ github.event.action }}
+          BUILD_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPERSEDING_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          promotion="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --head codex/tengri-release \
+            --json number,body \
+            --limit 1)"
+          pr_number="$(jq -r '.[0].number // empty' <<<"$promotion")"
+          if [[ -z "$pr_number" ]]; then
+            exit 0
+          fi
+
+          promoted_source="$(jq -r \
+            '.[0].body // "" | (try capture("- Source: `(?<sha>[0-9a-f]{40})`").sha catch "")' \
+            <<<"$promotion")"
+          if [[ -z "$promoted_source" || "$promoted_source" == "$SUPERSEDING_SHA" ]]; then
+            exit 0
+          fi
+
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${promoted_source}...${SUPERSEDING_SHA}" \
+            --jq .status)"
+          if [[ "$comparison" != ahead ]]; then
+            exit 0
+          fi
+
+          gh pr close "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --comment "Closing this promotion because the newer Tengri image build at ${SUPERSEDING_SHA} superseded its release contract (event: ${BUILD_ACTION}, conclusion: ${BUILD_CONCLUSION:-pending}). A successful build from that revision or a descendant must publish and verify a replacement promotion."
+
+  promote:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      }}
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        uses: actions/download-artifact@v5
+        with:
+          name: tengri-release-contract
+          path: .artifacts/tengri
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install script dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Validate release contract and published images
+        id: release
+        env:
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          contract=.artifacts/tengri/release-contract.json
+          source_sha="$(jq -r '.sourceSha' "$contract")"
+          tag="$(jq -r '.tag' "$contract")"
+          tengri_digest="$(jq -r '.images.tengri.digest' "$contract")"
+          nanoagent_digest="$(jq -r '.images.nanoagent.digest' "$contract")"
+          test "$source_sha" = "$WORKFLOW_SHA"
+          test "$tag" = "sha-${source_sha}"
+          test "$(jq -r '.images.tengri.repository' "$contract")" = registry.ide-newton.ts.net/lab/tengri
+          test "$(jq -r '.images.nanoagent.repository' "$contract")" = registry.ide-newton.ts.net/lab/nanoagent
+          test "$(jq -r '.signed' "$contract")" = true
+          [[ "$tengri_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$nanoagent_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          git merge-base --is-ancestor "$source_sha" HEAD
+          git diff --quiet "$source_sha..HEAD" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
+
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tengri-images.yml@refs/heads/main"
+          for entry in "tengri:${tengri_digest}" "nanoagent:${nanoagent_digest}"; do
+            service="${entry%%:*}"
+            digest="${entry#*:}"
+            reference="registry.ide-newton.ts.net/lab/${service}@${digest}"
+            docker buildx imagetools inspect --raw "$reference" > "${service}-index.json"
+            test "sha256:$(sha256sum "${service}-index.json" | cut -d ' ' -f1)" = "$digest"
+            jq -e '
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+            ' "${service}-index.json"
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$reference"
+          done
+
+          {
+            echo "source_sha=$source_sha"
+            echo "tag=$tag"
+            echo "tengri_digest=$tengri_digest"
+            echo "nanoagent_digest=$nanoagent_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Refresh promotion manifests from current main
+        id: promotion-base
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          main_head="$(git rev-parse origin/main)"
+          source_sha='${{ steps.release.outputs.source_sha }}'
+          git merge-base --is-ancestor "$source_sha" "$main_head"
+          git diff --quiet "$source_sha..$main_head" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
+          git checkout "$main_head" -- \
+            argocd/applications/tengri/deployment.yaml \
+            argocd/applications/tengri/kustomization.yaml \
+            argocd/applicationsets/platform.yaml \
+            argocd/applications/proompteng/deployment.yaml
+          echo "main_head=$main_head" >> "$GITHUB_OUTPUT"
+
+      - name: Pin both images and enable Tengri
+        run: |
+          set -euo pipefail
+          bun packages/scripts/src/tengri/update-release.ts \
+            --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
+            --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
+          bun packages/scripts/src/tengri/validate-release.ts
+
+      - name: Revalidate current main before opening promotion
+        id: final-release
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          latest_main="$(git rev-parse origin/main)"
+          source_sha='${{ steps.release.outputs.source_sha }}'
+          git merge-base --is-ancestor "$source_sha" "$latest_main"
+          git diff --quiet "$source_sha..$latest_main" -- \
+            services/tengri \
+            services/nanoagent \
+            packages/scripts/src/tengri \
+            packages/scripts/src/shared/cli.ts \
+            packages/scripts/package.json \
+            bun.lock \
+            .github/workflows/tengri-images.yml \
+            .github/workflows/tengri-release.yml \
+            argocd/applications/tengri/crd.yaml
+
+          git checkout "$latest_main" -- \
+            argocd/applications/tengri/deployment.yaml \
+            argocd/applications/tengri/kustomization.yaml \
+            argocd/applicationsets/platform.yaml \
+            argocd/applications/proompteng/deployment.yaml
+          current_release="$(bun packages/scripts/src/tengri/validate-release.ts)"
+          echo "was_enabled=$(jq -r '.enabled' <<<"$current_release")" >> "$GITHUB_OUTPUT"
+          bun packages/scripts/src/tengri/update-release.ts \
+            --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
+            --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
+          bun packages/scripts/src/tengri/validate-release.ts
+
+      - name: Create release pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/tengri-release
+          base: main
+          title: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'
+          commit-message: 'chore(tengri): promote ${{ steps.release.outputs.tag }}'
+          add-paths: |
+            argocd/applications/tengri/kustomization.yaml
+            argocd/applicationsets/platform.yaml
+            argocd/applications/proompteng/deployment.yaml
+          labels: |
+            automated-pr
+            tengri
+          body: |
+            ## Summary
+
+            Atomically enable Tengri with the two signed, multi-architecture images built from one source commit.
+
+            - Source: `${{ steps.release.outputs.source_sha }}`
+            - Tengri: `registry.ide-newton.ts.net/lab/tengri@${{ steps.release.outputs.tengri_digest }}`
+            - Nanoagent: `registry.ide-newton.ts.net/lab/nanoagent@${{ steps.release.outputs.nanoagent_digest }}`
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - Release contract matches the completed `main` workflow SHA.
+            - Both OCI indexes contain `linux/amd64` and `linux/arm64`.
+            - Both keyless signatures verify against the Tengri workflow identity.
+            - `bun packages/scripts/src/tengri/validate-release.ts` rejects partial and zero-digest enabled states.
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Infrastructure Impact
+
+            - Current state before promotion: Tengri enabled = `${{ steps.final-release.outputs.was_enabled }}`.
+            - Initial activation creates the Tengri control plane through Argo CD.
+            - A repeat promotion updates both immutable digests and triggers the singleton `Recreate` rollout, briefly interrupting gRPC, event, PTY, and preview connections. Existing MicroVM Pods and PVCs remain untouched.
+            - Verify with Argo CD and `kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m`, then exercise one authenticated read-only control-plane request.
+            - Roll back by reverting this promotion commit so Argo CD restores the previous signed digests; do not use `kubectl rollout undo` or a direct apply.
+
+            ## Breaking Changes
+
+            No API, Talos, RuntimeClass, or node changes. Repeat promotions deliberately perform the `Recreate` rollout described above.
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed.
+            - [x] Images are immutable, signed, and multi-architecture.
+            - [x] Tengri and Nanoagent are promoted atomically.
+            - [x] No node, Talos, RuntimeClass, cordon, drain, or reboot operation is included.
