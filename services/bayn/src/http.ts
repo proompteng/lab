@@ -949,7 +949,9 @@ const renderPrometheusMetricsDataFirst = (
       ? [
           '# HELP bayn_execution_funnel_count Current or latest terminal cycle count by opportunity-to-fill stage.',
           '# TYPE bayn_execution_funnel_count gauge',
-          `bayn_execution_funnel_count{stage="targets"} ${cycleDecision?.targetCount ?? 0}`,
+          ...(cycleDecision === null
+            ? []
+            : [`bayn_execution_funnel_count{stage="targets"} ${cycleDecision.targetCount}`]),
           `bayn_execution_funnel_count{stage="intents"} ${executionFunnel.intentCount}`,
           `bayn_execution_funnel_count{stage="orders"} ${executionFunnel.orderCount}`,
           `bayn_execution_funnel_count{stage="fills"} ${executionFunnel.executedOrderCount}`,

@@ -503,6 +503,28 @@ describe('Bayn HTTP pure decisions', () => {
     expect(noCycleMetrics).toContain('bayn_broker_position_count 2')
     expect(noCycleMetrics).toContain('bayn_broker_account_dollars{kind="equity"} 100001.250000')
 
+    const awaitingDecisionMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: {
+            ...realized.cycle.current,
+            decisionHash: null,
+          },
+          execution: {
+            ...realized.cycle.execution,
+            decision: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(awaitingDecisionMetrics).not.toContain('bayn_execution_funnel_count{stage="targets"}')
+    expect(awaitingDecisionMetrics).toContain('bayn_execution_funnel_count{stage="intents"} 2')
+
     const missingPositionSnapshotMetrics = renderPrometheusMetrics(
       {
         ...realized,
