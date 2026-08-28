@@ -597,11 +597,11 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let guest = self.guest(&principal, &request.agent_id).await?;
+        let creation_guard = self
+            .provisional_terminal_leases
+            .lock_creation(&request.agent_id)
+            .await;
         if request.creation_id.is_empty() {
-            let creation_guard = self
-                .provisional_terminal_leases
-                .lock_creation(&request.agent_id)
-                .await;
             let creation_id = compatible_terminal_creation_id("");
             let existing_sessions = guest.list_terminals().await.map_err(map_guest_error)?;
             let creation_record = self
@@ -659,6 +659,7 @@ impl MicroVmControlPlane for ControlPlane {
             return Ok(Response::new(terminal_session(creation.session)));
         }
 
+        let _creation_guard = creation_guard;
         let creation = guest
             .create_terminal(
                 &request.creation_id,
@@ -3429,6 +3430,56 @@ mod tests {
             .await
             .expect("same agent lock after release");
         drop(other_agent);
+    }
+
+    #[tokio::test]
+    async fn idless_snapshot_waits_for_an_explicit_mixed_version_creation() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let sessions = Arc::new(Mutex::new(vec![guest_terminal_session(
+            "terminal-existing",
+            "",
+            "/workspace",
+        )]));
+
+        let explicit_creation_guard = manager.lock_creation("agent-legacy").await;
+        let snapshot_manager = manager.clone();
+        let snapshot_sessions = sessions.clone();
+        let (started_sender, started_receiver) = oneshot::channel();
+        let snapshot = tokio::spawn(async move {
+            started_sender.send(()).expect("snapshot start receiver");
+            let _idless_creation_guard = snapshot_manager.lock_creation("agent-legacy").await;
+            snapshot_sessions.lock().await.clone()
+        });
+        started_receiver.await.expect("snapshot started");
+        tokio::task::yield_now().await;
+        assert!(
+            !snapshot.is_finished(),
+            "the ID-less snapshot must wait for an explicit creation",
+        );
+        sessions.lock().await.push(guest_terminal_session(
+            "terminal-explicit",
+            "",
+            "/workspace",
+        ));
+        drop(explicit_creation_guard);
+
+        let snapshot = tokio::time::timeout(Duration::from_secs(1), snapshot)
+            .await
+            .expect("serialized snapshot timeout")
+            .expect("serialized snapshot task");
+        assert_eq!(
+            snapshot
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["terminal-existing", "terminal-explicit"]
+        );
     }
 
     #[tokio::test]
