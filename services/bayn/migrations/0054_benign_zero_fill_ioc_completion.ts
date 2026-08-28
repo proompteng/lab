@@ -102,7 +102,7 @@ export default Effect.gen(function* () {
                       LIMIT 1
                     ) AS latest_order ON true
                     WHERE accepted.broker_order_id IS NOT NULL
-                      AND accepted.event_type = 'SUBMIT_ACCEPTED'
+                      AND accepted.event_type IN ('SUBMIT_ACCEPTED', 'RECOVERY_FOUND')
                       AND latest_order.account_id = intent.account_id
                       AND latest_order.client_order_id = intent.client_order_id
                       AND latest_order.intent_id = intent.intent_id

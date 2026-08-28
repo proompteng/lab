@@ -2273,7 +2273,7 @@ const insertSupersedingObserveGeneration = (document: ExecutionDecisionDocument)
 
 interface TerminalPlannedPaperIntentFixture {
   readonly brokerOrderPrefix: string
-  readonly latestMutation: 'accepted' | 'started'
+  readonly latestMutation: 'accepted' | 'recovered' | 'started'
   readonly orderType?: OrderType
   readonly requestLabel: string
   readonly responseContentHash: string
@@ -2314,7 +2314,10 @@ const insertTerminalPlannedPaperIntent = (
     const intentCreatedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) - 1)
     const submitStartedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 1)
     const acceptedAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 2)
-    const terminalAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
+    const recoveredAt = utcInstantFromEpochMillis(Date.parse(document.createdAt) + 3)
+    const terminalAt = utcInstantFromEpochMillis(
+      Date.parse(document.createdAt) + (fixture.latestMutation === 'recovered' ? 4 : 3),
+    )
     const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
     const requestHash = canonicalHashV1({ intentId: intent.intentId, request: fixture.requestLabel })
     const brokerOrderId = `${fixture.brokerOrderPrefix}-${intent.intentId.slice(0, 24)}`
@@ -2393,6 +2396,40 @@ const insertTerminalPlannedPaperIntent = (
             WHERE intent_id = ${intent.intentId}
           `
         }
+        if (fixture.latestMutation === 'recovered') {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ mutationId, sequence: 2, eventType: 'SUBMIT_UNKNOWN' })},
+              'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 2,
+              'SUBMIT', 'SUBMIT_UNKNOWN', ${requestHash}, 1000, ${acceptedAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'UNKNOWN', state_version = state_version + 1, updated_at = ${acceptedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms,
+              broker_order_id, request_id, response_status, response_content_hash, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ mutationId, sequence: 3, eventType: 'RECOVERY_FOUND' })},
+              'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 3,
+              'SUBMIT', 'RECOVERY_FOUND', ${requestHash}, 1000,
+              ${brokerOrderId}, ${fixture.requestLabel}, 200, ${fixture.responseContentHash}, ${recoveredAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'RECOVERED', state_version = state_version + 1, updated_at = ${recoveredAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        }
         yield* sql`
           UPDATE intents
           SET
@@ -2439,10 +2476,13 @@ const settleStartedPaperSubmit = (
     `
   })
 
-const insertBenignZeroFillIocPlannedIntent = (document: ExecutionDecisionDocument) =>
+const insertBenignZeroFillIocPlannedIntent = (
+  document: ExecutionDecisionDocument,
+  latestMutation: 'accepted' | 'recovered' = 'accepted',
+) =>
   insertTerminalPlannedPaperIntent(document, {
     brokerOrderPrefix: 'zero-fill',
-    latestMutation: 'accepted',
+    latestMutation,
     orderType: OrderType.Limit,
     requestLabel: 'zero-fill-ioc-completion',
     responseContentHash: 'c'.repeat(64),
@@ -5673,92 +5713,95 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
   })
 
-  test('completes a terminal zero-fill LIMIT/IOC only after exact accepted-order and reconciliation evidence', async () => {
-    const result = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const [clock] = yield* sql<{ evaluated_at: string }>`
+  test.each(['accepted', 'recovered'] as const)(
+    'completes a terminal zero-fill LIMIT/IOC through a %s submit path only after exact order and reconciliation evidence',
+    async (submitPath) => {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [clock] = yield* sql<{ evaluated_at: string }>`
           SELECT to_char(
             (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
           ) AS evaluated_at
         `
-        if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
-        const {
-          evaluationAt: evaluatedAt,
-          executionOpenAt,
-          executionSessionDate,
-          signalSessionDate,
-          snapshotBoundAt,
-        } = monthEndExecutionWindow(clock.evaluated_at)
-        const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
-        const draft = makeDraft('paper-account-zero-fill-ioc-completion', {
-          executionPolicy,
-          executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
-          executionOpenAt,
-          executionSessionDate,
-          signalSessionDate,
-        })
-        const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
-        const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
-        const manifest = makeInputManifest(snapshotB, {
-          asOfSession: signalSessionDate,
-          finalizedAt: snapshotBoundAt,
-          lastSession: signalSessionDate,
-        })
+          if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+          const {
+            evaluationAt: evaluatedAt,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+            snapshotBoundAt,
+          } = monthEndExecutionWindow(clock.evaluated_at)
+          const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+          const draft = makeDraft(`paper-account-zero-fill-ioc-completion-${submitPath}`, {
+            executionPolicy,
+            executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+          })
+          const acquisitionAt = utcInstantFromEpochMillis(Date.parse(draft.window.signalCloseAt) + 60_000)
+          const activatedAt = utcInstantFromEpochMillis(Date.parse(snapshotBoundAt) + 1_000)
+          const manifest = makeInputManifest(snapshotB, {
+            asOfSession: signalSessionDate,
+            finalizedAt: snapshotBoundAt,
+            lastSession: signalSessionDate,
+          })
 
-        const store = yield* CycleStore
-        yield* store.acquire(draft, acquisitionAt)
-        yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
-        const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
-        const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
-          evaluatedAt,
-          snapshotFinalizedAt: snapshotBoundAt,
-        })
-        if (
-          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
-          planned.document.riskBlock !== undefined
-        ) {
-          return yield* Effect.die(new Error('zero-fill IOC fixture requires a dispatchable planned decision'))
-        }
-        yield* insertReconciliation(planned.reconciliation)
-        yield* insertQualifiedPaperLineage(planned.document)
-        yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+          const store = yield* CycleStore
+          yield* store.acquire(draft, acquisitionAt)
+          yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+          const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+          const planned = yield* buildPlannedExecutionDecision(activated.cycle, snapshotB, {
+            evaluatedAt,
+            snapshotFinalizedAt: snapshotBoundAt,
+          })
+          if (
+            planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+            planned.document.riskBlock !== undefined
+          ) {
+            return yield* Effect.die(new Error('zero-fill IOC fixture requires a dispatchable planned decision'))
+          }
+          yield* insertReconciliation(planned.reconciliation)
+          yield* insertQualifiedPaperLineage(planned.document)
+          yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
 
-        const zeroFill = yield* insertBenignZeroFillIocPlannedIntent(planned.document)
-        const missingOrderReconciledAt = utcInstantFromEpochMillis(Date.parse(zeroFill.canceledAt) + 1)
-        yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, missingOrderReconciledAt))
-        const withoutOrder = yield* Effect.exit(
-          store.finish(draft.identity.cycleId, CycleState.Completed, missingOrderReconciledAt),
-        )
+          const zeroFill = yield* insertBenignZeroFillIocPlannedIntent(planned.document, submitPath)
+          const missingOrderReconciledAt = utcInstantFromEpochMillis(Date.parse(zeroFill.canceledAt) + 1)
+          yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, missingOrderReconciledAt))
+          const withoutOrder = yield* Effect.exit(
+            store.finish(draft.identity.cycleId, CycleState.Completed, missingOrderReconciledAt),
+          )
 
-        const orderObservedAt = utcInstantFromEpochMillis(Date.parse(missingOrderReconciledAt) + 1)
-        const order = yield* insertBenignZeroFillIocOrder(zeroFill, orderObservedAt)
-        const withoutPostOrderReconciliation = yield* Effect.exit(
-          store.finish(draft.identity.cycleId, CycleState.Completed, orderObservedAt),
-        )
+          const orderObservedAt = utcInstantFromEpochMillis(Date.parse(missingOrderReconciledAt) + 1)
+          const order = yield* insertBenignZeroFillIocOrder(zeroFill, orderObservedAt)
+          const withoutPostOrderReconciliation = yield* Effect.exit(
+            store.finish(draft.identity.cycleId, CycleState.Completed, orderObservedAt),
+          )
 
-        const reconciledAt = utcInstantFromEpochMillis(Date.parse(orderObservedAt) + 1)
-        yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, reconciledAt, [order]))
-        const completed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
-        const replayed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
-        const unfinished = yield* store.readOldestUnfinished({
-          qualificationRunId: draft.identity.qualificationRunId,
-          accountId: draft.identity.accountId,
-        })
-        return { completed, reconciledAt, replayed, unfinished, withoutOrder, withoutPostOrderReconciliation }
-      }).pipe(Effect.provide(TestClock.layer())),
-    )
+          const reconciledAt = utcInstantFromEpochMillis(Date.parse(orderObservedAt) + 1)
+          yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, reconciledAt, [order]))
+          const completed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+          const replayed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+          const unfinished = yield* store.readOldestUnfinished({
+            qualificationRunId: draft.identity.qualificationRunId,
+            accountId: draft.identity.accountId,
+          })
+          return { completed, reconciledAt, replayed, unfinished, withoutOrder, withoutPostOrderReconciliation }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
 
-    expect(Exit.isFailure(result.withoutOrder)).toBe(true)
-    expect(Exit.isFailure(result.withoutPostOrderReconciliation)).toBe(true)
-    expect(result.completed).toMatchObject({
-      changed: true,
-      cycle: { state: CycleState.Completed, terminalAt: result.reconciledAt },
-    })
-    expect(result.replayed).toEqual({ changed: false, cycle: result.completed.cycle })
-    expect(Option.isNone(result.unfinished)).toBe(true)
-  })
+      expect(Exit.isFailure(result.withoutOrder)).toBe(true)
+      expect(Exit.isFailure(result.withoutPostOrderReconciliation)).toBe(true)
+      expect(result.completed).toMatchObject({
+        changed: true,
+        cycle: { state: CycleState.Completed, terminalAt: result.reconciledAt },
+      })
+      expect(result.replayed).toEqual({ changed: false, cycle: result.completed.cycle })
+      expect(Option.isNone(result.unfinished)).toBe(true)
+    },
+  )
 
   test('finishes the exact no-trade decision once after cutoff and preserves terminal history across runtimes', async () => {
     const draft = makeDraft()
