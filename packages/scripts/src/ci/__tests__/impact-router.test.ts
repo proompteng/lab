@@ -33,7 +33,7 @@ describe('impact router', () => {
 
   test('routes design package changes through consumer compatibility validation', () => {
     const plan = selectImpactPlan(['packages/design/src/components/ui/button.tsx'], map)
-    expect(plan.validationTargets).toEqual(['design'])
+    expect(plan.validationTargets).toEqual(['design', 'landing'])
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
