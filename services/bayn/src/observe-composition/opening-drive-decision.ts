@@ -137,7 +137,10 @@ export const executionMarketDataBinding = (
 ): Result.Result<ExecutionMarketDataBinding, OpeningDriveRuntimeDecisionFailure> =>
   Result.mapError(
     decodeExecutionMarketDataBinding({
-      schemaVersion: 'bayn.execution-market-data-binding.v1',
+      schemaVersion:
+        snapshot.manifest.universe === undefined
+          ? 'bayn.execution-market-data-binding.v1'
+          : 'bayn.execution-market-data-binding.v2',
       snapshotSchemaVersion: snapshot.manifest.schemaVersion,
       sessionDate: snapshot.manifest.sessionDate,
       calendar: snapshot.manifest.calendar,

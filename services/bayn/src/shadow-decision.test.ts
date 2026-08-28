@@ -774,6 +774,20 @@ const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecision
   Effect.runPromise(buildObserveShadowDecision(input))
 
 describe('OBSERVE shadow decision', () => {
+  test('requires the canonical source universe on new execution market-data bindings', () => {
+    const legacyBinding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const currentBinding = { ...legacyBinding, schemaVersion: 'bayn.execution-market-data-binding.v2' }
+
+    expect(
+      Result.isSuccess(Schema.decodeUnknownResult(ExecutionMarketDataBindingSchema, strictParseOptions)(legacyBinding)),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        Schema.decodeUnknownResult(ExecutionMarketDataBindingSchema, strictParseOptions)(currentBinding),
+      ),
+    ).toBe(true)
+  })
+
   test('rejects a liquidation binding that omits its canonical source universe', () => {
     const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
     const {

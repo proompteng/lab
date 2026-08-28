@@ -131,6 +131,7 @@ const TargetPlannerInputFields = {
 export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-input.quote-bound.v1' as const
 
 const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
+  executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
   orderType: Schema.Literal(OrderType.Limit),
   timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
@@ -202,6 +203,7 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
   }
   const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
   const fractionalClose = input.executionTerms.orderType === OrderType.Market
+  const forcedClose = input.executionTerms.executionPurpose !== undefined
   if (fractionalClose && input.precision.quantityIncrementMicros !== '1') {
     issues.push({
       path: ['precision', 'quantityIncrementMicros'],
@@ -214,14 +216,25 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
       issue: 'quote-bound LIMIT/IOC execution requires whole-share quantity precision',
     })
   }
-  if (
-    fractionalClose &&
-    Object.values(input.executionTerms.maximumBuyQuantityMicros).some((quantity) => BigInt(quantity) !== 0n)
-  ) {
-    issues.push({
-      path: ['executionTerms', 'maximumBuyQuantityMicros'],
-      issue: 'fractional close must prohibit every buy quantity',
-    })
+  if (forcedClose) {
+    if (Object.values(input.targetWeights).some((weight) => weight !== 0)) {
+      issues.push({ path: ['targetWeights'], issue: 'forced close must target a flat account' })
+    }
+    const positionQuantities = new Map(
+      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)]),
+    )
+    if (
+      targetSymbols.some((symbol) => {
+        const currentQuantity = positionQuantities.get(symbol) ?? 0n
+        const expectedMaximumBuy = currentQuantity < 0n ? -currentQuantity : 0n
+        return BigInt(input.executionTerms.maximumBuyQuantityMicros[symbol] ?? '0') !== expectedMaximumBuy
+      })
+    ) {
+      issues.push({
+        path: ['executionTerms', 'maximumBuyQuantityMicros'],
+        issue: 'forced close must cap buys at each exactly reconciled short quantity',
+      })
+    }
   }
   if (
     Object.values(input.executionTerms.maximumBuyQuantityMicros).some(
@@ -384,7 +397,7 @@ export const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,
   targetWeight: UnitIntervalSchema,
   referencePriceMicros: PositiveMicrosSchema,
-  currentQuantityMicros: UnsignedMicrosSchema,
+  currentQuantityMicros: SignedMicrosSchema,
   targetQuantityMicros: UnsignedMicrosSchema,
 })
 

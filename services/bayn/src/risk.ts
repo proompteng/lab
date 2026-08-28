@@ -807,16 +807,23 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   })
 }
 
+const isPositionReducingCloseOrder = (facts: RiskFacts): boolean => {
+  if (facts.state.closeOnly !== true) return false
+  const currentQuantity =
+    facts.positions.find((position) => position.symbol === facts.intent.symbol)?.quantityMicros ?? 0n
+  const postTradeQuantity =
+    currentQuantity + (facts.intent.side === OrderSide.Buy ? facts.intentQuantityMicros : -facts.intentQuantityMicros)
+  return currentQuantity > 0n
+    ? facts.intent.side === OrderSide.Sell && postTradeQuantity >= 0n && postTradeQuantity < currentQuantity
+    : currentQuantity < 0n
+      ? facts.intent.side === OrderSide.Buy && postTradeQuantity <= 0n && postTradeQuantity > currentQuantity
+      : false
+}
+
 const isStrictlyExposureReducingClose = (facts: RiskFacts, metrics: DerivedRiskMetrics): boolean =>
-  facts.state.closeOnly === true &&
-  facts.intent.side === OrderSide.Sell &&
-  facts.positions.every((position) => position.quantityMicros >= 0n) &&
-  metrics.currentSymbolQuantityMicros > 0n &&
-  metrics.postTradeSymbolQuantityMicros >= 0n &&
-  metrics.postTradeSymbolQuantityMicros < metrics.currentSymbolQuantityMicros &&
+  isPositionReducingCloseOrder(facts) &&
   metrics.postTradeSymbolExposureMagnitudeMicros < metrics.currentSymbolExposureMagnitudeMicros &&
-  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros &&
-  metrics.postTradeNetExposureMagnitudeMicros <= metrics.currentNetExposureMagnitudeMicros
+  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros
 
 const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
   pipe(
@@ -839,8 +846,7 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
   )
 
 const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
-  facts.state.closeOnly === true &&
-  facts.intent.side === OrderSide.Sell &&
+  isPositionReducingCloseOrder(facts) &&
   facts.intent.orderType === OrderType.Market &&
   facts.intent.timeInForce === TimeInForce.Day
 
@@ -905,8 +911,9 @@ const buildAuthorityAndStateGates = (
   metrics: DerivedRiskMetrics,
   reconciledHash: string,
 ): readonly GateResult[] => {
-  const { intent, policy, state } = facts
+  const { policy, state } = facts
   const closeOnly = state.closeOnly === true
+  const positionReducingClose = isPositionReducingCloseOrder(facts)
   return [
     makeGate(
       Gate.Authority,
@@ -919,10 +926,9 @@ const buildAuthorityAndStateGates = (
     ),
     makeGate(
       Gate.Kill,
-      state.authority.kill === KillState.Clear ||
-        (closeOnly && intent.side === OrderSide.Sell && state.authority.kill === KillState.Active),
+      state.authority.kill === KillState.Clear || (positionReducingClose && state.authority.kill === KillState.Active),
       state.authority.kill,
-      closeOnly ? 'CLEAR|ACTIVE_FOR_SELL_CLOSE' : 'CLEAR',
+      closeOnly ? 'CLEAR|ACTIVE_FOR_POSITION_CLOSE' : 'CLEAR',
     ),
     makeGate(
       Gate.Reconciliation,
@@ -1003,7 +1009,8 @@ const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): read
   return [
     makeGate(
       Gate.LongOnly,
-      metrics.currentSymbolQuantityMicros >= 0n && metrics.postTradeSymbolQuantityMicros >= 0n,
+      exposureReducingClose ||
+        (metrics.currentSymbolQuantityMicros >= 0n && metrics.postTradeSymbolQuantityMicros >= 0n),
       `${metrics.currentSymbolQuantityMicros}:${metrics.postTradeSymbolQuantityMicros}`,
       '>=0:>=0',
     ),

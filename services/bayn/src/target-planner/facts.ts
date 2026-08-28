@@ -370,7 +370,12 @@ export const selectTargetPlannerPreflightReason = (facts: TargetPlannerFacts): B
   if (input.brokerState.account.status !== AccountStatus.Active) return TargetPlanReason.AccountNotActive
   if (input.brokerState.unknownOrderCount > 0) return TargetPlanReason.UnknownOrder
   if (input.brokerState.orders.some((order) => isUnresolved(order.status))) return TargetPlanReason.UnresolvedOrder
-  if (facts.positionQuantities.some((quantity) => quantity < 0n)) return TargetPlanReason.ShortPositionNotAllowed
+  const forcedClose =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    input.executionTerms.executionPurpose !== undefined
+  if (!forcedClose && facts.positionQuantities.some((quantity) => quantity < 0n)) {
+    return TargetPlanReason.ShortPositionNotAllowed
+  }
   if (facts.equity <= 0n) return TargetPlanReason.NonPositiveEquity
   return undefined
 }

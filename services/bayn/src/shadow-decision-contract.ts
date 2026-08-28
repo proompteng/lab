@@ -49,8 +49,7 @@ const ExecutionLineageSchema = Schema.Struct({
   recordCount: PositiveIntegerSchema,
 })
 
-const ExecutionMarketDataBindingBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v1'),
+const ExecutionMarketDataBindingFields = {
   snapshotSchemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
   sessionDate: IsoDateSchema,
   calendar: ExecutionCalendarObservationSchema,
@@ -59,7 +58,6 @@ const ExecutionMarketDataBindingBase = Schema.Struct({
   observedAt: UtcInstantSchema,
   universeId: StrictNonEmptyStringSchema,
   universeSymbolHash: Sha256Schema,
-  universe: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
   purpose: Schema.optionalKey(Schema.Literal('LIQUIDATION')),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
@@ -81,7 +79,20 @@ const ExecutionMarketDataBindingBase = Schema.Struct({
   lineage: Schema.Array(ExecutionLineageSchema).check(Schema.isMinLength(1)),
   contentHash: Sha256Schema,
   snapshotId: Sha256Schema,
-})
+} as const
+
+const ExecutionMarketDataBindingBase = Schema.Union([
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v1'),
+    ...ExecutionMarketDataBindingFields,
+    universe: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
+  }),
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v2'),
+    ...ExecutionMarketDataBindingFields,
+    universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  }),
+])
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 

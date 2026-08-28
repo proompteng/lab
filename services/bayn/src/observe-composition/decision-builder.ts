@@ -830,12 +830,18 @@ const compileObserveStrategyDecision = <R>(
         ),
       ).pipe(
         Effect.mapError((cause) =>
-          operationalError({
-            component: 'strategy',
-            operation: 'current-decision',
-            message: cause.message,
-            cause,
-          }),
+          cause instanceof IntradayMomentumEntryAwaitingSnapshot
+            ? new ObserveDecisionAwaitingSignal({
+                message: cause.message,
+                observedAt: facts.evaluatedAt,
+                submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+              })
+            : operationalError({
+                component: 'strategy',
+                operation: 'current-decision',
+                message: cause.message,
+                cause,
+              }),
         ),
       )
       if (
@@ -1454,6 +1460,17 @@ export const buildClosingExecutionCycleDecision = (
     const closeDecisionHash = yield* Effect.fromResult(
       hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const positionQuantities = new Map(
+      reconciliation.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)]),
+    )
+    const maximumCloseBuyQuantityMicros = Object.fromEntries(
+      Object.keys(closeDecision.targetWeights)
+        .sort()
+        .map((symbol) => {
+          const currentQuantity = positionQuantities.get(symbol) ?? 0n
+          return [symbol, currentQuantity < 0n ? String(-currentQuantity) : '0']
+        }),
+    )
     const closeExecutionMarketData = isQuoteBoundExecutionModel(preparation.executionModel)
       ? yield* Effect.gen(function* () {
           if (input.intradayMarketData === undefined) {
@@ -1564,23 +1581,16 @@ export const buildClosingExecutionCycleDecision = (
               priceReference: 'verified-adverse-quote-boundary',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-              maximumBuyQuantityMicros: Object.fromEntries(
-                Object.keys(closeDecision.targetWeights)
-                  .sort()
-                  .map((symbol) => [symbol, '0']),
-              ),
+              maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
             }
           : {
+              executionPurpose: 'forced-close',
               orderType: OrderType.Limit,
               timeInForce: TimeInForce.ImmediateOrCancel,
               priceReference: 'verified-adverse-quote-boundary',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-              maximumBuyQuantityMicros: Object.fromEntries(
-                Object.keys(closeDecision.targetWeights)
-                  .sort()
-                  .map((symbol) => [symbol, '0']),
-              ),
+              maximumBuyQuantityMicros: maximumCloseBuyQuantityMicros,
             },
       }
     } else {

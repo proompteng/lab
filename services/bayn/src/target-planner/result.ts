@@ -168,6 +168,12 @@ const plannedIntentIssues = (
           (intent.side === OrderSide.Sell &&
             intent.orderType === OrderType.Market &&
             intent.timeInForce === TimeInForce.Day &&
+            BigInt(target.currentQuantityMicros) > 0n &&
+            BigInt(target.targetQuantityMicros) === 0n) ||
+          (intent.side === OrderSide.Buy &&
+            intent.orderType === OrderType.Market &&
+            intent.timeInForce === TimeInForce.Day &&
+            BigInt(target.currentQuantityMicros) < 0n &&
             BigInt(target.targetQuantityMicros) === 0n))
   for (const { delta, index, intent, target } of facts.deltas) {
     if (delta === 0n && intent !== undefined) {

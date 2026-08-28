@@ -3298,31 +3298,39 @@ describe('OBSERVE runtime composition', () => {
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
-    const close = await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(closeObservedAt))
-        return yield* buildClosingExecutionCycleDecision({
-          input,
-          preparation,
-          policy,
-          cycle: boundCycle,
-          entryDocument,
-          reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [openPosition])),
-          closeExpiresAt,
-        })
-      }).pipe(
-        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
-        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
-        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
-        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
-        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
-        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
-        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
-        Effect.provideService(WriterFence, {} as WriterFenceService),
-        Effect.provide(TestClock.layer()),
-      ),
-    )
+    const buildClose = (position: Position) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(closeObservedAt))
+          return yield* buildClosingExecutionCycleDecision({
+            input,
+            preparation,
+            policy,
+            cycle: boundCycle,
+            entryDocument,
+            reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [position])),
+            closeExpiresAt,
+          })
+        }).pipe(
+          Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+          Effect.provideService(MarketData, marketData([])),
+          Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+          Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+          Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+          Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+          Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+          Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+          Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+    const close = await buildClose(openPosition)
+    const shortPosition: Position = {
+      ...openPosition,
+      quantityMicros: '-500000',
+      marketValueMicros: '-50000000',
+    }
+    const cover = await buildClose(shortPosition)
 
     expect(entryDocument.executionSession?.schemaVersion).toBe('bayn.execution-session-binding.v2')
     expect(close).toMatchObject({
@@ -3339,6 +3347,21 @@ describe('OBSERVE runtime composition', () => {
           {
             symbol: openPosition.symbol,
             side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
+      },
+    })
+    expect(cover).toMatchObject({
+      dispatchable: true,
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [
+          {
+            symbol: shortPosition.symbol,
+            side: OrderSide.Buy,
             orderType: OrderType.Market,
             timeInForce: TimeInForce.Day,
             quantityMicros: '500000',

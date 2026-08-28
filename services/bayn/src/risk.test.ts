@@ -600,6 +600,43 @@ describe('bounded execution risk', () => {
     expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
   })
 
+  test('admits an exact MARKET/DAY buy-to-cover only in close-only mode', () => {
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '-500000',
+            marketValueMicros: '-50000000',
+            unrealizedPnlMicros: '0',
+          }
+        : position,
+    )
+    const state = makeState({
+      positions,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const intent = makeIntent({
+      policyHash: canonicalHashV1(policy),
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '500000',
+      notionalLimitMicros: '50000000',
+    })
+
+    const cover = evaluateSuccess(intent, state, policy)
+    expect(cover.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(cover.gates.find((gate) => gate.name === Gate.LongOnly)?.passed).toBe(true)
+    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+  })
+
   test('permits only the bounded sell close through an active kill', () => {
     const closeOnlyState = makeState({
       closeOnly: true,

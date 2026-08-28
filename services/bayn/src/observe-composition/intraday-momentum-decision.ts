@@ -5,9 +5,10 @@ import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
 import type { IntradayMarketSnapshot, IntradaySnapshotQuery } from '../market-data'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
-import type {
-  IntradayMomentumStrategyDefinition,
-  IntradayMomentumTargetPortfolio,
+import {
+  IntradayMomentumFailure,
+  type IntradayMomentumStrategyDefinition,
+  type IntradayMomentumTargetPortfolio,
 } from '../strategy/intraday-momentum/model'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } from './opening-drive-decision'
@@ -22,7 +23,7 @@ export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('In
 
 export class IntradayMomentumEntryAwaitingSnapshot extends Data.TaggedError('IntradayMomentumEntryAwaitingSnapshot')<{
   readonly message: string
-  readonly availableAt: string
+  readonly availableAt?: string
 }> {}
 
 const failure = (
@@ -94,7 +95,9 @@ export const intradayMomentumEntryQuery = (
       }),
     )
   }
-  return Result.succeed(snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, decisionDelayMs))
+  return Result.succeed(
+    snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, decisionDelayMs, protocol.universe),
+  )
 }
 
 export const intradayMomentumCloseQuery = (
@@ -147,7 +150,10 @@ export const compileIntradayMomentumDecision = (
   definition: IntradayMomentumStrategyDefinition,
   cycle: AutonomousCycle,
   snapshot: IntradayMarketSnapshot,
-): Result.Result<CompiledIntradayMomentumDecision, IntradayMomentumRuntimeDecisionFailure> =>
+): Result.Result<
+  CompiledIntradayMomentumDecision,
+  IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
+> =>
   Result.mapError(
     Result.gen(function* () {
       const decision = yield* definition.decide({
@@ -175,5 +181,10 @@ export const compileIntradayMomentumDecision = (
         executionMarketData: binding,
       }
     }),
-    (cause) => failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
+    (cause) =>
+      cause instanceof IntradayMomentumFailure &&
+      cause.reason === 'snapshot-coverage' &&
+      cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
+        ? new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+        : failure('entry-decision', 'intraday-momentum strategy rejected its verified runtime snapshot', cause),
   )

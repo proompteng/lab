@@ -403,6 +403,44 @@ describe('causal target planner', () => {
     })
   })
 
+  test('permits only the exactly reconciled short quantity in a forced buy-to-cover', () => {
+    const input = fixture({
+      quoteBound: true,
+      allocationCapitalMicros: '0',
+      positions: [position('AMD', '-2000000')],
+      priceMicros: { AMD: '100000000' },
+      targetWeights: { AMD: 0 },
+      maximumBuyQuantityMicros: { AMD: '2000000' },
+    })
+    if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
+      return expect.unreachable('forced close fixture requires quote-bound planning')
+    }
+    if (input.executionTerms.orderType !== OrderType.Limit) {
+      return expect.unreachable('whole-share forced close fixture requires LIMIT execution')
+    }
+    const result = planSuccess({
+      ...input,
+      executionTerms: {
+        ...input.executionTerms,
+        executionPurpose: 'forced-close',
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', currentQuantityMicros: '-2000000', targetQuantityMicros: '0' }],
+      intentTargets: [
+        {
+          symbol: 'AMD',
+          side: OrderSide.Buy,
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
+          quantityMicros: '2000000',
+        },
+      ],
+    })
+  })
+
   test('caps only buy deltas at the verified whole-share ask quantity', () => {
     const result = planSuccess(
       fixture({
