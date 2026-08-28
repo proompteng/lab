@@ -30,7 +30,7 @@ describe('Finder model', () => {
   })
 
   test('uses the Nanoagent API root for the workspace', () => {
-    expect(FINDER_WORKSPACE_PATH).toBe('/')
+    expect(FINDER_WORKSPACE_PATH).toBe('/workspace')
   })
 
   test('refreshes recursive search only while Finder is active', () => {
@@ -100,13 +100,14 @@ describe('Finder model', () => {
     expect(
       finderDeletionTargets([
         { directory: true, path: '/' },
-        { directory: true, path: '/src' },
-        { directory: false, path: '/src/index.ts' },
-        { directory: false, path: '/README.md' },
+        { directory: true, path: '/workspace' },
+        { directory: true, path: '/workspace/src' },
+        { directory: false, path: '/workspace/src/index.ts' },
+        { directory: false, path: '/workspace/README.md' },
       ]),
     ).toEqual([
-      { directory: true, path: '/src' },
-      { directory: false, path: '/README.md' },
+      { directory: true, path: '/workspace/src' },
+      { directory: false, path: '/workspace/README.md' },
     ])
   })
 

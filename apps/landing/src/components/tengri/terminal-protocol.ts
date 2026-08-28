@@ -2,6 +2,7 @@ const OUTPUT_FRAME_TYPE = 1
 const MAX_UINT32 = 0xffff_ffff
 const RFC_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const SESSION_ID = /^[A-Za-z0-9_-]{16,128}$/
+const CREATION_ID = /^[A-Za-z0-9_-]{16,128}$/
 
 export type TerminalOutputFrame = {
   sequence: number
@@ -40,6 +41,12 @@ export function normalizeTerminalSize(columns: number, rows: number): { columns:
     columns: clampInteger(columns, 120, 20, 400),
     rows: clampInteger(rows, 32, 6, 200),
   }
+}
+
+export function terminalCreationId(agentId: string, windowId: string): string {
+  const creationId = `tengri-${agentId}-${windowId}`
+  if (!CREATION_ID.test(creationId)) throw new Error('Terminal creation identity is invalid')
+  return creationId
 }
 
 export function buildTerminalWebSocketUrl(

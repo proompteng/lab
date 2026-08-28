@@ -186,10 +186,6 @@ export function FinderApp({
   }, [active, load, query])
 
   useEffect(() => {
-    if (!active) {
-      setWatchState('paused')
-      return
-    }
     let refreshTimer = 0
     const source = new EventSource(
       `/api/tengri/files/events?agentId=${encodeURIComponent(agentId)}&path=${encodeURIComponent(path)}`,
@@ -207,7 +203,7 @@ export function FinderApp({
       window.clearTimeout(refreshTimer)
       source.close()
     }
-  }, [active, agentId, path])
+  }, [agentId, path])
 
   useEffect(() => {
     const interval = finderSearchRefreshInterval(active, query)

@@ -131,7 +131,13 @@ message FileEvent {
   FileEntry entry = 5;
 }
 
-message CreateTerminalRequest { string agent_id = 1; string cwd = 2; uint32 columns = 3; uint32 rows = 4; }
+message CreateTerminalRequest {
+  string agent_id = 1;
+  string cwd = 2;
+  uint32 columns = 3;
+  uint32 rows = 4;
+  string creation_id = 5;
+}
 message ListTerminalsRequest { string agent_id = 1; }
 message ListTerminalsResponse { repeated TerminalSession sessions = 1; }
 message TerminateTerminalRequest { string agent_id = 1; string terminal_id = 2; }
@@ -143,6 +149,7 @@ message TerminalSession {
   string created_at = 3;
   string last_activity_at = 4;
   bool attached = 5;
+  string creation_id = 6;
 }
 
 message TerminalTicket {

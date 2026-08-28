@@ -37,12 +37,40 @@ func TestTerminalManagerEnforcesFourSessionLimit(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	for index := 0; index < maxTerminalSessions; index++ {
-		if _, err := manager.create("/", 80, 24); err != nil {
+		if _, err := manager.create(fmt.Sprintf("terminal-creation-%02d", index), "/", 80, 24); err != nil {
 			t.Fatalf("create terminal %d: %v", index, err)
 		}
 	}
-	if _, err := manager.create("/", 80, 24); err == nil || !strings.Contains(err.Error(), "four") {
+	if _, err := manager.create("terminal-creation-overflow", "/", 80, 24); err == nil || !strings.Contains(err.Error(), "four") {
 		t.Fatalf("fifth terminal error = %v", err)
+	}
+}
+
+func TestTerminalManagerCreatesIdempotentlyBeforeEnforcingCapacity(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	workspace, err := newWorkspace(root)
+	if err != nil {
+		t.Fatalf("newWorkspace() error = %v", err)
+	}
+	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
+	t.Cleanup(manager.close)
+
+	first, err := manager.create("terminal-creation-stable", "/", 80, 24)
+	if err != nil {
+		t.Fatalf("create terminal: %v", err)
+	}
+	for index := 1; index < maxTerminalSessions; index++ {
+		if _, err := manager.create(fmt.Sprintf("terminal-creation-%02d", index), "/", 80, 24); err != nil {
+			t.Fatalf("fill terminal %d: %v", index, err)
+		}
+	}
+	replayed, err := manager.create("terminal-creation-stable", "/different", 200, 50)
+	if err != nil {
+		t.Fatalf("replay terminal creation: %v", err)
+	}
+	if replayed.ID != first.ID || replayed.CreationID != first.CreationID {
+		t.Fatalf("idempotent create = %#v, want %#v", replayed, first)
 	}
 }
 
@@ -84,7 +112,7 @@ func TestTerminalReplayResetReasonPreservesContiguousCursor(t *testing.T) {
 	}
 }
 
-func TestCreateTerminalRemovesSessionWhenRequestIsCancelled(t *testing.T) {
+func TestCreateTerminalCanBeReconciledAfterRequestCancellation(t *testing.T) {
 	workspace, err := newWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatalf("newWorkspace() error = %v", err)
@@ -92,7 +120,7 @@ func TestCreateTerminalRemovesSessionWhenRequestIsCancelled(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	server := &apiServer{terminals: manager}
-	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(`{"cwd":"/","columns":80,"rows":24}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(`{"creationId":"terminal-creation-cancelled","cwd":"/","columns":80,"rows":24}`))
 	cancelledContext, cancel := context.WithCancel(request.Context())
 	cancel()
 	request = request.WithContext(cancelledContext)
@@ -100,8 +128,16 @@ func TestCreateTerminalRemovesSessionWhenRequestIsCancelled(t *testing.T) {
 
 	server.handleCreateTerminal(response, request)
 
-	if sessions := manager.list(); len(sessions) != 0 {
-		t.Fatalf("cancelled request retained %d terminal sessions", len(sessions))
+	sessions := manager.list()
+	if len(sessions) != 1 {
+		t.Fatalf("cancelled request retained %d terminal sessions, want one reconcilable session", len(sessions))
+	}
+	replayed, replayErr := manager.create("terminal-creation-cancelled", "/", 80, 24)
+	if replayErr != nil {
+		t.Fatalf("reconcile cancelled creation: %v", replayErr)
+	}
+	if replayed.ID != sessions[0].ID {
+		t.Fatalf("reconciled terminal ID = %q, want %q", replayed.ID, sessions[0].ID)
 	}
 }
 
@@ -113,7 +149,7 @@ func TestTerminalManagerRunsInteractiveShell(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 
-	view, err := manager.create("/", 80, 24)
+	view, err := manager.create("terminal-creation-shell", "/", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}
@@ -154,7 +190,7 @@ func TestTerminalManagerDrainsFinalOutputBeforeExit(t *testing.T) {
 	manager := newTerminalManager(workspace, script, workspace.root)
 	t.Cleanup(manager.close)
 
-	view, err := manager.create("/", 80, 24)
+	view, err := manager.create("terminal-creation-output", "/", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}
@@ -205,7 +241,7 @@ func TestTerminalManagerDefaultsToConfiguredWorkspaceRoot(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 
-	view, err := manager.create("", 80, 24)
+	view, err := manager.create("terminal-creation-home", "", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}
@@ -235,7 +271,7 @@ func TestTerminalManagerSetsConfiguredHome(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", home)
 	t.Cleanup(manager.close)
 
-	view, err := manager.create("/", 80, 24)
+	view, err := manager.create("terminal-creation-process", "/", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}
@@ -509,7 +545,7 @@ func TestTerminalResizeChangesPTYDimensions(t *testing.T) {
 	}
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
-	view, err := manager.create("/", 80, 24)
+	view, err := manager.create("terminal-creation-replay", "/", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}
@@ -541,7 +577,7 @@ func TestTerminalSignalsReachTheProcessGroup(t *testing.T) {
 	}
 	manager := newTerminalManager(workspace, shell, workspace.root)
 	t.Cleanup(manager.close)
-	view, err := manager.create("/", 80, 24)
+	view, err := manager.create("terminal-creation-signal", "/", 80, 24)
 	if err != nil {
 		t.Fatalf("create terminal: %v", err)
 	}

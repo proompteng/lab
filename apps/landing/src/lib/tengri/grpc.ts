@@ -189,8 +189,18 @@ export async function listTerminals(subject: string, agentId: string) {
   return (response.sessions ?? []).map(normalizeTerminal)
 }
 
-export async function createTerminal(subject: string, agentId: string, cwd: string, columns: number, rows: number) {
-  return normalizeTerminal(await unary<RawRecord>('createTerminal', { agentId, cwd, columns, rows }, subject, 130_000))
+export async function createTerminal(
+  subject: string,
+  agentId: string,
+  creationId: string,
+  cwd: string,
+  columns: number,
+  rows: number,
+  signal?: AbortSignal,
+) {
+  return normalizeTerminal(
+    await unary<RawRecord>('createTerminal', { agentId, creationId, cwd, columns, rows }, subject, 130_000, signal),
+  )
 }
 
 export async function terminateTerminal(subject: string, agentId: string, terminalId: string) {
@@ -321,16 +331,46 @@ async function unary<Response = RawRecord>(
   request: RawRecord,
   subject: string,
   deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const client = getClient()
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   return new Promise((resolve, reject) => {
-    method.call(client, request, metadata(subject, methodName, request), callOptions(deadlineMs), (error, response) => {
-      if (error) reject(mapGrpcError(error))
-      else resolve(response as Response)
-    })
+    if (signal?.aborted) {
+      reject(abortedRequestError())
+      return
+    }
+    let settled = false
+    let call: grpc.ClientUnaryCall | null = null
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      call?.cancel()
+      reject(abortedRequestError())
+    }
+    call = method.call(
+      client,
+      request,
+      metadata(subject, methodName, request),
+      callOptions(deadlineMs),
+      (error, response) => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        if (error) reject(mapGrpcError(error))
+        else resolve(response as Response)
+      },
+    )
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
   })
+}
+
+function abortedRequestError() {
+  const error = new Error('Tengri request was canceled')
+  error.name = 'AbortError'
+  return error
 }
 
 function stream(methodName: string, request: RawRecord, subject: string) {
@@ -506,6 +546,7 @@ function normalizeFileEventKind(value: string): TengriFileEventKind {
 function normalizeTerminal(session: RawRecord): TengriTerminalSession {
   return {
     id: stringValue(session.id),
+    creationId: stringValue(session.creationId),
     cwd: stringValue(session.cwd),
     createdAt: stringValue(session.createdAt),
     lastActivityAt: stringValue(session.lastActivityAt),

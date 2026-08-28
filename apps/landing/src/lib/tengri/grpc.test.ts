@@ -31,6 +31,8 @@ const descriptor = grpc.loadPackageDefinition(definition) as unknown as {
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
+let terminalRequestStarted: (() => void) | null = null
+let terminalRequestCancelled: (() => void) | null = null
 
 beforeAll(async () => {
   server = new grpc.Server()
@@ -61,6 +63,32 @@ beforeAll(async () => {
         return
       }
       callback(serviceError(grpc.status.INTERNAL, 'pod 10.244.1.42 failed at an internal URL'), null)
+    },
+    createTerminal(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      if (call.request.creationId === 'terminal-creation-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test request was not cancelled'), null),
+          5_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, {
+        id: 'terminal-session-test',
+        creationId: String(call.request.creationId),
+        cwd: String(call.request.cwd),
+        createdAt: '2026-08-27T00:00:00Z',
+        lastActivityAt: '2026-08-27T00:00:00Z',
+        attached: false,
+      })
     },
     readFile(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -169,6 +197,49 @@ describe('Tengri gRPC BFF transport', () => {
       message: 'This file is not valid UTF-8 text',
       status: 415,
     })
+  })
+
+  test('projects terminal creation identity and cancels gRPC when the browser request aborts', async () => {
+    const { createTerminal } = await import('./grpc')
+    const terminal = await createTerminal('github:42', 'agent-test', 'terminal-creation-stable', '/workspace', 120, 32)
+    expect(receivedRequest).toEqual({
+      agentId: 'agent-test',
+      creationId: 'terminal-creation-stable',
+      cwd: '/workspace',
+      columns: 120,
+      rows: 32,
+    })
+    expect(terminal).toMatchObject({
+      id: 'terminal-session-test',
+      creationId: 'terminal-creation-stable',
+      cwd: '/workspace',
+    })
+
+    const started = new Promise<void>((resolve) => {
+      terminalRequestStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      terminalRequestCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = createTerminal(
+      'github:42',
+      'agent-test',
+      'terminal-creation-cancel',
+      '/workspace',
+      120,
+      32,
+      controller.signal,
+    )
+    await started
+    controller.abort()
+    expect(await rejection(pending)).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+    await Promise.race([
+      cancelled,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('gRPC call was not cancelled')), 1_000)),
+    ])
+    terminalRequestStarted = null
+    terminalRequestCancelled = null
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {

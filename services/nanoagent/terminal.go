@@ -38,6 +38,7 @@ const (
 
 type terminalSessionView struct {
 	ID             string    `json:"id"`
+	CreationID     string    `json:"creationId"`
 	Cwd            string    `json:"cwd"`
 	CreatedAt      time.Time `json:"createdAt"`
 	LastActivityAt time.Time `json:"lastActivityAt"`
@@ -45,9 +46,10 @@ type terminalSessionView struct {
 }
 
 type createTerminalRequest struct {
-	Columns uint16 `json:"columns"`
-	Cwd     string `json:"cwd"`
-	Rows    uint16 `json:"rows"`
+	Columns    uint16 `json:"columns"`
+	CreationID string `json:"creationId"`
+	Cwd        string `json:"cwd"`
+	Rows       uint16 `json:"rows"`
 }
 
 type terminalChunk struct {
@@ -157,6 +159,7 @@ func (connection *terminalConnection) abort() {
 
 type terminalSession struct {
 	id               string
+	creationID       string
 	cwd              string
 	createdAt        time.Time
 	lastActivityAt   time.Time
@@ -238,11 +241,19 @@ func (manager *terminalManager) close() {
 	})
 }
 
-func (manager *terminalManager) create(cwd string, columns, rows uint16) (terminalSessionView, error) {
+func (manager *terminalManager) create(creationID, cwd string, columns, rows uint16) (terminalSessionView, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if manager.closed {
 		return terminalSessionView{}, errors.New("terminal manager is closed")
+	}
+	if !validTerminalCreationID(creationID) {
+		return terminalSessionView{}, errors.New("terminal creation ID is invalid")
+	}
+	for _, session := range manager.sessions {
+		if session.creationID == creationID {
+			return session.view(), nil
+		}
 	}
 	if len(manager.sessions) >= maxTerminalSessions {
 		return terminalSessionView{}, errors.New("at most four terminal sessions are allowed")
@@ -279,6 +290,7 @@ func (manager *terminalManager) create(cwd string, columns, rows uint16) (termin
 	now := time.Now().UTC()
 	session := &terminalSession{
 		id:               id,
+		creationID:       creationID,
 		cwd:              manager.workspace.displayPath(resolved),
 		createdAt:        now,
 		lastActivityAt:   now,
@@ -498,6 +510,7 @@ func (session *terminalSession) view() terminalSessionView {
 	defer session.mu.Unlock()
 	return terminalSessionView{
 		ID:             session.id,
+		CreationID:     session.creationID,
 		Cwd:            session.cwd,
 		CreatedAt:      session.createdAt,
 		LastActivityAt: session.lastActivityAt,
@@ -811,12 +824,28 @@ func clampTerminalDimension(value, fallback, minimum, maximum uint16) uint16 {
 	return value
 }
 
+func validTerminalCreationID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func (server *apiServer) handleCreateTerminal(writer http.ResponseWriter, request *http.Request) {
 	var input createTerminalRequest
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	session, err := server.terminals.create(input.Cwd, input.Columns, input.Rows)
+	session, err := server.terminals.create(input.CreationID, input.Cwd, input.Columns, input.Rows)
 	if err != nil {
 		if strings.Contains(err.Error(), "four terminal") {
 			writeAPIError(writer, http.StatusConflict, err.Error())
@@ -826,7 +855,6 @@ func (server *apiServer) handleCreateTerminal(writer http.ResponseWriter, reques
 		return
 	}
 	if request.Context().Err() != nil {
-		server.terminals.terminate(session.ID)
 		return
 	}
 	writeJSON(writer, http.StatusCreated, session)

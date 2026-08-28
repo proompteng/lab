@@ -561,7 +561,12 @@ impl MicroVmControlPlane for ControlPlane {
         let terminal = self
             .guest(&principal, &request.agent_id)
             .await?
-            .create_terminal(&request.cwd, request.columns, request.rows)
+            .create_terminal(
+                &request.creation_id,
+                &request.cwd,
+                request.columns,
+                request.rows,
+            )
             .await
             .map_err(map_guest_error)?;
         metrics::global().record_pty_created(&request.agent_id, &terminal.id);
@@ -988,6 +993,7 @@ fn file_entry(entry: crate::guest::FileEntry) -> FileEntry {
 fn terminal_session(session: crate::guest::TerminalSession) -> TerminalSession {
     TerminalSession {
         id: session.id,
+        creation_id: session.creation_id,
         cwd: session.cwd,
         created_at: session.created_at,
         last_activity_at: session.last_activity_at,

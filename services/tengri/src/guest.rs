@@ -96,6 +96,7 @@ pub struct FileEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSession {
     pub id: String,
+    pub creation_id: String,
     pub cwd: String,
     pub created_at: String,
     pub last_activity_at: String,
@@ -287,13 +288,19 @@ impl GuestClient {
 
     pub async fn create_terminal(
         &self,
+        creation_id: &str,
         cwd: &str,
         columns: u32,
         rows: u32,
     ) -> Result<TerminalSession, GuestError> {
         self.json(
             self.request(Method::POST, "/v1/terminals")
-                .json(&serde_json::json!({"cwd": cwd, "columns": columns, "rows": rows})),
+                .json(&serde_json::json!({
+                    "creationId": creation_id,
+                    "cwd": cwd,
+                    "columns": columns,
+                    "rows": rows
+                })),
         )
         .await
     }

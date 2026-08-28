@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { SearchAddon } from '@xterm/addon-search'
 import type { Terminal } from '@xterm/xterm'
 import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, RotateCw, Search, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { TengriTerminalSession, TengriTerminalTicket } from '@/lib/tengri/types'
 
@@ -19,6 +19,7 @@ import {
   parseTerminalResumeState,
   safelyDisposeTerminal,
   settleTerminalCreation,
+  terminalCreationId,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
@@ -35,14 +36,22 @@ type ConnectionState = {
 
 const encoder = new TextEncoder()
 
-export function TerminalApp({ agentId }: { agentId: string }) {
+export function TerminalApp({
+  agentId,
+  registerCloseHandler,
+  windowId,
+}: {
+  agentId: string
+  registerCloseHandler: (windowId: string, handler: () => void) => () => void
+  windowId: string
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const reconnectNowRef = useRef<() => void>(() => undefined)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const instanceId = useId().replaceAll(/[^a-zA-Z0-9_-]/g, '')
-  const storageKey = `tengri:terminal:${agentId}:${instanceId}`
+  const creationId = terminalCreationId(agentId, windowId)
+  const storageKey = `tengri:terminal:${agentId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
@@ -65,6 +74,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
 
   useEffect(() => {
     let disposed = false
+    let closeRequested = false
     let terminalEnded = false
     let connecting = false
     let session: TengriTerminalSession | null = null
@@ -81,6 +91,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
     let resizeObserver: ResizeObserver | null = null
     let cleanupChecked = false
     let resumeChecked = false
+    let creationPromise: Promise<TengriTerminalSession> | null = null
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
     const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
@@ -259,22 +270,39 @@ export function TerminalApp({ agentId }: { agentId: string }) {
         resumeChecked = true
       }
       if (!session) {
+        const sessions = await runTengriAction<TengriTerminalSession[]>(
+          { action: 'list-terminals', agentId },
+          requestSignal(),
+        )
+        session = sessions.find((candidate) => candidate.creationId === creationId) ?? null
+      }
+      if (!session) {
         const { columns, rows } = normalizeTerminalSize(terminal.cols, terminal.rows)
-        session = await settleTerminalCreation(
-          runTengriAction<TengriTerminalSession>({
+        const pending = runTengriAction<TengriTerminalSession>(
+          {
             action: 'create-terminal',
             agentId,
+            creationId,
             cwd: '/workspace',
             columns,
             rows,
-          }),
-          () => disposed,
-          async (created) => {
-            recordPendingCleanup(created.id)
-            storeSession(created, true)
-            await terminateAndClear(created, true).catch(() => undefined)
           },
+          { signal: AbortSignal.timeout(130_000) },
         )
+        creationPromise = pending
+        try {
+          session = await settleTerminalCreation(
+            pending,
+            () => closeRequested,
+            async (created) => {
+              recordPendingCleanup(created.id)
+              storeSession(created, true)
+              await terminateAndClear(created, true).catch(() => undefined)
+            },
+          )
+        } finally {
+          if (creationPromise === pending) creationPromise = null
+        }
         reconnectToken = ''
         lastSequence = 0
       }
@@ -284,20 +312,44 @@ export function TerminalApp({ agentId }: { agentId: string }) {
 
     async function reconcileSession() {
       const current = session
-      if (!current || disposed) return
+      if (disposed) return
       try {
         const sessions = await runTengriAction<TengriTerminalSession[]>(
           { action: 'list-terminals', agentId },
           requestSignal(),
         )
-        if (sessions.some((candidate) => candidate.id === current.id)) return
-        clearStoredSession(current.id)
+        const existing = sessions.find(
+          (candidate) => candidate.id === current?.id || candidate.creationId === creationId,
+        )
+        if (existing) {
+          session = existing
+          persist()
+          return
+        }
+        clearStoredSession(current?.id)
         session = null
         reconnectToken = ''
         lastSequence = 0
         resumeChecked = true
       } catch {
         // Keep the known session after a transient control-plane failure.
+      }
+    }
+
+    async function cleanupCreatedTerminal() {
+      await creationPromise?.catch(() => undefined)
+      try {
+        const sessions = await runTengriAction<TengriTerminalSession[]>(
+          { action: 'list-terminals', agentId },
+          AbortSignal.timeout(30_000),
+        )
+        const created = sessions.find((candidate) => candidate.creationId === creationId)
+        if (!created) return
+        recordPendingCleanup(created.id)
+        storeSession(created, true)
+        await terminateAndClear(created, true)
+      } catch {
+        // A future Terminal window consumes the agent-level pending cleanup registry.
       }
     }
 
@@ -595,6 +647,17 @@ export function TerminalApp({ agentId }: { agentId: string }) {
     }
 
     const handleOnline = () => reconnectNow()
+    const unregisterCloseHandler = registerCloseHandler(windowId, () => {
+      closeRequested = true
+      const current = session
+      if (current) {
+        recordPendingCleanup(current.id)
+        storeSession(current, true)
+        void terminateAndClear(current, true).catch(() => undefined)
+      } else {
+        void cleanupCreatedTerminal()
+      }
+    })
     window.addEventListener('online', handleOnline)
     void start().catch((cause) => {
       if (disposed || controller.signal.aborted) return
@@ -604,6 +667,7 @@ export function TerminalApp({ agentId }: { agentId: string }) {
 
     return () => {
       disposed = true
+      unregisterCloseHandler()
       reconnectNowRef.current = () => undefined
       controller.abort()
       window.removeEventListener('online', handleOnline)
@@ -612,20 +676,20 @@ export function TerminalApp({ agentId }: { agentId: string }) {
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       if (persistFrame !== null) cancelAnimationFrame(persistFrame)
       resizeObserver?.disconnect()
-      socket?.close(1_000, 'Terminal window closed')
+      socket?.close(1_000, closeRequested ? 'Terminal window closed' : 'Terminal view disconnected')
       for (const disposable of disposables) disposable.dispose()
       searchAddonRef.current = null
       const terminal = terminalRef.current
       terminalRef.current = null
       safelyDisposeTerminal(terminal)
       const current = session
-      if (current && !terminalEnded) {
-        recordPendingCleanup(current.id)
-        storeSession(current, true)
-        void terminateAndClear(current, true).catch(() => undefined)
+      if (current && !terminalEnded && !closeRequested) {
+        storeSession(current, false)
+      } else if (!current && closeRequested) {
+        void cleanupCreatedTerminal()
       }
     }
-  }, [agentId, cleanupStorageKey, run, storageKey])
+  }, [agentId, cleanupStorageKey, creationId, registerCloseHandler, run, storageKey, windowId])
 
   function find(direction: 'next' | 'previous') {
     const value = searchValue.trim()
