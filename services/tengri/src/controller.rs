@@ -28,6 +28,8 @@ use crate::{
     tickets::TicketStore,
 };
 
+const BOOTSTRAP_SECRET_REJECTED: &str = "BootstrapSecretRejected";
+
 #[derive(Clone)]
 pub struct ControllerContext {
     pub client: Client,
@@ -138,7 +140,7 @@ async fn reconcile(
                     &microvms,
                     &pods,
                     &microvm,
-                    "BootstrapSecretRejected",
+                    BOOTSTRAP_SECRET_REJECTED,
                     "Bootstrap Secret",
                     &error,
                     now,
@@ -468,13 +470,15 @@ async fn report_provisioning_failure(
         return;
     }
 
-    if microvm
-        .status
-        .as_ref()
-        .is_some_and(|status| status.phase == MicroVMPhase::Ready && status.guest_ready)
+    if reason != BOOTSTRAP_SECRET_REJECTED
+        && microvm
+            .status
+            .as_ref()
+            .is_some_and(|status| status.phase == MicroVMPhase::Ready && status.guest_ready)
     {
         match existing_guest_is_usable(pods, microvm).await {
             Ok(true) => {
+                preserve_ready_status(api, microvm, reason).await;
                 warn!(
                     microvm = %microvm.name_any(),
                     reason,
@@ -511,6 +515,24 @@ async fn report_provisioning_failure(
     }
 }
 
+async fn preserve_ready_status(api: &Api<MicroVM>, microvm: &MicroVM, reason: &str) {
+    let Some(mut status) = microvm.status.clone() else {
+        return;
+    };
+    status.observed_generation = microvm.meta().generation.unwrap_or_default();
+    if microvm.status.as_ref() == Some(&status) {
+        return;
+    }
+    if let Err(error) = patch_status(api, microvm, status).await {
+        warn!(
+            microvm = %microvm.name_any(),
+            reason,
+            error = %error,
+            "failed to advance the observed generation of the preserved ready agent"
+        );
+    }
+}
+
 async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<bool, kube::Error> {
     let Some(pod_name) = microvm
         .status
@@ -523,7 +545,13 @@ async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<
         .get_opt(pod_name)
         .await?
         .as_ref()
-        .is_some_and(pod_is_ready))
+        .is_some_and(|pod| pod_is_usable(pod, microvm)))
+}
+
+fn pod_is_usable(pod: &Pod, microvm: &MicroVM) -> bool {
+    pod.meta().deletion_timestamp.is_none()
+        && is_controlled_by_microvm(pod, microvm)
+        && pod_is_ready(pod)
 }
 
 fn is_terminal_provisioning_error(error: &kube::Error) -> bool {
@@ -1111,17 +1139,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_reapply_does_not_replace_a_usable_ready_guest_with_failed_status() {
+    async fn rejected_reapply_preserves_a_usable_ready_guest_at_the_current_generation() {
         let now = Utc::now();
         let mut microvm = test_microvm(now);
         microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.metadata.generation = Some(8);
         microvm.status = Some(MicroVMStatus {
             phase: MicroVMPhase::Ready,
             pod_name: Some("agent".to_owned()),
             guest_ready: true,
             ready_at: Some(now.to_rfc3339()),
+            observed_generation: 7,
             ..MicroVMStatus::default()
         });
+        let response_microvm = microvm.clone();
         let error = kube::Error::Api(
             kube::core::Status {
                 code: 422,
@@ -1156,15 +1187,245 @@ mod tests {
                 .status(StatusCode::OK)
                 .header(http::header::CONTENT_TYPE, "application/json")
                 .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri"},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent","uid":"microvm-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
                         .to_vec(),
                 ))
                 .expect("ready Pod response"),
         );
 
+        let (request, response) = handle
+            .next_request()
+            .await
+            .expect("status generation update");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("status patch body"),
+        )
+        .expect("status patch JSON");
+        assert_eq!(body["status"]["phase"], "Ready");
+        assert_eq!(body["status"]["guestReady"], true);
+        assert_eq!(body["status"]["observedGeneration"], 8);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
+                ))
+                .expect("status patch response"),
+        );
+
         tokio::time::timeout(Duration::from_millis(100), report)
             .await
-            .expect("ready guest status must be preserved without a status patch")
+            .expect("ready guest status must be preserved at the current generation")
+            .expect("provisioning report task");
+    }
+
+    #[tokio::test]
+    async fn same_named_foreign_ready_pod_is_not_a_usable_guest() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent".to_owned()),
+            guest_ready: true,
+            ..MicroVMStatus::default()
+        });
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let pods = Api::namespaced(client, "tengri");
+        let check = tokio::spawn(async move { existing_guest_is_usable(&pods, &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
+                        .to_vec(),
+                ))
+                .expect("foreign ready Pod response"),
+        );
+
+        assert!(!check.await.expect("guest check task").expect("Pod lookup"));
+    }
+
+    #[test]
+    fn terminating_owned_ready_pod_is_not_a_usable_guest() {
+        let now = Utc::now();
+        let microvm = test_microvm(now);
+        let pod: Pod = serde_json::from_value(json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "agent",
+                "namespace": "tengri",
+                "deletionTimestamp": now.to_rfc3339(),
+                "ownerReferences": [{
+                    "apiVersion": "runtime.proompteng.ai/v1alpha1",
+                    "kind": "MicroVM",
+                    "name": "agent",
+                    "uid": "microvm-uid",
+                    "controller": true,
+                }],
+            },
+            "status": {"conditions": [{"status": "True", "type": "Ready"}]},
+        }))
+        .expect("terminating ready Pod");
+
+        assert!(!pod_is_usable(&pod, &microvm));
+    }
+
+    #[tokio::test]
+    async fn rejected_reapply_does_not_advance_an_unverified_ready_guest() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.metadata.generation = Some(8);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent".to_owned()),
+            guest_ready: true,
+            ready_at: Some(now.to_rfc3339()),
+            observed_generation: 7,
+            ..MicroVMStatus::default()
+        });
+        let error = kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: "immutable field changed".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let microvms = Api::namespaced(client.clone(), "tengri");
+        let pods = Api::namespaced(client, "tengri");
+
+        let report = tokio::spawn(async move {
+            report_provisioning_failure(
+                &microvms,
+                &pods,
+                &microvm,
+                "MicroVMPodRejected",
+                "Firecracker Pod",
+                &error,
+                now,
+            )
+            .await;
+        });
+        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"InternalError","message":"Pod lookup failed","code":500}"#
+                        .to_vec(),
+                ))
+                .expect("Pod lookup failure response"),
+        );
+
+        tokio::time::timeout(Duration::from_millis(100), report)
+            .await
+            .expect("unverified guest must retain its previous generation")
+            .expect("provisioning report task");
+        if let Ok(Some(_)) =
+            tokio::time::timeout(Duration::from_millis(25), handle.next_request()).await
+        {
+            panic!("unverified guest must not receive a status generation update");
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_secret_rejection_does_not_preserve_a_ready_pod() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.metadata.generation = Some(4);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent".to_owned()),
+            guest_ready: true,
+            ready_at: Some(now.to_rfc3339()),
+            observed_generation: 3,
+            ..MicroVMStatus::default()
+        });
+        let response_microvm = microvm.clone();
+        let error = kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: "bootstrap Secret is unavailable".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let microvms = Api::namespaced(client.clone(), "tengri");
+        let pods = Api::namespaced(client, "tengri");
+
+        let report = tokio::spawn(async move {
+            report_provisioning_failure(
+                &microvms,
+                &pods,
+                &microvm,
+                "BootstrapSecretRejected",
+                "Bootstrap Secret",
+                &error,
+                now,
+            )
+            .await;
+        });
+
+        let (request, response) = handle.next_request().await.expect("failed status update");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent/status"
+        );
+        let body: serde_json::Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("failed status patch body"),
+        )
+        .expect("failed status patch JSON");
+        assert_eq!(body["status"]["phase"], "Failed");
+        assert_eq!(body["status"]["guestReady"], false);
+        assert_eq!(body["status"]["failureReason"], "BootstrapSecretRejected");
+        assert_eq!(body["status"]["observedGeneration"], 4);
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&response_microvm).expect("MicroVM response JSON"),
+                ))
+                .expect("failed status patch response"),
+        );
+
+        tokio::time::timeout(Duration::from_millis(100), report)
+            .await
+            .expect("bootstrap rejection must publish Failed")
             .expect("provisioning report task");
     }
 
