@@ -1321,6 +1321,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 51, name: 'position_snapshot_ingestion_order' },
       { migration_id: 52, name: 'position_snapshot_observability_index' },
       { migration_id: 53, name: 'full_session_intraday_cycles' },
+      { migration_id: 54, name: 'benign_zero_fill_ioc_completion' },
     ])
   })
 
