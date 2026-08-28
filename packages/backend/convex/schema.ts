@@ -30,6 +30,7 @@ export default defineSchema({
   })
     .index('bySlug', ['slug'])
     .index('byStatus', ['status', 'updatedAt']),
+  // Retained only while the scheduled retirement cleanup drains existing rows.
   liveSessions: defineTable({
     site: v.string(),
     sessionId: v.string(),

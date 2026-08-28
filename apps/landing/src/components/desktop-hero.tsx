@@ -13,7 +13,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import LivePresenceTracker from '@/components/live-presence-tracker'
 import TerminalWindow, { type TerminalWindowHandle } from '@/components/terminal-window'
 import { cn } from '@/lib/utils'
 
@@ -327,7 +326,6 @@ export default function DesktopHero() {
         </header>
 
         <div ref={desktopStageRef} className="relative z-10 flex-1 overflow-hidden">
-          <LivePresenceTracker />
           <TerminalWindow
             ref={terminalWindowRef}
             desktopBoundsRef={desktopStageRef}
