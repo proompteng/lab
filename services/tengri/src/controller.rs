@@ -545,7 +545,7 @@ async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<
         .get_opt(pod_name)
         .await?
         .as_ref()
-        .is_some_and(pod_is_ready))
+        .is_some_and(|pod| is_controlled_by_microvm(pod, microvm) && pod_is_ready(pod)))
 }
 
 fn is_terminal_provisioning_error(error: &kube::Error) -> bool {
@@ -1181,7 +1181,7 @@ mod tests {
                 .status(StatusCode::OK)
                 .header(http::header::CONTENT_TYPE, "application/json")
                 .body(KubeBody::from(
-                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri"},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent","uid":"microvm-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
                         .to_vec(),
                 ))
                 .expect("ready Pod response"),
@@ -1221,6 +1221,38 @@ mod tests {
             .await
             .expect("ready guest status must be preserved at the current generation")
             .expect("provisioning report task");
+    }
+
+    #[tokio::test]
+    async fn same_named_foreign_ready_pod_is_not_a_usable_guest() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent".to_owned()),
+            guest_ready: true,
+            ..MicroVMStatus::default()
+        });
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let pods = Api::namespaced(client, "tengri");
+        let check = tokio::spawn(async move { existing_guest_is_usable(&pods, &microvm).await });
+
+        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri","ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"foreign","uid":"foreign-uid","controller":true}]},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
+                        .to_vec(),
+                ))
+                .expect("foreign ready Pod response"),
+        );
+
+        assert!(!check.await.expect("guest check task").expect("Pod lookup"));
     }
 
     #[tokio::test]
