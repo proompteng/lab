@@ -109,9 +109,12 @@ func TestReadBootstrapTokenFDPreservesCredentialBytes(t *testing.T) {
 		t.Fatalf("close bootstrap token writer: %v", err)
 	}
 
-	actual, err := readBootstrapTokenFD(strconv.FormatUint(uint64(reader.Fd()), 10))
+	actual, err := readBootstrapTokenFD(duplicateTestFD(t, reader))
 	if err != nil {
 		t.Fatalf("readBootstrapTokenFD() error = %v", err)
+	}
+	if _, err := reader.Stat(); err != nil {
+		t.Fatalf("readBootstrapTokenFD() closed the test-owned pipe: %v", err)
 	}
 	if actual != token {
 		t.Fatalf("readBootstrapTokenFD() = %q, want exact credential bytes", actual)
@@ -126,8 +129,22 @@ func TestReadBootstrapTokenFDRejectsRegularFile(t *testing.T) {
 	}
 	defer file.Close()
 
-	_, err = readBootstrapTokenFD(strconv.FormatUint(uint64(file.Fd()), 10))
+	_, err = readBootstrapTokenFD(duplicateTestFD(t, file))
 	if err == nil || !strings.Contains(err.Error(), "not a pipe") {
 		t.Fatalf("readBootstrapTokenFD() error = %v, want non-pipe rejection", err)
 	}
+	if _, err := file.Stat(); err != nil {
+		t.Fatalf("readBootstrapTokenFD() closed the test-owned file: %v", err)
+	}
+}
+
+func duplicateTestFD(t *testing.T, file *os.File) string {
+	t.Helper()
+	fd, err := unix.Dup(int(file.Fd()))
+	if err != nil {
+		t.Fatalf("duplicate test descriptor: %v", err)
+	}
+
+	// readBootstrapTokenFD consumes and closes the descriptor it receives. Tests retain ownership of the original.
+	return strconv.Itoa(fd)
 }
