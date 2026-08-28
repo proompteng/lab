@@ -33,7 +33,12 @@ hosts, Kubernetes APIs, cluster addresses, LAN services, metadata endpoints, or 
 
 Terminal sessions use real PTYs, cap each agent at four sessions and four clients per session, and retain a bounded
 sequence-numbered output replay window for reconnects. The bootstrap credential is removed from child environments;
-resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group.
+resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group. Cleanup
+observes the Linux session leader through a pidfd and leaves the exited leader unreaped until cleanup completes. That
+keeps the original numeric session ID allocated while Nanoagent includes descendants that sanitize their environment
+and rescans before delayed escalation. Every signal revalidates the target's session and process start time, so cleanup
+cannot target a replacement terminal. Non-Linux development hosts retain process-group cleanup when Linux process
+identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
 ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence
