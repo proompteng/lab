@@ -52,7 +52,10 @@ import {
 } from './shadow-decision'
 import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
 import type { IntradayMomentumTargetPortfolio } from './strategy/intraday-momentum/model'
-import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
+import {
+  defaultIntradayMomentumProtocolDocument,
+  intradayMomentumExecutionModel,
+} from './strategy/intraday-momentum/protocol'
 import type { OpeningDriveTargetPortfolio } from './strategy/opening-drive/model'
 import { openingDriveExecutionModel } from './strategy/opening-drive/protocol'
 import {
@@ -574,34 +577,37 @@ const openingDriveDecision = (calendarHash: string, boundSnapshotId: string): Op
   })),
 })
 
-const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string): IntradayMomentumTargetPortfolio => ({
-  schemaVersion: 'bayn.intraday-momentum.target.v1',
-  strategy: 'intraday-momentum',
-  sessionDate: executionDate,
-  snapshotId: boundSnapshotId,
-  observedAt: '2026-07-22T16:00:02.000Z',
-  calendarHash,
-  selectedSymbols: [],
-  targetWeights: { AMD: 0, NVDA: 0 },
-  signals: ['AMD', 'NVDA'].map((symbol) => ({
-    symbol,
-    referencePriceMicros: '100000000',
-    rangeHighPriceMicros: '101000000',
-    rangeLowPriceMicros: '99000000',
-    bidPriceMicros: '100000000',
-    askPriceMicros: '100100000',
-    quoteObservedAt: '2026-07-22T16:00:01.000Z',
-    confirmationTradePriceMicros: '100000000',
-    confirmationTradeObservedAt: '2026-07-22T16:00:01.000Z',
-    lookbackReturnBps: 0,
-    breakoutBps: -100,
-    rangeLocationPpm: 500_000,
-    spreadBps: 10,
-    eligible: false,
-    rejectionReasons: ['lookback-return'] as const,
-    rank: null,
-  })),
-})
+const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string): IntradayMomentumTargetPortfolio => {
+  const universe = defaultIntradayMomentumProtocolDocument.universe
+  return {
+    schemaVersion: 'bayn.intraday-momentum.target.v1',
+    strategy: 'intraday-momentum',
+    sessionDate: executionDate,
+    snapshotId: boundSnapshotId,
+    observedAt: '2026-07-22T16:00:02.000Z',
+    calendarHash,
+    selectedSymbols: [],
+    targetWeights: Object.fromEntries(universe.map((symbol) => [symbol, 0])),
+    signals: universe.map((symbol) => ({
+      symbol,
+      referencePriceMicros: '100000000',
+      rangeHighPriceMicros: '101000000',
+      rangeLowPriceMicros: '99000000',
+      bidPriceMicros: '100000000',
+      askPriceMicros: '100100000',
+      quoteObservedAt: '2026-07-22T16:00:01.000Z',
+      confirmationTradePriceMicros: '100000000',
+      confirmationTradeObservedAt: '2026-07-22T16:00:01.000Z',
+      lookbackReturnBps: 0,
+      breakoutBps: -100,
+      rangeLocationPpm: 500_000,
+      spreadBps: 10,
+      eligible: false,
+      rejectionReasons: ['lookback-return'] as const,
+      rank: null,
+    })),
+  }
+}
 
 type ArchiveMarketDataBindingV1 = Extract<
   ExecutionMarketDataBinding,
@@ -693,14 +699,18 @@ const currentEntryMarketDataBinding = (
     snapshotSchemaVersion,
     ...bindingMaterial
   } = binding
-  const universe = [...binding.symbols].sort()
   const currentMaterial = {
     ...bindingMaterial,
     rangeStartAt: '2026-07-22T15:40:00.000Z',
     rangeEndAt: '2026-07-22T16:00:00.000Z',
     observedAt: '2026-07-22T16:00:02.000Z',
-    universe,
-    universeSymbolHash: sha256(universe.join(',')),
+    universeId: defaultIntradayMomentumProtocolDocument.universeId,
+    universeSymbolHash: defaultIntradayMomentumProtocolDocument.universeSymbolHash,
+    universe: defaultIntradayMomentumProtocolDocument.universe,
+    symbols: defaultIntradayMomentumProtocolDocument.universe,
+    barCount: defaultIntradayMomentumProtocolDocument.universe.length * 10,
+    quoteCount: defaultIntradayMomentumProtocolDocument.universe.length,
+    tradeCount: defaultIntradayMomentumProtocolDocument.universe.length,
   }
   const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...currentMaterial }
   const contentHash = canonicalHashV1(snapshotMaterial)
@@ -724,7 +734,12 @@ const currentEntryMarketDataBinding = (
 
 const rehashEntryMarketDataBinding = (
   binding: ArchiveMarketDataBindingV2,
-  changes: Partial<Pick<ArchiveMarketDataBindingV2, 'observedAt' | 'rangeEndAt' | 'rangeStartAt'>>,
+  changes: Partial<
+    Pick<
+      ArchiveMarketDataBindingV2,
+      'observedAt' | 'rangeEndAt' | 'rangeStartAt' | 'symbols' | 'universe' | 'universeId' | 'universeSymbolHash'
+    >
+  >,
 ): ArchiveMarketDataBindingV2 => {
   const {
     contentHash: _contentHash,
@@ -874,11 +889,18 @@ const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDec
     calendarHash ?? cycle.window.executionCalendarHash,
     executionMarketData.snapshotId,
   )
+  const universe = defaultIntradayMomentumProtocolDocument.universe
+  const priceMicros = Object.fromEntries(universe.map((symbol) => [symbol, '100100000']))
+  const bidPriceMicros = Object.fromEntries(universe.map((symbol) => [symbol, '100000000']))
+  const askPriceMicros = Object.fromEntries(universe.map((symbol) => [symbol, '100100000']))
   const { contentHash: _referencePriceHash, ...referencePriceMaterial } = base.plannerInput.referencePrices
   const currentReferencePriceMaterial = {
     ...referencePriceMaterial,
     snapshotId: executionMarketData.snapshotId,
     snapshotContentHash: executionMarketData.contentHash,
+    priceMicros,
+    bidPriceMicros,
+    askPriceMicros,
   }
   const plannerInput: QuoteBoundTargetPlannerInput = {
     ...base.plannerInput,
@@ -893,6 +915,7 @@ const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDec
       ...base.plannerInput.executionTerms,
       snapshotId: executionMarketData.snapshotId,
       snapshotContentHash: executionMarketData.contentHash,
+      maximumBuyQuantityMicros: Object.fromEntries(universe.map((symbol) => [symbol, '1000000'])),
     },
     precision: {
       quantityIncrementMicros: '1000000',
@@ -1328,6 +1351,21 @@ describe('OBSERVE shadow decision', () => {
     expect(Result.isFailure(subsetEvidence)).toBe(true)
     if (Result.isFailure(subsetEvidence)) {
       expect(String(subsetEvidence.failure.cause)).toContain('complete execution universe')
+    }
+
+    const foreignUniverse = executionMarketData.universe
+      .map((symbol) => (symbol === 'AAPL' ? 'TSLA' : symbol))
+      .toSorted()
+    const foreignUniverseBinding = rehashEntryMarketDataBinding(executionMarketData, {
+      universeId: 'foreign-equity-universe-v1',
+      universeSymbolHash: sha256(foreignUniverse.join(',')),
+      universe: foreignUniverse,
+      symbols: foreignUniverse,
+    })
+    const foreignUniverseEvidence = rebindExecutionMarketData(foreignUniverseBinding)
+    expect(Result.isFailure(foreignUniverseEvidence)).toBe(true)
+    if (Result.isFailure(foreignUniverseEvidence)) {
+      expect(String(foreignUniverseEvidence.failure.cause)).toContain('source-controlled strategy universe')
     }
 
     const alternateSessionDate = '2026-07-23'

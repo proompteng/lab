@@ -436,6 +436,14 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 
+const executionBindingMatchesIntradayMomentumProtocol = (
+  binding: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
+): boolean =>
+  binding.universeId === defaultIntradayMomentumProtocolDocument.universeId &&
+  binding.universeSymbolHash === defaultIntradayMomentumProtocolDocument.universeSymbolHash &&
+  binding.universe.length === defaultIntradayMomentumProtocolDocument.universe.length &&
+  binding.universe.every((symbol, index) => symbol === defaultIntradayMomentumProtocolDocument.universe[index])
+
 const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
@@ -486,6 +494,12 @@ const executionMaterialIssues = (
         issue: 'intraday-momentum entry requires execution market-data binding v2',
       })
     } else {
+      if (!executionBindingMatchesIntradayMomentumProtocol(executionMarketData)) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'universe'],
+          issue: 'intraday-momentum entry must bind the source-controlled strategy universe',
+        })
+      }
       const executionSession = document.executionSession
       if (
         executionSession === undefined ||
