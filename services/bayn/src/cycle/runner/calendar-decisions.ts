@@ -210,15 +210,23 @@ export const selectIntradayExecutionSession = (
     | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v2' }>
     | Extract<CycleExecutionPolicy, { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }>,
   observedAt: string,
-): MarketCalendarSession | undefined =>
-  observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+): MarketCalendarSession | undefined => {
+  const observedAtMillis = Date.parse(observedAt)
+  if (!Number.isFinite(observedAtMillis)) return undefined
+
+  return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
+    const openAtMillis = Date.parse(session.openAt)
     const cutoffAt =
       executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2'
-        ? Date.parse(session.openAt) + executionPolicy.submissionCutoffAfterOpenMs
+        ? openAtMillis + executionPolicy.submissionCutoffAfterOpenMs
         : Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
-    if (!Number.isFinite(cutoffAt) || Date.parse(observedAt) >= cutoffAt) return selected
+    const hasExecutableWindow =
+      executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v2' ||
+      openAtMillis + executionPolicy.warmupAfterOpenMs < cutoffAt
+    if (!Number.isFinite(cutoffAt) || !hasExecutableWindow || observedAtMillis >= cutoffAt) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
+}
 
 const isMonthEndCycleDueDataFirst = (signalSessionDate: string, executionSessionDate: string): boolean =>
   signalSessionDate.slice(0, 7) !== executionSessionDate.slice(0, 7)
