@@ -2,7 +2,6 @@
 
 import { motion } from 'motion/react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import LiveOnlineCounter from '@/components/live-online-counter'
 import { resolveTerminalWindowCenter } from '@/components/terminal-window-motion'
 import { cn } from '@/lib/utils'
 
@@ -1061,9 +1060,6 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
             <p className="font-display truncate text-center text-sm font-medium tracking-[0.01em] text-[rgb(var(--terminal-titlebar-text))]">
               control plane
             </p>
-          </div>
-          <div className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2">
-            <LiveOnlineCounter />
           </div>
           <div className="w-10" />
         </div>

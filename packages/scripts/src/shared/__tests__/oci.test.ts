@@ -729,7 +729,6 @@ describe('native OCI build workflows', () => {
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
-      productNixWorkflow,
       agentsBuildWorkflow,
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
@@ -759,7 +758,7 @@ describe('native OCI build workflows', () => {
     }
     expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
-    expect(productNixWorkflow).not.toContain("- 'flake.nix'")
+    expect(productNixWorkflow).toContain("- 'flake.nix'")
     expect(productNixWorkflow).toContain("- 'flake.lock'")
     expect(productNixWorkflow).toContain("- 'nix/images/bun-workspace-service.nix'")
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
@@ -1272,7 +1271,7 @@ describe('native OCI build workflows', () => {
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(5)
+    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
     expect(flake).toContain('"olden-image"')
     expect(repoFileExists('nix/images/olden.nix')).toBe(true)
     expect(productNixWorkflow).not.toContain('image_name: olden')
@@ -1510,7 +1509,7 @@ describe('native OCI build workflows', () => {
       'flake.lock',
       'bun.lock',
     ]) {
-      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(5)
+      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(6)
       expect(enabledProductReleaseWorkflow).toContain(sharedInput)
     }
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/product-nix-images.yml')
