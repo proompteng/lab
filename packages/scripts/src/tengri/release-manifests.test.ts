@@ -231,7 +231,12 @@ spec:
   })
 
   it('rejects Tengri repository and revision overrides without mutating release manifests', () => {
-    const overrides = ['repoURL: https://github.com/example/fork.git', 'targetRevision: unverified-branch'] as const
+    const overrides = [
+      'repoURL: https://github.com/example/fork.git',
+      'targetRevision: unverified-branch',
+      'repoURL : https://github.com/example/fork.git',
+      '"targetRevision": unverified-branch',
+    ] as const
 
     for (const override of overrides) {
       const paths = fixture()

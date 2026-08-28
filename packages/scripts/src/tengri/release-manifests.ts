@@ -103,20 +103,33 @@ function findTengriApplicationBlock(contents: string) {
 }
 
 function assertTengriApplicationTarget(block: string) {
+  const lines = block.split('\n')
+  const indentation = Math.min(
+    ...lines.filter((line) => line.trim() !== '').map((line) => line.length - line.trimStart().length),
+  )
+  const parsed = YAML.parse(lines.map((line) => line.slice(Math.min(indentation, line.length))).join('\n')) as unknown
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 1 ||
+    typeof parsed[0] !== 'object' ||
+    parsed[0] === null ||
+    Array.isArray(parsed[0])
+  ) {
+    throw new Error('Tengri ApplicationSet entry must be exactly one YAML mapping')
+  }
+  const application = parsed[0] as Record<string, unknown>
+  if (application.name !== 'tengri') {
+    throw new Error('Tengri ApplicationSet entry must be named tengri')
+  }
   for (const [field, expected] of Object.entries(tengriApplicationTarget)) {
-    const matches = [
-      ...block.matchAll(new RegExp(`^\\s*${field}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s#]+))\\s*(?:#.*)?$`, 'gm')),
-    ]
-    const actual = matches.length === 1 ? (matches[0][1] ?? matches[0][2] ?? matches[0][3]) : undefined
+    const actual = application[field]
     if (actual !== expected) {
       throw new Error(
-        `Tengri ApplicationSet entry must target path=${tengriApplicationTarget.path}, namespace=${tengriApplicationTarget.namespace}, automation=${tengriApplicationTarget.automation}; got ${field}=${actual ?? 'missing or duplicated'}`,
+        `Tengri ApplicationSet entry must target path=${tengriApplicationTarget.path}, namespace=${tengriApplicationTarget.namespace}, automation=${tengriApplicationTarget.automation}; got ${field}=${typeof actual === 'string' ? actual : 'missing or invalid'}`,
       )
     }
   }
-  const sourceOverrides = ['repoURL', 'targetRevision'].filter((field) =>
-    new RegExp(`^\\s*${field}:\\s*`, 'm').test(block),
-  )
+  const sourceOverrides = ['repoURL', 'targetRevision'].filter((field) => Object.hasOwn(application, field))
   if (sourceOverrides.length > 0) {
     throw new Error(
       `Tengri ApplicationSet entry must use the platform repository and main revision defaults; remove ${sourceOverrides.join(', ')}`,
