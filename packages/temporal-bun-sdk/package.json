@@ -99,7 +99,6 @@
     "@bufbuild/protobuf": "^2.14.0",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
-    "@effect/schema": "^0.75.5",
     "effect": "^3.22.1",
     "typescript": "^7.0.2"
   },

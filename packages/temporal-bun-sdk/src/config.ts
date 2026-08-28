@@ -2,10 +2,9 @@ import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { Code } from '@connectrpc/connect'
-import type * as ParseResult from '@effect/schema/ParseResult'
-import * as Schema from '@effect/schema/Schema'
-import * as TreeFormatter from '@effect/schema/TreeFormatter'
 import { Cause, Effect, Exit } from 'effect'
+import * as ParseResult from 'effect/ParseResult'
+import * as Schema from 'effect/Schema'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
 import type { PayloadCodecConfig } from './common/payloads/codecs'
 import type { LogFormat, LogLevel } from './observability/logger'
@@ -150,7 +149,7 @@ const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
 const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
 const decodeTemporalConfigOverrides = Schema.decodeUnknown(TemporalConfigOverridesSchema)
 
-const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+const formatSchemaError = (error: ParseResult.ParseError): string => ParseResult.TreeFormatter.formatErrorSync(error)
 const mapSchemaError = <A>(
   effect: Effect.Effect<A, ParseResult.ParseError, never>,
 ): Effect.Effect<A, TemporalConfigError, never> =>
