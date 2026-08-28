@@ -985,10 +985,13 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
-  it('rejects selector requirements with invalid value cardinality or types', () => {
+  it('rejects selector requirements with invalid cardinality, types, or label syntax', () => {
     const drifts = [
       ['values: ["false", "False", "0"]', 'values: []'],
       ['values: ["false", "False", "0"]', 'values: [false]'],
+      ['values: ["false", "False", "0"]', 'values: ["bad value"]'],
+      ['values: ["false", "False", "0"]', `values: ["${'a'.repeat(64)}"]`],
+      ['key: enabled', 'key: example.com/bad$key'],
       ['operator: NotIn', 'operator: Exists'],
     ] as const
 

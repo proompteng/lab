@@ -12,6 +12,8 @@ export const TENGRI_GRPC_ENDPOINT = 'tengri-grpc.tengri.svc.cluster.local:50051'
 export const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
+const kubernetesLabelNamePattern = /^[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?$/
+const kubernetesDnsLabelPattern = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/
 const defaultKustomizationPath = 'argocd/applications/tengri/kustomization.yaml'
 const defaultApplicationSetPath = 'argocd/applicationsets/platform.yaml'
 const defaultBffDeploymentPath = 'argocd/applications/proompteng/deployment.yaml'
@@ -426,7 +428,10 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
       throw new Error('Tengri ApplicationSet application selector matchLabels must be a mapping')
     }
     for (const [key, value] of Object.entries(selector.matchLabels)) {
-      if (typeof value !== 'string' || candidate[key] !== value) {
+      if (!isValidKubernetesLabelKey(key) || !isValidKubernetesLabelValue(value)) {
+        throw new Error('Tengri ApplicationSet application selector contains an invalid label')
+      }
+      if (candidate[key] !== value) {
         throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
       }
     }
@@ -439,8 +444,7 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
     for (const expression of selector.matchExpressions) {
       if (
         !isPlainRecord(expression) ||
-        typeof expression.key !== 'string' ||
-        expression.key.length === 0 ||
+        !isValidKubernetesLabelKey(expression.key) ||
         typeof expression.operator !== 'string' ||
         Object.keys(expression).some((field) => !['key', 'operator', 'values'].includes(field))
       ) {
@@ -452,13 +456,13 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
       let admits: boolean
       switch (expression.operator) {
         case 'In':
-          if (!Array.isArray(values) || values.length === 0 || !values.every((item) => typeof item === 'string')) {
+          if (!Array.isArray(values) || values.length === 0 || !values.every(isValidKubernetesLabelValue)) {
             throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
           }
           admits = present && values.includes(value)
           break
         case 'NotIn':
-          if (!Array.isArray(values) || values.length === 0 || !values.every((item) => typeof item === 'string')) {
+          if (!Array.isArray(values) || values.length === 0 || !values.every(isValidKubernetesLabelValue)) {
             throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
           }
           admits = !present || !values.includes(value)
@@ -487,6 +491,27 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isValidKubernetesLabelValue(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length <= 63 && (value.length === 0 || kubernetesLabelNamePattern.test(value))
+  )
+}
+
+function isValidKubernetesLabelKey(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const segments = value.split('/')
+  if (segments.length > 2) return false
+  const name = segments.at(-1) ?? ''
+  if (name.length === 0 || name.length > 63 || !kubernetesLabelNamePattern.test(name)) return false
+  if (segments.length === 1) return true
+  const prefix = segments[0] ?? ''
+  return (
+    prefix.length > 0 &&
+    prefix.length <= 253 &&
+    prefix.split('.').every((segment) => segment.length <= 63 && kubernetesDnsLabelPattern.test(segment))
+  )
 }
 
 function containsMergeKey(value: unknown): boolean {
