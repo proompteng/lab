@@ -362,6 +362,47 @@ describe('causal target planner', () => {
     ).toBe(true)
   })
 
+  test('plans an exact fractional MARKET/DAY close without permitting a buy', () => {
+    const input = fixture({
+      quoteBound: true,
+      allocationCapitalMicros: '0',
+      positions: [position('AMD', '500000')],
+      priceMicros: { AMD: '100000000' },
+      targetWeights: { AMD: 0 },
+      maximumBuyQuantityMicros: { AMD: '0' },
+    })
+    if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) {
+      return expect.unreachable('fractional close fixture requires quote-bound planning')
+    }
+    const result = planSuccess({
+      ...input,
+      precision: { ...input.precision, quantityIncrementMicros: '1' },
+      executionTerms: {
+        executionPurpose: 'fractional-close',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        priceReference: input.executionTerms.priceReference,
+        snapshotId: input.executionTerms.snapshotId,
+        snapshotContentHash: input.executionTerms.snapshotContentHash,
+        maximumBuyQuantityMicros: { AMD: '0' },
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      targets: [{ symbol: 'AMD', currentQuantityMicros: '500000', targetQuantityMicros: '0' }],
+      intentTargets: [
+        {
+          symbol: 'AMD',
+          side: OrderSide.Sell,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.Day,
+          quantityMicros: '500000',
+        },
+      ],
+    })
+  })
+
   test('caps only buy deltas at the verified whole-share ask quantity', () => {
     const result = planSuccess(
       fixture({

@@ -1436,6 +1436,9 @@ export const buildClosingExecutionCycleDecision = (
           .map((position) => position.symbol),
       ),
     ].sort()
+    const requiresFractionalClose = reconciliation.brokerState.positions.some(
+      (position) => BigInt(position.quantityMicros) % 1_000_000n !== 0n,
+    )
     const symbols =
       preparation.executionModel.schemaVersion === 'bayn.execution-model.v5' ? liquidationSymbols : legacyCloseSymbols
     const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
@@ -1541,23 +1544,37 @@ export const buildClosingExecutionCycleDecision = (
         ...commonPlannerInput,
         referencePrices: prices,
         precision: {
-          quantityIncrementMicros: '1000000',
+          quantityIncrementMicros: requiresFractionalClose ? '1' : '1000000',
           priceIncrementMicros: preparation.executionModel.precision.priceIncrementMicros,
           minimumBuyNotionalMicros: preparation.executionModel.precision.minimumBuyNotionalMicros,
         },
         allocationCapitalMicros: '0',
-        executionTerms: {
-          orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
-          priceReference: 'verified-adverse-quote-boundary',
-          snapshotId: closeExecutionMarketData.binding.snapshotId,
-          snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-          maximumBuyQuantityMicros: Object.fromEntries(
-            Object.keys(closeDecision.targetWeights)
-              .sort()
-              .map((symbol) => [symbol, '0']),
-          ),
-        },
+        executionTerms: requiresFractionalClose
+          ? {
+              executionPurpose: 'fractional-close',
+              orderType: OrderType.Market,
+              timeInForce: TimeInForce.Day,
+              priceReference: 'verified-adverse-quote-boundary',
+              snapshotId: closeExecutionMarketData.binding.snapshotId,
+              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+              maximumBuyQuantityMicros: Object.fromEntries(
+                Object.keys(closeDecision.targetWeights)
+                  .sort()
+                  .map((symbol) => [symbol, '0']),
+              ),
+            }
+          : {
+              orderType: OrderType.Limit,
+              timeInForce: TimeInForce.ImmediateOrCancel,
+              priceReference: 'verified-adverse-quote-boundary',
+              snapshotId: closeExecutionMarketData.binding.snapshotId,
+              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+              maximumBuyQuantityMicros: Object.fromEntries(
+                Object.keys(closeDecision.targetWeights)
+                  .sort()
+                  .map((symbol) => [symbol, '0']),
+              ),
+            },
       }
     } else {
       if (!isLegacyAutonomousCycle(cycle)) {

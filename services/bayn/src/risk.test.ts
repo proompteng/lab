@@ -565,6 +565,41 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...policy, schemaVersion: 'bayn.paper-risk-policy.v2' })).toThrow()
   })
 
+  test('admits MARKET/DAY only for an exact exposure-reducing close', () => {
+    const policy = decodePolicy({
+      ...makePolicy(),
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedOrderTypes: [OrderType.Limit],
+      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    })
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            quantityMicros: '500000',
+            marketValueMicros: '50000000',
+            unrealizedPnlMicros: '5000000',
+          }
+        : position,
+    )
+    const state = makeState({
+      positions,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const intent = makeIntent({
+      policyHash: canonicalHashV1(policy),
+      side: OrderSide.Sell,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '500000',
+      notionalLimitMicros: '50000000',
+    })
+
+    expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
+    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+  })
+
   test('permits only the bounded sell close through an active kill', () => {
     const closeOnlyState = makeState({
       closeOnly: true,

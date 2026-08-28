@@ -3188,7 +3188,7 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('recovers a persisted v2 opening-drive cycle into a quote-bound forced close', async () => {
+  test('recovers a persisted v2 opening-drive cycle into an exact fractional forced close', async () => {
     const protocol = Result.getOrThrow(decodeDefaultOpeningDriveProtocol())
     const definition = makeOpeningDriveDefinition(protocol)
     const strategy = {
@@ -3291,10 +3291,10 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: heldSymbol,
-      quantityMicros: '1000000',
+      quantityMicros: '500000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
-      marketValueMicros: '100000000',
+      marketValueMicros: '50000000',
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
@@ -3335,7 +3335,15 @@ describe('OBSERVE runtime composition', () => {
       },
       targetPlan: {
         status: TargetPlanStatus.Planned,
-        intentTargets: [{ symbol: openPosition.symbol, side: OrderSide.Sell }],
+        intentTargets: [
+          {
+            symbol: openPosition.symbol,
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros: '500000',
+          },
+        ],
       },
     })
   })

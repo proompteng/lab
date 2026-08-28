@@ -293,6 +293,14 @@ describe('Alpaca broker mutations', () => {
     expect(
       orderRequestBody({
         ...boundaryIntent,
+        side: OrderSide.Sell,
+        quantityMicros: '500000',
+        notionalLimitMicros: '50000000',
+      }),
+    ).toMatchObject(Result.succeed({ type: 'market', time_in_force: 'day', qty: '0.5', side: 'sell' }))
+    expect(
+      orderRequestBody({
+        ...boundaryIntent,
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
       }),

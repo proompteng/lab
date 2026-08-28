@@ -130,7 +130,7 @@ const TargetPlannerInputFields = {
 
 export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-input.quote-bound.v1' as const
 
-export const QuoteBoundExecutionTermsSchema = Schema.Struct({
+const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
   orderType: Schema.Literal(OrderType.Limit),
   timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
@@ -138,6 +138,21 @@ export const QuoteBoundExecutionTermsSchema = Schema.Struct({
   snapshotContentHash: Sha256Schema,
   maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
+
+const FractionalCloseExecutionTermsSchema = Schema.Struct({
+  executionPurpose: Schema.Literal('fractional-close'),
+  orderType: Schema.Literal(OrderType.Market),
+  timeInForce: Schema.Literal(TimeInForce.Day),
+  priceReference: Schema.Literal('verified-adverse-quote-boundary'),
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+})
+
+export const QuoteBoundExecutionTermsSchema = Schema.Union([
+  QuoteBoundLimitExecutionTermsSchema,
+  FractionalCloseExecutionTermsSchema,
+])
 
 export const TargetPlannerInputV1Schema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
@@ -155,7 +170,7 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   ...TargetPlannerInputFields,
   referencePrices: IntradaySnapshotReferencePricesSchema,
   precision: Schema.Struct({
-    quantityIncrementMicros: Schema.Literal('1000000'),
+    quantityIncrementMicros: Schema.Union([Schema.Literal('1'), Schema.Literal('1000000')]),
     priceIncrementMicros: PositiveMicrosSchema,
     minimumBuyNotionalMicros: PositiveMicrosSchema,
   }),
@@ -186,6 +201,28 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     })
   }
   const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
+  const fractionalClose = input.executionTerms.orderType === OrderType.Market
+  if (fractionalClose && input.precision.quantityIncrementMicros !== '1') {
+    issues.push({
+      path: ['precision', 'quantityIncrementMicros'],
+      issue: 'fractional close must preserve the exact reconciled broker quantity',
+    })
+  }
+  if (!fractionalClose && input.precision.quantityIncrementMicros !== '1000000') {
+    issues.push({
+      path: ['precision', 'quantityIncrementMicros'],
+      issue: 'quote-bound LIMIT/IOC execution requires whole-share quantity precision',
+    })
+  }
+  if (
+    fractionalClose &&
+    Object.values(input.executionTerms.maximumBuyQuantityMicros).some((quantity) => BigInt(quantity) !== 0n)
+  ) {
+    issues.push({
+      path: ['executionTerms', 'maximumBuyQuantityMicros'],
+      issue: 'fractional close must prohibit every buy quantity',
+    })
+  }
   if (
     Object.values(input.executionTerms.maximumBuyQuantityMicros).some(
       (quantity) => BigInt(quantity) % quantityIncrement !== 0n,
@@ -193,7 +230,7 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
   ) {
     issues.push({
       path: ['executionTerms', 'maximumBuyQuantityMicros'],
-      issue: 'must use the declared whole-share quantity precision',
+      issue: 'must use the declared quantity precision',
     })
   }
   return issues

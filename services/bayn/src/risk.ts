@@ -838,8 +838,15 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
     ),
   )
 
+const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
+  facts.state.closeOnly === true &&
+  facts.intent.side === OrderSide.Sell &&
+  facts.intent.orderType === OrderType.Market &&
+  facts.intent.timeInForce === TimeInForce.Day
+
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
+  const fractionalCloseOrder = isBrokerSupportedFractionalCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
     makeGate(
@@ -876,15 +883,19 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      policyAllowsOrderType(policy, intent.orderType),
+      policyAllowsOrderType(policy, intent.orderType) || fractionalCloseOrder,
       intent.orderType,
-      policy.allowedOrderTypes.join(','),
+      fractionalCloseOrder
+        ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
+        : policy.allowedOrderTypes.join(','),
     ),
     makeGate(
       Gate.TimeInForce,
-      policy.allowedTimeInForce.includes(intent.timeInForce),
+      policy.allowedTimeInForce.includes(intent.timeInForce) || fractionalCloseOrder,
       intent.timeInForce,
-      policy.allowedTimeInForce.join(','),
+      fractionalCloseOrder
+        ? `${policy.allowedTimeInForce.join(',')}|DAY_MARKET_CLOSE_ONLY`
+        : policy.allowedTimeInForce.join(','),
     ),
   ]
 }
