@@ -6,10 +6,10 @@ import { utcInstantFromEpochMillis } from '../time'
 import type { IntradayMarketSnapshot, IntradaySnapshotQuery } from '../market-data'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import type {
-  IntradayMomentumProtocol,
   IntradayMomentumStrategyDefinition,
   IntradayMomentumTargetPortfolio,
-} from '../strategy/intraday-momentum'
+} from '../strategy/intraday-momentum/model'
+import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import {
   adverseQuotePrices,
   executionMarketDataBinding,

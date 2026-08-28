@@ -31,7 +31,7 @@ import {
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
 import { openingDriveExecutionModel } from './strategy/opening-drive'
-import { intradayMomentumExecutionModel } from './strategy/intraday-momentum'
+import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 
 const hash = (character: string): string => character.repeat(64)
 const resultValue = <A, E>(result: Result.Result<A, E>): A => {

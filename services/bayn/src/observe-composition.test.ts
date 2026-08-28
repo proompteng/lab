@@ -78,11 +78,8 @@ import {
   openingDriveExecutionModel,
   type OpeningDriveProtocol,
 } from './strategy/opening-drive'
-import {
-  decodeDefaultIntradayMomentumProtocol,
-  intradayMomentumBehaviorHash,
-  makeIntradayMomentumDefinition,
-} from './strategy/intraday-momentum'
+import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
+import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
 import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,

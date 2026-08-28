@@ -107,7 +107,7 @@ import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../
 import {
   defaultIntradayMomentumProtocolDocument,
   intradayMomentumExecutionModel,
-} from '../../strategy/intraday-momentum'
+} from '../../strategy/intraday-momentum/protocol'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import { baynTestPostgresUrl, isGithubActions } from '../../test-environment.test-support'

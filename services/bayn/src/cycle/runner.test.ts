@@ -73,7 +73,7 @@ import {
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { utcInstantFromEpochMillis } from '../time'
 import { openingDriveExecutionModel } from '../strategy/opening-drive'
-import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum'
+import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'

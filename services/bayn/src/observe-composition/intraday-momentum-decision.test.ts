@@ -12,11 +12,11 @@ import {
   type AutonomousCycle,
 } from '../cycle'
 import { canonicalHashV1, sha256 } from '../hash'
+import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import {
   decodeDefaultIntradayMomentumProtocol,
   intradayMomentumExecutionModel,
-  type IntradayMomentumTargetPortfolio,
-} from '../strategy/intraday-momentum'
+} from '../strategy/intraday-momentum/protocol'
 import {
   intradayMomentumCloseQuery,
   intradayMomentumEntryDisposition,
