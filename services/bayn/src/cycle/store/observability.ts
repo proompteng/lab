@@ -4,6 +4,7 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
   type CycleEconomicsObservation,
+  type CycleExecutionFunnelObservation,
   type CycleOperationsProjection,
   type CycleOperationsSnapshot,
   type DurableAuthorityObservation,
@@ -17,6 +18,7 @@ import {
   Sha256Schema,
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
+  UtcInstantSchema,
   strictParseOptions,
 } from '../../schemas'
 
@@ -50,6 +52,58 @@ const NullableForwardPerformanceProfitability = Schema.NullOr(
   Schema.Literals(['PROFITABLE', 'NOT_PROFITABLE', 'UNDETERMINED']),
 )
 const NullableReturnDecimal = Schema.NullOr(Schema.String.check(Schema.isPattern(/^-?(?:0|[1-9][0-9]*)\.[0-9]+$/)))
+
+const CycleDecisionObservationRowSchema = Schema.Struct({
+  createdAt: UtcInstantSchema,
+  marketDataObservedAt: Schema.NullOr(UtcInstantSchema),
+  barCount: NonNegativeIntegerSchema,
+  quoteCount: NonNegativeIntegerSchema,
+  tradeCount: NonNegativeIntegerSchema,
+  targetPlanStatus: Schema.Literals(['PLANNED', 'NO_TRADE', 'BLOCKED']),
+  targetPlanReason: NullableString,
+  targetCount: NonNegativeIntegerSchema,
+  orderedIntentCount: NonNegativeIntegerSchema,
+  dispatchable: Schema.Boolean,
+  riskBlockReason: NullableString,
+  riskBlockReasonCount: NonNegativeIntegerSchema,
+})
+
+const CycleExecutionFunnelObservationRowSchema = Schema.Struct({
+  decision: Schema.NullOr(CycleDecisionObservationRowSchema),
+  intentCount: NonNegativeIntegerSchema,
+  plannedIntentCount: NonNegativeIntegerSchema,
+  approvedIntentCount: NonNegativeIntegerSchema,
+  ioStartedIntentCount: NonNegativeIntegerSchema,
+  acknowledgedIntentCount: NonNegativeIntegerSchema,
+  unknownIntentCount: NonNegativeIntegerSchema,
+  terminalIntentCount: NonNegativeIntegerSchema,
+  recoveredIntentCount: NonNegativeIntegerSchema,
+  filledIntentCount: NonNegativeIntegerSchema,
+  canceledIntentCount: NonNegativeIntegerSchema,
+  expiredIntentCount: NonNegativeIntegerSchema,
+  rejectedIntentCount: NonNegativeIntegerSchema,
+  blockedIntentCount: NonNegativeIntegerSchema,
+  orderCount: NonNegativeIntegerSchema,
+  openOrderCount: NonNegativeIntegerSchema,
+  filledOrderCount: NonNegativeIntegerSchema,
+  rejectedOrderCount: NonNegativeIntegerSchema,
+  fillCount: NonNegativeIntegerSchema,
+  buyFillCount: NonNegativeIntegerSchema,
+  sellFillCount: NonNegativeIntegerSchema,
+  latestIntentAt: Schema.NullOr(UtcInstantSchema),
+  latestOrderAt: Schema.NullOr(UtcInstantSchema),
+  latestFillAt: Schema.NullOr(UtcInstantSchema),
+  maximumOrderAcknowledgementLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  maximumFillLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  positionCount: NonNegativeIntegerSchema,
+  grossExposureMicros: SignedMicrosSchema,
+  netExposureMicros: SignedMicrosSchema,
+  unrealizedPnlMicros: SignedMicrosSchema,
+  accountObservedAt: Schema.NullOr(UtcInstantSchema),
+  cashMicros: NullableSignedMicros,
+  equityMicros: NullableSignedMicros,
+  buyingPowerMicros: NullableSignedMicros,
+})
 
 const ProjectionRowSchema = Schema.Struct({
   current_cycle_id: NullableSha256,
@@ -104,6 +158,7 @@ const ProjectionRowSchema = Schema.Struct({
   unresolved_mutation_count: NonNegativeIntegerSchema,
   oldest_unresolved_mutation_at: NullableDate,
   latest_mutation_at: NullableDate,
+  execution_funnel: CycleExecutionFunnelObservationRowSchema,
   accounting_fill_count: NonNegativeIntegerSchema,
   accounting_transaction_count: NonNegativeIntegerSchema,
   accounting_receipt_count: NonNegativeIntegerSchema,
@@ -316,6 +371,8 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
   })
 }
 
+const executionFromRow = (row: ProjectionRow): CycleExecutionFunnelObservation => row.execution_funnel
+
 export const projectCycleObservabilityRow = (
   row: CycleObservabilityProjectionRow,
 ): Result.Result<CycleOperationsProjection, CycleObservabilityError> => {
@@ -350,6 +407,7 @@ export const projectCycleObservabilityRow = (
         oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
         latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
       },
+      execution: executionFromRow(row),
       economics,
     })),
   )
@@ -393,6 +451,13 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY execution_session_date DESC, terminal_at DESC, cycle_id
             LIMIT 1
           ),
+          observed_cycle AS (
+            SELECT * FROM current_cycle
+            UNION ALL
+            SELECT * FROM last_cycle
+            WHERE NOT EXISTS (SELECT 1 FROM current_cycle)
+            LIMIT 1
+          ),
           requested_account AS (
             SELECT ${expectedAccountId ?? null}::text AS account_id
           ),
@@ -402,6 +467,71 @@ const makeCycleObservability = Effect.gen(function* () {
               (SELECT account_id FROM current_cycle),
               (SELECT account_id FROM last_cycle)
             ) AS account_id
+          ),
+          observed_decision AS (
+            SELECT decision.*
+            FROM autonomous_cycle_shadow_decisions AS decision
+            JOIN observed_cycle AS cycle ON cycle.cycle_id = decision.cycle_id
+            LIMIT 1
+          ),
+          cycle_intents AS (
+            SELECT intent.*
+            FROM intents AS intent
+            JOIN observed_cycle AS cycle ON cycle.cycle_id = intent.cycle_id
+            WHERE intent.account_id = (SELECT account_id FROM selected_account)
+          ),
+          cycle_order_events AS (
+            SELECT
+              orders.*,
+              events.observed_at,
+              events.source_sequence,
+              intents.created_at AS intent_created_at
+            FROM orders
+            JOIN broker_events AS events ON events.event_id = orders.event_id
+            JOIN cycle_intents AS intents
+              ON intents.intent_id = orders.intent_id
+              AND intents.account_id = orders.account_id
+          ),
+          latest_cycle_orders AS (
+            SELECT DISTINCT ON (broker_order_id) *
+            FROM cycle_order_events
+            ORDER BY broker_order_id, source_sequence DESC, observed_at DESC, event_id DESC
+          ),
+          first_cycle_orders AS (
+            SELECT DISTINCT ON (broker_order_id) *
+            FROM cycle_order_events
+            ORDER BY broker_order_id, source_sequence, observed_at, event_id
+          ),
+          cycle_fills AS (
+            SELECT
+              fills.*,
+              events.observed_at,
+              intents.created_at AS intent_created_at
+            FROM fills
+            JOIN broker_events AS events ON events.event_id = fills.event_id
+            JOIN cycle_intents AS intents
+              ON intents.intent_id = fills.intent_id
+              AND intents.account_id = fills.account_id
+          ),
+          latest_account_snapshot AS (
+            SELECT snapshot.*, events.observed_at
+            FROM account_snapshots AS snapshot
+            JOIN broker_events AS events ON events.event_id = snapshot.event_id
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+            ORDER BY events.observed_at DESC, snapshot.event_id DESC
+            LIMIT 1
+          ),
+          latest_position_snapshot AS (
+            SELECT snapshot.*
+            FROM position_snapshots AS snapshot
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+            ORDER BY snapshot.observed_at DESC, snapshot.snapshot_id DESC
+            LIMIT 1
+          ),
+          current_positions AS (
+            SELECT position.*
+            FROM positions AS position
+            JOIN latest_position_snapshot AS snapshot ON snapshot.snapshot_id = position.snapshot_id
           ),
           selected_fills AS (
             SELECT fill.*
@@ -587,6 +717,82 @@ const makeCycleObservability = Effect.gen(function* () {
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,
             (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at,
             (SELECT max(occurred_at) FROM account_mutation_events) AS latest_mutation_at,
+            jsonb_build_object(
+              'decision', CASE
+                WHEN decision.cycle_id IS NULL THEN NULL
+                ELSE jsonb_build_object(
+                  'createdAt', to_char(decision.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                  'marketDataObservedAt', CASE
+                    WHEN decision.document #>> '{bindings,executionMarketData,observedAt}' IS NULL THEN NULL
+                    ELSE decision.document #>> '{bindings,executionMarketData,observedAt}'
+                  END,
+                  'barCount', coalesce((decision.document #>> '{bindings,executionMarketData,barCount}')::integer, 0),
+                  'quoteCount', coalesce((decision.document #>> '{bindings,executionMarketData,quoteCount}')::integer, 0),
+                  'tradeCount', coalesce((decision.document #>> '{bindings,executionMarketData,tradeCount}')::integer, 0),
+                  'targetPlanStatus', decision.document #>> '{targetPlan,status}',
+                  'targetPlanReason', decision.document #>> '{targetPlan,reason}',
+                  'targetCount', coalesce(jsonb_array_length(decision.document #> '{targetPlan,intentTargets}'), 0),
+                  'orderedIntentCount', coalesce(jsonb_array_length(decision.document -> 'orderedIntentIds'), 0),
+                  'dispatchable', coalesce((decision.document ->> 'dispatchable')::boolean, false),
+                  'riskBlockReason', decision.document #>> '{riskBlock,reasonCodes,0}',
+                  'riskBlockReasonCount', coalesce(jsonb_array_length(decision.document #> '{riskBlock,reasonCodes}'), 0)
+                )
+              END,
+              'intentCount', (SELECT count(*)::integer FROM cycle_intents),
+              'plannedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'PLANNED'),
+              'approvedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'APPROVED'),
+              'ioStartedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'IO_STARTED'),
+              'acknowledgedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'ACKNOWLEDGED'),
+              'unknownIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'UNKNOWN'),
+              'terminalIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'TERMINAL'),
+              'recoveredIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE state = 'RECOVERED'),
+              'filledIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE terminal_outcome = 'FILLED'),
+              'canceledIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE terminal_outcome = 'CANCELED'),
+              'expiredIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE terminal_outcome = 'EXPIRED'),
+              'rejectedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE terminal_outcome = 'REJECTED'),
+              'blockedIntentCount', (SELECT count(*)::integer FROM cycle_intents WHERE terminal_outcome = 'BLOCKED'),
+              'orderCount', (SELECT count(*)::integer FROM latest_cycle_orders),
+              'openOrderCount', (
+                SELECT count(*)::integer FROM latest_cycle_orders
+                WHERE status IN ('NEW', 'PARTIALLY_FILLED', 'PENDING')
+              ),
+              'filledOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'FILLED'),
+              'rejectedOrderCount', (SELECT count(*)::integer FROM latest_cycle_orders WHERE status = 'REJECTED'),
+              'fillCount', (SELECT count(*)::integer FROM cycle_fills),
+              'buyFillCount', (SELECT count(*)::integer FROM cycle_fills WHERE side = 'BUY'),
+              'sellFillCount', (SELECT count(*)::integer FROM cycle_fills WHERE side = 'SELL'),
+              'latestIntentAt', (
+                SELECT to_char(max(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                FROM cycle_intents
+              ),
+              'latestOrderAt', (
+                SELECT to_char(max(observed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                FROM latest_cycle_orders
+              ),
+              'latestFillAt', (
+                SELECT to_char(max(observed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                FROM cycle_fills
+              ),
+              'maximumOrderAcknowledgementLatencyMs', (
+                SELECT round(max(extract(epoch FROM (observed_at - intent_created_at))) * 1000)::bigint
+                FROM first_cycle_orders
+              ),
+              'maximumFillLatencyMs', (
+                SELECT round(max(extract(epoch FROM (observed_at - intent_created_at))) * 1000)::bigint
+                FROM cycle_fills
+              ),
+              'positionCount', (SELECT count(*)::integer FROM current_positions WHERE quantity_micros <> 0),
+              'grossExposureMicros', coalesce((SELECT sum(abs(market_value_micros)) FROM current_positions), 0)::text,
+              'netExposureMicros', coalesce((SELECT sum(market_value_micros) FROM current_positions), 0)::text,
+              'unrealizedPnlMicros', coalesce((SELECT sum(unrealized_pnl_micros) FROM current_positions), 0)::text,
+              'accountObservedAt', (
+                SELECT to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                FROM latest_account_snapshot
+              ),
+              'cashMicros', (SELECT cash_micros::text FROM latest_account_snapshot),
+              'equityMicros', (SELECT equity_micros::text FROM latest_account_snapshot),
+              'buyingPowerMicros', (SELECT buying_power_micros::text FROM latest_account_snapshot)
+            ) AS execution_funnel,
             (SELECT count(*)::integer FROM selected_fills) AS accounting_fill_count,
             (SELECT count(*)::integer FROM selected_accounting_transactions) AS accounting_transaction_count,
             (SELECT count(*)::integer FROM selected_accounting_receipts) AS accounting_receipt_count,
@@ -643,6 +849,7 @@ const makeCycleObservability = Effect.gen(function* () {
           LEFT JOIN last_cycle AS last ON true
           LEFT JOIN authority_state AS authority ON authority.singleton
           LEFT JOIN latest_reconciliation AS reconciliation ON true
+          LEFT JOIN observed_decision AS decision ON true
         `.pipe(
           Effect.mapError((cause) =>
             isSqlError(cause)

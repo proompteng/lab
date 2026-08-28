@@ -356,6 +356,55 @@ describe('Bayn HTTP pure decisions', () => {
           approvedIntentCount: 3,
           acknowledgedIntentCount: 1,
         },
+        execution: {
+          decision: {
+            createdAt: '2026-09-01T13:35:05.000Z',
+            marketDataObservedAt: '2026-09-01T13:35:05.000Z',
+            barCount: 50,
+            quoteCount: 10,
+            tradeCount: 10,
+            targetPlanStatus: 'PLANNED' as const,
+            targetPlanReason: null,
+            targetCount: 2,
+            orderedIntentCount: 2,
+            dispatchable: true,
+            riskBlockReason: null,
+            riskBlockReasonCount: 0,
+          },
+          intentCount: 2,
+          plannedIntentCount: 0,
+          approvedIntentCount: 0,
+          ioStartedIntentCount: 0,
+          acknowledgedIntentCount: 2,
+          unknownIntentCount: 0,
+          terminalIntentCount: 2,
+          recoveredIntentCount: 0,
+          filledIntentCount: 2,
+          canceledIntentCount: 0,
+          expiredIntentCount: 0,
+          rejectedIntentCount: 0,
+          blockedIntentCount: 0,
+          orderCount: 2,
+          openOrderCount: 0,
+          filledOrderCount: 2,
+          rejectedOrderCount: 0,
+          fillCount: 2,
+          buyFillCount: 2,
+          sellFillCount: 0,
+          latestIntentAt: '2026-09-01T13:35:06.000Z',
+          latestOrderAt: '2026-09-01T13:35:07.000Z',
+          latestFillAt: '2026-09-01T13:35:08.000Z',
+          maximumOrderAcknowledgementLatencyMs: 1_000,
+          maximumFillLatencyMs: 2_000,
+          positionCount: 2,
+          grossExposureMicros: '800000000',
+          netExposureMicros: '800000000',
+          unrealizedPnlMicros: '1250000',
+          accountObservedAt: '2026-09-01T13:35:08.000Z',
+          cashMicros: '99200000000',
+          equityMicros: '100001250000',
+          buyingPowerMicros: '396800000000',
+        },
       },
       capitalActivation: {
         _tag: 'Realized' as const,
@@ -388,8 +437,16 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_broker_orders_enabled 1')
     expect(metrics).toContain('bayn_capital_promotion_enabled 1')
     expect(metrics).toContain('bayn_mutation_recovery_found_events_total 185')
-    expect(metrics).toContain('bayn_intents{state="approved"} 3')
-    expect(metrics).toContain('bayn_intents{state="acknowledged"} 1')
+    expect(metrics).toContain('bayn_cycle_target_plan_info{status="planned",reason="none"} 1')
+    expect(metrics).toContain('bayn_execution_funnel_count{stage="targets"} 2')
+    expect(metrics).toContain('bayn_execution_funnel_count{stage="fills"} 2')
+    expect(metrics).toContain('bayn_cycle_intents{state="acknowledged"} 2')
+    expect(metrics).toContain('bayn_cycle_orders{status="filled"} 2')
+    expect(metrics).toContain('bayn_cycle_fills{side="buy"} 2')
+    expect(metrics).toContain('bayn_broker_position_count 2')
+    expect(metrics).toContain('bayn_broker_gross_exposure_dollars 800.000000')
+    expect(metrics).toContain('bayn_broker_unrealized_pnl_dollars 1.250000')
+    expect(metrics).toContain('bayn_broker_account_dollars{kind="buying_power"} 396800.000000')
     expect(metrics).toContain('bayn_capital_activation_recovery_only 0')
 
     const restrictedMetrics = renderPrometheusMetrics(

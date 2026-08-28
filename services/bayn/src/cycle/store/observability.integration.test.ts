@@ -738,6 +738,88 @@ const seedTerminalRejectedMutation = Effect.gen(function* () {
   )
 })
 
+const seedOrderLifecycle = (cycleId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const intentId = '1'.repeat(64)
+    const clientOrderId = 'bayn-observability-ack-latency'
+    const brokerOrderId = 'broker-observability-ack-latency'
+
+    yield* sql`
+      INSERT INTO intents (
+        intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+        decision_hash, policy_hash, account_id, client_order_id,
+        symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+        state, terminal_outcome, state_version, created_at, updated_at
+      ) VALUES (
+        ${intentId}, 'bayn.paper-intent.v3', ${'f'.repeat(64)}, NULL,
+        'opening-drive-momentum', ${cycleId}, ${'2'.repeat(64)}, ${'3'.repeat(64)},
+        ${accountId}, ${clientOrderId}, 'NVDA', 'BUY', 'MARKET', 'DAY',
+        1000000, 1000000, 'PLANNED', NULL, 1,
+        '2026-03-09T13:31:00.000Z', '2026-03-09T13:31:00.000Z'
+      )
+    `
+
+    const insertOrder = (
+      eventId: string,
+      sourceEventId: string,
+      sourceSequence: number,
+      status: 'NEW' | 'FILLED',
+      observedAt: string,
+      filledQuantityMicros: string,
+    ) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+            INSERT INTO broker_events (
+              event_id, schema_version, content_hash, event_kind, broker, account_id,
+              source_event_id, source_sequence, occurred_at, observed_at
+            ) VALUES (
+              ${eventId}, 'bayn.paper-broker-event.v1', ${eventId}, 'ORDER', 'ALPACA',
+              ${accountId}, ${sourceEventId}, ${sourceSequence}, ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO orders (
+              event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+              side, order_type, time_in_force, quantity_micros, filled_quantity_micros, status
+            ) VALUES (
+              ${eventId}, ${accountId}, 'bayn.paper-order.v1', ${brokerOrderId},
+              ${clientOrderId}, ${intentId}, 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000,
+              ${filledQuantityMicros}, ${status}
+            )
+          `
+        }),
+      )
+
+    yield* insertOrder('4'.repeat(64), 'order-acknowledged', 100, 'NEW', '2026-03-09T13:31:02.000Z', '0')
+    yield* insertOrder('5'.repeat(64), 'order-filled', 101, 'FILLED', '2026-04-08T13:31:00.000Z', '1000000')
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES (
+            ${'6'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'6'.repeat(64)}, 'FILL', 'ALPACA',
+            ${accountId}, 'fill-after-long-recovery', 102,
+            '2026-04-08T13:31:00.000Z', '2026-04-08T13:31:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+          ) VALUES (
+            ${'6'.repeat(64)}, ${accountId}, 'bayn.paper-fill.v1', 'fill-after-long-recovery',
+            ${brokerOrderId}, ${clientOrderId}, ${intentId}, 'NVDA', 'BUY', 1000000, 100000000, 0,
+            '2026-04-08T13:31:00.000000000Z'
+          )
+        `
+      }),
+    )
+  })
+
 describePostgres('PostgreSQL cycle observability projection', () => {
   let runtime: ReturnType<typeof makeRuntime>
 
@@ -820,6 +902,17 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         },
         forwardPerformance: null,
       },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
+        positionCount: 0,
+        grossExposureMicros: '0',
+        netExposureMicros: '0',
+        unrealizedPnlMicros: '0',
+        accountObservedAt: null,
+      },
     })
     expect(result.current).toMatchObject({
       current: {
@@ -853,6 +946,12 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         oldestUnresolvedAt: null,
         latestOccurredAt: null,
       },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
+      },
     })
     expect(result.blocked).toMatchObject({
       current: null,
@@ -869,6 +968,12 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
         latestOccurredAt: '2026-03-06T21:02:00.000Z',
+      },
+      execution: {
+        decision: null,
+        intentCount: 0,
+        orderCount: 0,
+        fillCount: 0,
       },
     })
     expect(result.blockedReplay).toEqual(result.blocked)
@@ -896,6 +1001,28 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       submissionCutoffAt: draft.window.submissionCutoffAt,
     })
     expect(projection.unfinishedCycleCount).toBe(1)
+  })
+
+  test('measures acknowledgement from the first order event and preserves fill latencies wider than int32', async () => {
+    const draft = makeIntradayDraft()
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        yield* seedSafetyState()
+        yield* store.acquire(draft, '2026-03-09T13:00:00.000Z')
+        yield* seedOrderLifecycle(draft.identity.cycleId)
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      orderCount: 1,
+      filledOrderCount: 1,
+      latestOrderAt: '2026-04-08T13:31:00.000Z',
+      maximumOrderAcknowledgementLatencyMs: 2_000,
+      maximumFillLatencyMs: 2_592_000_000,
+    })
   })
 
   test('projects open-recovery pressure and approved intent backlog as queryable counts', async () => {

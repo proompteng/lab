@@ -216,8 +216,11 @@ describe('Bayn cycle operations alert contract', () => {
       readRepoFile('argocd/applications/observability/bayn-cycle-operations-dashboard-configmap.yaml'),
     ) as Record<string, any>
     const dashboard = JSON.parse(dashboardConfigMap.data['bayn-cycle-operations-dashboard.json']) as {
+      readonly description: string
       readonly title: string
       readonly uid: string
+      readonly version: number
+      readonly time: { readonly from: string; readonly to: string }
       readonly panels: readonly {
         readonly description?: string
         readonly gridPos: {
@@ -245,6 +248,9 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
+    expect(dashboard.version).toBe(3)
+    expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
+    expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
       'Runtime',
       'Execution controller',
@@ -252,27 +258,37 @@ describe('Bayn cycle operations alert contract', () => {
       'Ledger safety',
       'Execution authority',
       'Cycle condition',
-      'Current reason',
+      'Current blocker',
       'Cycle phase',
       'Session preflight',
+      'Snapshot',
       'Decision',
+      'Target plan',
+      'Targets',
+      'Intents',
+      'Orders',
+      'Fills',
+      'Opportunity → fill',
+      'Bound market data',
+      'Session window',
+      'Open positions',
+      'Gross exposure',
+      'Net exposure',
+      'Buying power',
+      'Unrealized P&L',
       'Unresolved mutations',
-      'Economic evidence',
-      'Profitability',
-      'Net realized after all costs',
-      'Net realized return',
       'Gross realized P&L',
       'Recorded costs',
+      'Net realized P&L',
+      'Profitability',
       'Accounting coverage',
-      'Current session window',
-      'Controller cadence',
-      'Condition history',
-      'Phase history',
-      'Reason history',
+      'Opportunity → fill history',
+      'Blocker history',
+      'Execution latency',
       'Safety freshness',
-      'Workload capacity',
       'Running build',
     ])
+    expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
     const overlappingPanels = dashboard.panels.flatMap((left, leftIndex) =>
       dashboard.panels.slice(leftIndex + 1).flatMap((right) => {
         const overlapsHorizontally =
@@ -286,69 +302,39 @@ describe('Bayn cycle operations alert contract', () => {
     expect(dashboardExpressions).toEqual(
       expect.arrayContaining([
         'min(bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"})',
+        'min(bayn_reconciliation_exact{job="bayn",namespace="bayn",service="bayn"} * bayn_reconciliation_covers_latest_mutation{job="bayn",namespace="bayn",service="bayn"} * (bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"} == bool 0))',
         'max by (authority) (bayn_authority_effective{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max by (condition) (bayn_cycle_condition{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max by (reason) (bayn_cycle_reason{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'max by (phase) (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn"} == 1)',
         'min(bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_cycle_snapshot_bound{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (status, reason) (bayn_cycle_target_plan_info{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (kind) (bayn_cycle_decision_market_data_records{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_broker_position_count{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_broker_net_exposure_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_broker_unrealized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_accounting_gross_realized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (profitability) ((bayn_forward_performance_profitability{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
         'max(bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
-        'max(bayn_cycle_execution_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
         'max(bayn_cycle_execution_close_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',
         'max(bayn_oldest_unresolved_mutation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_reconciliation_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_autonomous_cycle_loop_last_pass_age_seconds{job="bayn",namespace="bayn",service="bayn"})',
-        'max(kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn"})',
-        'max(kube_deployment_spec_replicas{namespace="bayn",deployment="bayn"})',
-        'max(kube_deployment_status_replicas_available{namespace="bayn",deployment="bayn-egress-proxy"})',
-        'max(kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-egress-proxy"})',
-        'sum(kube_replicaset_status_ready_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
-        'sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-execution-controller-.*"})',
         'max by (source_revision, verification) (bayn_build_info{job="bayn",namespace="bayn",service="bayn"})',
       ]),
     )
-    const receiptPanels = dashboard.panels.filter(({ title }) =>
-      [
-        'Economic evidence',
-        'Profitability',
-        'Net realized after all costs',
-        'Net realized return',
-        'Gross realized P&L',
-        'Recorded costs',
-      ].includes(title),
-    )
-    expect(receiptPanels).toHaveLength(6)
-    expect(
-      receiptPanels.every(({ targets = [] }) =>
-        targets.every(({ expr = '' }) =>
-          expr.includes(
-            'and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})',
-          ),
-        ),
-      ),
-    ).toBe(true)
-    const economicEvidenceExpression = dashboard.panels.find(({ title }) => title === 'Economic evidence')?.targets?.[0]
-      ?.expr
-    const profitabilityExpression = dashboard.panels.find(({ title }) => title === 'Profitability')?.targets?.[0]?.expr
-    expect(economicEvidenceExpression).toContain(
-      'label_replace(max(bayn_forward_performance_receipt_available{job="bayn",namespace="bayn",service="bayn"}) == 0, "status", "NO COMPLETED RECEIPT", "", "")',
-    )
-    expect(profitabilityExpression).toContain(
-      'label_replace(max(bayn_forward_performance_receipt_available{job="bayn",namespace="bayn",service="bayn"}) == 0, "profitability", "UNDETERMINED", "", "")',
-    )
-    expect(
-      dashboard.panels
-        .find(({ title }) => title === 'Accounting coverage')
-        ?.targets?.every(({ expr = '' }) =>
-          expr.includes(
-            'topk(1, timestamp(bayn_accounting_activity_count{job="bayn",namespace="bayn",service="bayn",kind="transactions"}))',
-          ),
-        ),
-    ).toBe(true)
+    expect(dashboard.panels.find(({ title }) => title === 'Opportunity → fill')?.type).toBe('bargauge')
+    expect(dashboardExpressions.join('\n')).not.toContain('bayn_intents{')
     const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
-    expect(statPanels).toHaveLength(21)
+    expect(statPanels).toHaveLength(29)
     expect(
       statPanels.every(({ targets = [] }) =>
         targets.every(({ instant, range }) => instant === true && range === false),
@@ -368,6 +354,7 @@ describe('Bayn cycle operations alert contract', () => {
             'Broker binding',
             'Ledger safety',
             'Session preflight',
+            'Snapshot',
             'Decision',
             'Unresolved mutations',
           ].includes(title),

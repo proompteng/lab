@@ -12,6 +12,43 @@ import {
 
 const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 
+const emptyExecutionFunnel = (): CycleObservabilityProjectionRow['execution_funnel'] => ({
+  decision: null,
+  intentCount: 0,
+  plannedIntentCount: 0,
+  approvedIntentCount: 0,
+  ioStartedIntentCount: 0,
+  acknowledgedIntentCount: 0,
+  unknownIntentCount: 0,
+  terminalIntentCount: 0,
+  recoveredIntentCount: 0,
+  filledIntentCount: 0,
+  canceledIntentCount: 0,
+  expiredIntentCount: 0,
+  rejectedIntentCount: 0,
+  blockedIntentCount: 0,
+  orderCount: 0,
+  openOrderCount: 0,
+  filledOrderCount: 0,
+  rejectedOrderCount: 0,
+  fillCount: 0,
+  buyFillCount: 0,
+  sellFillCount: 0,
+  latestIntentAt: null,
+  latestOrderAt: null,
+  latestFillAt: null,
+  maximumOrderAcknowledgementLatencyMs: null,
+  maximumFillLatencyMs: null,
+  positionCount: 0,
+  grossExposureMicros: '0',
+  netExposureMicros: '0',
+  unrealizedPnlMicros: '0',
+  accountObservedAt: null,
+  cashMicros: null,
+  equityMicros: null,
+  buyingPowerMicros: null,
+})
+
 const emptyRow = (): CycleObservabilityProjectionRow => ({
   current_cycle_id: null,
   current_account_id: null,
@@ -65,6 +102,7 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   unresolved_mutation_count: 0,
   oldest_unresolved_mutation_at: null,
   latest_mutation_at: null,
+  execution_funnel: emptyExecutionFunnel(),
   accounting_fill_count: 0,
   accounting_transaction_count: 0,
   accounting_receipt_count: 0,
@@ -131,6 +169,7 @@ describe('cycle observability projection', () => {
           oldestUnresolvedAt: null,
           latestOccurredAt: null,
         },
+        execution: emptyExecutionFunnel(),
         economics: {
           accounting: {
             fillCount: 0,
@@ -301,6 +340,55 @@ describe('cycle observability projection', () => {
         ledgerExact: true,
       },
     })
+  })
+
+  test('projects the current cycle opportunity-to-fill funnel and broker exposure', () => {
+    const row: CycleObservabilityProjectionRow = {
+      ...currentCycleRow(),
+      execution_funnel: {
+        ...emptyExecutionFunnel(),
+        decision: {
+          createdAt: '2026-07-27T13:35:05.000Z',
+          marketDataObservedAt: '2026-07-27T13:35:05.000Z',
+          barCount: 50,
+          quoteCount: 10,
+          tradeCount: 10,
+          targetPlanStatus: 'PLANNED',
+          targetPlanReason: null,
+          targetCount: 2,
+          orderedIntentCount: 2,
+          dispatchable: true,
+          riskBlockReason: null,
+          riskBlockReasonCount: 0,
+        },
+        intentCount: 2,
+        acknowledgedIntentCount: 2,
+        filledIntentCount: 2,
+        terminalIntentCount: 2,
+        orderCount: 2,
+        filledOrderCount: 2,
+        fillCount: 2,
+        buyFillCount: 2,
+        latestIntentAt: '2026-07-27T13:35:06.000Z',
+        latestOrderAt: '2026-07-27T13:35:07.000Z',
+        latestFillAt: '2026-07-27T13:35:08.000Z',
+        maximumOrderAcknowledgementLatencyMs: 1_000,
+        maximumFillLatencyMs: 2_000,
+        positionCount: 2,
+        grossExposureMicros: '800000000',
+        netExposureMicros: '800000000',
+        unrealizedPnlMicros: '1250000',
+        accountObservedAt: '2026-07-27T13:35:08.000Z',
+        cashMicros: '99200000000',
+        equityMicros: '100001250000',
+        buyingPowerMicros: '396800000000',
+      },
+    }
+
+    const projected = projectCycleObservabilityRow(row)
+    expect(Result.isSuccess(projected)).toBe(true)
+    if (Result.isFailure(projected)) return expect.unreachable(projected.failure.message)
+    expect(projected.success.execution).toEqual(row.execution_funnel)
   })
 
   test('keeps explicit account mismatch ahead of other incomplete row failures', () => {
