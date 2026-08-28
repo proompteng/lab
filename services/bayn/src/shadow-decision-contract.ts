@@ -108,6 +108,10 @@ const marketDataBindingIssues = (
   if (binding.purpose === 'LIQUIDATION' && universe === undefined) {
     issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for liquidation' })
   }
+  const orderedUniverse = universe?.toSorted(compareCanonicalText)
+  if (universe !== undefined && universe.some((symbol, index) => symbol !== orderedUniverse?.[index])) {
+    issues.push({ path: ['universe'], issue: 'must be canonically ordered' })
+  }
   if (
     universe !== undefined &&
     (sha256(universe.join(',')) !== binding.universeSymbolHash ||

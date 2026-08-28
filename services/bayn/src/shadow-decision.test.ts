@@ -17,7 +17,7 @@ import {
 } from './cycle'
 import { defaultExecutionModel } from './execution-model'
 import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
 import { utcInstantFromEpochMillis } from './time'
 import {
   AccountStatus,
@@ -804,6 +804,42 @@ describe('OBSERVE shadow decision', () => {
 
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) expect(String(result.failure)).toContain('universe')
+  })
+
+  test('rejects a liquidation binding whose source universe is not canonically ordered', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const universe = ['NVDA', 'AMD']
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      universe,
+      universeSymbolHash: sha256(universe.join(',')),
+      symbols: ['AMD'],
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('canonically ordered')
   })
 
   test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
