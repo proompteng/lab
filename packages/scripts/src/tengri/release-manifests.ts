@@ -262,9 +262,21 @@ function findTengriApplicationBlock(contents: string) {
   if (document.getIn(['spec', 'template', 'spec', 'sources'], true) !== undefined) {
     throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
   }
-  const repository = document.getIn(['spec', 'template', 'spec', 'source', 'repoURL'])
-  const revision = document.getIn(['spec', 'template', 'spec', 'source', 'targetRevision'])
-  const path = document.getIn(['spec', 'template', 'spec', 'source', 'path'])
+  const sourceNode = document.getIn(['spec', 'template', 'spec', 'source'], true)
+  if (!isMap(sourceNode)) {
+    throw new Error('Tengri ApplicationSet template must contain one verified source mapping')
+  }
+  const source = sourceNode.toJSON() as Record<string, unknown>
+  const verifiedSourceFields = new Set(['repoURL', 'targetRevision', 'path'])
+  const conflictingSourceFields = Object.keys(source).filter((field) => !verifiedSourceFields.has(field))
+  if (conflictingSourceFields.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet source must contain only the verified repository, revision, and path; remove ${conflictingSourceFields.join(', ')}`,
+    )
+  }
+  const repository = source.repoURL
+  const revision = source.targetRevision
+  const path = source.path
   const project = document.getIn(['spec', 'template', 'spec', 'project'])
   const repositoryIsSafe = repository === expectedRepository || repository === expectedRepositoryTemplate
   const revisionIsSafe = revision === expectedRevision || revision === expectedRevisionTemplate
@@ -346,6 +358,10 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
   if (!isPlainRecord(selector)) {
     throw new Error('Tengri ApplicationSet application selector must be a label selector')
   }
+  const selectorFields = new Set(['matchLabels', 'matchExpressions'])
+  if (Object.keys(selector).some((field) => !selectorFields.has(field))) {
+    throw new Error('Tengri ApplicationSet application selector contains an invalid field')
+  }
 
   const candidate = { ...application, enabled: 'true' }
   if (selector.matchLabels !== undefined) {
@@ -364,7 +380,13 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
       throw new Error('Tengri ApplicationSet application selector matchExpressions must be a sequence')
     }
     for (const expression of selector.matchExpressions) {
-      if (!isPlainRecord(expression) || typeof expression.key !== 'string' || typeof expression.operator !== 'string') {
+      if (
+        !isPlainRecord(expression) ||
+        typeof expression.key !== 'string' ||
+        expression.key.length === 0 ||
+        typeof expression.operator !== 'string' ||
+        Object.keys(expression).some((field) => !['key', 'operator', 'values'].includes(field))
+      ) {
         throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
       }
       const present = Object.hasOwn(candidate, expression.key)
@@ -373,16 +395,28 @@ function assertSelectorAdmitsTengri(selector: unknown, application: Record<strin
       let admits: boolean
       switch (expression.operator) {
         case 'In':
-          admits = Array.isArray(values) && present && values.includes(value)
+          if (!Array.isArray(values) || values.length === 0 || !values.every((item) => typeof item === 'string')) {
+            throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
+          }
+          admits = present && values.includes(value)
           break
         case 'NotIn':
-          admits = Array.isArray(values) && (!present || !values.includes(value))
+          if (!Array.isArray(values) || values.length === 0 || !values.every((item) => typeof item === 'string')) {
+            throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
+          }
+          admits = !present || !values.includes(value)
           break
         case 'Exists':
-          admits = values === undefined && present
+          if (values !== undefined && (!Array.isArray(values) || values.length > 0)) {
+            throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
+          }
+          admits = present
           break
         case 'DoesNotExist':
-          admits = values === undefined && !present
+          if (values !== undefined && (!Array.isArray(values) || values.length > 0)) {
+            throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
+          }
+          admits = !present
           break
         default:
           throw new Error(`Tengri ApplicationSet application selector uses unsupported operator ${expression.operator}`)

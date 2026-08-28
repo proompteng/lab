@@ -336,6 +336,41 @@ spec:
     }
   })
 
+  it('rejects conflicting singular-source render modes without mutating release manifests', () => {
+    const conflictingModes = [
+      '        chart: tengri\n',
+      '        directory: {}\n',
+      '        helm: {}\n',
+      '        kustomize: {}\n',
+      '        plugin: { name: other }\n',
+    ] as const
+
+    for (const mode of conflictingModes) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          "        path: '{{ .path }}'\n",
+          `        path: '{{ .path }}'\n${mode}`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow(
+        'must contain only the verified repository, revision, and path',
+      )
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must contain only the verified repository, revision, and path',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects an application template that does not produce the canonical name', () => {
     for (const replacement of ["      name: 'other'\n", '']) {
       const paths = fixture()
@@ -640,6 +675,31 @@ spec:
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
     expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
     rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects selector requirements with invalid value cardinality or types', () => {
+    const drifts = [
+      ['values: ["false", "False", "0"]', 'values: []'],
+      ['values: ["false", "False", "0"]', 'values: [false]'],
+      ['operator: NotIn', 'operator: Exists'],
+    ] as const
+
+    for (const [expected, drifted] of drifts) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(paths.applicationSetPath, readFileSync(paths.applicationSetPath, 'utf8').replace(expected, drifted))
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('selector contains an invalid expression')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'selector contains an invalid expression',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
   })
 
   it('rejects matrix and list generator templates that override the verified application template', () => {
