@@ -7,7 +7,13 @@ import YAML from 'yaml'
 
 import { fatal, repoRoot } from './cli'
 
-export type EnabledAppClass = 'nix-image' | 'helm-chart' | 'vendor-manifest' | 'external-source' | 'deferred'
+export type EnabledAppClass =
+  | 'nix-image'
+  | 'workflow-image'
+  | 'helm-chart'
+  | 'vendor-manifest'
+  | 'external-source'
+  | 'deferred'
 
 export type EnabledAppInventoryEntry = {
   name: string
@@ -138,6 +144,24 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   [
     'tigresse',
     'operator source lives in the private proompteng/tigresse repository; lab only vendors the chart and pins its image digest',
+  ],
+])
+
+type ReleaseWorkflowImageContract = {
+  reason: string
+  repositories: string[]
+  workflowPaths: string[]
+}
+
+const releaseWorkflowImageApps = new Map<string, ReleaseWorkflowImageContract>([
+  [
+    'tengri',
+    {
+      reason:
+        'Tengri and Nanoagent are built, signed, and promoted together by the dedicated multi-architecture Tengri release workflow',
+      repositories: ['registry.ide-newton.ts.net/lab/nanoagent', 'registry.ide-newton.ts.net/lab/tengri'],
+      workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
+    },
   ],
 ])
 
@@ -278,6 +302,17 @@ const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
         }
       }
     }
+
+    if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.configMapGenerator)) {
+      for (const generator of record.configMapGenerator) {
+        if (!isRecord(generator) || !Array.isArray(generator.literals)) continue
+        for (const literal of generator.literals) {
+          if (typeof literal !== 'string') continue
+          const value = literal.slice(literal.indexOf('=') + 1)
+          if (value.startsWith(labImagePrefix)) images.add(value)
+        }
+      }
+    }
   })
   return [...images]
 }
@@ -312,6 +347,18 @@ const normalizeRepoImages = (images: Iterable<string>): string[] => {
   )
   return values.filter(
     (reference) => /@sha256:[0-9a-f]{64}$/.test(reference) || !digestPinnedRepositories.has(imageRepository(reference)),
+  )
+}
+
+const hasCompleteWorkflowImageOwnership = (
+  entry: EnabledAppInventoryEntry,
+  contract: ReleaseWorkflowImageContract,
+): boolean => {
+  const repositories = new Set(entry.repoImages.map(imageRepository))
+  const workflowPaths = new Set(entry.workflowPaths)
+  return (
+    contract.repositories.every((repository) => repositories.has(repository)) &&
+    contract.workflowPaths.every((path) => workflowPaths.has(path))
   )
 }
 
@@ -362,7 +409,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   }
 }
 
-const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
+export const classifyEnabledApp = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
   if (entry.repoURL !== labRepoURL) {
     return { ...entry, class: 'external-source' }
   }
@@ -370,6 +417,11 @@ const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => 
   const manifestOnlyReason = manifestOnlyRepoImageApps.get(entry.name)
   if (manifestOnlyReason) {
     return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
+  }
+
+  const releaseWorkflowContract = releaseWorkflowImageApps.get(entry.name)
+  if (releaseWorkflowContract && hasCompleteWorkflowImageOwnership(entry, releaseWorkflowContract)) {
+    return { ...entry, class: 'workflow-image', deferredReason: releaseWorkflowContract.reason }
   }
 
   if (entry.repoImages.length > 0) {
@@ -409,7 +461,7 @@ export const loadEnabledAppInventory = (root = repoRoot): EnabledAppInventory =>
   }
 
   const entries = [...deduped.values()]
-    .map((entry) => classify(inspectApplicationPath(root, entry)))
+    .map((entry) => classifyEnabledApp(inspectApplicationPath(root, entry)))
     .sort((a, b) => a.name.localeCompare(b.name))
 
   return {
@@ -436,6 +488,17 @@ export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): voi
   if (chartBuilds.length > 0) {
     throw new Error(
       `Helm-chart app(s) unexpectedly own lab images: ${chartBuilds.map((entry) => entry.name).join(', ')}`,
+    )
+  }
+
+  const invalidWorkflowImages = inventory.entries.filter((entry) => {
+    if (entry.class !== 'workflow-image') return false
+    const contract = releaseWorkflowImageApps.get(entry.name)
+    return !contract || !hasCompleteWorkflowImageOwnership(entry, contract) || entry.nixImageAttr !== undefined
+  })
+  if (invalidWorkflowImages.length > 0) {
+    throw new Error(
+      `Workflow image app(s) have incomplete release ownership: ${invalidWorkflowImages.map((entry) => entry.name).join(', ')}`,
     )
   }
 }

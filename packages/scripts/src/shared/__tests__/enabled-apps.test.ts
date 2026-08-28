@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
 
-import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled-apps'
+import {
+  assertEnabledAppBuildPolicy,
+  classifyEnabledApp,
+  type EnabledAppInventoryEntry,
+  loadEnabledAppInventory,
+} from '../enabled-apps'
 
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
@@ -151,6 +156,54 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
+  it('classifies Tengri as a dedicated release-workflow image only with complete ownership evidence', () => {
+    const tengri = {
+      name: 'tengri',
+      path: 'argocd/applications/tengri',
+      repoURL: 'https://github.com/proompteng/lab.git',
+      sourceFile: 'argocd/applicationsets/platform.yaml',
+      sourceKind: 'applicationset-element',
+      class: 'deferred',
+      enabled: true,
+      hasHelmChart: false,
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/nanoagent@sha256:' + 'b'.repeat(64),
+        'registry.ide-newton.ts.net/lab/tengri@sha256:' + 'a'.repeat(64),
+      ],
+      workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
+    } satisfies EnabledAppInventoryEntry
+
+    expect(classifyEnabledApp(tengri)).toMatchObject({
+      class: 'workflow-image',
+      deferredReason: expect.stringContaining('built, signed, and promoted together'),
+    })
+    for (const repository of tengri.repoImages) {
+      expect(
+        classifyEnabledApp({ ...tengri, repoImages: tengri.repoImages.filter((value) => value !== repository) }).class,
+      ).toBe('deferred')
+    }
+    for (const workflowPath of tengri.workflowPaths) {
+      expect(
+        classifyEnabledApp({
+          ...tengri,
+          workflowPaths: tengri.workflowPaths.filter((value) => value !== workflowPath),
+        }).class,
+      ).toBe('deferred')
+    }
+    const expectIncompleteOwnership = (entry: EnabledAppInventoryEntry) => {
+      expect(() =>
+        assertEnabledAppBuildPolicy({
+          entries: [entry],
+          applicationSetEntryCount: 1,
+          directApplicationCount: 0,
+        }),
+      ).toThrow('incomplete release ownership')
+    }
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', repoImages: [tengri.repoImages[0]] })
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', workflowPaths: [tengri.workflowPaths[0]] })
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', nixImageAttr: 'tengri-image' })
+  })
+
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
     expect(inventory.applicationSetEntryCount).toBeGreaterThan(0)
     expect(inventory.directApplicationCount).toBe(1)

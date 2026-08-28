@@ -31,6 +31,7 @@ export type NixRolloutReport = {
     byClass: Record<string, number>
   }
   nixImages: EnabledAppInventoryEntry[]
+  workflowImages: EnabledAppInventoryEntry[]
   manifestOnlyImageApps: EnabledAppInventoryEntry[]
   deferredApps: EnabledAppInventoryEntry[]
   missingBuildContracts: string[]
@@ -148,6 +149,7 @@ export const buildNixRolloutReport = (input: {
   const inventory = input.inventory ?? loadEnabledAppInventory()
   const releaseContracts = input.releaseContracts ?? []
   const nixImages = inventory.entries.filter((entry) => entry.class === 'nix-image')
+  const workflowImages = inventory.entries.filter((entry) => entry.class === 'workflow-image')
   const manifestOnlyImageApps = inventory.entries.filter(
     (entry) => entry.class === 'vendor-manifest' && entry.repoImages.length > 0,
   )
@@ -187,6 +189,7 @@ export const buildNixRolloutReport = (input: {
       byClass: countByClass(inventory.entries),
     },
     nixImages,
+    workflowImages,
     manifestOnlyImageApps,
     deferredApps,
     missingBuildContracts,
@@ -227,6 +230,15 @@ export const formatNixRolloutReportMarkdown = (report: NixRolloutReport): string
         entry.deployScriptPath ?? '',
         `${entry.workflowPaths.join('<br>')} |`,
       ].join(' | '),
+    ),
+    '',
+    '## Dedicated Workflow Image Apps',
+    '',
+    '| App | Images | Workflows | Reason |',
+    '| --- | --- | --- | --- |',
+    ...report.workflowImages.map(
+      (entry) =>
+        `| ${entry.name} | ${entry.repoImages.join('<br>')} | ${entry.workflowPaths.join('<br>')} | ${entry.deferredReason ?? ''} |`,
     ),
     '',
     '## Manifest-Only Repo Image References',
