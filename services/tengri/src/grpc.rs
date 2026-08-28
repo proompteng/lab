@@ -57,6 +57,8 @@ const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
 const CODEX_LOGIN_ATTEMPT_TTL_MINUTES: i64 = 15;
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const LEGACY_TERMINAL_TICKET_TIMEOUT: Duration = Duration::from_secs(30);
+const PROVISIONAL_TERMINAL_CLEANUP_RETRY: Duration = Duration::from_secs(2);
+const PROVISIONAL_TERMINAL_ANNOTATION_PREFIX: &str = "runtime.proompteng.ai/provisional-terminal-";
 
 #[derive(Clone)]
 pub struct ControlPlane {
@@ -69,7 +71,7 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
     terminal_identities: TerminalIdentityRegistry,
-    provisional_terminal_leases: ProvisionalTerminalLeaseRegistry,
+    provisional_terminal_leases: ProvisionalTerminalLeaseManager,
 }
 
 pub struct ControlPlaneConfig {
@@ -93,22 +95,33 @@ impl ControlPlane {
             config.namespace.clone(),
             config.internal_hmac_secret,
         )?;
+        let namespace: Arc<str> = config.namespace.into();
+        let terminal_identities = TerminalIdentityRegistry::default();
+        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            namespace.clone(),
+            terminal_identities.clone(),
+        );
         Ok(Self {
             client,
-            namespace: config.namespace.into(),
+            namespace,
             default_image: config.default_image.into(),
             architecture: config.architecture,
             auth,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
             create_lock: Arc::new(Mutex::new(())),
-            terminal_identities: TerminalIdentityRegistry::default(),
-            provisional_terminal_leases: ProvisionalTerminalLeaseRegistry::default(),
+            terminal_identities,
+            provisional_terminal_leases,
         })
     }
 
     pub fn tickets(&self) -> TicketStore {
         self.tickets.clone()
+    }
+
+    pub async fn recover_provisional_terminal_leases(&self) -> Result<(), kube::Error> {
+        self.provisional_terminal_leases.recover().await
     }
 
     async fn authorize<T: prost::Message>(
@@ -577,10 +590,8 @@ impl MicroVmControlPlane for ControlPlane {
         if request.creation_id.is_empty() {
             let creation_id = compatible_terminal_creation_id("");
             let create_guest = guest.clone();
-            let cleanup_guest = guest.clone();
             let provisional_terminal_leases = self.provisional_terminal_leases.clone();
             let provisional_agent_id = request.agent_id.clone();
-            let cleanup_agent_id = request.agent_id.clone();
             let cwd = request.cwd.clone();
             let columns = request.columns;
             let rows = request.rows;
@@ -599,22 +610,10 @@ impl MicroVmControlPlane for ControlPlane {
                                 &provisional_agent_id,
                                 &terminal_id,
                                 LEGACY_TERMINAL_TICKET_TIMEOUT,
-                                move |terminal_id| async move {
-                                    match cleanup_guest.terminate_terminal(&terminal_id).await {
-                                        Ok(()) => metrics::global()
-                                            .record_pty_terminated(&cleanup_agent_id, &terminal_id),
-                                        Err(error) => tracing::warn!(
-                                            agent_id = %cleanup_agent_id,
-                                            terminal_id,
-                                            %error,
-                                            "failed to clean up an unconfirmed legacy terminal creation"
-                                        ),
-                                    }
-                                },
                             )
-                            .await;
+                            .await?;
                     }
-                    creation
+                    Ok(creation)
                 },
             )
             .await?;
@@ -663,14 +662,15 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
-        self.guest(&principal, &request.agent_id)
-            .await?
-            .terminate_terminal(&request.terminal_id)
-            .await
-            .map_err(map_guest_error)?;
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        match guest.terminate_terminal(&request.terminal_id).await {
+            Ok(()) => {}
+            Err(error) if terminal_is_absent(&error) => {}
+            Err(error) => return Err(map_guest_error(error)),
+        }
         self.provisional_terminal_leases
             .clear(&request.agent_id, &request.terminal_id)
-            .await;
+            .await?;
         metrics::global().record_pty_terminated(&request.agent_id, &request.terminal_id);
         Ok(Response::new(Empty {}))
     }
@@ -1562,6 +1562,240 @@ fn compatible_terminal_creation_id(value: &str) -> String {
     format!("legacy-grpc-{}", Uuid::new_v4().simple())
 }
 
+#[derive(Clone)]
+struct ProvisionalTerminalLeaseManager {
+    client: Client,
+    namespace: Arc<str>,
+    terminal_identities: TerminalIdentityRegistry,
+    registry: ProvisionalTerminalLeaseRegistry,
+}
+
+impl ProvisionalTerminalLeaseManager {
+    fn new(
+        client: Client,
+        namespace: Arc<str>,
+        terminal_identities: TerminalIdentityRegistry,
+    ) -> Self {
+        Self {
+            client,
+            namespace,
+            terminal_identities,
+            registry: ProvisionalTerminalLeaseRegistry::default(),
+        }
+    }
+
+    async fn register(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        timeout: Duration,
+    ) -> Result<(), Status> {
+        let expires_at = Utc::now()
+            + chrono::Duration::from_std(timeout)
+                .map_err(|_| Status::internal("terminal lease duration is invalid"))?;
+        if let Err(error) = self
+            .patch_annotation(agent_id, terminal_id, Some(&expires_at.to_rfc3339()))
+            .await
+        {
+            if !self.cleanup_once(agent_id, terminal_id).await {
+                self.schedule(agent_id, terminal_id, Duration::ZERO).await;
+            }
+            return Err(map_kube_error(error));
+        }
+        self.schedule(agent_id, terminal_id, timeout).await;
+        Ok(())
+    }
+
+    async fn recover(&self) -> Result<(), kube::Error> {
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let now = Utc::now();
+        for agent in agents.list(&ListParams::default()).await?.items {
+            for lease in recoverable_provisional_terminal_leases(&agent, now) {
+                self.schedule(&lease.agent_id, &lease.terminal_id, lease.delay)
+                    .await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn schedule(&self, agent_id: &str, terminal_id: &str, timeout: Duration) {
+        let cleanup = self.clone();
+        let cleanup_agent_id = agent_id.to_owned();
+        self.registry
+            .register(
+                agent_id,
+                terminal_id,
+                timeout,
+                PROVISIONAL_TERMINAL_CLEANUP_RETRY,
+                move |terminal_id| {
+                    let cleanup = cleanup.clone();
+                    let agent_id = cleanup_agent_id.clone();
+                    async move { cleanup.cleanup_once(&agent_id, &terminal_id).await }
+                },
+            )
+            .await;
+    }
+
+    async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
+        let guest = match GuestClient::for_agent_with_terminal_identities(
+            self.client.clone(),
+            &self.namespace,
+            agent_id,
+            self.terminal_identities.clone(),
+        )
+        .await
+        {
+            Ok(guest) => Some(guest),
+            Err(error) if agent_is_absent(&error) => None,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to connect to the guest while cleaning up an unconfirmed terminal"
+                );
+                return false;
+            }
+        };
+
+        if let Some(guest) = guest {
+            match guest.terminate_terminal(terminal_id).await {
+                Ok(()) => {}
+                Err(error) if terminal_is_absent(&error) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id,
+                        terminal_id,
+                        %error,
+                        "failed to clean up an unconfirmed terminal; retrying"
+                    );
+                    return false;
+                }
+            }
+        }
+
+        match self.patch_annotation(agent_id, terminal_id, None).await {
+            Ok(()) => {
+                metrics::global().record_pty_terminated(agent_id, terminal_id);
+                true
+            }
+            Err(error) if kube_resource_is_absent(&error) => true,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to clear a provisional terminal lease; retrying"
+                );
+                false
+            }
+        }
+    }
+
+    async fn issue_and_confirm<T, I>(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        issue: I,
+    ) -> Result<T, Status>
+    where
+        I: FnOnce() -> Result<T, Status>,
+    {
+        let manager = self.clone();
+        let confirmation_agent_id = agent_id.to_owned();
+        let confirmation_terminal_id = terminal_id.to_owned();
+        self.registry
+            .issue_and_confirm(agent_id, terminal_id, move |tracked| async move {
+                if tracked {
+                    manager
+                        .patch_annotation(&confirmation_agent_id, &confirmation_terminal_id, None)
+                        .await
+                        .map_err(map_kube_error)?;
+                }
+                issue()
+            })
+            .await
+    }
+
+    async fn clear(&self, agent_id: &str, terminal_id: &str) -> Result<(), Status> {
+        if self.registry.clear(agent_id, terminal_id).await {
+            self.patch_annotation(agent_id, terminal_id, None)
+                .await
+                .map_err(map_kube_error)?;
+        }
+        Ok(())
+    }
+
+    async fn patch_annotation(
+        &self,
+        agent_id: &str,
+        terminal_id: &str,
+        value: Option<&str>,
+    ) -> Result<(), kube::Error> {
+        let key = provisional_terminal_annotation_key(terminal_id);
+        let mut annotations = serde_json::Map::new();
+        annotations.insert(
+            key,
+            value.map_or(Value::Null, |value| Value::String(value.to_owned())),
+        );
+        let patch = json!({"metadata": {"annotations": annotations}});
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        agents
+            .patch(agent_id, &PatchParams::default(), &Patch::Merge(&patch))
+            .await?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RecoverableProvisionalTerminalLease {
+    agent_id: String,
+    terminal_id: String,
+    delay: Duration,
+}
+
+fn recoverable_provisional_terminal_leases(
+    agent: &MicroVM,
+    now: DateTime<Utc>,
+) -> Vec<RecoverableProvisionalTerminalLease> {
+    let agent_id = agent.name_any();
+    agent
+        .metadata
+        .annotations
+        .iter()
+        .flat_map(|annotations| annotations.iter())
+        .filter_map(|(key, value)| {
+            let terminal_id = key.strip_prefix(PROVISIONAL_TERMINAL_ANNOTATION_PREFIX)?;
+            if terminal_id.is_empty()
+                || terminal_id.len() > 128
+                || !terminal_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                tracing::warn!(
+                    agent_id,
+                    annotation = key,
+                    "ignoring an invalid provisional terminal lease"
+                );
+                return None;
+            }
+            let expires_at = DateTime::parse_from_rfc3339(value)
+                .map(|value| value.with_timezone(&Utc))
+                .unwrap_or(now);
+            let delay = (expires_at - now).to_std().unwrap_or(Duration::ZERO);
+            Some(RecoverableProvisionalTerminalLease {
+                agent_id: agent_id.clone(),
+                terminal_id: terminal_id.to_owned(),
+                delay,
+            })
+        })
+        .collect()
+}
+
+fn provisional_terminal_annotation_key(terminal_id: &str) -> String {
+    format!("{PROVISIONAL_TERMINAL_ANNOTATION_PREFIX}{terminal_id}")
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProvisionalTerminalLease {
     AwaitingTicket(Uuid),
@@ -1579,10 +1813,11 @@ impl ProvisionalTerminalLeaseRegistry {
         agent_id: &str,
         terminal_id: &str,
         timeout: Duration,
-        cleanup: C,
+        retry_delay: Duration,
+        mut cleanup: C,
     ) where
-        C: FnOnce(String) -> CF + Send + 'static,
-        CF: Future<Output = ()> + Send + 'static,
+        C: FnMut(String) -> CF + Send + 'static,
+        CF: Future<Output = bool> + Send + 'static,
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
         let token = Uuid::new_v4();
@@ -1611,25 +1846,38 @@ impl ProvisionalTerminalLeaseRegistry {
                 return;
             }
 
-            cleanup(cleanup_terminal_id).await;
-            let mut leases = registry.leases.lock().await;
-            if matches!(
-                leases.get(&key),
-                Some(ProvisionalTerminalLease::Expiring(current)) if *current == token
-            ) {
-                leases.remove(&key);
+            loop {
+                if cleanup(cleanup_terminal_id.clone()).await {
+                    let mut leases = registry.leases.lock().await;
+                    if matches!(
+                        leases.get(&key),
+                        Some(ProvisionalTerminalLease::Expiring(current)) if *current == token
+                    ) {
+                        leases.remove(&key);
+                    }
+                    return;
+                }
+                sleep(retry_delay).await;
+                let leases = registry.leases.lock().await;
+                if !matches!(
+                    leases.get(&key),
+                    Some(ProvisionalTerminalLease::Expiring(current)) if *current == token
+                ) {
+                    return;
+                }
             }
         });
     }
 
-    async fn issue_and_confirm<T, I>(
+    async fn issue_and_confirm<T, I, IF>(
         &self,
         agent_id: &str,
         terminal_id: &str,
         issue: I,
     ) -> Result<T, Status>
     where
-        I: FnOnce() -> Result<T, Status>,
+        I: FnOnce(bool) -> IF,
+        IF: Future<Output = Result<T, Status>>,
     {
         let key = (agent_id.to_owned(), terminal_id.to_owned());
         let mut leases = self.leases.lock().await;
@@ -1641,16 +1889,18 @@ impl ProvisionalTerminalLeaseRegistry {
                 "terminal session expired before ticket issuance",
             ));
         }
-        let issued = issue()?;
+        let tracked = leases.contains_key(&key);
+        let issued = issue(tracked).await?;
         leases.remove(&key);
         Ok(issued)
     }
 
-    async fn clear(&self, agent_id: &str, terminal_id: &str) {
+    async fn clear(&self, agent_id: &str, terminal_id: &str) -> bool {
         self.leases
             .lock()
             .await
-            .remove(&(agent_id.to_owned(), terminal_id.to_owned()));
+            .remove(&(agent_id.to_owned(), terminal_id.to_owned()))
+            .is_some()
     }
 }
 
@@ -1661,20 +1911,20 @@ async fn detached_terminal_creation<C, S, SF>(
 where
     C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
     S: FnOnce(GuestTerminalCreation) -> SF + Send + 'static,
-    SF: Future<Output = GuestTerminalCreation> + Send + 'static,
+    SF: Future<Output = Result<GuestTerminalCreation, Status>> + Send + 'static,
 {
     let (result_sender, result_receiver) = oneshot::channel();
     tokio::spawn(async move {
         let result = match creation.await {
-            Ok(creation) => Ok(on_success(creation).await),
-            Err(error) => Err(error),
+            Ok(creation) => on_success(creation).await,
+            Err(error) => Err(map_guest_error(error)),
         };
         let _ = result_sender.send(result);
     });
 
     match result_receiver.await {
         Ok(Ok(creation)) => Ok(creation),
-        Ok(Err(error)) => Err(map_guest_error(error)),
+        Ok(Err(error)) => Err(error),
         Err(_) => Err(Status::internal(
             "terminal creation task ended without a result",
         )),
@@ -1789,6 +2039,18 @@ fn is_conflict(error: &kube::Error) -> bool {
     matches!(error, kube::Error::Api(response) if response.code == 409)
 }
 
+fn kube_resource_is_absent(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 404)
+}
+
+fn agent_is_absent(error: &GuestError) -> bool {
+    matches!(error, GuestError::Kubernetes(error) if kube_resource_is_absent(error))
+}
+
+fn terminal_is_absent(error: &GuestError) -> bool {
+    matches!(error, GuestError::Api { status, .. } if *status == reqwest::StatusCode::NOT_FOUND)
+}
+
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
@@ -1817,10 +2079,14 @@ fn map_guest_error(error: GuestError) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
     use crate::crd::MicroVMStatus;
+    use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+    use kube::client::Body as KubeBody;
 
     #[test]
     fn caller_cannot_select_resource_policy() {
@@ -2415,11 +2681,82 @@ mod tests {
         }
     }
 
+    fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
+        MicroVM::new(
+            "agent-legacy",
+            MicroVMSpec {
+                display_name: "Legacy agent".to_owned(),
+                owner_hash: "a".repeat(64),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn provisional_terminal_lease_is_persisted_on_the_microvm() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let manager = ProvisionalTerminalLeaseManager::new(
+            Client::new(service, "tengri"),
+            Arc::<str>::from("tengri"),
+            TerminalIdentityRegistry::default(),
+        );
+        let persistence = tokio::spawn(async move {
+            manager
+                .patch_annotation(
+                    "agent-legacy",
+                    "terminal-durable",
+                    Some("2026-08-28T21:00:00Z"),
+                )
+                .await
+        });
+
+        let (request, response) = handle.next_request().await.expect("MicroVM lease patch");
+        assert_eq!(request.method(), http::Method::PATCH);
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-legacy"
+        );
+        let body: Value = serde_json::from_slice(
+            &request
+                .into_body()
+                .collect_bytes()
+                .await
+                .expect("lease patch body"),
+        )
+        .expect("lease patch JSON");
+        assert_eq!(
+            body["metadata"]["annotations"]
+                [provisional_terminal_annotation_key("terminal-durable")],
+            "2026-08-28T21:00:00Z"
+        );
+        response.send_response(
+            HttpResponse::builder()
+                .status(HttpStatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    serde_json::to_vec(&provisional_terminal_test_agent(Utc::now()))
+                        .expect("MicroVM response JSON"),
+                ))
+                .expect("MicroVM lease patch response"),
+        );
+        persistence
+            .await
+            .expect("lease persistence task")
+            .expect("lease persistence request");
+    }
+
     #[tokio::test]
     async fn legacy_terminal_without_a_ticket_is_cleaned_up_after_the_handler_returns() {
         let registry = ProvisionalTerminalLeaseRegistry::default();
         let registration = registry.clone();
-        let (cleanup_sender, cleanup_receiver) = oneshot::channel();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
         let creation = detached_terminal_creation(
             async { Ok(legacy_guest_terminal_creation("terminal-unconfirmed")) },
             move |creation| async move {
@@ -2428,12 +2765,17 @@ mod tests {
                         "agent-legacy",
                         &creation.session.id,
                         Duration::from_millis(10),
-                        move |terminal_id| async move {
-                            cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        Duration::from_millis(1),
+                        move |terminal_id| {
+                            let cleanup_sender = cleanup_sender.clone();
+                            async move {
+                                cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                                true
+                            }
                         },
                     )
                     .await;
-                creation
+                Ok(creation)
             },
         )
         .await
@@ -2441,7 +2783,7 @@ mod tests {
 
         assert_eq!(creation.session.id, "terminal-unconfirmed");
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver)
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
                 .await
                 .expect("cleanup timeout")
                 .expect("cleanup result"),
@@ -2458,14 +2800,19 @@ mod tests {
                 "agent-legacy",
                 "terminal-confirmed",
                 Duration::from_millis(10),
-                move |terminal_id| async move {
-                    cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                Duration::from_millis(1),
+                move |terminal_id| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        true
+                    }
                 },
             )
             .await;
 
         let ticket = registry
-            .issue_and_confirm("agent-legacy", "terminal-confirmed", || {
+            .issue_and_confirm("agent-legacy", "terminal-confirmed", |_| async {
                 Ok("terminal-ticket")
             })
             .await
@@ -2487,7 +2834,7 @@ mod tests {
         let registration = registry.clone();
         let (started_sender, started_receiver) = oneshot::channel();
         let (release_sender, release_receiver) = oneshot::channel();
-        let (cleanup_sender, cleanup_receiver) = oneshot::channel();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
         let handler = tokio::spawn(detached_terminal_creation(
             async move {
                 started_sender.send(()).expect("started receiver");
@@ -2500,12 +2847,17 @@ mod tests {
                         "agent-legacy",
                         &creation.session.id,
                         Duration::from_millis(10),
-                        move |terminal_id| async move {
-                            cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        Duration::from_millis(1),
+                        move |terminal_id| {
+                            let cleanup_sender = cleanup_sender.clone();
+                            async move {
+                                cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                                true
+                            }
                         },
                     )
                     .await;
-                creation
+                Ok(creation)
             },
         ));
         started_receiver.await.expect("creation started");
@@ -2513,11 +2865,93 @@ mod tests {
         release_sender.send(()).expect("creation receiver");
 
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver)
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
                 .await
                 .expect("cleanup timeout")
                 .expect("cleanup result"),
             "terminal-canceled-handler"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_provisional_terminal_cleanup_is_retried() {
+        let registry = ProvisionalTerminalLeaseRegistry::default();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let cleanup_attempts = attempts.clone();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .register(
+                "agent-legacy",
+                "terminal-retry",
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                move |terminal_id| {
+                    let cleanup_attempts = cleanup_attempts.clone();
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        let attempt = cleanup_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                        if attempt == 1 {
+                            return false;
+                        }
+                        cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("cleanup retry timeout")
+                .expect("cleanup retry result"),
+            "terminal-retry"
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn replacement_registry_recovers_a_durable_provisional_terminal_lease() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.metadata.annotations = Some(std::collections::BTreeMap::from([(
+            provisional_terminal_annotation_key("terminal-recovered"),
+            (now - chrono::Duration::seconds(1)).to_rfc3339(),
+        )]));
+        let recovered = recoverable_provisional_terminal_leases(&agent, now);
+        assert_eq!(
+            recovered,
+            vec![RecoverableProvisionalTerminalLease {
+                agent_id: "agent-legacy".to_owned(),
+                terminal_id: "terminal-recovered".to_owned(),
+                delay: Duration::ZERO,
+            }]
+        );
+
+        let replacement_registry = ProvisionalTerminalLeaseRegistry::default();
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        replacement_registry
+            .register(
+                &recovered[0].agent_id,
+                &recovered[0].terminal_id,
+                recovered[0].delay,
+                Duration::from_millis(1),
+                move |terminal_id| {
+                    let cleanup_sender = cleanup_sender.clone();
+                    async move {
+                        cleanup_sender.send(terminal_id).expect("cleanup receiver");
+                        true
+                    }
+                },
+            )
+            .await;
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver.recv())
+                .await
+                .expect("recovered cleanup timeout")
+                .expect("recovered cleanup result"),
+            "terminal-recovered"
         );
     }
 }
