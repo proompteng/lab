@@ -68,6 +68,7 @@ export type {
 } from './observe-composition/model'
 
 export {
+  decideReconciledExecutionCycleCompletion,
   decideExecutionCycleCloseDocument,
   executionMutationSubmissionAllowed,
   isExecutionCycleReconciledFlat,

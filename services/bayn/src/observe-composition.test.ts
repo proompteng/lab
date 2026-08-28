@@ -91,6 +91,7 @@ import {
   appendPendingMutationOrder,
   countOpenPositions,
   decideExecutionCycleCloseDocument,
+  decideReconciledExecutionCycleCompletion,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
@@ -1743,6 +1744,15 @@ describe('OBSERVE runtime composition', () => {
       }),
     ).toBe(false)
     expect(isExecutionCycleReconciledFlat({ ...flat, riskContext: { unknownMutationCount: 1 } })).toBe(false)
+  })
+
+  test('uses the persisted reconciliation time when completing an already-flat cycle', () => {
+    const reconciliationCompletedAt = '2020-05-01T12:45:04.000Z'
+
+    expect(decideReconciledExecutionCycleCompletion(reconciliationResultAt(reconciliationCompletedAt))).toEqual({
+      _tag: 'Complete',
+      observedAt: reconciliationCompletedAt,
+    })
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {

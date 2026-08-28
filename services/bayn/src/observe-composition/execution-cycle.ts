@@ -239,6 +239,13 @@ export const isExecutionCycleReconciledFlat = (facts: {
   countOpenPositions(facts.brokerState.positions) === 0 &&
   facts.brokerState.orders.every(({ status }) => terminalOrderStatuses.has(status))
 
+export const decideReconciledExecutionCycleCompletion = (
+  facts: ReconciliationPassResult,
+): { readonly _tag: 'Complete'; readonly observedAt: string } | undefined =>
+  isExecutionCycleReconciledFlat(facts)
+    ? { _tag: 'Complete', observedAt: facts.report.reconciliation.reconciledAt }
+    : undefined
+
 type ExecutionCycleClosureResult =
   | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
@@ -271,9 +278,9 @@ const ensureExecutionCycleClosure = (
       const closeReconciliation = yield* reconcile.pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
       )
-      if (isExecutionCycleReconciledFlat(closeReconciliation)) {
-        return { _tag: 'Complete', observedAt }
-      }
+      const completion = decideReconciledExecutionCycleCompletion(closeReconciliation)
+      if (completion !== undefined) return completion
+      const reconciledAt = closeReconciliation.report.reconciliation.reconciledAt
       const document = yield* buildClosingExecutionCycleDecision({
         input,
         preparation,
@@ -284,9 +291,9 @@ const ensureExecutionCycleClosure = (
         closeExpiresAt: closeWindow.expiresAt,
       })
       const decision = decideExecutionCycleCloseDocument(document)
-      if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt }
+      if (decision._tag === 'Complete') return { _tag: 'Complete', observedAt: reconciledAt }
       if (decision._tag === 'Block') {
-        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt }
+        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: reconciledAt }
       }
       const closure = yield* Effect.fromResult(
         makeExecutionCycleClosure({
