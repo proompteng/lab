@@ -841,15 +841,19 @@ const unwrapStrategyApplicationFailure = (cause: unknown): unknown => {
   return cause
 }
 
+const intradayArchiveMaterializationPending = (cause: unknown): cause is IntradaySnapshotFailure =>
+  cause instanceof IntradaySnapshotFailure &&
+  (cause.reason === 'not-ready' ||
+    (cause.reason === 'watermark' &&
+      cause.message === 'intraday archive has not materialized the captured source offset'))
+
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
-  return snapshotFailure instanceof IntradaySnapshotFailure &&
-    snapshotFailure.reason === 'watermark' &&
-    snapshotFailure.message === 'intraday archive has not materialized the captured source offset'
+  return intradayArchiveMaterializationPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
         observedAt,
@@ -1674,7 +1678,7 @@ export const buildClosingExecutionCycleDecision = (
           const query = yield* queryEffect
           const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
             Effect.mapError((cause) =>
-              cause.cause instanceof IntradaySnapshotFailure && cause.cause.reason === 'not-ready'
+              intradayArchiveMaterializationPending(cause.cause)
                 ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
                 : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
             ),

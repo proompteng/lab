@@ -3325,6 +3325,10 @@ describe('OBSERVE runtime composition', () => {
       reason: 'watermark',
       message: 'intraday archive has not materialized the captured source offset',
     })
+    const entryNotReady = new IntradaySnapshotFailure({
+      reason: 'not-ready',
+      message: 'intraday entry snapshot lacks a post-range trade',
+    })
     const topologyMismatch = new IntradaySnapshotFailure({
       reason: 'watermark',
       message: 'intraday archive partition topology changed after version capture',
@@ -3332,6 +3336,12 @@ describe('OBSERVE runtime composition', () => {
     expect(await failedEntry(replicaLag)).toMatchObject({
       _tag: 'ObserveDecisionAwaitingSignal',
       message: replicaLag.message,
+      observedAt: historicalWindow.submissionOpenAt,
+      submissionCutoffAt: historicalWindow.submissionCutoffAt,
+    })
+    expect(await failedEntry(entryNotReady)).toMatchObject({
+      _tag: 'ObserveDecisionAwaitingSignal',
+      message: entryNotReady.message,
       observedAt: historicalWindow.submissionOpenAt,
       submissionCutoffAt: historicalWindow.submissionCutoffAt,
     })
@@ -3446,6 +3456,44 @@ describe('OBSERVE runtime composition', () => {
     const waiting = await Effect.runPromise(
       buildCloseProgram(openPosition, { ...input, intradayMarketData: waitingArchive }).pipe(Effect.flip),
     )
+    const closeReplicaLag = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive has not materialized the captured source offset',
+    })
+    const laggingCloseArchive: IntradayMarketDataService = {
+      captureVersion: archive.captureVersion,
+      loadSnapshot: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: closeReplicaLag.message,
+            cause: closeReplicaLag,
+          }),
+        ),
+    }
+    const waitingForReplica = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: laggingCloseArchive }).pipe(Effect.flip),
+    )
+    const closeTopologyMismatch = new IntradaySnapshotFailure({
+      reason: 'watermark',
+      message: 'intraday archive partition topology changed after version capture',
+    })
+    const mismatchedCloseArchive: IntradayMarketDataService = {
+      captureVersion: archive.captureVersion,
+      loadSnapshot: () =>
+        Effect.fail(
+          operationalError({
+            component: 'market-data',
+            operation: 'load-intraday',
+            message: closeTopologyMismatch.message,
+            cause: closeTopologyMismatch,
+          }),
+        ),
+    }
+    const fatalCloseMismatch = await Effect.runPromise(
+      buildCloseProgram(openPosition, { ...input, intradayMarketData: mismatchedCloseArchive }).pipe(Effect.flip),
+    )
     const staleObservedAt = '2020-05-01T19:30:10.000Z'
     const stale = await Effect.runPromise(buildCloseProgram(openPosition, input, staleObservedAt).pipe(Effect.flip))
     const refreshed = await Effect.runPromise(buildCloseProgram(openPosition, input, '2020-05-01T19:31:01.000Z'))
@@ -3553,6 +3601,20 @@ describe('OBSERVE runtime composition', () => {
         observedAt: closeObservedAt,
       }),
     )
+    expect(waitingForReplica).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `${closeReplicaLag.message}: ${closeReplicaLag.message}`,
+        observedAt: closeObservedAt,
+      }),
+    )
+    expect(fatalCloseMismatch).toMatchObject({
+      _tag: 'CycleRunnerError',
+      failure: 'operational',
+      cause: {
+        _tag: 'OperationalError',
+        cause: closeTopologyMismatch,
+      },
+    })
     expect(stale).toEqual(
       new ExecutionCloseAwaitingMarketData({
         message: `closing quote for ${heldSymbol} is outside the freshness window`,
