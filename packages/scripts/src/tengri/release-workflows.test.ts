@@ -6,6 +6,7 @@ import YAML from 'yaml'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
+const controllerPath = resolve(repositoryRoot, '.github/workflows/tengri-controller.yaml')
 const releasePath = resolve(repositoryRoot, '.github/workflows/tengri-release.yml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
@@ -37,6 +38,26 @@ describe('Tengri release workflows', () => {
     expect(source).toContain('digest="sha256:$(sha256sum "${index_path}"')
     expect(source).not.toContain('.Manifest.Digest')
     expect(source).toContain('sourceSha: $sourceSha')
+  })
+
+  it('gates the sole Tengri publisher on full controller validation', () => {
+    const imagesSource = readFileSync(imagesPath, 'utf8')
+    const controllerSource = readFileSync(controllerPath, 'utf8')
+    const images = YAML.parse(imagesSource) as {
+      jobs?: {
+        'validate-tengri'?: { steps?: Array<{ run?: string }> }
+        publish?: { needs?: string[] }
+      }
+    }
+    const validation = images.jobs?.['validate-tengri']?.steps?.map((step) => step.run ?? '').join('\n')
+
+    expect(validation).toContain('cargo fmt --check')
+    expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
+    expect(validation).toContain('cargo test --locked --all-targets')
+    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
+    expect(images.jobs?.publish?.needs).toContain('validate-tengri')
+    expect(controllerSource).not.toContain('docker/build-push-action')
+    expect(controllerSource).not.toContain('cosign sign')
   })
 
   it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {

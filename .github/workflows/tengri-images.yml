@@ -37,6 +37,36 @@ env:
   TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
 
 jobs:
+  validate-tengri:
+    name: Validate Tengri
+    runs-on: arc-amd64
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
+
+      - name: Validate controller and generated CRD
+        working-directory: services/tengri
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all-targets
+          cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
+          diff -u /tmp/tengri-crd.yaml crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
+
   validate-nanoagent:
     name: Validate Nanoagent
     runs-on: arc-amd64
@@ -118,6 +148,7 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs:
       - build
+      - validate-tengri
       - validate-nanoagent
     runs-on: arc-arm64
     timeout-minutes: 30
