@@ -21,6 +21,7 @@ import {
   codexEventShouldRender,
   codexEventSupersedesRestoredItem,
   codexLoginCompletionError,
+  codexLoginCompletionIsUncorrelated,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
   codexResumeCommitIsCurrent,
@@ -287,16 +288,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       const currentThread = threadIdRef.current
       if (!codexEventMatchesThread(event, currentThread)) return
-      if (
-        event.method.toLowerCase() === 'account/login/completed' &&
-        !codexLoginCompletionMatches(event, loginIdRef.current)
-      ) {
-        return
+      const eventMethod = event.method.toLowerCase()
+      if (eventMethod === 'account/login/completed') {
+        const activeLoginId = loginIdRef.current
+        if (codexLoginCompletionIsUncorrelated(event)) {
+          if (activeLoginId) void refreshAccount(undefined, false, activeLoginId)
+          return
+        }
+        if (!codexLoginCompletionMatches(event, activeLoginId)) return
       }
       setEvents((current) =>
         appendCodexEventAfterRestore(current, event, restoredHistoryRef.current, restoredHistorySequenceRef.current),
       )
-      if (event.method === 'account/login/completed') {
+      if (eventMethod === 'account/login/completed') {
         const completionError = codexLoginCompletionError(event)
         loginIdRef.current = ''
         setLogin(null)
