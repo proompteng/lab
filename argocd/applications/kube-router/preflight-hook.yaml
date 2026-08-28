@@ -42,7 +42,14 @@ spec:
             - |
               set -o pipefail
               expected_namespaces=$(
-                printf '%s\n' agents argocd bayn bilig hermes kafka media pgadmin synthesis torghut | sort -u
+                {
+                  printf '%s\n' agents argocd bayn bilig hermes kafka media pgadmin synthesis torghut
+                  if kubectl -n kube-system get namespace tengri >/dev/null 2>&1 &&
+                    kubectl -n tengri get networkpolicies.networking.k8s.io -o json |
+                      jq -e '.items | length > 0' >/dev/null; then
+                    printf '%s\n' tengri
+                  fi
+                } | sort -u
               )
               actual_namespaces=$(
                 kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json |
@@ -79,6 +86,19 @@ spec:
                   )
                   if [[ "$actual_hermes_policy_hash" != "$expected_hermes_policy_hash" ]]; then
                     echo 'Hermes NetworkPolicies differ from the exact reviewed policy set.' >&2
+                    exit 1
+                  fi
+                  ;;
+                tengri)
+                  expected_tengri_policy_hash=c91525ac54b23d81b0c240925e34837fe91abb98e1d645c6f4a7ca5bfc4e9ad5
+                  actual_tengri_policy_hash=$(
+                    kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json |
+                      jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)' |
+                      sha256sum |
+                      cut -d ' ' -f1
+                  )
+                  if [[ "$actual_tengri_policy_hash" != "$expected_tengri_policy_hash" ]]; then
+                    echo 'Tengri NetworkPolicies differ from the exact reviewed policy set.' >&2
                     exit 1
                   fi
                   ;;

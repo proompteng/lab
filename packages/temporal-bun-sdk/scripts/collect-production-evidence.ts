@@ -284,6 +284,7 @@ const agentReadinessPath = join(distDir, 'agent-readiness.json')
 const releaseProvenancePath = join(distDir, 'release-provenance.json')
 
 const forbiddenDependencies = [
+  '@effect/schema',
   '@temporalio/worker',
   '@temporalio/core-bridge',
   '@temporalio/client',

@@ -97,6 +97,28 @@ test('rejects bypassing the live namespace preflight', async () => {
   )
 })
 
+test('rejects an unscoped optional Tengri namespace check in the preflight hook', async () => {
+  const files = copy(await loadProductionFiles())
+  files.preflightHook = files.preflightHook.replace(
+    'kubectl -n kube-system get namespace tengri',
+    'kubectl get namespace tengri',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.preflightHook}: missing production invariant "kubectl -n kube-system get namespace tengri"`,
+  )
+})
+
+test('rejects an unscoped optional Tengri namespace check in the coverage probe', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace(
+    'kubectl -n kube-system get namespace tengri',
+    'kubectl get namespace tengri',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.coverageProbe}: missing production invariant "kubectl -n kube-system get namespace tengri"`,
+  )
+})
+
 test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
@@ -133,11 +155,42 @@ spec:
   )
 })
 
-test('rejects safety coverage that omits enforced Hermes', async () => {
+test('rejects an unreviewed Tengri policy without a matching preflight contract', async () => {
   const files = copy(await loadProductionFiles())
-  files.coverageProbe = files.coverageProbe.replace("    printf '%s\\n' hermes", '    true')
+  files.tengriPolicies += `
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: unreviewed
+  namespace: tengri
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+`
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(
+      `${productionPaths.preflightHook}: missing production invariant "expected_tengri_policy_hash=`,
+    ),
+  )
+})
+
+test('rejects safety coverage that omits an enforced namespace', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace("      printf '%s\\n' tengri", '      true')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.coverageProbe}: missing production invariant "printf '%s\\\\n' hermes"`,
+    `${productionPaths.coverageProbe}: missing production invariant "printf '%s\\\\n' tengri"`,
+  )
+})
+
+test('rejects impact routing that skips Tengri policy changes', async () => {
+  const files = copy(await loadProductionFiles())
+  files.impactMap = files.impactMap.replace('      - argocd/applications/tengri/network-policies.yaml\n', '')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/tengri/network-policies.yaml"`,
   )
 })
 
@@ -189,7 +242,18 @@ test('rejects a preflight that cannot prove the retired selector matches no Pods
     'rules:\n  - apiGroups:\n      - networking.k8s.io',
   )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.rbac}: preflight must read policy state and retired-selector Pod matches`,
+    `${productionPaths.rbac}: preflight must read namespaces, policy state, and retired-selector Pod matches`,
+  )
+})
+
+test('rejects a preflight that cannot determine whether optional Tengri policies are live', async () => {
+  const files = copy(await loadProductionFiles())
+  files.rbac = files.rbac.replace(
+    /  - apiGroups:\n      - ""\n    resources:\n      - namespaces\n    verbs:\n      - get\n/,
+    '',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.rbac}: preflight must read namespaces, policy state, and retired-selector Pod matches`,
   )
 })
 

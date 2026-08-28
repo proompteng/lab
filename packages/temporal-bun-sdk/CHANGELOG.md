@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.2](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.1...temporal-bun-sdk-v0.11.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** preserve release evidence ([#14113](https://github.com/proompteng/lab/issues/14113)) ([6f5d585](https://github.com/proompteng/lab/commit/6f5d585f047193fafe171345d3bf7e7d2daa172a))
+* **temporal-bun-sdk:** remove deprecated Effect schema ([#14132](https://github.com/proompteng/lab/issues/14132)) ([c5f311d](https://github.com/proompteng/lab/commit/c5f311d8c7daa788d7c0bf508dc2402e72fec266))
+
 ## [0.11.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.11.0...temporal-bun-sdk-v0.11.1) (2026-08-27)
 
 

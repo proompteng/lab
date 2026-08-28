@@ -14,6 +14,13 @@ nonce-authorized navigation bridge into uncompressed HTML responses; the desktop
 events only from the exact issued preview origin and iframe. This keeps the virtual address bar, history, reload, and
 Chrome shortcuts synchronized without exposing the session token to guest applications.
 
+Public HTTP traffic is split across two listeners with separate routers and Kubernetes Services. Port `8080` exposes
+only Tengri-owned control routes such as terminal WebSockets, preview-session opening, probes, and metrics. Port `8081`
+exposes only session-host bootstrap assets and the authenticated guest preview proxy. Traefik routes
+`tengri.proompteng.ai` control paths to `tengri-gateway:8080` and session hosts to `tengri-preview:8081`; observability
+can reach only the control listener. A guest application may therefore own paths such as `/metrics` or `/healthz`
+without those requests reaching Tengri's own handlers.
+
 `/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
 Kubernetes control path and in-process ticket state are usable; deployment probes do not advertise an isolated process
 as ready to accept agent operations.
@@ -22,6 +29,11 @@ as ready to accept agent operations.
 authentication outage by publishing `new,current` in the same 1Password field first: the BFF signs with both keys and
 the controller accepts either while the two ExternalSecrets refresh independently. After both workloads observe the
 bundle, remove the previous key. More than two keys are rejected.
+
+The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
+into its environment and, without logging either value, deletes only its own control-plane Pod when an ExternalSecret
+refresh changes them. The Deployment then creates a replacement Pod with the refreshed environment; no manual restart
+or cluster-wide reloader is required.
 
 Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
 `tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across

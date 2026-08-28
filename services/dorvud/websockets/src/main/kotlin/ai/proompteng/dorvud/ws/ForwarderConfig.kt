@@ -106,7 +106,6 @@ data class ForwarderConfig(
           ?.filter { it.isNotEmpty() }
           ?: emptyList()
       val symbolAllowlist = configuredAllowlistSymbols.toSet()
-      if (symbolAllowlist.size > 12) error("SYMBOLS_ALLOWLIST must include no more than 12 symbols")
       val configuredStaticSymbols =
         mergedEnv["SYMBOLS"]
           ?.split(",")
@@ -237,10 +236,15 @@ data class ForwarderConfig(
           coreFeed = alpacaFeed,
           coreTopics = topics,
           mergedEnv = mergedEnv,
-          coreSymbols = staticSymbols,
           observationSymbols = observationSymbols,
           hasVersionedUniverse = universeContract != null,
         )
+      val coreSubscriptionCount =
+        if (jangarSymbolsUrl != null && symbolAllowlist.isNotEmpty()) symbolAllowlist.size else staticSymbols.size
+      val subscriptionCount = coreSubscriptionCount + observationSymbols.size * observationFeeds.size
+      if (subscriptionCount > 30) {
+        error("configured market-data feeds require $subscriptionCount symbol subscriptions; maximum is 30")
+      }
       val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
       if (alpacaMarketType == AlpacaMarketType.OPTIONS && enableBarsBackfill) {
         error("ENABLE_BARS_BACKFILL is not supported when ALPACA_MARKET_TYPE=options")
@@ -386,7 +390,6 @@ data class ForwarderConfig(
       coreFeed: String,
       coreTopics: TopicConfig,
       mergedEnv: Map<String, String>,
-      coreSymbols: List<String>,
       observationSymbols: List<String>,
       hasVersionedUniverse: Boolean,
     ): List<ObservationFeedConfig> {
@@ -448,10 +451,6 @@ data class ForwarderConfig(
           .keys
       if (duplicateTopics.isNotEmpty()) {
         error("market-data feed topics must be unique: ${duplicateTopics.sorted().joinToString(",")}")
-      }
-      val subscriptionCount = coreSymbols.size + observationSymbols.size * feeds.size
-      if (subscriptionCount > 30) {
-        error("configured market-data feeds require $subscriptionCount symbol subscriptions; maximum is 30")
       }
       return feeds
     }
