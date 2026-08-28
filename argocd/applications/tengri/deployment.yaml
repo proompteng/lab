@@ -59,6 +59,12 @@ spec:
               value: https://tengri-{session}.proompteng.ai
             - name: TENGRI_DESKTOP_ORIGIN
               value: https://proompteng.ai
+            - name: TENGRI_RUNTIME_SECRET_DIRECTORY
+              value: /var/run/secrets/tengri-runtime
+            - name: TENGRI_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           envFrom:
             - secretRef:
                 name: tengri-runtime
@@ -98,9 +104,15 @@ spec:
             privileged: false
             runAsNonRoot: true
           volumeMounts:
+            - name: runtime-secret
+              mountPath: /var/run/secrets/tengri-runtime
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: runtime-secret
+          secret:
+            secretName: tengri-runtime
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
