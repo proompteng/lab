@@ -410,7 +410,10 @@ describe('intraday momentum strategy', () => {
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
-    const decision = success(
+    const millisecondDecision = success(
+      decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol),
+    )
+    const nanosecondDecision = success(
       decideIntradayMomentum(
         marketContextAt({
           rangeEndAt: '2026-08-18T18:00:00.000Z',
@@ -422,7 +425,7 @@ describe('intraday momentum strategy', () => {
       ),
     )
 
-    expect(decision.selectedSymbols).toEqual(['AMD', 'AVGO', 'NVDA'])
+    expect(nanosecondDecision).toEqual(millisecondDecision)
   })
 
   test.each([
