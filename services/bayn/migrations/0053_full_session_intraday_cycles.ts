@@ -103,6 +103,7 @@ export default Effect.gen(function* () {
             AND signal_calendar_version IS NOT NULL
             AND signal_close_at IS NOT NULL
             AND publication_deadline_at IS NOT NULL
+            AND submission_cutoff_before_open_ms IS NOT NULL
             AND submission_cutoff_before_open_ms BETWEEN 1 AND 86400000
             AND submission_cutoff_after_open_ms IS NULL
             AND warmup_after_open_ms IS NULL
@@ -120,6 +121,7 @@ export default Effect.gen(function* () {
             AND (
               (
                 execution_policy_schema_version = 'bayn.autonomous-cycle-execution-policy.v2'
+                AND submission_cutoff_after_open_ms IS NOT NULL
                 AND submission_cutoff_after_open_ms BETWEEN 1 AND 86400000
                 AND warmup_after_open_ms IS NULL
                 AND submission_cutoff_before_close_ms IS NULL
@@ -127,7 +129,9 @@ export default Effect.gen(function* () {
               OR (
                 execution_policy_schema_version = 'bayn.autonomous-cycle-execution-policy.v3'
                 AND submission_cutoff_after_open_ms IS NULL
+                AND warmup_after_open_ms IS NOT NULL
                 AND warmup_after_open_ms BETWEEN 1 AND 86400000
+                AND submission_cutoff_before_close_ms IS NOT NULL
                 AND submission_cutoff_before_close_ms BETWEEN 1 AND 86400000
               )
             )
@@ -137,23 +141,28 @@ export default Effect.gen(function* () {
         CHECK (
           (
             schema_version = 'bayn.autonomous-cycle.v1'
+            AND submission_cutoff_before_open_ms IS NOT NULL
             AND execution_open_at =
               submission_cutoff_at + submission_cutoff_before_open_ms * interval '1 millisecond'
           )
           OR (
             schema_version = 'bayn.autonomous-cycle.v2'
+            AND submission_cutoff_before_open_ms IS NOT NULL
             AND submission_cutoff_at =
               execution_open_at + submission_cutoff_before_open_ms * interval '1 millisecond'
           )
           OR (
             schema_version = 'bayn.autonomous-cycle.v3'
             AND execution_policy_schema_version = 'bayn.autonomous-cycle-execution-policy.v2'
+            AND submission_cutoff_after_open_ms IS NOT NULL
             AND submission_cutoff_at =
               execution_open_at + submission_cutoff_after_open_ms * interval '1 millisecond'
           )
           OR (
             schema_version = 'bayn.autonomous-cycle.v3'
             AND execution_policy_schema_version = 'bayn.autonomous-cycle-execution-policy.v3'
+            AND warmup_after_open_ms IS NOT NULL
+            AND submission_cutoff_before_close_ms IS NOT NULL
             AND submission_open_at = execution_open_at + warmup_after_open_ms * interval '1 millisecond'
             AND submission_cutoff_at =
               execution_close_at - submission_cutoff_before_close_ms * interval '1 millisecond'

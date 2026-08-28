@@ -3111,7 +3111,17 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           FROM autonomous_cycles
           WHERE cycle_id = ${draft.identity.cycleId}
         `
-        return { authoritySlot, receipt, row }
+        const missingWarmup = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET warmup_after_open_ms = NULL
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const missingCutoff = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET submission_cutoff_before_close_ms = NULL
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        return { authoritySlot, missingCutoff, missingWarmup, receipt, row }
       }),
     )
 
@@ -3134,6 +3144,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       },
     })
     expect(observed.authoritySlot).toEqual(Option.some(observed.receipt.cycle))
+    expect(Exit.isFailure(observed.missingWarmup)).toBe(true)
+    expect(Exit.isFailure(observed.missingCutoff)).toBe(true)
     expect(observed.row).toEqual({
       schema_version: 'bayn.autonomous-cycle.v3',
       execution_policy_schema_version: 'bayn.autonomous-cycle-execution-policy.v3',

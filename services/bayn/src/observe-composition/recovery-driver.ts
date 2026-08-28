@@ -241,7 +241,9 @@ const makeRecoveryFirstCycleDriverEffect = (
       const context: CycleRunContext<ObserveDecisionRuntime> = {
         qualificationRunId: startup.qualificationRunId,
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
-        ...(strategyName === 'risk-balanced-trend' || strategyName === 'opening-drive-momentum'
+        ...(strategyName === 'risk-balanced-trend' ||
+        strategyName === 'opening-drive-momentum' ||
+        strategyName === 'intraday-momentum'
           ? { strategyName }
           : {}),
         strategyProtocolHash: preparation.strategyProtocolHash,

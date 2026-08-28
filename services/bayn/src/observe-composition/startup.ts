@@ -54,13 +54,14 @@ export const prepareObserveStartup = (
   const executionModel = decodedExecutionModel.success
   if (
     executionModel.schemaVersion !== 'bayn.execution-model.v3' &&
-    executionModel.schemaVersion !== 'bayn.execution-model.v4'
+    executionModel.schemaVersion !== 'bayn.execution-model.v4' &&
+    executionModel.schemaVersion !== 'bayn.execution-model.v5'
   ) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-loop',
-        message: 'autonomous cycles require an account-neutral v3 or v4 execution model',
+        message: 'autonomous cycles require an account-neutral v3, v4, or v5 execution model',
       }),
     )
   }

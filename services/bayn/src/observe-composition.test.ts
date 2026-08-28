@@ -79,6 +79,11 @@ import {
   type OpeningDriveProtocol,
 } from './strategy/opening-drive'
 import {
+  decodeDefaultIntradayMomentumProtocol,
+  intradayMomentumBehaviorHash,
+  makeIntradayMomentumDefinition,
+} from './strategy/intraday-momentum'
+import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
   makeClosingDecisionPlan,
@@ -3814,6 +3819,42 @@ describe('OBSERVE runtime composition', () => {
         }),
       ),
     ).toBe(true)
+  })
+
+  test('admits the provenance-bound full-session intraday execution model at autonomous startup', () => {
+    const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
+    const definition = makeIntradayMomentumDefinition(protocol)
+    const strategy = {
+      definition,
+      provenance: {
+        ...fixtureRuntime.provenance,
+        strategy: {
+          name: definition.name,
+          behaviorHash: intradayMomentumBehaviorHash,
+          parameterHash: canonicalHashV1(definition.parameters),
+          parameterSchemaVersion: definition.parameters.schemaVersion,
+        },
+      },
+    }
+
+    const prepared = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy,
+    })
+
+    expect(Result.isSuccess(prepared)).toBe(true)
+    if (Result.isSuccess(prepared)) {
+      expect(prepared.success.executionModel.schemaVersion).toBe('bayn.execution-model.v5')
+      expect(prepared.success.executionPolicy).toMatchObject({
+        schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+        warmupAfterOpenMs: 1_800_000,
+        submissionCutoffBeforeCloseMs: 3_600_000,
+      })
+    }
   })
 
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
