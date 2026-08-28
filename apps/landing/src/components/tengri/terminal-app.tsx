@@ -13,6 +13,7 @@ import { runTengriAction } from './client'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
+  parseLegacyTerminalResumeState,
   parseTerminalCleanupState,
   parseTerminalControlFrame,
   parseTerminalOutputFrame,
@@ -58,6 +59,7 @@ export function TerminalApp({
   const creationId = terminalCreationId(agentId, desktopId, windowId)
   const creationScope = terminalCreationScope(agentId, desktopId)
   const storageKey = `tengri:terminal:${agentId}:${desktopId}:${windowId}`
+  const legacyStorageKey = `tengri:terminal:${agentId}:${windowId}`
   const cleanupStorageKey = `tengri:terminal-cleanup:${agentId}`
   const [connection, setConnection] = useState<ConnectionState>({
     phase: 'initializing',
@@ -99,6 +101,7 @@ export function TerminalApp({
     let resumeChecked = false
     let claimedSessionId: string | null = null
     let creationPromise: Promise<TengriTerminalSession> | null = null
+    let releaseLegacyMigration: () => void = () => {}
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
     const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
@@ -115,6 +118,56 @@ export function TerminalApp({
       } catch {
         return null
       }
+    }
+
+    const migrateLegacyResumeState = async (): Promise<TerminalResumeState | null> => {
+      let legacy: TerminalResumeState | null = null
+      try {
+        legacy = parseLegacyTerminalResumeState(sessionStorage.getItem(legacyStorageKey), agentId, desktopId)
+      } catch {
+        return null
+      }
+      if (!legacy) return null
+
+      const persistMigration = () => {
+        try {
+          sessionStorage.setItem(storageKey, JSON.stringify(legacy))
+          sessionStorage.removeItem(legacyStorageKey)
+        } catch {
+          // The validated in-memory state can still reconnect this document.
+        }
+        return legacy
+      }
+      if (!navigator.locks) return persistMigration()
+
+      return await new Promise<TerminalResumeState | null>((resolve) => {
+        let settled = false
+        const settle = (state: TerminalResumeState | null) => {
+          if (settled) return
+          settled = true
+          resolve(state)
+        }
+        let release: () => void = () => {}
+        const released = new Promise<void>((releaseLock) => {
+          release = releaseLock
+        })
+        void navigator.locks
+          .request(`tengri-terminal-migration:${agentId}:${legacy.sessionId}`, { ifAvailable: true }, async (lock) => {
+            if (!lock || disposed) {
+              try {
+                sessionStorage.removeItem(legacyStorageKey)
+              } catch {
+                // The duplicate tab cannot claim the legacy session without the migration lock.
+              }
+              settle(null)
+              return
+            }
+            releaseLegacyMigration = release
+            settle(persistMigration())
+            await released
+          })
+          .catch(() => settle(persistMigration()))
+      })
     }
 
     const pendingCleanupIds = (): string[] => {
@@ -273,7 +326,7 @@ export function TerminalApp({
         cleanupChecked = true
       }
       if (!resumeChecked) {
-        const stored = resumeState()
+        const stored = resumeState() ?? (await migrateLegacyResumeState())
         if (stored) {
           const sessions = await runTengriAction<TengriTerminalSession[]>(
             { action: 'list-terminals', agentId },
@@ -728,8 +781,20 @@ export function TerminalApp({
         void cleanupCreatedTerminal()
       }
       releaseSessionClaim()
+      releaseLegacyMigration()
     }
-  }, [agentId, cleanupStorageKey, creationId, registerCloseHandler, run, storageKey, windowId])
+  }, [
+    agentId,
+    cleanupStorageKey,
+    creationId,
+    creationScope,
+    desktopId,
+    legacyStorageKey,
+    registerCloseHandler,
+    run,
+    storageKey,
+    windowId,
+  ])
 
   function find(direction: 'next' | 'previous') {
     const value = searchValue.trim()

@@ -688,6 +688,72 @@ test('preserves terminal identity on reload and isolates a duplicated desktop ta
   await duplicate.close()
 })
 
+test('migrates one legacy terminal resume state without sharing it across desktop tabs', async ({ page }) => {
+  const windowId = 'terminal-3'
+  const legacyStorageKey = `tengri:terminal:${readyAgent.id}:${windowId}`
+  const legacyResumeState = JSON.stringify({
+    agentId: readyAgent.id,
+    sessionId: 'terminal-legacy-0001',
+    reconnectToken: 'legacy-reconnect-token-0001',
+    sequence: 12,
+    cleanupPending: false,
+  })
+  const terminalStore: TerminalStore = {
+    sessions: [
+      {
+        id: 'terminal-legacy-0001',
+        creationId: `tengri-${readyAgent.id}-${windowId}`,
+        cwd: '/workspace',
+        createdAt: '2026-08-26T12:34:00.000Z',
+        lastActivityAt: '2026-08-26T12:34:00.000Z',
+        attached: false,
+      },
+    ],
+  }
+  await page.addInitScript(({ key, state }) => sessionStorage.setItem(key, state), {
+    key: legacyStorageKey,
+    state: legacyResumeState,
+  })
+  const originalMock = await mockTengri(page, { terminalStore })
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect(
+    page.getByRole('region', { name: 'Terminal window' }).getByText('Connected', { exact: true }),
+  ).toBeVisible()
+  expect(originalMock.actions.filter((action) => action.action === 'create-terminal')).toHaveLength(0)
+  const migrated = await page.evaluate(
+    ({ agentId, legacyKey, terminalWindowId }) => {
+      const desktopId = sessionStorage.getItem(`tengri:desktop:${agentId}`)
+      return {
+        desktopId,
+        legacy: sessionStorage.getItem(legacyKey),
+        state: desktopId ? sessionStorage.getItem(`tengri:terminal:${agentId}:${desktopId}:${terminalWindowId}`) : null,
+      }
+    },
+    { agentId: readyAgent.id, legacyKey: legacyStorageKey, terminalWindowId: windowId },
+  )
+  expect(migrated.legacy).toBeNull()
+  expect(migrated.desktopId).toMatch(/^[0-9a-f]{32}$/)
+  expect(JSON.parse(migrated.state ?? '{}')).toMatchObject({
+    agentId: readyAgent.id,
+    desktopId: migrated.desktopId,
+    sessionId: 'terminal-legacy-0001',
+  })
+
+  const duplicate = await page.context().newPage()
+  await duplicate.addInitScript(({ key, state }) => sessionStorage.setItem(key, state), {
+    key: legacyStorageKey,
+    state: legacyResumeState,
+  })
+  const duplicateMock = await mockTengri(duplicate, { terminalStore })
+  await duplicate.goto('/')
+  await duplicate.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  await expect.poll(() => duplicateMock.actions.filter((action) => action.action === 'create-terminal').length).toBe(1)
+  expect(await duplicate.evaluate((key) => sessionStorage.getItem(key), legacyStorageKey)).toBeNull()
+  expect(terminalStore.sessions).toHaveLength(2)
+  await duplicate.close()
+})
+
 test('reports the desktop window limit for shortcuts, Dock launches, and Spotlight actions', async ({ page }) => {
   await mockTengri(page)
   await page.goto('/')

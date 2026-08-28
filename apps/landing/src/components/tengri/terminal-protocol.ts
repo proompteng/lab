@@ -171,6 +171,42 @@ export function parseTerminalResumeState(
   }
 }
 
+export function parseLegacyTerminalResumeState(
+  value: string | null,
+  agentId: string,
+  desktopId: string,
+): TerminalResumeState | null {
+  if (!value) return null
+  let candidate: unknown
+  try {
+    candidate = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+  const state = candidate as Record<string, unknown>
+  if (
+    state.agentId !== agentId ||
+    'desktopId' in state ||
+    typeof state.sessionId !== 'string' ||
+    !SESSION_ID.test(state.sessionId)
+  ) {
+    return null
+  }
+  if (typeof state.reconnectToken !== 'string' || (state.reconnectToken && !isReconnectToken(state.reconnectToken))) {
+    return null
+  }
+  if (!isUint32(state.sequence)) return null
+  return {
+    agentId,
+    desktopId,
+    sessionId: state.sessionId,
+    reconnectToken: state.reconnectToken,
+    sequence: state.sequence,
+    cleanupPending: state.cleanupPending === true,
+  }
+}
+
 export function parseTerminalCleanupState(value: string | null, agentId: string): TerminalCleanupState | null {
   if (!value) return null
   let candidate: unknown

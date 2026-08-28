@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
+  parseLegacyTerminalResumeState,
   parseTerminalControlFrame,
   parseTerminalCleanupState,
   parseTerminalOutputFrame,
@@ -134,6 +135,30 @@ describe('Tengri terminal protocol', () => {
 
     expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.sessionId).toBe('abcdefghijklmnopqrstuvwx')
     expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-b')).toBeNull()
+  })
+
+  test('upgrades only the legacy resume shape into the active desktop', () => {
+    const legacyState = {
+      agentId: 'agent-a',
+      sessionId: 'abcdefghijklmnopqrstuvwx',
+      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+      sequence: 42,
+      cleanupPending: false,
+    }
+    const legacy = JSON.stringify(legacyState)
+
+    expect(parseLegacyTerminalResumeState(legacy, 'agent-a', 'desktop-a')).toEqual({
+      ...legacyState,
+      desktopId: 'desktop-a',
+    })
+    expect(parseLegacyTerminalResumeState(legacy, 'agent-b', 'desktop-a')).toBeNull()
+    expect(
+      parseLegacyTerminalResumeState(
+        JSON.stringify({ ...legacyState, desktopId: 'desktop-a' }),
+        'agent-a',
+        'desktop-a',
+      ),
+    ).toBeNull()
   })
 
   test('reconciles a transient desktop window with an existing guest session', () => {

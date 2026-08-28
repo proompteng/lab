@@ -66,17 +66,17 @@ function newDesktopId() {
 
 function createDesktopIdentityLease(agentId: string): DesktopIdentityLease {
   let released = false
-  let resolveIdentity = (_id: string) => undefined
+  let resolveIdentity: (id: string) => void = () => {}
   const identity = new Promise<string>((resolve) => {
     resolveIdentity = resolve
   })
   const lease: DesktopIdentityLease = {
     identity,
     references: 0,
-    release: () => undefined,
+    release: () => {},
     releaseTimer: null,
   }
-  let handlePageHide = () => undefined
+  let handlePageHide: () => void = () => {}
   const storageKey = `tengri:desktop:${agentId}`
   let storedId = ''
   try {
