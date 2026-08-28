@@ -1926,6 +1926,18 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
               "noValue": "NO COMPLETED RECEIPT",
               "unit": "currencyUSD"
             },
@@ -1955,7 +1967,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_forward_performance_total_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_forward_performance_total_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
               "instant": true,
               "legendFormat": "all costs",
               "range": false,
@@ -1974,6 +1986,18 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
               "noValue": "NO COMPLETED RECEIPT",
               "thresholds": {
                 "mode": "absolute",
@@ -2020,7 +2044,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_forward_performance_net_realized_pnl_after_costs_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
               "instant": true,
               "legendFormat": "net after all costs",
               "range": false,
@@ -2039,6 +2063,18 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 3,
+              "mappings": [
+                {
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "index": 0,
+                      "text": "INSUFFICIENT EVIDENCE"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
               "noValue": "NO COMPLETED RECEIPT",
               "thresholds": {
                 "mode": "absolute",
@@ -2085,7 +2121,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_forward_performance_net_realized_return_ratio{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
+              "expr": "max(bayn_forward_performance_net_realized_return_ratio{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or (vector(NaN) and on() max((bayn_forward_performance_evidence{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",status=\"insufficient_evidence\"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})))",
               "instant": true,
               "legendFormat": "net realized return",
               "range": false,
@@ -2383,6 +2419,6 @@ data:
       "timezone": "browser",
       "title": "Bayn Trading Operations",
       "uid": "bayn-cycle-operations",
-      "version": 6,
+      "version": 7,
       "weekStart": ""
     }
