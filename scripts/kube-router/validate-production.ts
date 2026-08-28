@@ -28,6 +28,7 @@ export const productionPaths = {
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
+  tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -95,7 +96,7 @@ function canonicalJson(value: unknown): unknown {
   )
 }
 
-function hermesPolicyHash(content: string): string {
+function networkPolicyHash(content: string): string {
   const contract = yamlDocuments(content)
     .map((policy) => ({ name: policy.metadata?.name, spec: policy.spec }))
     .sort((left, right) => String(left.name).localeCompare(String(right.name)))
@@ -246,7 +247,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   const hook = resource(yamlDocuments(files.preflightHook), 'Job', 'kube-router-policy-preflight')
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
-  const expectedHermesPolicyHash = hermesPolicyHash(files.hermesPolicies)
+  const expectedHermesPolicyHash = networkPolicyHash(files.hermesPolicies)
+  const expectedTengriPolicyHash = networkPolicyHash(files.tengriPolicies)
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -258,13 +260,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.preflightHook}: the bounded pre-DaemonSet coverage gate is incomplete`)
   }
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
-    `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')} | sort -u`,
+    `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')}`,
+    '} | sort -u',
+    'kubectl get namespace tengri',
+    "jq -e '.items | length > 0'",
+    "printf '%s\\n' tengri",
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
     'case "$namespace" in',
     'network-policy.proompteng.ai/retired-rollout-policy',
     `expected_hermes_policy_hash=${expectedHermesPolicyHash}`,
+    `expected_tengri_policy_hash=${expectedTengriPolicyHash}`,
     'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
     "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
     'Hermes NetworkPolicies differ from the exact reviewed policy set.',
@@ -373,6 +380,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     'set -euo pipefail',
     "printf '%s\\n' hermes",
+    'kubectl get namespace tengri',
+    "jq -e '.items | length > 0'",
+    "printf '%s\\n' tengri",
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])
@@ -435,6 +445,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [
     '- argocd/applications/kube-router/**',
+    '- argocd/applications/tengri/network-policies.yaml',
     '- docs/runbooks/kube-router-network-policy-rollout.md',
   ])
   requireTerms(failures, productionPaths.pullRequestWorkflow, files.pullRequestWorkflow, [

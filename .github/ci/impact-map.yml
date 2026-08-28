@@ -63,6 +63,7 @@ targets:
       - .github/workflows/pull-request.yml
       - argocd/applications/hermes/**
       - argocd/applications/kube-router/**
+      - argocd/applications/tengri/network-policies.yaml
       - argocd/applications/observability/cluster-metrics-alloy-config.river
       - argocd/applications/observability/cluster-metrics-alloy-deployment.yaml
       - argocd/applications/observability/graf-mimir-rules.yaml

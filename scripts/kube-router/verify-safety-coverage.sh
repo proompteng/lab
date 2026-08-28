@@ -8,6 +8,11 @@ desired_namespaces=$(
   {
     yq eval-all --no-doc --unwrapScalar 'select(.kind == "NetworkPolicy") | .metadata.namespace' "$safety_manifest"
     printf '%s\n' hermes
+    if kubectl get namespace tengri >/dev/null 2>&1 &&
+      kubectl -n tengri get networkpolicies.networking.k8s.io -o json |
+        jq -e '.items | length > 0' >/dev/null; then
+      printf '%s\n' tengri
+    fi
   } | sort -u
 )
 actual_namespaces=$(

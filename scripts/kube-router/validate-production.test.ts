@@ -133,11 +133,42 @@ spec:
   )
 })
 
-test('rejects safety coverage that omits enforced Hermes', async () => {
+test('rejects an unreviewed Tengri policy without a matching preflight contract', async () => {
   const files = copy(await loadProductionFiles())
-  files.coverageProbe = files.coverageProbe.replace("    printf '%s\\n' hermes", '    true')
+  files.tengriPolicies += `
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: unreviewed
+  namespace: tengri
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+`
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(
+      `${productionPaths.preflightHook}: missing production invariant "expected_tengri_policy_hash=`,
+    ),
+  )
+})
+
+test('rejects safety coverage that omits an enforced namespace', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace("      printf '%s\\n' tengri", '      true')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.coverageProbe}: missing production invariant "printf '%s\\\\n' hermes"`,
+    `${productionPaths.coverageProbe}: missing production invariant "printf '%s\\\\n' tengri"`,
+  )
+})
+
+test('rejects impact routing that skips Tengri policy changes', async () => {
+  const files = copy(await loadProductionFiles())
+  files.impactMap = files.impactMap.replace('      - argocd/applications/tengri/network-policies.yaml\n', '')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/tengri/network-policies.yaml"`,
   )
 })
 
