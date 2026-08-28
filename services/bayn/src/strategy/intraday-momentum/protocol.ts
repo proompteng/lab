@@ -25,6 +25,12 @@ const coreUniverse = {
   symbolHash: '8c6b71d066bce38f6f61d5264bb7ebdd45f44ee0c606b92ecf6bc68b81e1d49d',
 } as const
 
+export const intradayMomentumSourceTopics = Object.freeze({
+  bars: 'torghut.bars.1m.v1',
+  quotes: 'torghut.quotes.v1',
+  trades: 'torghut.trades.v1',
+} as const)
+
 export const intradayMomentumExecutionModel: Extract<
   ExecutionModel,
   { readonly schemaVersion: 'bayn.execution-model.v5' }
@@ -58,6 +64,11 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   feed: Schema.Literal('iex'),
   delayClass: Schema.Literal('real_time_exchange_only'),
+  sourceTopics: Schema.Struct({
+    bars: Schema.Literal(intradayMomentumSourceTopics.bars),
+    quotes: Schema.Literal(intradayMomentumSourceTopics.quotes),
+    trades: Schema.Literal(intradayMomentumSourceTopics.trades),
+  }),
   positionPolicy: Schema.Literal('long-only'),
   lookbackMinutes: IntradayMinuteOffsetSchema,
   decisionDelaySeconds: PositiveIntegerSchema,
@@ -186,6 +197,7 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   universe: coreUniverse.symbols,
   feed: 'iex',
   delayClass: 'real_time_exchange_only',
+  sourceTopics: intradayMomentumSourceTopics,
   positionPolicy: 'long-only',
   lookbackMinutes: 20,
   decisionDelaySeconds: 2,

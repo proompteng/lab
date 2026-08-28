@@ -40,6 +40,11 @@ interface FixtureOptions {
   readonly spreadBps?: number
   readonly displayedSize?: number
   readonly omitFirstBarFor?: string
+  readonly sourceTopics?: {
+    readonly bars: string
+    readonly quotes: string
+    readonly trades: string
+  }
 }
 
 const marketContextAt = (options: FixtureOptions) => {
@@ -73,6 +78,7 @@ const marketContextAt = (options: FixtureOptions) => {
   const rangeStart = rangeEnd - defaultIntradayMomentumProtocolDocument.lookbackMinutes * 60_000
   const observedLagMs = options.observedLagMs ?? defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000
   const observedAt = instant(rangeEnd + observedLagMs)
+  const sourceTopics = options.sourceTopics ?? { bars: barsTopic, quotes: quotesTopic, trades: tradesTopic }
   let barOffset = 1
   let quoteOffset = 1
   let tradeOffset = 1
@@ -88,7 +94,7 @@ const marketContextAt = (options: FixtureOptions) => {
       symbol,
       event_at: instant(rangeStart + minute * 60_000),
       ingested_at: instant(rangeStart + (minute + 1) * 60_000),
-      source_topic: barsTopic,
+      source_topic: sourceTopics.bars,
       source_partition: '0',
       source_offset: String(barOffset++),
       schema_version: '1',
@@ -119,7 +125,7 @@ const marketContextAt = (options: FixtureOptions) => {
       symbol,
       event_at: instant(quoteEventAt),
       ingested_at: instant(quoteEventAt + 100),
-      source_topic: quotesTopic,
+      source_topic: sourceTopics.quotes,
       source_partition: '0',
       source_offset: String(quoteOffset++),
       schema_version: '1',
@@ -143,7 +149,7 @@ const marketContextAt = (options: FixtureOptions) => {
       symbol,
       event_at: instant(quoteEventAt),
       ingested_at: instant(quoteEventAt + 100),
-      source_topic: tradesTopic,
+      source_topic: sourceTopics.trades,
       source_partition: '0',
       source_offset: String(tradeOffset++),
       schema_version: '1',
@@ -153,9 +159,9 @@ const marketContextAt = (options: FixtureOptions) => {
     }
   })
   const archiveWatermarks = [
-    { sourceTopic: barsTopic, sourcePartition: 0, inclusiveLastOffset: String(barOffset - 1) },
-    { sourceTopic: quotesTopic, sourcePartition: 0, inclusiveLastOffset: String(quoteOffset - 1) },
-    { sourceTopic: tradesTopic, sourcePartition: 0, inclusiveLastOffset: String(tradeOffset - 1) },
+    { sourceTopic: sourceTopics.bars, sourcePartition: 0, inclusiveLastOffset: String(barOffset - 1) },
+    { sourceTopic: sourceTopics.quotes, sourcePartition: 0, inclusiveLastOffset: String(quoteOffset - 1) },
+    { sourceTopic: sourceTopics.trades, sourcePartition: 0, inclusiveLastOffset: String(tradeOffset - 1) },
   ] as const
   const request = {
     sessionDate: '2026-08-18',
@@ -168,7 +174,7 @@ const marketContextAt = (options: FixtureOptions) => {
     universe: symbols,
     feed: defaultIntradayMomentumProtocolDocument.feed,
     delayClass: defaultIntradayMomentumProtocolDocument.delayClass,
-    sourceTopics: { bars: barsTopic, quotes: quotesTopic, trades: tradesTopic },
+    sourceTopics,
     maximumQuoteAgeMs: options.snapshotMaximumQuoteAgeMs ?? defaultIntradayMomentumProtocolDocument.maximumQuoteAgeMs,
     minimumWatermarkLagMs: defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000,
     archiveWatermarks,
@@ -373,6 +379,26 @@ describe('intraday momentum strategy', () => {
             rangeEndAt: '2026-08-18T18:00:00.000Z',
             snapshotMaximumQuoteAgeMs: protocol.maximumQuoteAgeMs + 1,
             returnBps: qualifyingReturns,
+          }),
+          protocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-identity' })
+  })
+
+  test('rejects a fully verified snapshot sourced from alternate archive topics', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    expect(
+      error(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T18:00:00.000Z',
+            returnBps: qualifyingReturns,
+            sourceTopics: {
+              bars: 'torghut.bars.1m.experimental.v1',
+              quotes: 'torghut.quotes.experimental.v1',
+              trades: 'torghut.trades.experimental.v1',
+            },
           }),
           protocol,
         ),

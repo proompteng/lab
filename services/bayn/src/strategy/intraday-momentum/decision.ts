@@ -163,6 +163,9 @@ const validateSnapshot = (
     manifest.universeSymbolHash !== protocol.universeSymbolHash ||
     manifest.feed !== protocol.feed ||
     manifest.delayClass !== protocol.delayClass ||
+    manifest.sourceTopics.bars !== protocol.sourceTopics.bars ||
+    manifest.sourceTopics.quotes !== protocol.sourceTopics.quotes ||
+    manifest.sourceTopics.trades !== protocol.sourceTopics.trades ||
     manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
     manifest.symbols.length !== protocol.universe.length ||
     manifest.symbols.some((symbol, index) => symbol !== protocol.universe[index])
