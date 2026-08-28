@@ -128,6 +128,24 @@ beforeAll(async () => {
         contentType: 'application/octet-stream',
       })
     },
+    searchFiles(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {
+        entries: [
+          {
+            name: 'main.ts',
+            path: '/workspace/main.ts',
+            directory: false,
+            size: 42,
+            modifiedAt: '2026-08-28T00:00:00Z',
+          },
+        ],
+        truncated: true,
+      })
+    },
     resolveCodexApproval(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -216,6 +234,25 @@ describe('Tengri gRPC BFF transport', () => {
     expect(error).toMatchObject({
       message: 'This file is not valid UTF-8 text',
       status: 415,
+    })
+  })
+
+  test('preserves bounded file-search metadata from the control plane', async () => {
+    const { searchFiles } = await import('./grpc')
+    const result = await searchFiles('github:42', 'agent-test', '/workspace', 'main')
+
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', path: '/workspace', query: 'main', limit: 100 })
+    expect(result).toEqual({
+      entries: [
+        {
+          name: 'main.ts',
+          path: '/workspace/main.ts',
+          directory: false,
+          size: 42,
+          modifiedAt: '2026-08-28T00:00:00Z',
+        },
+      ],
+      truncated: true,
     })
   })
 

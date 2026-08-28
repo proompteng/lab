@@ -51,6 +51,11 @@ export type TengriFileEntry = {
   modifiedAt: string
 }
 
+export type TengriFileSearchResult = {
+  entries: TengriFileEntry[]
+  truncated: boolean
+}
+
 export type TengriFileEventKind = 'changed' | 'created' | 'removed' | 'renamed' | 'reset' | 'unknown'
 
 export type TengriFileEvent = {

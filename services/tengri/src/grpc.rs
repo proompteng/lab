@@ -515,14 +515,15 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let limit = request.limit.clamp(1, 200);
-        let entries = self
+        let result = self
             .guest(&principal, &request.agent_id)
             .await?
             .search_files(&request.query, &request.path, limit)
             .await
             .map_err(map_guest_error)?;
         Ok(Response::new(SearchFilesResponse {
-            entries: entries.into_iter().map(file_entry).collect(),
+            entries: result.entries.into_iter().map(file_entry).collect(),
+            truncated: result.truncated,
         }))
     }
 
