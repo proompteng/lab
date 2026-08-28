@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::{
     activity::{
@@ -566,15 +567,11 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<TerminalSession>, Status> {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
+        let creation_id = compatible_terminal_creation_id(&request.creation_id);
         let creation = self
             .guest(&principal, &request.agent_id)
             .await?
-            .create_terminal(
-                &request.creation_id,
-                &request.cwd,
-                request.columns,
-                request.rows,
-            )
+            .create_terminal(&creation_id, &request.cwd, request.columns, request.rows)
             .await
             .map_err(map_guest_error)?;
         if creation.created {
@@ -1494,6 +1491,13 @@ fn validate_resource_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
+fn compatible_terminal_creation_id(value: &str) -> String {
+    if value.is_empty() {
+        return format!("legacy-{}", Uuid::new_v4().simple());
+    }
+    value.to_owned()
+}
+
 fn validate_preview_session_id(value: &str) -> Result<(), Status> {
     if value.len() != 24
         || !value
@@ -2195,5 +2199,23 @@ mod tests {
         assert!(validate_preview_path("https://private.example").is_err());
         assert!(validate_preview_path("/app#stolen").is_err());
         assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
+    }
+
+    #[test]
+    fn legacy_terminal_requests_receive_valid_unique_creation_ids() {
+        let first = compatible_terminal_creation_id("");
+        let second = compatible_terminal_creation_id("");
+
+        assert!((16..=128).contains(&first.len()));
+        assert!(
+            first
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        );
+        assert_ne!(first, second);
+        assert_eq!(
+            compatible_terminal_creation_id("tengri-existing-creation"),
+            "tengri-existing-creation"
+        );
     }
 }
