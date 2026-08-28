@@ -1,7 +1,14 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, mock, test } from 'bun:test'
 import { githubSubjectId } from './identity'
 
 void mock.module('server-only', () => ({}))
+
+afterEach(() => {
+  delete process.env.TENGRI_BFF_SECRET_DIR
+})
 
 describe('Tengri GitHub identity', () => {
   test('uses the provider account ID rather than Better Auth internal user ID', () => {
@@ -40,4 +47,31 @@ describe('Tengri GitHub identity', () => {
     expect(setCookies.every((cookie) => cookie.includes('SameSite=Lax'))).toBe(true)
     expect(setCookies.join(';')).not.toContain('github-client-secret')
   })
+
+  test('reloads Better Auth when a projected secret rotates', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'tengri-bff-auth-'))
+    process.env.TENGRI_BFF_SECRET_DIR = directory
+    process.env.BETTER_AUTH_URL = 'https://proompteng.ai'
+    writeSecret(directory, 'BETTER_AUTH_SECRET', 'better-auth-secret-value-before-rotation')
+    writeSecret(directory, 'GITHUB_CLIENT_ID', 'github-client-id')
+    writeSecret(directory, 'GITHUB_CLIENT_SECRET', 'github-client-secret-before-rotation')
+
+    try {
+      const { getTengriAuth } = await import('./auth')
+      const original = getTengriAuth()
+      expect(original).not.toBeNull()
+
+      writeSecret(directory, 'GITHUB_CLIENT_SECRET', 'github-client-secret-after-rotation')
+      const rotated = getTengriAuth()
+
+      expect(rotated).not.toBeNull()
+      expect(rotated).not.toBe(original)
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
 })
+
+function writeSecret(directory: string, name: string, value: string) {
+  writeFileSync(path.join(directory, name), `${value}\n`, { mode: 0o600 })
+}
