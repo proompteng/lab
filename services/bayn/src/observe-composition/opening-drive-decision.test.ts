@@ -445,6 +445,9 @@ describe('opening-drive runtime decision boundary', () => {
       operation: 'entry-decision',
       message: 'existing position AMD has no fresh entry-cycle liquidation quote',
     })
+    expect(
+      success(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, [{ symbol: 'TSLA', quantityMicros: '1000000' }])),
+    ).toBeUndefined()
     expect(success(requireFreshOpeningDrivePositionQuotes(delayedSnapshot, []))).toBeUndefined()
   })
 

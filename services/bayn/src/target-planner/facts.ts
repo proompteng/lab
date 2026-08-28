@@ -184,6 +184,9 @@ export const parseTargetPlannerFacts = Pipeable.dual(2, parseTargetPlannerFactsD
 const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
   const { input, priceSymbols, targetSymbols } = facts
   const accountId = input.accountId
+  const partialClose =
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    input.executionTerms.executionPurpose !== undefined
   return (
     targetSymbols.length > 0 &&
     sameStrings(targetSymbols, priceSymbols) &&
@@ -192,7 +195,7 @@ const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
     input.brokerState.account.accountId === accountId &&
     input.brokerState.reconciliation.accountId === accountId &&
     input.brokerState.positions.every(
-      (position) => position.accountId === accountId && targetSymbols.includes(position.symbol),
+      (position) => position.accountId === accountId && (partialClose || targetSymbols.includes(position.symbol)),
     ) &&
     input.brokerState.orders.every((order) => order.accountId === accountId)
   )

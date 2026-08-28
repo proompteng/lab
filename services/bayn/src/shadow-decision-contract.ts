@@ -447,6 +447,14 @@ const executionMaterialIssues = (
     document.targetPlan.executionTerms?.priceReference === 'reconciled-broker-position-mark'
   const bindsReconciledPositions =
     document.bindings.executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+  const usesLiquidationMarketData = document.bindings.executionMarketData?.purpose === 'LIQUIDATION'
+  const isClosePlan = document.targetPlan.executionTerms?.executionPurpose !== undefined
+  if (usesLiquidationMarketData !== isClosePlan) {
+    issues.push({
+      path: ['bindings', 'executionMarketData', 'purpose'],
+      issue: 'liquidation market data must bind a close-only target plan and must not bind an entry plan',
+    })
+  }
   if (usesReconciledPositionMark !== bindsReconciledPositions) {
     issues.push({
       path: ['bindings', 'executionMarketData'],

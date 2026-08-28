@@ -38,6 +38,7 @@ import { strictParseOptions } from './schemas'
 import {
   decodeObserveShadowDecisionDocument,
   ExecutionMarketDataBindingSchema,
+  makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   ShadowDecisionContractFailure,
   type ExecutionMarketDataBinding,
@@ -1139,6 +1140,37 @@ describe('OBSERVE shadow decision', () => {
       failure: 'binding',
       message: 'intraday entry requires non-liquidation market-data evidence',
     })
+  })
+
+  test('rejects rehashed liquidation evidence when durably decoding an intraday entry decision', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData === undefined) throw new Error('intraday fixture must include execution market data')
+    const brokerState = makeBrokerState([])
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: { observedAt: brokerObservedAt, contentHash: brokerState.stateHash },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const forged = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        executionMarketData: liquidationMarketDataBinding(input.cycle),
+      },
+    })
+
+    expect(Result.isFailure(forged)).toBe(true)
+    if (Result.isFailure(forged)) expect(String(forged.failure.cause)).toContain('liquidation market data')
   })
 
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {

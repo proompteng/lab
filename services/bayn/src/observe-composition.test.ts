@@ -3389,8 +3389,8 @@ describe('OBSERVE runtime composition', () => {
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
-    const buildCloseProgram = (
-      position: Position,
+    const buildClosePositionsProgram = (
+      positions: readonly Position[],
       closeInput: typeof input = input,
       observedAt: string = closeObservedAt,
     ) =>
@@ -3402,7 +3402,14 @@ describe('OBSERVE runtime composition', () => {
           policy,
           cycle: boundCycle,
           entryDocument,
-          reconcile: Effect.succeed(reconciliationResultAt(observedAt, 0, 0, [{ ...position, observedAt }])),
+          reconcile: Effect.succeed(
+            reconciliationResultAt(
+              observedAt,
+              0,
+              0,
+              positions.map((position) => ({ ...position, observedAt })),
+            ),
+          ),
           closeExpiresAt,
         })
       }).pipe(
@@ -3417,6 +3424,11 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(WriterFence, {} as WriterFenceService),
         Effect.provide(TestClock.layer()),
       )
+    const buildCloseProgram = (
+      position: Position,
+      closeInput: typeof input = input,
+      observedAt: string = closeObservedAt,
+    ) => buildClosePositionsProgram([position], closeInput, observedAt)
     const buildClose = (position: Position) => Effect.runPromise(buildCloseProgram(position))
     const close = await buildClose(openPosition)
     const shortPosition: Position = {
@@ -3436,6 +3448,16 @@ describe('OBSERVE runtime composition', () => {
     const outOfUniverseClose = await Effect.runPromise(
       buildCloseProgram(outOfUniversePosition, { ...input, intradayMarketData: unusedArchive }),
     )
+    const wholeSymbol = protocol.universe.find((symbol) => symbol !== heldSymbol)
+    if (wholeSymbol === undefined) return expect.unreachable('mixed close fixture requires two strategy symbols')
+    const wholePosition: Position = {
+      ...openPosition,
+      symbol: wholeSymbol,
+      quantityMicros: '1000000',
+      marketValueMicros: '100000000',
+    }
+    const fractionalPass = await Effect.runPromise(buildClosePositionsProgram([openPosition, wholePosition]))
+    const wholePass = await Effect.runPromise(buildClosePositionsProgram([wholePosition]))
     const unavailable = new IntradaySnapshotFailure({
       reason: 'not-ready',
       message: 'liquidation snapshot lacks a post-range quote',
@@ -3564,6 +3586,36 @@ describe('OBSERVE runtime composition', () => {
           },
         ],
       },
+    })
+    expect(fractionalPass.targetPlan).toMatchObject({
+      executionTerms: {
+        executionPurpose: 'fractional-close',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+      },
+      intentTargets: [
+        {
+          symbol: heldSymbol,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.Day,
+          quantityMicros: '500000',
+        },
+      ],
+    })
+    expect(wholePass.targetPlan).toMatchObject({
+      executionTerms: {
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+      },
+      intentTargets: [
+        {
+          symbol: wholeSymbol,
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
+          quantityMicros: '1000000',
+        },
+      ],
     })
     const withExecutionTerms = (
       targetPlan: typeof close.targetPlan,

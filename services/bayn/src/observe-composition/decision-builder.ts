@@ -476,9 +476,11 @@ const reconciledPositionLiquidationBinding = (
   cycle: AutonomousCycle,
   calendar: MarketCalendarObservation,
   brokerState: ReconciliationPassResult['brokerState'],
+  symbols: readonly string[],
 ): Result.Result<ExecutionMarketDataBinding, ObserveDecisionCompositionFailure> => {
+  const selectedSymbols = new Set(symbols)
   const positions = brokerState.positions
-    .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
+    .filter(({ symbol, quantityMicros }) => selectedSymbols.has(symbol) && BigInt(quantityMicros) !== 0n)
     .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
     .map(({ symbol, quantityMicros, marketPriceMicros, observedAt }) => ({
       symbol,
@@ -1595,11 +1597,19 @@ export const buildClosingExecutionCycleDecision = (
           .map((position) => position.symbol),
       ),
     ].sort()
-    const requiresFractionalClose = reconciliation.brokerState.positions.some(
-      (position) => BigInt(position.quantityMicros) % 1_000_000n !== 0n,
-    )
+    const fractionalLiquidationSymbols = reconciliation.brokerState.positions
+      .filter(
+        (position) => BigInt(position.quantityMicros) !== 0n && BigInt(position.quantityMicros) % 1_000_000n !== 0n,
+      )
+      .map((position) => position.symbol)
+      .sort()
     const symbols =
-      preparation.executionModel.schemaVersion === 'bayn.execution-model.v5' ? liquidationSymbols : legacyCloseSymbols
+      fractionalLiquidationSymbols.length > 0
+        ? fractionalLiquidationSymbols
+        : preparation.executionModel.schemaVersion === 'bayn.execution-model.v5'
+          ? liquidationSymbols
+          : legacyCloseSymbols
+    const requiresFractionalClose = symbols.some((symbol) => fractionalLiquidationSymbols.includes(symbol))
     const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
@@ -1627,13 +1637,7 @@ export const buildClosingExecutionCycleDecision = (
             )
             sourceUniverse = definition.parameters.universe
             queryEffect = Effect.fromResult(
-              intradayMomentumCloseQuery(
-                cycle,
-                definition.parameters,
-                executionSession.calendar,
-                evaluatedAt,
-                liquidationSymbols,
-              ),
+              intradayMomentumCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt, symbols),
             ).pipe(
               Effect.mapError((cause) =>
                 cause instanceof IntradayMomentumCloseAwaitingSnapshot
@@ -1652,9 +1656,14 @@ export const buildClosingExecutionCycleDecision = (
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
           }
-          if (liquidationSymbols.some((symbol) => !sourceUniverse.includes(symbol))) {
+          if (symbols.some((symbol) => !sourceUniverse.includes(symbol))) {
             const binding = yield* Effect.fromResult(
-              reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState),
+              reconciledPositionLiquidationBinding(
+                cycle,
+                executionSession.calendar,
+                reconciliation.brokerState,
+                symbols,
+              ),
             ).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )

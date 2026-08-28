@@ -279,8 +279,9 @@ export const requireFreshIntradayPositionQuotes = (
   positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
 ): Result.Result<void, OpeningDriveRuntimeDecisionFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
+  const entryUniverse = new Set(snapshot.manifest.symbols)
   for (const position of positions) {
-    if (BigInt(position.quantityMicros) === 0n) continue
+    if (BigInt(position.quantityMicros) === 0n || !entryUniverse.has(position.symbol)) continue
     const quote = snapshot.latestQuotes[position.symbol]
     if (quote === undefined) {
       return Result.fail(

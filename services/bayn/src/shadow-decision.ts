@@ -212,12 +212,15 @@ const revaluePositionAtReferencePrice = (position: Position, referencePriceMicro
 const revalueInitialPositions = (
   positions: readonly Position[],
   referencePrices: Readonly<Record<string, string>>,
+  preserveReconciledMarksForUnselectedPositions: boolean,
 ): Result.Result<readonly Position[], ShadowDecisionError> =>
   Result.all(
     positions.map((position) => {
       const referencePrice = referencePrices[position.symbol]
       return referencePrice === undefined
-        ? Result.fail(error('binding', `held symbol ${position.symbol} has no target-planning reference price`))
+        ? preserveReconciledMarksForUnselectedPositions
+          ? Result.succeed(position)
+          : Result.fail(error('binding', `held symbol ${position.symbol} has no target-planning reference price`))
         : Result.succeed(revaluePositionAtReferencePrice(position, referencePrice))
     }),
   ).pipe(Result.map((revalued) => revalued.sort(compareSymbols)))
@@ -367,7 +370,12 @@ const validateBindings = (
   }
   if (executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
     const positions = plannerInput.brokerState.positions
-      .filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n)
+      .filter(
+        ({ symbol, quantityMicros }) =>
+          decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+          decision.symbols.includes(symbol) &&
+          BigInt(quantityMicros) !== 0n,
+      )
       .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
     const bindingMatchesReconciliation =
       executionMarketData.reconciliationId === plannerInput.brokerState.reconciliation.reconciliationId &&
@@ -794,6 +802,8 @@ const prepareShadowRisk = (context: ShadowDecisionContext): Result.Result<Prepar
     const revalued = revalueInitialPositions(
       firstRiskInput?.state.positions ?? input.plannerInput.brokerState.positions,
       input.plannerInput.referencePrices.priceMicros,
+      input.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+        input.plannerInput.executionTerms.executionPurpose !== undefined,
     )
     if (Result.isFailure(revalued)) return Result.fail(revalued.failure)
     initialPositions = revalued.success
