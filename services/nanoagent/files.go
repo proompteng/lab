@@ -308,6 +308,23 @@ func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *htt
 		writeWorkspaceError(writer, err)
 		return
 	}
+	logicalSource := filepath.Join(server.workspace.realRoot, sourceRelative)
+	sourceInfo, err := server.workspace.safeRoot.Lstat(sourceRelative)
+	if err != nil {
+		writeWorkspaceError(writer, err)
+		return
+	}
+	rawSource := source
+	if sourceInfo.Mode()&os.ModeSymlink != 0 {
+		// Rename moves a leaf symlink entry rather than its target, but fsnotify
+		// still reports that entry beneath the canonical parent directory.
+		rawSourceParent, err := filepath.EvalSymlinks(filepath.Dir(logicalSource))
+		if err != nil {
+			writeWorkspaceError(writer, err)
+			return
+		}
+		rawSource = filepath.Join(rawSourceParent, filepath.Base(logicalSource))
+	}
 	destination, err := server.workspace.resolveForWrite(input.DestinationPath)
 	if err != nil {
 		writeWorkspaceError(writer, err)
@@ -333,21 +350,43 @@ func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *htt
 		writeWorkspaceError(writer, err)
 		return
 	}
-	if err := server.workspace.safeRoot.Rename(sourceRelative, destinationRelative); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	entry, err := server.fileEntryRelative(destinationRelative)
+	logicalDestination := filepath.Join(server.workspace.realRoot, destinationRelative)
+	rawDestinationParent, err := filepath.EvalSymlinks(filepath.Dir(destination))
 	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	server.fileWatcher.publish(fileEvent{
-		Kind:         "renamed",
-		Path:         entry.Path,
-		PreviousPath: server.workspace.displayRelative(sourceRelative),
-		Entry:        &entry,
-	})
+	rawDestination := filepath.Join(rawDestinationParent, filepath.Base(destination))
+	renameGeneration, err := server.fileWatcher.beginPairedRenamePaths(
+		logicalSource,
+		rawSource,
+		logicalDestination,
+		rawDestination,
+	)
+	if err != nil {
+		writeAPIError(writer, http.StatusConflict, err.Error())
+		return
+	}
+	renamePublished := false
+	defer func() {
+		if !renamePublished {
+			server.fileWatcher.cancelPairedRename(logicalSource, renameGeneration)
+		}
+	}()
+	if err := server.workspace.safeRoot.Rename(sourceRelative, destinationRelative); err != nil {
+		writeWorkspaceError(writer, err)
+		return
+	}
+	destinationPath := server.workspace.displayRelative(destinationRelative)
+	entry, err := server.fileEntryRelative(destinationRelative)
+	if err != nil {
+		server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: destinationPath})
+		renamePublished = true
+		writeWorkspaceError(writer, err)
+		return
+	}
+	server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: entry.Path, Entry: &entry})
+	renamePublished = true
 	writeJSON(writer, http.StatusOK, entry)
 }
 
@@ -513,7 +552,7 @@ func createWorkspaceTemporaryFile(workspace workspace, parent string, mode os.Fi
 		if _, err := rand.Read(suffix[:]); err != nil {
 			return "", nil, fmt.Errorf("generate temporary file name: %w", err)
 		}
-		name := filepath.Join(parent, fmt.Sprintf(".nanoagent-write-%x", suffix))
+		name := filepath.Join(parent, fmt.Sprintf("%s%x", workspaceTemporaryFilePrefix, suffix))
 		file, err := workspace.safeRoot.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if err == nil {
 			return name, file, nil

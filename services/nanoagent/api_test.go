@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,54 @@ func TestFileAPIWritesReadsAndListsWorkspaceFiles(t *testing.T) {
 	}
 }
 
+func TestFileAPIAtomicWriteDoesNotExposeTemporaryRenameEvents(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	id, events, err := server.fileWatcher.subscribe(0, "/", server.workspace.realRoot)
+	if err != nil {
+		t.Fatalf("subscribe workspace: %v", err)
+	}
+	defer server.fileWatcher.unsubscribe(id)
+	body, err := json.Marshal(writeFileRequest{
+		Path:    "/document.txt",
+		Content: base64.StdEncoding.EncodeToString([]byte("saved")),
+	})
+	if err != nil {
+		t.Fatalf("marshal write request: %v", err)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	quiet := time.NewTimer(time.Hour)
+	if !quiet.Stop() {
+		<-quiet.C
+	}
+	defer quiet.Stop()
+	sawTarget := false
+	for {
+		select {
+		case event := <-events:
+			if event.Kind == "reset" || strings.Contains(event.Path, "/.nanoagent-write-") {
+				t.Fatalf("atomic write leaked temporary filesystem event: %#v", event)
+			}
+			if event.Path == "/document.txt" {
+				sawTarget = true
+				quiet.Reset(250 * time.Millisecond)
+			}
+		case <-quiet.C:
+			if sawTarget {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("timed out waiting for the written target event")
+		}
+	}
+}
+
 func TestFileAPIAcceptsTheAdvertisedFourMiBPayload(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
@@ -282,6 +331,269 @@ func TestFileAPIRejectsSymlinkIntoInternalMetadata(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(internal, "injected.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("internal metadata was modified through a symlink: %v", err)
+	}
+}
+
+func TestFileAPIMoveReportsTheLogicalSymlinkEntryPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	t.Parallel()
+	server := testAPIServer(t)
+	if err := os.WriteFile(filepath.Join(server.workspace.root, "target.txt"), []byte("target"), 0o640); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(server.workspace.root, "link.txt")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	id, events, err := server.fileWatcher.subscribe(0, "/link.txt", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer server.fileWatcher.unsubscribe(id)
+	body, err := json.Marshal(moveFileRequest{SourcePath: "/link.txt", DestinationPath: "/moved-link.txt"})
+	if err != nil {
+		t.Fatalf("marshal move request: %v", err)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
+	}
+	if event := <-events; event.Kind != "renamed" || event.PreviousPath != "/link.txt" || event.Path != "/moved-link.txt" {
+		t.Fatalf("symlink move event = %#v, want logical entry paths", event)
+	}
+	info, err := os.Lstat(filepath.Join(server.workspace.root, "moved-link.txt"))
+	if err != nil {
+		t.Fatalf("lstat moved symlink: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("moved entry mode = %v, want symlink", info.Mode())
+	}
+}
+
+func TestFileAPIMoveCorrelatesRawEventsThroughSymlinkedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	t.Parallel()
+	server := testAPIServer(t)
+	actual := filepath.Join(server.workspace.realRoot, "actual")
+	if err := os.Mkdir(actual, 0o750); err != nil {
+		t.Fatalf("create actual directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(actual, "source.txt"), []byte("source"), 0o640); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
+		t.Fatalf("create parent symlink: %v", err)
+	}
+	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	if err != nil {
+		t.Fatalf("subscribe canonical parent: %v", err)
+	}
+	defer server.fileWatcher.unsubscribe(id)
+	body, err := json.Marshal(moveFileRequest{
+		SourcePath:      "/alias/source.txt",
+		DestinationPath: "/alias/moved.txt",
+	})
+	if err != nil {
+		t.Fatalf("marshal move request: %v", err)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
+	}
+	paired := false
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.Kind != "renamed" || event.PreviousPath != "/alias/source.txt" || event.Path != "/alias/moved.txt" {
+				t.Fatalf("symlink-parent move event = %#v, want one logical paired rename", event)
+			}
+			if paired {
+				t.Fatalf("symlink-parent move emitted duplicate paired event: %#v", event)
+			}
+			paired = true
+		case <-deadline.C:
+			if !paired {
+				t.Fatal("timed out waiting for symlink-parent paired rename")
+			}
+			return
+		}
+	}
+}
+
+func TestFileAPIMoveCorrelatesLeafSymlinkThroughSymlinkedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional privileges on Windows")
+	}
+	t.Parallel()
+	server := testAPIServer(t)
+	actual := filepath.Join(server.workspace.realRoot, "actual")
+	if err := os.Mkdir(actual, 0o750); err != nil {
+		t.Fatalf("create actual directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(actual, "target.txt"), []byte("target"), 0o640); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(actual, "link.txt")); err != nil {
+		t.Fatalf("create leaf symlink: %v", err)
+	}
+	if err := os.Symlink("actual", filepath.Join(server.workspace.realRoot, "alias")); err != nil {
+		t.Fatalf("create parent symlink: %v", err)
+	}
+	id, events, err := server.fileWatcher.subscribe(0, "/", actual)
+	if err != nil {
+		t.Fatalf("subscribe canonical parent: %v", err)
+	}
+	defer server.fileWatcher.unsubscribe(id)
+	body, err := json.Marshal(moveFileRequest{
+		SourcePath:      "/alias/link.txt",
+		DestinationPath: "/alias/moved-link.txt",
+	})
+	if err != nil {
+		t.Fatalf("marshal move request: %v", err)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("move status = %d body = %s", response.Code, response.Body.String())
+	}
+	paired := false
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.Kind != "renamed" || event.PreviousPath != "/alias/link.txt" || event.Path != "/alias/moved-link.txt" {
+				t.Fatalf("combined-symlink move event = %#v, want one logical paired rename", event)
+			}
+			if paired {
+				t.Fatalf("combined-symlink move emitted duplicate paired event: %#v", event)
+			}
+			paired = true
+		case <-deadline.C:
+			if !paired {
+				t.Fatal("timed out waiting for combined-symlink paired rename")
+			}
+			info, err := os.Lstat(filepath.Join(actual, "moved-link.txt"))
+			if err != nil {
+				t.Fatalf("lstat moved symlink: %v", err)
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("moved entry mode = %v, want symlink", info.Mode())
+			}
+			return
+		}
+	}
+}
+
+func TestFileAPIMoveDoesNotDependOnSpareWatcherCapacity(t *testing.T) {
+	t.Parallel()
+	server := testAPIServer(t)
+	source := filepath.Join(server.workspace.root, "source.txt")
+	if err := os.WriteFile(source, []byte("move me"), 0o640); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	server.fileWatcher.mu.Lock()
+	for index := range fileWatchDirectoryLimit {
+		server.fileWatcher.watched[fmt.Sprintf("/already-watched/%03d", index)] = 1
+	}
+	server.fileWatcher.mu.Unlock()
+	body, err := json.Marshal(moveFileRequest{SourcePath: "/source.txt", DestinationPath: "/destination/moved.txt"})
+	if err != nil {
+		t.Fatalf("marshal move request: %v", err)
+	}
+
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("move at watcher limit status = %d body = %s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(server.workspace.root, "destination", "moved.txt"))
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if string(content) != "move me" {
+		t.Fatalf("destination content = %q", content)
+	}
+	if _, err := os.Lstat(source); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source still exists after move: %v", err)
+	}
+}
+
+func TestFileAPIAllowsImmediateFollowUpMovesWhileEchoFenceIsPending(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		prepare     func(*testing.T, *apiServer)
+		source      string
+		destination string
+	}{
+		{
+			name:        "previous destination becomes source",
+			source:      "/b.txt",
+			destination: "/c.txt",
+		},
+		{
+			name: "previous source becomes destination",
+			prepare: func(t *testing.T, server *apiServer) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(server.workspace.root, "c.txt"), []byte("replacement"), 0o640); err != nil {
+					t.Fatalf("write replacement source: %v", err)
+				}
+			},
+			source:      "/c.txt",
+			destination: "/a.txt",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := testAPIServer(t)
+			_ = server.fileWatcher.close()
+			server.fileWatcher = &fileWatcher{
+				workspace:        server.workspace,
+				subscriptions:    make(map[uint64]fileSubscription),
+				watched:          make(map[string]uint32),
+				renameFence:      time.Second,
+				expectedRenames:  make(map[string]expectedFileRename),
+				completedRenames: make(map[uint64]completedFileRename),
+			}
+			if err := os.WriteFile(filepath.Join(server.workspace.root, "a.txt"), []byte("original"), 0o640); err != nil {
+				t.Fatalf("write initial source: %v", err)
+			}
+			move := func(source string, destination string) *httptest.ResponseRecorder {
+				t.Helper()
+				body, err := json.Marshal(moveFileRequest{SourcePath: source, DestinationPath: destination})
+				if err != nil {
+					t.Fatalf("marshal move request: %v", err)
+				}
+				return performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPost, "/v1/files/move", body)
+			}
+
+			if response := move("/a.txt", "/b.txt"); response.Code != http.StatusOK {
+				t.Fatalf("initial move status = %d body = %s", response.Code, response.Body.String())
+			}
+			if test.prepare != nil {
+				test.prepare(t, server)
+			}
+			if response := move(test.source, test.destination); response.Code != http.StatusOK {
+				t.Fatalf("follow-up move status = %d body = %s", response.Code, response.Body.String())
+			}
+			content, err := os.ReadFile(filepath.Join(server.workspace.root, strings.TrimPrefix(test.destination, "/")))
+			if err != nil {
+				t.Fatalf("read follow-up destination: %v", err)
+			}
+			want := "original"
+			if test.source == "/c.txt" {
+				want = "replacement"
+			}
+			if string(content) != want {
+				t.Fatalf("follow-up destination content = %q, want %q", content, want)
+			}
+		})
 	}
 }
 
