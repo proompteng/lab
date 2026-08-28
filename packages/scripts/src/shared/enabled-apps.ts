@@ -7,7 +7,13 @@ import YAML from 'yaml'
 
 import { fatal, repoRoot } from './cli'
 
-export type EnabledAppClass = 'nix-image' | 'helm-chart' | 'vendor-manifest' | 'external-source' | 'deferred'
+export type EnabledAppClass =
+  | 'nix-image'
+  | 'workflow-image'
+  | 'helm-chart'
+  | 'vendor-manifest'
+  | 'external-source'
+  | 'deferred'
 
 export type EnabledAppInventoryEntry = {
   name: string
@@ -138,6 +144,13 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   [
     'tigresse',
     'operator source lives in the private proompteng/tigresse repository; lab only vendors the chart and pins its image digest',
+  ],
+])
+
+const releaseWorkflowImageApps = new Map<string, string>([
+  [
+    'tengri',
+    'Tengri and Nanoagent are built, signed, and promoted together by the dedicated multi-architecture Tengri release workflow',
   ],
 ])
 
@@ -362,7 +375,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   }
 }
 
-const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
+export const classifyEnabledApp = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
   if (entry.repoURL !== labRepoURL) {
     return { ...entry, class: 'external-source' }
   }
@@ -370,6 +383,11 @@ const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => 
   const manifestOnlyReason = manifestOnlyRepoImageApps.get(entry.name)
   if (manifestOnlyReason) {
     return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
+  }
+
+  const releaseWorkflowReason = releaseWorkflowImageApps.get(entry.name)
+  if (releaseWorkflowReason && entry.repoImages.length > 0 && entry.workflowPaths.length > 0) {
+    return { ...entry, class: 'workflow-image', deferredReason: releaseWorkflowReason }
   }
 
   if (entry.repoImages.length > 0) {
@@ -409,7 +427,7 @@ export const loadEnabledAppInventory = (root = repoRoot): EnabledAppInventory =>
   }
 
   const entries = [...deduped.values()]
-    .map((entry) => classify(inspectApplicationPath(root, entry)))
+    .map((entry) => classifyEnabledApp(inspectApplicationPath(root, entry)))
     .sort((a, b) => a.name.localeCompare(b.name))
 
   return {
@@ -436,6 +454,17 @@ export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): voi
   if (chartBuilds.length > 0) {
     throw new Error(
       `Helm-chart app(s) unexpectedly own lab images: ${chartBuilds.map((entry) => entry.name).join(', ')}`,
+    )
+  }
+
+  const invalidWorkflowImages = inventory.entries.filter(
+    (entry) =>
+      entry.class === 'workflow-image' &&
+      (entry.repoImages.length === 0 || entry.workflowPaths.length === 0 || entry.nixImageAttr !== undefined),
+  )
+  if (invalidWorkflowImages.length > 0) {
+    throw new Error(
+      `Workflow image app(s) have incomplete release ownership: ${invalidWorkflowImages.map((entry) => entry.name).join(', ')}`,
     )
   }
 }
