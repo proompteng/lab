@@ -282,8 +282,13 @@ export function codexReconciledActiveTurnId(activeTurnId: string, completedTurns
 export function codexLoginCompletionMatches(event: TengriCodexEvent, activeLoginId: string) {
   if (event.method.toLowerCase() !== 'account/login/completed' || !activeLoginId) return false
   const params = record(parseRawEvent(event.rawJson).params)
-  if (params.loginId === null) return true
   return boundedIdentifier(params.loginId, 256) === activeLoginId
+}
+
+export function codexLoginCompletionIsUncorrelated(event: TengriCodexEvent) {
+  if (event.method.toLowerCase() !== 'account/login/completed') return false
+  const params = record(parseRawEvent(event.rawJson).params)
+  return params.loginId === null
 }
 
 export function codexAccountRefreshIsCurrent(

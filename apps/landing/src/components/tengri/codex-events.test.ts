@@ -13,6 +13,7 @@ import {
   codexEventShouldRender,
   codexEventSupersedesRestoredItem,
   codexLoginCompletionError,
+  codexLoginCompletionIsUncorrelated,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
   codexResumeCommitIsCurrent,
@@ -442,12 +443,14 @@ describe('Codex event decoding', () => {
     expect(codexLoginCompletionError(failedLogin)).toBe('device code expired')
     expect(codexLoginCompletionMatches(failedLogin, 'login-1')).toBe(true)
     expect(codexLoginCompletionMatches(failedLogin, 'login-2')).toBe(false)
-    expect(
-      codexLoginCompletionMatches(
-        { ...failedLogin, rawJson: JSON.stringify({ params: { loginId: null, success: false } }) },
-        'login-2',
-      ),
-    ).toBe(true)
+    const uncorrelatedCompletion = {
+      ...failedLogin,
+      rawJson: JSON.stringify({ params: { loginId: null, success: false } }),
+    }
+    expect(codexLoginCompletionMatches(uncorrelatedCompletion, 'login-2')).toBe(false)
+    expect(codexLoginCompletionIsUncorrelated(uncorrelatedCompletion)).toBe(true)
+    expect(codexLoginCompletionIsUncorrelated(failedLogin)).toBe(false)
+    expect(codexLoginCompletionIsUncorrelated({ ...failedLogin, method: 'thread/started' })).toBe(false)
     expect(
       codexLoginCompletionError({
         ...failedLogin,
