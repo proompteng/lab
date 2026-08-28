@@ -199,7 +199,7 @@ export default function DesktopHero() {
           </div>
         </header>
 
-        <div className="relative z-10 flex-1 overflow-hidden">
+        <div className="relative z-10 flex min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           <PublicWelcomeWindow />
 
           {isAboutDialogOpen ? (
@@ -249,7 +249,7 @@ function PublicWelcomeWindow() {
   return (
     <section
       aria-labelledby="public-welcome-title"
-      className="absolute top-1/2 left-1/2 w-[min(92vw,36rem)] -translate-x-1/2 -translate-y-[56%] overflow-hidden rounded-[22px] border border-[rgb(84_92_126/0.5)] bg-[rgba(31,35,53,0.76)] shadow-[0_32px_90px_-38px_rgba(0,0,0,0.92)] backdrop-blur-2xl"
+      className="m-auto w-[min(92vw,36rem)] shrink-0 overflow-hidden rounded-[22px] border border-[rgb(84_92_126/0.5)] bg-[rgba(31,35,53,0.76)] shadow-[0_32px_90px_-38px_rgba(0,0,0,0.92)] backdrop-blur-2xl"
     >
       <div className="flex h-10 items-center gap-2 border-b border-[rgb(84_92_126/0.36)] bg-[rgba(41,46,66,0.72)] px-3">
         <span aria-hidden="true" className="size-3 rounded-full bg-[#ed6a5f]" />
