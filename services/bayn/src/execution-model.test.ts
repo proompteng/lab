@@ -22,7 +22,7 @@ import {
   SupportedExecutionModelSchema,
 } from './execution-model-contract'
 import { strictParseOptions } from './schemas'
-import { intradayMomentumExecutionModel } from './strategy/intraday-momentum'
+import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 import { openingDriveExecutionModel } from './strategy/opening-drive'
 
 const success = <A>(result: Result.Result<A, ExecutionModelFailure>): A => {
