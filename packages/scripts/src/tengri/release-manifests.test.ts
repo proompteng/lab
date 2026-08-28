@@ -395,10 +395,11 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
-  it('rejects repository and revision overrides from templatePatch', () => {
+  it('rejects source overrides from templatePatch', () => {
     const overrides = [
       '        repoURL: https://github.com/example/fork.git',
       '        targetRevision: unverified',
+      '        path: argocd/applications/other',
     ] as const
 
     for (const override of overrides) {

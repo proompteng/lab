@@ -185,7 +185,9 @@ function assertSafeTemplatePatch(templatePatch: unknown) {
     throw new Error('Platform ApplicationSet must contain the expected templatePatch')
   }
   const sourceBlocks = templatePatch.match(/^\s*source:\s*$/gm) ?? []
-  const sourceOverrides = ['repoURL', 'targetRevision'].filter((field) => templatePatch.includes(field))
+  const sourceOverrides = ['repoURL', 'targetRevision', 'path'].filter((field) =>
+    new RegExp(`^\\s*${field}\\s*:`, 'm').test(templatePatch),
+  )
   if (
     sourceBlocks.length !== 1 ||
     !templatePatch.includes(expectedTemplatePatchSourceBlock) ||
