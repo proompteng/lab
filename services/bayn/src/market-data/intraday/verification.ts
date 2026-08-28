@@ -808,22 +808,43 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   schema_version: record.schemaVersion,
 })
 
-const eventPayloadKey = (record: IntradayQuote | IntradayTrade): string =>
-  `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`
+const eventPayloadKey = (record: IntradayQuote | IntradayTrade): Result.Result<string, IntradaySnapshotFailure> =>
+  Result.try({
+    try: () => `${record.symbol}\u0000${intradayInstantNanos(record.eventAt)}`,
+    catch: (cause) =>
+      failure(
+        'rows',
+        'intraday quote or trade timestamp does not match the archive contract',
+        { symbol: record.symbol },
+        cause,
+      ),
+  })
 
 const payloadVariantCounts = <T extends IntradayQuote | IntradayTrade>(
   records: readonly T[],
   payload: (record: T) => readonly number[],
-): ReadonlyMap<string, number> => {
-  const variants = new Map<string, Set<string>>()
-  for (const record of records) {
-    const key = eventPayloadKey(record)
-    const observed = variants.get(key) ?? new Set<string>()
-    observed.add(JSON.stringify(payload(record)))
-    variants.set(key, observed)
-  }
-  return new Map([...variants].map(([key, observed]) => [key, observed.size]))
-}
+): Result.Result<
+  {
+    readonly counts: ReadonlyMap<string, number>
+    readonly keys: ReadonlyMap<T, string>
+  },
+  IntradaySnapshotFailure
+> =>
+  Result.gen(function* () {
+    const variants = new Map<string, Set<string>>()
+    const keys = new Map<T, string>()
+    for (const record of records) {
+      const key = yield* eventPayloadKey(record)
+      const observed = variants.get(key) ?? new Set<string>()
+      observed.add(JSON.stringify(payload(record)))
+      variants.set(key, observed)
+      keys.set(record, key)
+    }
+    return {
+      counts: new Map([...variants].map(([key, observed]) => [key, observed.size])),
+      keys,
+    }
+  })
 
 /**
  * Re-enters an already materialized snapshot through the authoritative row
@@ -836,13 +857,13 @@ export const reverifyIntradayMarketSnapshot = (
 ): Result.Result<IntradayMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const { manifest } = snapshot
-    const quotePayloadVariants = payloadVariantCounts(snapshot.quotes, (quote) => [
+    const quotePayloadVariants = yield* payloadVariantCounts(snapshot.quotes, (quote) => [
       quote.bidPrice,
       quote.bidSize,
       quote.askPrice,
       quote.askSize,
     ])
-    const tradePayloadVariants = payloadVariantCounts(snapshot.trades, (trade) => [trade.price, trade.size])
+    const tradePayloadVariants = yield* payloadVariantCounts(snapshot.trades, (trade) => [trade.price, trade.size])
     const request: IntradaySnapshotRequest = {
       sessionDate: manifest.sessionDate,
       calendar: manifest.calendar,
@@ -879,7 +900,9 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       quotes: snapshot.quotes.map((quote) => ({
         ...archiveIdentityRow(quote),
-        latest_payload_variants: String(quotePayloadVariants.get(eventPayloadKey(quote)) ?? 0),
+        latest_payload_variants: String(
+          quotePayloadVariants.counts.get(quotePayloadVariants.keys.get(quote) ?? '') ?? 0,
+        ),
         bid_price: quote.bidPrice,
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
@@ -887,7 +910,9 @@ export const reverifyIntradayMarketSnapshot = (
       })),
       trades: snapshot.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
-        latest_payload_variants: String(tradePayloadVariants.get(eventPayloadKey(trade)) ?? 0),
+        latest_payload_variants: String(
+          tradePayloadVariants.counts.get(tradePayloadVariants.keys.get(trade) ?? '') ?? 0,
+        ),
         price: trade.price,
         size: trade.size,
       })),
