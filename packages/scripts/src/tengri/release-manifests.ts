@@ -20,6 +20,11 @@ const tengriApplicationTarget = {
   namespace: 'tengri',
   automation: 'auto',
 } as const
+const expectedRepository = 'https://github.com/proompteng/lab.git'
+const expectedRevision = 'main'
+const expectedRepositoryTemplate =
+  '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
+const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
 
 export type TengriRelease = {
   tengriDigest: string
@@ -95,18 +100,45 @@ function findTengriApplicationBlock(contents: string) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generators')
   }
 
-  const matches = generators.items.flatMap((generator) => {
+  const matches = generators.items.flatMap((generator, generatorIndex) => {
     if (!isMap(generator)) return []
     const elements = generator.getIn(['list', 'elements'], true)
     if (!isSeq(elements)) return []
-    return elements.items.filter((entry) => isMap(entry) && entry.get('name') === 'tengri')
+    return elements.items.flatMap((entry) =>
+      isMap(entry) && entry.get('name') === 'tengri' ? [{ entry, generatorIndex }] : [],
+    )
   })
   if (matches.length !== 1) {
     throw new Error(`Platform ApplicationSet must contain exactly one Tengri entry, found ${matches.length}`)
   }
-  const entry = matches[0]
+  const { entry, generatorIndex: tengriGeneratorIndex } = matches[0]
   const application = entry.toJSON() as Record<string, unknown>
   assertTengriApplicationTarget(application)
+
+  const repository = document.getIn(['spec', 'template', 'spec', 'source', 'repoURL'])
+  const revision = document.getIn(['spec', 'template', 'spec', 'source', 'targetRevision'])
+  const repositoryIsSafe = repository === expectedRepository || repository === expectedRepositoryTemplate
+  const revisionIsSafe = revision === expectedRevision || revision === expectedRevisionTemplate
+  if (!repositoryIsSafe || !revisionIsSafe) {
+    throw new Error(
+      `Tengri ApplicationSet template must resolve to repository ${expectedRepository} at revision ${expectedRevision}`,
+    )
+  }
+
+  for (const [generatorIndex, generator] of generators.items.entries()) {
+    if (generatorIndex === tengriGeneratorIndex || !isMap(generator)) continue
+    const elements = generator.getIn(['list', 'elements'], true)
+    if (!isSeq(elements)) continue
+    for (const matrixInput of elements.items) {
+      if (!isMap(matrixInput)) continue
+      const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
+      if (sourceOverrides.length > 0) {
+        throw new Error(
+          `Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`,
+        )
+      }
+    }
+  }
 
   const enabledNode = entry.get('enabled', true)
   const enabled = entry.get('enabled')
