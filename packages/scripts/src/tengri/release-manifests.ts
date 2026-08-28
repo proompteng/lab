@@ -52,6 +52,8 @@ const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRe
 const expectedPathTemplate = '{{ .path }}'
 const expectedProjectTemplate = '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
 const expectedApplicationNameTemplate = '{{ .name }}{{ .suffix }}'
+const expectedDestinationNamespaceTemplate =
+  '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
 export const TENGRI_APPLICATION_TEMPLATE_PATCH = `{{- if .annotations }}
 metadata:
   annotations:
@@ -258,6 +260,11 @@ function findTengriApplicationBlock(contents: string) {
 
   if (document.getIn(['spec', 'template', 'metadata', 'name']) !== expectedApplicationNameTemplate) {
     throw new Error(`Tengri ApplicationSet template must name applications ${expectedApplicationNameTemplate}`)
+  }
+  const destinationNode = document.getIn(['spec', 'template', 'spec', 'destination'], true)
+  const destination = isMap(destinationNode) ? destinationNode.toJSON() : null
+  if (!isDeepStrictEqual(destination, { namespace: expectedDestinationNamespaceTemplate })) {
+    throw new Error('Tengri ApplicationSet base destination must contain only the verified namespace projection')
   }
   if (document.getIn(['spec', 'template', 'spec', 'sources'], true) !== undefined) {
     throw new Error('Tengri ApplicationSet template must use one verified source and must not define sources')
