@@ -39,6 +39,7 @@ describe('Tengri release workflows', () => {
     expect(readme).toContain('`Tengri images`')
     expect(readme).toContain('`Tengri release`')
     expect(readme).toContain('generated promotion PR')
+    expect(readme.match(/^## GitOps rollout and rollback$/gm)).toHaveLength(1)
     expect(readme).not.toContain('Roll out only through the `Tengri controller` workflow')
     expect(operations).toContain('`Tengri images`')
     expect(operations).toContain('`Tengri release`')
