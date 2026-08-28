@@ -356,20 +356,83 @@ class ForwarderConfigTest {
   }
 
   @Test
-  fun `rejects symbol allowlists over twelve names`() {
-    val err =
+  fun `accepts the production core and observation symbols within the global subscription budget`() {
+    val coreSymbols =
+      listOf(
+        "AAPL",
+        "AMD",
+        "AMZN",
+        "AVGO",
+        "COHR",
+        "CRDO",
+        "IWM",
+        "LITE",
+        "MRVL",
+        "MU",
+        "NVDA",
+        "QQQ",
+        "SMH",
+        "SNDK",
+        "SPY",
+        "WDC",
+      )
+    val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
+          "ALPACA_OBSERVATION_SYMBOLS" to observationSymbols.joinToString(","),
+          "SYMBOLS" to coreSymbols.joinToString(","),
+          "SYMBOLS_ALLOWLIST" to coreSymbols.joinToString(","),
+          "MARKET_DATA_UNIVERSE_ID" to "cross-asset-taa-v2",
+          "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(observationSymbols),
+        ) + observationTopics,
+      )
+
+    assertEquals(coreSymbols, cfg.staticSymbols)
+    assertEquals(coreSymbols.toSet(), cfg.symbolAllowlist)
+    assertEquals(observationSymbols, cfg.observationSymbols)
+    assertEquals(listOf(coreSymbols, observationSymbols), cfg.marketDataFeedConfigs().map { it.symbols })
+  }
+
+  @Test
+  fun `rejects a core-only universe over the global subscription budget`() {
+    val symbols = (1..31).map { "S$it" }
+
+    assertEquals(
+      "configured market-data feeds require 31 symbol subscriptions; maximum is 30",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(
           mapOf(
             "ALPACA_KEY_ID" to "key",
             "ALPACA_SECRET_KEY" to "secret",
-            "SYMBOLS" to "NVDA",
-            "SYMBOLS_ALLOWLIST" to "A,B,C,D,E,F,G,H,I,J,K,L,M",
+            "SYMBOLS" to symbols.joinToString(","),
+            "SYMBOLS_ALLOWLIST" to symbols.joinToString(","),
           ),
         )
-      }
+      }.message,
+    )
+  }
 
-    assertEquals("SYMBOLS_ALLOWLIST must include no more than 12 symbols", err.message)
+  @Test
+  fun `rejects a dynamic allowlist over the global subscription budget`() {
+    val symbols = (1..31).map { "S$it" }
+
+    assertEquals(
+      "configured market-data feeds require 31 symbol subscriptions; maximum is 30",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(
+          mapOf(
+            "ALPACA_KEY_ID" to "key",
+            "ALPACA_SECRET_KEY" to "secret",
+            "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+            "SYMBOLS_ALLOWLIST" to symbols.joinToString(","),
+          ),
+        )
+      }.message,
+    )
   }
 
   @Test
