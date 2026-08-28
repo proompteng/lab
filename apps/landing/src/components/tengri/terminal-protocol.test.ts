@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import {
   buildTerminalWebSocketUrl,
   normalizeTerminalSize,
+  parseLegacyTerminalResumeState,
   parseTerminalControlFrame,
   parseTerminalCleanupState,
   parseTerminalOutputFrame,
@@ -10,6 +11,7 @@ import {
   safelyDisposeTerminal,
   settleTerminalCreation,
   terminalCreationId,
+  terminalCreationScope,
   terminalHeartbeatAction,
   terminalPlainText,
   terminalReconnectDelay,
@@ -65,16 +67,20 @@ describe('Tengri terminal protocol', () => {
     expect(parseTerminalControlFrame('{"type":"exit","exitCode":7}')).toEqual({ type: 'exit', exitCode: 7 })
     const serialized = JSON.stringify({
       agentId: 'agent-a',
+      desktopId: 'desktop-a',
       sessionId: 'abcdefghijklmnopqrstuvwx',
       reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
       sequence: 12,
     })
-    expect(parseTerminalResumeState(serialized, 'agent-a')?.sequence).toBe(12)
-    expect(parseTerminalResumeState(serialized, 'agent-a')?.cleanupPending).toBe(false)
-    expect(parseTerminalResumeState(serialized, 'agent-b')).toBeNull()
+    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.sequence).toBe(12)
+    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.cleanupPending).toBe(false)
+    expect(parseTerminalResumeState(serialized, 'agent-b', 'desktop-a')).toBeNull()
     expect(
-      parseTerminalResumeState(JSON.stringify({ ...JSON.parse(serialized), cleanupPending: true }), 'agent-a')
-        ?.cleanupPending,
+      parseTerminalResumeState(
+        JSON.stringify({ ...JSON.parse(serialized), cleanupPending: true }),
+        'agent-a',
+        'desktop-a',
+      )?.cleanupPending,
     ).toBe(true)
   })
 
@@ -102,11 +108,13 @@ describe('Tengri terminal protocol', () => {
     const state = parseTerminalResumeState(
       JSON.stringify({
         agentId: 'agent-a',
+        desktopId: 'desktop-a',
         sessionId: 'abcdefghijklmnopqrstuvwx',
         reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
         sequence: 42,
       }),
       'agent-a',
+      'desktop-a',
     )
     if (!state) throw new Error('expected valid terminal state')
     expect(terminalResumeAttachment(state, false)).toEqual({
@@ -116,24 +124,76 @@ describe('Tengri terminal protocol', () => {
     expect(terminalResumeAttachment(state, true)).toEqual({ reconnectToken: '', sequence: 0 })
   })
 
+  test('rejects terminal resume state cloned into another desktop', () => {
+    const serialized = JSON.stringify({
+      agentId: 'agent-a',
+      desktopId: 'desktop-a',
+      sessionId: 'abcdefghijklmnopqrstuvwx',
+      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+      sequence: 42,
+    })
+
+    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-a')?.sessionId).toBe('abcdefghijklmnopqrstuvwx')
+    expect(parseTerminalResumeState(serialized, 'agent-a', 'desktop-b')).toBeNull()
+  })
+
+  test('upgrades only the legacy resume shape into the active desktop', () => {
+    const legacyState = {
+      agentId: 'agent-a',
+      sessionId: 'abcdefghijklmnopqrstuvwx',
+      reconnectToken: 'zyxwvutsrqponmlkjihgfedc',
+      sequence: 42,
+      cleanupPending: false,
+    }
+    const legacy = JSON.stringify(legacyState)
+
+    expect(parseLegacyTerminalResumeState(legacy, 'agent-a', 'desktop-a')).toEqual({
+      ...legacyState,
+      desktopId: 'desktop-a',
+    })
+    expect(parseLegacyTerminalResumeState(legacy, 'agent-b', 'desktop-a')).toBeNull()
+    expect(
+      parseLegacyTerminalResumeState(
+        JSON.stringify({ ...legacyState, desktopId: 'desktop-a' }),
+        'agent-a',
+        'desktop-a',
+      ),
+    ).toBeNull()
+  })
+
   test('reconciles a transient desktop window with an existing guest session', () => {
     const sessions = [
-      { id: 'detached-session', creationId: 'old-window', attached: false },
-      { id: 'exact-session', creationId: 'current-window', attached: true },
-      { id: 'other-detached', creationId: 'other-window', attached: false },
+      { id: 'detached-session', creationId: 'tengri-agent-a-desktop-a-terminal-1', attached: false },
+      { id: 'exact-session', creationId: 'tengri-agent-a-desktop-a-terminal-2', attached: true },
+      { id: 'other-detached', creationId: 'tengri-agent-a-desktop-a-terminal-3', attached: false },
+      { id: 'other-desktop', creationId: 'tengri-agent-a-desktop-b-terminal-1', attached: false },
     ]
+    const scope = terminalCreationScope('agent-a', 'desktop-a')
 
-    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set())).toBe(sessions[1])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set())).toBe(sessions[0])
-    expect(terminalReconciliationCandidate(sessions, 'missing-window', new Set(['detached-session']))).toBe(sessions[2])
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set())).toBe(sessions[1])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set())).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, 'missing-window', scope, new Set(['detached-session']))).toBe(
+      sessions[2],
+    )
     expect(
       terminalReconciliationCandidate(
         sessions.filter((session) => session.attached),
         'missing-window',
+        scope,
         new Set(),
       ),
     ).toBeNull()
-    expect(terminalReconciliationCandidate(sessions, 'current-window', new Set(['exact-session']))).toBe(sessions[0])
+    expect(terminalReconciliationCandidate(sessions, sessions[1].creationId, scope, new Set(['exact-session']))).toBe(
+      sessions[0],
+    )
+    expect(
+      terminalReconciliationCandidate(
+        sessions.filter((session) => session.id === 'other-desktop'),
+        'missing-window',
+        scope,
+        new Set(),
+      ),
+    ).toBeNull()
   })
 
   test('cleans an accepted terminal when its window closes before creation returns', async () => {
@@ -158,9 +218,13 @@ describe('Tengri terminal protocol', () => {
   })
 
   test('derives a stable bounded terminal creation identity from the desktop window', () => {
-    expect(terminalCreationId('agent-123', 'terminal-7')).toBe('tengri-agent-123-terminal-7')
-    expect(() => terminalCreationId('agent with spaces', 'terminal-7')).toThrow('creation identity')
-    expect(() => terminalCreationId('a'.repeat(120), 'terminal-7')).toThrow('creation identity')
+    const firstDesktop = terminalCreationId('agent-123', 'desktop-a', 'terminal-7')
+    const secondDesktop = terminalCreationId('agent-123', 'desktop-b', 'terminal-7')
+
+    expect(firstDesktop).toBe('tengri-agent-123-desktop-a-terminal-7')
+    expect(secondDesktop).not.toBe(firstDesktop)
+    expect(() => terminalCreationId('agent with spaces', 'desktop-a', 'terminal-7')).toThrow('creation identity')
+    expect(() => terminalCreationId('a'.repeat(120), 'desktop-a', 'terminal-7')).toThrow('creation identity')
   })
 
   test('contains renderer disposal failures', () => {
