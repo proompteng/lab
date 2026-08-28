@@ -515,14 +515,15 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let limit = request.limit.clamp(1, 200);
-        let entries = self
+        let result = self
             .guest(&principal, &request.agent_id)
             .await?
             .search_files(&request.query, &request.path, limit)
             .await
             .map_err(map_guest_error)?;
         Ok(Response::new(SearchFilesResponse {
-            entries: entries.into_iter().map(file_entry).collect(),
+            entries: result.entries.into_iter().map(file_entry).collect(),
+            truncated: result.truncated,
         }))
     }
 
@@ -1547,9 +1548,16 @@ fn validate_preview_path(value: &str) -> Result<String, Status> {
 }
 
 fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
-    let (_, digest) = image
+    let (repository, digest) = image
         .rsplit_once("@sha256:")
         .ok_or_else(|| anyhow::anyhow!("TENGRI_DEFAULT_IMAGE must be pinned by sha256 digest"))?;
+    anyhow::ensure!(
+        !repository.is_empty()
+            && !repository
+                .chars()
+                .any(|character| character == '@' || character.is_whitespace()),
+        "TENGRI_DEFAULT_IMAGE has an invalid image repository"
+    );
     anyhow::ensure!(
         digest.len() == 64
             && digest
@@ -1650,6 +1658,21 @@ mod tests {
     #[test]
     fn default_image_must_be_digest_pinned() {
         assert!(validate_digest_pinned_image("registry.example/nanoagent:latest").is_err());
+        assert!(validate_digest_pinned_image(&format!("@sha256:{}", "a".repeat(64))).is_err());
+        assert!(
+            validate_digest_pinned_image(&format!(
+                "registry.example/nano agent@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_err()
+        );
+        assert!(
+            validate_digest_pinned_image(&format!(
+                "registry.example/nanoagent@staging@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_err()
+        );
         assert!(
             validate_digest_pinned_image(&format!(
                 "registry.example/nanoagent@sha256:{}",

@@ -4,7 +4,7 @@ import { FileSearch, Folder, Monitor, Play, Search } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { TengriFileEntry } from '@/lib/tengri/types'
+import type { TengriFileEntry, TengriFileSearchResult } from '@/lib/tengri/types'
 import { APP_TITLES, type TengriApp } from '@/lib/tengri/window-manager'
 import { runTengriAction } from './client'
 import { DOCK_APPS } from './desktop-apps'
@@ -19,6 +19,7 @@ type SpotlightResult =
 type FileSearchState = {
   entries: TengriFileEntry[]
   query: string
+  truncated: boolean
 }
 
 export function Spotlight({
@@ -39,7 +40,7 @@ export function Spotlight({
   const modalFocus = useModalFocus<HTMLElement>()
   const reducedMotion = useReducedMotion()
   const [query, setQuery] = useState('')
-  const [fileSearch, setFileSearch] = useState<FileSearchState>({ entries: [], query: '' })
+  const [fileSearch, setFileSearch] = useState<FileSearchState>({ entries: [], query: '', truncated: false })
   const [recentIds, setRecentIds] = useState<string[]>([])
   const [searchError, setSearchError] = useState('')
   const [searching, setSearching] = useState(false)
@@ -68,27 +69,27 @@ export function Spotlight({
   useEffect(() => {
     const searchQuery = query.trim()
     if (searchQuery.length < 2) {
-      setFileSearch({ entries: [], query: searchQuery })
+      setFileSearch({ entries: [], query: searchQuery, truncated: false })
       setSearchError('')
       setSearching(false)
       return
     }
-    setFileSearch({ entries: [], query: searchQuery })
+    setFileSearch({ entries: [], query: searchQuery, truncated: false })
     setSearching(true)
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      void runTengriAction<TengriFileEntry[]>(
+      void runTengriAction<TengriFileSearchResult>(
         { action: 'search-files', agentId, path: FINDER_WORKSPACE_PATH, query: searchQuery },
         controller.signal,
       )
-        .then((entries) => {
-          setFileSearch({ entries: entries.slice(0, 8), query: searchQuery })
+        .then((result) => {
+          setFileSearch({ entries: result.entries.slice(0, 8), query: searchQuery, truncated: result.truncated })
           setSearchError('')
           setSearching(false)
         })
         .catch((cause: unknown) => {
           if (controller.signal.aborted) return
-          setFileSearch({ entries: [], query: searchQuery })
+          setFileSearch({ entries: [], query: searchQuery, truncated: false })
           setSearchError(cause instanceof Error ? cause.message : 'File search is unavailable')
           setSearching(false)
         })
@@ -219,6 +220,11 @@ export function Spotlight({
         {searchError ? (
           <p className="border-b border-red-300/10 bg-red-500/8 px-5 py-2 text-xs text-red-200" role="alert">
             {searchError}
+          </p>
+        ) : null}
+        {fileSearch.truncated && fileSearch.query === query.trim() ? (
+          <p className="border-b border-amber-200/10 bg-amber-300/6 px-5 py-2 text-xs text-amber-100/75" role="status">
+            Search limit reached. Narrow your search.
           </p>
         ) : null}
         <div

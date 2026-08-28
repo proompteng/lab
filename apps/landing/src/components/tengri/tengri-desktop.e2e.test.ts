@@ -69,6 +69,7 @@ type MockOptions = {
   resumeThreadDelayMs?: number
   resumeThreadRawJson?: string
   searchDelays?: Record<string, number>
+  searchTruncated?: boolean
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -77,6 +78,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
+  let searchRequestsInFlight = 0
+  let maxConcurrentSearchRequests = 0
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
   let releaseHeldCodexAccount = () => {}
@@ -226,8 +229,17 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'search-files':
-        await new Promise((resolve) => setTimeout(resolve, options.searchDelays?.[String(action.query)] ?? 0))
-        result = files.filter((entry) => entry.name.toLowerCase().includes(String(action.query).toLowerCase()))
+        searchRequestsInFlight += 1
+        maxConcurrentSearchRequests = Math.max(maxConcurrentSearchRequests, searchRequestsInFlight)
+        try {
+          await new Promise((resolve) => setTimeout(resolve, options.searchDelays?.[String(action.query)] ?? 0))
+          result = {
+            entries: files.filter((entry) => entry.name.toLowerCase().includes(String(action.query).toLowerCase())),
+            truncated: options.searchTruncated ?? false,
+          }
+        } finally {
+          searchRequestsInFlight -= 1
+        }
         break
       case 'read-file':
         result = {
@@ -374,6 +386,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   return {
     actions,
     getAgent: () => agent,
+    getMaxConcurrentSearchRequests: () => maxConcurrentSearchRequests,
     getResumeThreadResponseCount: () => resumeThreadResponses,
     releaseHeldCodexAccount,
     releaseHeldLifecycleAction,
@@ -382,6 +395,24 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     waitForHeldResume: () => heldResumeStarted,
   }
 }
+
+test('serializes slow Finder refreshes and reports bounded search results', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    searchDelays: { missing: 2_100 },
+    searchTruncated: true,
+  })
+  await page.goto('/')
+
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Finder' }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await finder.getByLabel('Search files').fill('missing')
+
+  await expect(finder.getByText('Search limit reached · Narrow your search')).toBeVisible({ timeout: 5_000 })
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'search-files').length, { timeout: 7_000 })
+    .toBeGreaterThanOrEqual(2)
+  expect(mock.getMaxConcurrentSearchRequests()).toBe(1)
+})
 
 function parentPath(path: string) {
   const separator = path.lastIndexOf('/')

@@ -53,10 +53,13 @@ type deleteFileRequest struct {
 }
 
 type searchFilesResponse struct {
-	Entries []fileEntry `json:"entries"`
+	Entries   []fileEntry `json:"entries"`
+	Truncated bool        `json:"truncated"`
 }
 
 var errTooManyDirectoryEntries = errors.New("directory exceeds the 10,000 entry Finder limit")
+
+const maxSearchVisitedEntries = 50_000
 
 var workspaceSearchExcludedRootNames = map[string]struct{}{
 	".bun":   {},
@@ -408,9 +411,28 @@ func (server *apiServer) handleSearchFiles(writer http.ResponseWriter, request *
 			return
 		}
 	}
-	result := make([]fileEntry, 0, limit)
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if requestErr := request.Context().Err(); requestErr != nil {
+	result, err := server.searchFiles(request.Context(), root, query, limit, maxSearchVisitedEntries)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		writeWorkspaceError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *apiServer) searchFiles(
+	ctx context.Context,
+	root string,
+	query string,
+	limit int,
+	visitedLimit int,
+) (searchFilesResponse, error) {
+	result := searchFilesResponse{Entries: make([]fileEntry, 0, limit)}
+	visited := 0
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if requestErr := ctx.Err(); requestErr != nil {
 			return requestErr
 		}
 		if walkErr != nil {
@@ -427,27 +449,34 @@ func (server *apiServer) handleSearchFiles(writer http.ResponseWriter, request *
 			}
 			return nil
 		}
-		if path == root || !strings.Contains(strings.ToLower(entry.Name()), query) {
+		if path == root {
+			return nil
+		}
+
+		visited++
+		if visited > visitedLimit {
+			result.Truncated = true
+			return filepath.SkipAll
+		}
+		if !strings.Contains(strings.ToLower(entry.Name()), query) {
 			return nil
 		}
 		item, itemErr := server.fileEntry(path)
-		if itemErr == nil {
-			result = append(result, item)
+		if itemErr != nil {
+			return nil
 		}
-		if len(result) >= limit {
+		if len(result.Entries) >= limit {
+			result.Truncated = true
 			return filepath.SkipAll
 		}
+		result.Entries = append(result.Entries, item)
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return
-		}
-		writeWorkspaceError(writer, err)
-		return
+		return searchFilesResponse{}, err
 	}
-	sortFileEntries(result)
-	writeJSON(writer, http.StatusOK, searchFilesResponse{Entries: result})
+	sortFileEntries(result.Entries)
+	return result, nil
 }
 
 func (server *apiServer) fileEntry(path string) (fileEntry, error) {

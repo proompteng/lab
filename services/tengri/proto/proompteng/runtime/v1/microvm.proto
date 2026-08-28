@@ -110,7 +110,7 @@ message CreateDirectoryRequest { string agent_id = 1; string path = 2; }
 message MoveFileRequest { string agent_id = 1; string source_path = 2; string destination_path = 3; }
 message DeleteFileRequest { string agent_id = 1; string path = 2; bool recursive = 3; }
 message SearchFilesRequest { string agent_id = 1; string query = 2; string path = 3; uint32 limit = 4; }
-message SearchFilesResponse { repeated FileEntry entries = 1; }
+message SearchFilesResponse { repeated FileEntry entries = 1; bool truncated = 2; }
 // Watches direct children of path. Clients open additional watches for nested directories they display or edit.
 message WatchFilesRequest { string agent_id = 1; string path = 2; uint64 after_sequence = 3; }
 
