@@ -11,11 +11,16 @@ const scriptsWorkflow = readFileSync(
 describe('landing browser validation workflow', () => {
   test('installs Chromium and runs the co-located Tengri Playwright suite', () => {
     const landingStep = workflow.match(
-      /- name: Run landing validation[\s\S]*?\n\s+- name: Run selected validation/,
+      /- name: Run landing validation[\s\S]*?\n\s+- name: Upload landing browser artifacts/,
+    )?.[0]
+    const artifactStep = workflow.match(
+      /- name: Upload landing browser artifacts[\s\S]*?\n\s+- name: Run selected validation/,
     )?.[0]
 
     expect(landingStep).toContain('bunx playwright install --with-deps chromium')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
+    expect(artifactStep).toContain("always() && matrix.target == 'landing'")
+    expect(artifactStep).toContain('apps/landing/test-results')
   })
 
   test('runs this contract for pull-request workflow-only changes', () => {

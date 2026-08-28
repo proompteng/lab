@@ -727,18 +727,16 @@ test('matches the Tahoe desktop at required production viewports', async ({ page
   await page.goto('/')
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
   await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
-  const developmentTools = page.getByRole('button', { name: 'Open Next.js Dev Tools' })
-  if (await developmentTools.isVisible()) {
-    await developmentTools.evaluate((element) => {
-      ;(element as HTMLElement).style.display = 'none'
-    })
-  }
+  await expect(page.getByRole('button', { name: 'Open Next.js Dev Tools' })).toHaveCount(0)
 
   await expect(page).toHaveScreenshot('tengri-desktop-1440x900.png', {
     fullPage: true,
   })
 
   await page.setViewportSize({ width: 1728, height: 1117 })
+  await page.goto('/')
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
   await expect(page).toHaveScreenshot('tengri-desktop-1728x1117.png', {
     fullPage: true,
   })
