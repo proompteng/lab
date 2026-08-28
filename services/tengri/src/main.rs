@@ -30,6 +30,7 @@ use tracing_subscriber::EnvFilter;
 const DEFAULT_NAMESPACE: &str = "tengri";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
 const DEFAULT_GATEWAY_ADDRESS: &str = "0.0.0.0:8080";
+const DEFAULT_PREVIEW_ADDRESS: &str = "0.0.0.0:8081";
 const DEFAULT_ARCHITECTURE: &str = "amd64";
 const MAX_GRPC_MESSAGE_BYTES: usize = 16 << 20;
 const RUNTIME_SECRET_POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -52,6 +53,10 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| DEFAULT_GATEWAY_ADDRESS.to_owned())
         .parse::<SocketAddr>()
         .context("parse TENGRI_GATEWAY_ADDRESS")?;
+    let preview_address = env_value("TENGRI_PREVIEW_ADDRESS")
+        .unwrap_or_else(|| DEFAULT_PREVIEW_ADDRESS.to_owned())
+        .parse::<SocketAddr>()
+        .context("parse TENGRI_PREVIEW_ADDRESS")?;
     let architecture = parse_architecture(
         &env_value("TENGRI_GUEST_ARCHITECTURE").unwrap_or_else(|| DEFAULT_ARCHITECTURE.to_owned()),
     )?;
@@ -98,6 +103,9 @@ async fn main() -> anyhow::Result<()> {
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
         .with_context(|| format!("bind HTTP gateway on {gateway_address}"))?;
+    let preview_listener = TcpListener::bind(preview_address)
+        .await
+        .with_context(|| format!("bind preview gateway on {preview_address}"))?;
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let controller_client = client.clone();
@@ -125,12 +133,21 @@ async fn main() -> anyhow::Result<()> {
             .context("serve gRPC control plane")
     });
 
-    let gateway_shutdown = shutdown_rx;
+    let gateway_shutdown = shutdown_rx.clone();
+    let preview_state = gateway_state.clone();
     let mut gateway_task = tokio::spawn(async move {
-        axum::serve(gateway_listener, gateway::router(gateway_state))
+        axum::serve(gateway_listener, gateway::control_router(gateway_state))
             .with_graceful_shutdown(wait_for_shutdown(gateway_shutdown))
             .await
             .context("serve HTTP and WebSocket gateway")
+    });
+
+    let preview_shutdown = shutdown_rx;
+    let mut preview_task = tokio::spawn(async move {
+        axum::serve(preview_listener, gateway::preview_router(preview_state))
+            .with_graceful_shutdown(wait_for_shutdown(preview_shutdown))
+            .await
+            .context("serve preview gateway")
     });
 
     let mut runtime_secret_task = tokio::spawn(async move {
@@ -154,12 +171,13 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    info!(%listen_address, %gateway_address, %namespace, ?architecture, "Tengri control plane ready");
+    info!(%listen_address, %gateway_address, %preview_address, %namespace, ?architecture, "Tengri control plane ready");
     let result = tokio::select! {
         () = shutdown_signal() => Ok(()),
         result = &mut controller_task => task_result("controller", result),
         result = &mut grpc_task => task_result("gRPC server", result),
         result = &mut gateway_task => task_result("HTTP gateway", result),
+        result = &mut preview_task => task_result("preview gateway", result),
         result = &mut runtime_secret_task => task_result("runtime secret watcher", result),
     };
 
@@ -172,6 +190,9 @@ async fn main() -> anyhow::Result<()> {
         }
         if !gateway_task.is_finished() {
             let _ = gateway_task.await;
+        }
+        if !preview_task.is_finished() {
+            let _ = preview_task.await;
         }
     })
     .await;
