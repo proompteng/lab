@@ -253,6 +253,9 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   const requestedSymbols = intradaySnapshotSymbols(request)
   const canonicalSymbols = [...new Set(requestedSymbols)].sort()
+  if (request.purpose !== undefined && request.purpose !== 'LIQUIDATION') {
+    return Result.fail(failure('request', 'intraday snapshot purpose is not supported'))
+  }
   if (
     canonicalSymbols.length === 0 ||
     canonicalSymbols.length > canonicalUniverse.length ||
@@ -263,6 +266,9 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     return Result.fail(
       failure('request', 'intraday snapshot symbols must be a non-empty canonical subset of the bound universe'),
     )
+  }
+  if (request.purpose === 'LIQUIDATION' && request.symbols === undefined) {
+    return Result.fail(failure('request', 'liquidation snapshots require an explicit canonical symbol subset'))
   }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {
     return Result.fail(failure('request', 'intraday universe ID must be non-empty and canonical'))
@@ -636,15 +642,17 @@ const validateBarCoverage = (
       }),
     )
   }
-  const completionEventAt = rangeEndNanos - minuteNanos
-  for (const symbol of requestedSymbols) {
-    if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
-      return Result.fail(
-        failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
-          symbol,
-          eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
-        }),
-      )
+  if (request.purpose !== 'LIQUIDATION') {
+    const completionEventAt = rangeEndNanos - minuteNanos
+    for (const symbol of requestedSymbols) {
+      if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
+        return Result.fail(
+          failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
+            symbol,
+            eventAt: new Date(epoch(request.rangeEndAt) - minuteMs).toISOString(),
+          }),
+        )
+      }
     }
   }
   // Alpaca stock bars are trade aggregates: an interior minute with no qualifying trade has no emitted bar. Accept
@@ -734,12 +742,16 @@ const latestQuotes = (
         }),
       )
     }
-    if (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
+    if (
+      request.purpose !== 'LIQUIDATION' &&
+      (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
+    ) {
       return Result.fail(
         failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
       )
     }
-    for (const evidence of [quote, trade]) {
+    for (const evidence of request.purpose === 'LIQUIDATION' ? [quote] : [quote, trade]) {
+      if (evidence === undefined) continue
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
       if (availabilityDelay < minimumDelay || availabilityDelay > maximumDelay) {
         return Result.fail(
@@ -853,6 +865,7 @@ export const verifyIntradaySnapshot = (
       universeSymbolHash: verifiedRequest.universeSymbolHash,
       ...(verifiedRequest.symbols === undefined ? {} : { universe: Object.freeze([...verifiedRequest.universe]) }),
       symbols: Object.freeze([...intradaySnapshotSymbols(verifiedRequest)]),
+      ...(verifiedRequest.purpose === undefined ? {} : { purpose: verifiedRequest.purpose }),
       feed: verifiedRequest.feed,
       delayClass: verifiedRequest.delayClass,
       sourceTopics: Object.freeze({ ...verifiedRequest.sourceTopics }),
@@ -1000,6 +1013,7 @@ export const reverifyIntradayMarketSnapshot = (
       universeSymbolHash: manifest.universeSymbolHash,
       universe: manifest.universe ?? manifest.symbols,
       ...(manifest.universe === undefined ? {} : { symbols: manifest.symbols }),
+      ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
       feed: manifest.feed,
       delayClass: manifest.delayClass,
       sourceTopics: manifest.sourceTopics,

@@ -104,7 +104,10 @@ export const intradayMomentumCloseQuery = (
   ) {
     return Result.fail(failure('entry-query', 'cycle does not admit a complete intraday close snapshot at this time'))
   }
-  return Result.succeed(snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, 0, symbols))
+  return Result.succeed({
+    ...snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, 0, symbols),
+    purpose: 'LIQUIDATION',
+  })
 }
 
 export type IntradayMomentumEntryDisposition = 'AWAIT_SIGNAL' | 'EXECUTE' | 'NO_TRADE'

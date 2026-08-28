@@ -178,6 +178,7 @@ describe('intraday-momentum runtime decision boundary', () => {
       universe: protocol.universe,
       universeSymbolHash: protocol.universeSymbolHash,
       symbols: ['AMD'],
+      purpose: 'LIQUIDATION',
     })
     expect(
       failure(intradayMomentumCloseQuery(cycle, protocol, calendar, '2026-08-18T19:30:00.000Z', ['AMD'])),

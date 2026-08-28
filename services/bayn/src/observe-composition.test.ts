@@ -1755,6 +1755,10 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Complete',
       observedAt: reconciliationCompletedAt,
     })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, false)).toEqual({
+      _tag: 'Complete',
+      observedAt: reconciliationCompletedAt,
+    })
     expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, true)).toEqual({
       _tag: 'Block',
       reason: CycleTerminalReason.Risk,

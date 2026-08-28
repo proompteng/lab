@@ -21,7 +21,7 @@ import {
   executionMandateFailureRestrictionPrefix,
 } from '../execution/mandate'
 import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
-import { IntentState, OrderStatus, ReconciliationStatus, TerminalOutcome } from '../execution/contracts'
+import { IntentState, OrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -31,6 +31,7 @@ import { decodeIntradayMomentumProtocol, decodeOpeningDriveProtocol, strategyDef
 import { isQuoteBoundExecutionModel } from '../execution-model-contract'
 import {
   countOpenPositions,
+  decideExecutionIntentTerminalDisposition,
   mutationIntentReconciliationDelayMs,
   executionClosePlanNeedsResidualReplan,
   type BoundMutationCycleOutcome,
@@ -260,27 +261,36 @@ export const decideReconciledExecutionCycleTerminalization = (
 
 const entryExecutionCycleHasUnsuccessfulIntent = (
   document: ExecutionDecisionDocument,
-): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
+  orders: ReconciliationPassResult['brokerState']['orders'],
+): Effect.Effect<boolean, CycleRunnerError, IntentStore | MutationStore> =>
   Effect.gen(function* () {
-    const store = yield* IntentStore
+    const intentStore = yield* IntentStore
+    const mutationStore = yield* MutationStore
     const records = yield* Effect.forEach(
       document.orderedIntentIds,
       (intentId) =>
-        store
-          .read(intentId)
-          .pipe(
-            Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'entry execution intent read failed', cause, failure: 'store' }),
-            ),
+        Effect.all({
+          intent: intentStore.read(intentId),
+          latestSubmit: mutationStore.latest(intentId, MutationOperation.Submit),
+        }).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({ message: 'entry execution terminal evidence read failed', cause, failure: 'store' }),
           ),
+        ),
       { concurrency: 1 },
     )
-    return records.some(
-      (record) =>
-        Option.isSome(record) &&
-        record.value.intent.state === IntentState.Terminal &&
-        record.value.intent.terminalOutcome !== TerminalOutcome.Filled,
-    )
+    return records.some(({ intent: maybeIntent, latestSubmit }) => {
+      const record = Option.getOrUndefined(maybeIntent)
+      return (
+        record !== undefined &&
+        decideExecutionIntentTerminalDisposition({
+          phase: 'ENTRY',
+          intent: record.intent,
+          ...(latestSubmit?.brokerOrderId === undefined ? {} : { acceptedBrokerOrderId: latestSubmit.brokerOrderId }),
+          orders,
+        }) === 'UNSUCCESSFUL'
+      )
+    })
   })
 
 type ExecutionCycleClosureResult =
@@ -319,7 +329,7 @@ const ensureExecutionCycleClosure = (
       if (completion !== undefined) {
         const terminalization = decideReconciledExecutionCycleTerminalization(
           closeReconciliation,
-          yield* entryExecutionCycleHasUnsuccessfulIntent(entryDocument),
+          yield* entryExecutionCycleHasUnsuccessfulIntent(entryDocument, closeReconciliation.brokerState.orders),
         )
         if (terminalization !== undefined) return terminalization
       }
@@ -715,7 +725,12 @@ const executeBoundExecutionCycle = (
       const entryCutoffAt = closeWindow?.startAt
       const entryHasUnsuccessfulIntent =
         closeOnly || (entryCutoffAt !== undefined && observedAt >= entryCutoffAt)
-          ? yield* entryExecutionCycleHasUnsuccessfulIntent(document)
+          ? yield* reconcile.pipe(
+              Effect.mapError((cause) =>
+                mutationRunnerError({ message: 'entry execution terminal reconciliation failed', cause }),
+              ),
+              Effect.flatMap((facts) => entryExecutionCycleHasUnsuccessfulIntent(document, facts.brokerState.orders)),
+            )
           : false
       const terminalization = decideExecutionMandateCycleTerminalization({
         closeOnly,

@@ -145,14 +145,14 @@ describe('immutable intraday market snapshot', () => {
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
   })
 
-  test('verifies a liquidation subset without requiring sparse unheld symbols', () => {
+  test('verifies quote-led liquidation evidence without requiring a range-completion bar or trade', () => {
     const rows = makeRows()
-    const liquidationRequest = { ...request, symbols: ['AMD'] }
+    const liquidationRequest = { ...request, symbols: ['AMD'], purpose: 'LIQUIDATION' as const }
     const liquidationRows = {
       archiveWatermarks: rows.archiveWatermarks,
-      bars: rows.bars.filter((row) => row.symbol === 'AMD'),
+      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
       quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
-      trades: rows.trades.filter((row) => row.symbol === 'AMD'),
+      trades: [],
     }
     const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
 
@@ -160,9 +160,10 @@ describe('immutable intraday market snapshot', () => {
       universe: request.universe,
       universeSymbolHash: request.universeSymbolHash,
       symbols: ['AMD'],
-      barCount: 5,
+      purpose: 'LIQUIDATION',
+      barCount: 4,
       quoteCount: 1,
-      tradeCount: 1,
+      tradeCount: 0,
     })
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
     expect(error(verifyIntradaySnapshotRequest({ ...liquidationRequest, symbols: ['AAPL'] }))).toMatchObject({

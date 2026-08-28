@@ -6,6 +6,7 @@ import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export type IntradaySnapshotPurpose = 'LIQUIDATION'
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
@@ -19,6 +20,8 @@ export interface IntradaySnapshotQuery {
   readonly universe: readonly string[]
   /** Canonical subset required by this snapshot. Omission means the full universe. */
   readonly symbols?: readonly string[]
+  /** Quote-led close evidence; omission keeps the full decision-time bar and trade contract. */
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: {
@@ -101,6 +104,7 @@ export interface IntradaySnapshotManifest {
   /** Added for subset snapshots; omitted only by legacy v1 material. */
   readonly universe?: readonly string[]
   readonly symbols: readonly string[]
+  readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: IntradaySnapshotRequest['sourceTopics']
