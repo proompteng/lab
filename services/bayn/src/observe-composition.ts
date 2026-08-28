@@ -69,6 +69,7 @@ export type {
 } from './observe-composition/model'
 
 export {
+  blockedEntryRequiresCloseOnlyContainment,
   decideReconciledExecutionCycleCompletion,
   decideReconciledExecutionCycleTerminalization,
   decideExecutionCycleCloseDocument,

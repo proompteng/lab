@@ -87,6 +87,7 @@ import {
   makeClosingDecisionPlan,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
+  blockedEntryRequiresCloseOnlyContainment,
   countOpenPositions,
   decideExecutionCycleCloseDocument,
   decideReconciledExecutionCycleCompletion,
@@ -147,7 +148,7 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { decodeTargetPlanResult, TargetPlanStatus } from './target-planner'
+import { decodeTargetPlanResult, TargetPlanReason, TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import { utcInstantFromEpochMillis } from './time'
 import type { DecisionPlan, IsoDate } from './types'
@@ -1028,6 +1029,46 @@ const prepareStoredExecutionStep = async (
 }
 
 describe('OBSERVE runtime composition', () => {
+  test('defers only causally noncanonical v5 entry holdings to close-only containment', () => {
+    const blocked = (reason: TargetPlanReason) => ({ status: TargetPlanStatus.Blocked, reason })
+
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.ShortPositionNotAllowed),
+        [{ symbol: 'AAPL', quantityMicros: '-1000000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputMismatch),
+        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.IdentityMismatch),
+        [{ symbol: 'TSLA', quantityMicros: '1000000' }],
+        ['AAPL'],
+      ),
+    ).toBe(true)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputStale),
+        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        ['AAPL'],
+      ),
+    ).toBe(false)
+    expect(
+      blockedEntryRequiresCloseOnlyContainment(
+        blocked(TargetPlanReason.InputMismatch),
+        [{ symbol: 'AAPL', quantityMicros: '1000000' }],
+        ['AAPL'],
+      ),
+    ).toBe(false)
+  })
+
   test('closes external holdings before quote-bound in-universe holdings', () => {
     const positions = [
       { symbol: 'AAPL', quantityMicros: '1000000' },

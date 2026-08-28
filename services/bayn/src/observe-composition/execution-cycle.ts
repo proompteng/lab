@@ -26,7 +26,7 @@ import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
-import { TargetPlanStatus } from '../target-planner'
+import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { decodeIntradayMomentumProtocol, decodeOpeningDriveProtocol, strategyDefinition } from '../strategy'
 import { isQuoteBoundExecutionModel } from '../execution-model-contract'
 import {
@@ -89,6 +89,27 @@ export const executionMutationSubmissionAllowed = (input: {
     ? input.executionMandateCloseSubmitCutoffAt === undefined ||
       input.observedAt < input.executionMandateCloseSubmitCutoffAt
     : input.executionMandateCutoffAt === undefined || input.observedAt < input.executionMandateCutoffAt)
+
+export const blockedEntryRequiresCloseOnlyContainment = (
+  targetPlan: Pick<ExecutionDecisionDocument['targetPlan'], 'status' | 'reason'>,
+  positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
+  universe: readonly string[],
+): boolean => {
+  if (targetPlan.status !== TargetPlanStatus.Blocked) return false
+  const universeSet = new Set(universe)
+  switch (targetPlan.reason) {
+    case TargetPlanReason.ShortPositionNotAllowed:
+      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) < 0n)
+    case TargetPlanReason.InputMismatch:
+      return positions.some(
+        ({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) % 1_000_000n !== 0n,
+      )
+    case TargetPlanReason.IdentityMismatch:
+      return positions.some(({ symbol, quantityMicros }) => !universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+    default:
+      return false
+  }
+}
 
 const configuredMutationGeneration = (input: MutationAutonomousCycleInput): string | undefined => {
   return input.executionProgram.authority.capitalAuthority.authorityGenerationHash
@@ -562,6 +583,7 @@ const executeBoundExecutionCycle = (
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
+    let closeOnlyContainmentUniverse: readonly string[] | undefined
     let sessionCloseLeads:
       | { readonly sessionCloseStartLeadMs: number; readonly sessionCloseSubmitLeadMs: number }
       | undefined
@@ -582,6 +604,7 @@ const executeBoundExecutionCycle = (
           sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
           sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
         }
+        closeOnlyContainmentUniverse = protocol.universe
       } else {
         const protocol = yield* Effect.fromResult(
           decodeOpeningDriveProtocol(strategyDefinition(input.strategy).parameters),
@@ -635,6 +658,26 @@ const executeBoundExecutionCycle = (
       ...(entrySubmissionCutoffAt === undefined ? {} : { executionMandateCutoffAt: entrySubmissionCutoffAt }),
     }
     const closeDue = closeWindow !== undefined && observedAt >= closeWindow.startAt
+    const closeOnlyContainmentReason =
+      document.targetPlan.status === TargetPlanStatus.Blocked &&
+      (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
+        document.targetPlan.reason === TargetPlanReason.InputMismatch ||
+        document.targetPlan.reason === TargetPlanReason.IdentityMismatch)
+    const entryRequiresCloseOnlyContainment =
+      closeOnlyContainmentUniverse !== undefined && closeOnlyContainmentReason
+        ? yield* reconcile.pipe(
+            Effect.mapError((cause) =>
+              mutationRunnerError({ message: 'blocked entry containment reconciliation failed', cause }),
+            ),
+            Effect.map(({ brokerState }) =>
+              blockedEntryRequiresCloseOnlyContainment(
+                document.targetPlan,
+                brokerState.positions,
+                closeOnlyContainmentUniverse,
+              ),
+            ),
+          )
+        : false
     const drainIncompatibleEntry =
       capability._tag === 'Mutation' && !strategyAllowsMutationCadence(input.strategy, input.cycleCadence)
     let closeOnly = false
@@ -661,7 +704,11 @@ const executeBoundExecutionCycle = (
       }
     }
 
-    if (step === undefined && closeDue) {
+    if (step === undefined && entryRequiresCloseOnlyContainment && !closeDue) {
+      return { _tag: 'Wait', observedAt }
+    }
+
+    if (step === undefined && closeDue && !entryRequiresCloseOnlyContainment) {
       const entryDrain = yield* prepareNextMutationIntent({
         input: entryPhaseInput,
         preparation,
