@@ -1158,19 +1158,45 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             AND table_name = 'autonomous_cycle_shadow_decisions'
             AND column_name = 'decision_hash'
         `
-        const [positionSnapshotIndex] = yield* sql<{ indexdef: string }>`
-          SELECT indexdef
+        const observabilityIndexes = yield* sql<{ indexdef: string; indexname: string }>`
+          SELECT indexdef, indexname
           FROM pg_indexes
           WHERE schemaname = 'public'
-            AND tablename = 'position_snapshots'
-            AND indexname = 'position_snapshots_account_observed_at_idx'
+            AND indexname IN (
+              'position_snapshots_account_observed_at_idx',
+              'intents_account_cycle_idx',
+              'orders_account_intent_idx',
+              'fills_account_intent_idx'
+            )
+          ORDER BY indexname
         `
-        return { decisionHashColumn, migrations, positionSnapshotIndex, tables }
+        return { decisionHashColumn, migrations, observabilityIndexes, tables }
       }),
     )
 
     expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
-    expect(schema.positionSnapshotIndex?.indexdef).toContain('(account_id, observed_at DESC)')
+    expect(schema.observabilityIndexes).toHaveLength(4)
+    expect(schema.observabilityIndexes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ indexname: 'position_snapshots_account_observed_at_idx' }),
+        expect.objectContaining({ indexname: 'intents_account_cycle_idx' }),
+        expect.objectContaining({ indexname: 'orders_account_intent_idx' }),
+        expect.objectContaining({ indexname: 'fills_account_intent_idx' }),
+      ]),
+    )
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'position_snapshots_account_observed_at_idx')
+        ?.indexdef,
+    ).toContain('(account_id, observed_at DESC)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'intents_account_cycle_idx')?.indexdef,
+    ).toContain('(account_id, cycle_id)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'orders_account_intent_idx')?.indexdef,
+    ).toContain('(account_id, intent_id)')
+    expect(
+      schema.observabilityIndexes.find(({ indexname }) => indexname === 'fills_account_intent_idx')?.indexdef,
+    ).toContain('(account_id, intent_id)')
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',
