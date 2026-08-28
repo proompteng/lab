@@ -823,15 +823,7 @@ const validateExecutionCapitalLimitsDataFirst = (
         quantityEnvelope.success.afterIntentMaximumMicros <= 0n &&
         quantityEnvelope.success.afterIntentMinimumMicros > quantityEnvelope.success.beforeIntentMinimumMicros) &&
     projectedSymbol < currentSymbol
-  const exposureReducingClose =
-    strictlyReducingClose &&
-    snapshot.positions.every((position) =>
-      intent.side === IntentOrderSide.Sell
-        ? BigInt(position.quantityMicros) >= 0n
-        : BigInt(position.quantityMicros) <= 0n,
-    ) &&
-    projectedGross <= currentGross &&
-    projectedNetExposure <= currentNetExposure
+  const exposureReducingClose = strictlyReducingClose && projectedGross < currentGross
 
   if (context.closeOnly && !strictlyReducingClose) {
     return Result.fail({

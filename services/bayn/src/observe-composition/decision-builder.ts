@@ -1527,7 +1527,11 @@ export const buildClosingExecutionCycleDecision = (
             ),
           )
           const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
-            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            Effect.mapError((cause) =>
+              cause.operation === 'close-quote-not-ready'
+                ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+                : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
+            ),
           )
           const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
             Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),

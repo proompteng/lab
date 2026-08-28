@@ -416,7 +416,7 @@ describe('opening-drive runtime decision boundary', () => {
     })
 
     expect(success(closeBidPrices(snapshot, ['AMD', 'AMD']))).toEqual({ AMD: '100120000' })
-    expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-prices' })
+    expect(failure(closeBidPrices(snapshot, ['AAPL']))).toMatchObject({ operation: 'close-quote-not-ready' })
 
     const amdQuote = snapshot.latestQuotes['AMD']
     if (amdQuote === undefined) return expect.unreachable('opening-drive fixture requires an AMD quote')
@@ -428,7 +428,7 @@ describe('opening-drive runtime decision boundary', () => {
       },
     }
     expect(failure(closeBidPrices(staleHeldSymbolSnapshot, ['AMD']))).toMatchObject({
-      operation: 'close-prices',
+      operation: 'close-quote-not-ready',
       message: 'closing quote for AMD is outside the freshness window',
     })
     expect(success(closeBidPrices(staleHeldSymbolSnapshot, ['AVGO']))).toEqual({ AVGO: '102120000' })

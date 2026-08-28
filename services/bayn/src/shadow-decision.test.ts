@@ -674,6 +674,7 @@ const openingDriveMarketDataBinding = (
 const liquidationMarketDataBinding = (
   cycle: AutonomousCycle,
   barsContentHash: string = hash('8'),
+  symbols?: readonly string[],
 ): ExecutionMarketDataBinding => {
   const binding = openingDriveMarketDataBinding(cycle, barsContentHash)
   const {
@@ -686,8 +687,10 @@ const liquidationMarketDataBinding = (
     ...bindingMaterial
   } = binding
   const universe = [...binding.symbols].sort()
+  const liquidationSymbols = [...(symbols ?? binding.symbols)].sort()
   const liquidationMaterial = {
     ...bindingMaterial,
+    symbols: liquidationSymbols,
     universe,
     universeSymbolHash: sha256(universe.join(',')),
     purpose: 'LIQUIDATION' as const,
@@ -987,6 +990,23 @@ describe('OBSERVE shadow decision', () => {
     })
   })
 
+  test('rejects liquidation-only evidence for an intraday entry decision', async () => {
+    const input = makeOpeningDriveInput()
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...input,
+          executionMarketData: liquidationMarketDataBinding(input.cycle),
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday entry requires non-liquidation market-data evidence',
+    })
+  })
+
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
     const input = makeIntradayMomentumInput()
     const accepted = await build(input)
@@ -1137,6 +1157,19 @@ describe('OBSERVE shadow decision', () => {
     expect(failure).toMatchObject({
       failure: 'binding',
       message: 'intraday close requires explicit liquidation market-data evidence',
+    })
+
+    const mismatchedSymbols = await Effect.runPromise(
+      Effect.flip(
+        buildObserveShadowDecision({
+          ...closeInput,
+          executionMarketData: liquidationMarketDataBinding(input.cycle, hash('d'), ['AMD']),
+        }),
+      ),
+    )
+    expect(mismatchedSymbols).toMatchObject({
+      failure: 'binding',
+      message: 'intraday close market-data symbols must match the flat execution target',
     })
   })
 

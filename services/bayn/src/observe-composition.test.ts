@@ -3329,16 +3329,20 @@ describe('OBSERVE runtime composition', () => {
       unrealizedPnlMicros: '0',
       observedAt: closeObservedAt,
     }
-    const buildCloseProgram = (position: Position, closeInput: typeof input = input) =>
+    const buildCloseProgram = (
+      position: Position,
+      closeInput: typeof input = input,
+      observedAt: string = closeObservedAt,
+    ) =>
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(closeObservedAt))
+        yield* TestClock.setTime(Date.parse(observedAt))
         return yield* buildClosingExecutionCycleDecision({
           input: closeInput,
           preparation,
           policy,
           cycle: boundCycle,
           entryDocument,
-          reconcile: Effect.succeed(reconciliationResultAt(closeObservedAt, 0, 0, [position])),
+          reconcile: Effect.succeed(reconciliationResultAt(observedAt, 0, 0, [{ ...position, observedAt }])),
           closeExpiresAt,
         })
       }).pipe(
@@ -3381,6 +3385,9 @@ describe('OBSERVE runtime composition', () => {
     const waiting = await Effect.runPromise(
       buildCloseProgram(openPosition, { ...input, intradayMarketData: waitingArchive }).pipe(Effect.flip),
     )
+    const staleObservedAt = '2020-05-01T19:30:10.000Z'
+    const stale = await Effect.runPromise(buildCloseProgram(openPosition, input, staleObservedAt).pipe(Effect.flip))
+    const refreshed = await Effect.runPromise(buildCloseProgram(openPosition, input, '2020-05-01T19:31:01.000Z'))
 
     expect(entryDocument.executionSession?.schemaVersion).toBe('bayn.execution-session-binding.v2')
     expect(close).toMatchObject({
@@ -3425,6 +3432,19 @@ describe('OBSERVE runtime composition', () => {
         observedAt: closeObservedAt,
       }),
     )
+    expect(stale).toEqual(
+      new ExecutionCloseAwaitingMarketData({
+        message: `closing quote for ${heldSymbol} is outside the freshness window`,
+        observedAt: staleObservedAt,
+      }),
+    )
+    expect(refreshed).toMatchObject({
+      dispatchable: true,
+      targetPlan: {
+        status: TargetPlanStatus.Planned,
+        intentTargets: [{ symbol: heldSymbol, side: OrderSide.Sell, quantityMicros: '500000' }],
+      },
+    })
   })
 
   test('keeps a rejected execution close intent recoverable while reconciliation still shows an open position', async () => {

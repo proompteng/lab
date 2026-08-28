@@ -327,8 +327,19 @@ const validateBindings = (
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
     return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
   }
+  if (intradayEntry && executionMarketData?.purpose === 'LIQUIDATION') {
+    return Result.fail(error('binding', 'intraday entry requires non-liquidation market-data evidence'))
+  }
   if (intradayClose && executionMarketData?.purpose !== 'LIQUIDATION') {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
+  }
+  if (
+    intradayClose &&
+    executionMarketData !== undefined &&
+    (executionMarketData.symbols.length !== decision.symbols.length ||
+      executionMarketData.symbols.some((symbol, index) => symbol !== decision.symbols[index]))
+  ) {
+    return Result.fail(error('binding', 'intraday close market-data symbols must match the flat execution target'))
   }
   if (
     intradayDecision !== (executionMarketData !== undefined) ||

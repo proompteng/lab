@@ -582,6 +582,39 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(1)
   })
 
+  test('keeps a gross-reducing hard close eligible for a mixed-sign account above ordinary caps', async () => {
+    const observed = await runLiveSubmit({
+      grant: persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '99999999' }),
+      brokerAccount: account({
+        buyingPowerMicros: '0',
+        equityMicros: '899999999',
+        lastEquityMicros: '1000000000',
+      }),
+      positions: [
+        position({
+          side: PositionSide.Short,
+          quantityMicros: '-1000000',
+          marketValueMicros: '-100000000',
+        }),
+        position({
+          assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
+          symbol: 'NVDA',
+          quantityMicros: '1000000',
+          marketValueMicros: '100000000',
+        }),
+      ],
+      proposedIntent: intent({ side: OrderSide.Buy }),
+      currentDailyTradedNotionalMicros: '250000000',
+      maxDailyTradedNotionalMicros: '249999999',
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '100000000',
+      closeOnly: true,
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
   test('rejects a close-only buy that is not a strictly reducing short cover', async () => {
     const observed = await runLiveSubmit({
       positions: [],

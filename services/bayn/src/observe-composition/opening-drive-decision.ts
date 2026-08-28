@@ -29,7 +29,13 @@ export const intradayArchiveTopics = Object.freeze({
 })
 
 export class OpeningDriveRuntimeDecisionFailure extends Data.TaggedError('OpeningDriveRuntimeDecisionFailure')<{
-  readonly operation: 'entry-query' | 'entry-decision' | 'close-query' | 'close-prices' | 'binding'
+  readonly operation:
+    | 'entry-query'
+    | 'entry-decision'
+    | 'close-query'
+    | 'close-quote-not-ready'
+    | 'close-prices'
+    | 'binding'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -256,11 +262,13 @@ export const adverseClosingQuotePrices = (
   for (const symbol of [...new Set(symbols)].sort()) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
-      return Result.fail(failure('close-prices', `intraday snapshot has no verified quote for ${symbol}`))
+      return Result.fail(failure('close-quote-not-ready', `intraday snapshot has no verified quote for ${symbol}`))
     }
     const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
     if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
-      return Result.fail(failure('close-prices', `closing quote for ${symbol} is outside the freshness window`))
+      return Result.fail(
+        failure('close-quote-not-ready', `closing quote for ${symbol} is outside the freshness window`),
+      )
     }
   }
   return adverseQuotePrices(snapshot, symbols)
