@@ -503,6 +503,33 @@ describe('Bayn HTTP pure decisions', () => {
     expect(noCycleMetrics).toContain('bayn_broker_position_count 2')
     expect(noCycleMetrics).toContain('bayn_broker_account_dollars{kind="equity"} 100001.250000')
 
+    const terminalOnlyMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          current: null,
+          last: {
+            ...realized.cycle.current,
+            phase: CycleState.Completed,
+            terminalReason: null,
+            terminalAt: '2026-09-01T13:36:00.000Z',
+          },
+          unfinishedCycleCount: 0,
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(terminalOnlyMetrics).toContain('bayn_cycle_unfinished_count 0')
+    expect(terminalOnlyMetrics).toContain('bayn_cycle_last_terminal_timestamp_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_snapshot_bound ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_decision_bound ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_attempt_age_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_submission_open_timestamp_seconds ')
+    expect(terminalOnlyMetrics).not.toContain('bayn_cycle_execution_close_timestamp_seconds ')
+
     const awaitingDecisionMetrics = renderPrometheusMetrics(
       {
         ...realized,
