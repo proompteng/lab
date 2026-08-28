@@ -89,7 +89,6 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     )?;
 
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
-    insert(&mut crd, resources, "additionalProperties", json!(false))?;
     for (field, fixed) in [
         ("cpuMillis", crd::CPU_MILLIS),
         ("memoryMib", crd::MEMORY_MIB),
@@ -128,6 +127,13 @@ mod tests {
                 "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum/0"
             ),
             Some(&json!(2_000))
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/additionalProperties"
+            ),
+            None,
+            "Kubernetes forbids combining typed properties with additionalProperties"
         );
         assert_eq!(
             crd.pointer("/metadata/annotations/argocd.argoproj.io~1sync-wave"),
