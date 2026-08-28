@@ -91,6 +91,10 @@ async fn main() -> anyhow::Result<()> {
         },
         activity.clone(),
     )?;
+    service
+        .recover_provisional_terminal_leases()
+        .await
+        .context("recover provisional terminal leases")?;
     let tickets = service.tickets();
     let gateway_state = GatewayState::new(
         client.clone(),
