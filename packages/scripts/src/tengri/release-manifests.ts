@@ -27,7 +27,33 @@ const expectedRepositoryTemplate =
   '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
 const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
 const expectedPathTemplate = '{{ .path }}'
-const expectedTemplatePatchSourceBlock = `{{- if or $useLovely $hasKustomize }}
+export const TENGRI_APPLICATION_TEMPLATE_PATCH = `{{- if .annotations }}
+metadata:
+  annotations:
+  {{- range $key, $value := .annotations }}
+      {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+{{- $hasDestServer := hasKey . "destinationServer" -}}
+{{- $hasDestName := hasKey . "destinationName" -}}
+{{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+{{- $hasKustomize := hasKey . "kustomize" -}}
+{{- $auto := eq .automation "auto" -}}
+{{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+{{- $needsSpec := or $hasDestServer $hasDestName $useLovely $hasKustomize $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
+{{- if $needsSpec }}
+spec:
+{{- if or $hasDestServer $hasDestName }}
+  destination:
+    namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+  {{- if $hasDestServer }}
+    server: '{{ .destinationServer }}'
+  {{- end }}
+  {{- if $hasDestName }}
+    name: '{{ .destinationName }}'
+  {{- end }}
+{{- end }}
+{{- if or $useLovely $hasKustomize }}
   source:
   {{- if $useLovely }}
     plugin:
@@ -36,6 +62,41 @@ const expectedTemplatePatchSourceBlock = `{{- if or $useLovely $hasKustomize }}
   {{- if $hasKustomize }}
     kustomize: {{ toJson .kustomize }}
   {{- end }}
+{{- end }}
+{{- if or $auto $hasManagedNS }}
+  syncPolicy:
+  {{- if $auto }}
+    automated:
+      enabled: true
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+      refresh: true
+  {{- end }}
+  {{- if $hasManagedNS }}
+    managedNamespaceMetadata:
+    {{- if hasKey .managedNamespaceMetadata "labels" }}
+      labels:
+      {{- range $key, $value := .managedNamespaceMetadata.labels }}
+        {{ $key }}: {{ $value | quote }}
+      {{- end }}
+    {{- end }}
+    {{- if hasKey .managedNamespaceMetadata "annotations" }}
+      annotations:
+      {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+        {{ $key }}: {{ $value | quote }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- if hasKey . "ignoreDifferences" }}
+  ignoreDifferences: {{ toJson .ignoreDifferences }}
+{{- end }}
 {{- end }}`
 
 export type TengriRelease = {
@@ -209,31 +270,10 @@ function assertSafeTemplatePatch(templatePatch: unknown) {
   if (typeof templatePatch !== 'string') {
     throw new Error('Platform ApplicationSet must contain the expected templatePatch')
   }
-  const sourceBlocks = templatePatch.match(/^\s*source:\s*$/gm) ?? []
-  const patchKeys = templatePatch.split('\n').flatMap((line) => yamlMappingKey(line) ?? [])
-  const sourceOverrides = ['repoURL', 'targetRevision', 'path'].filter((field) => patchKeys.includes(field))
-  if (
-    sourceBlocks.length !== 1 ||
-    !templatePatch.includes(expectedTemplatePatchSourceBlock) ||
-    sourceOverrides.length > 0
-  ) {
+  if (templatePatch.trimEnd() !== TENGRI_APPLICATION_TEMPLATE_PATCH) {
     throw new Error(
-      'Tengri ApplicationSet templatePatch must preserve the verified plugin and kustomize-only source patch',
+      'Tengri ApplicationSet templatePatch must preserve the verified destination and plugin and kustomize-only source patch',
     )
-  }
-}
-
-function yamlMappingKey(line: string): string | undefined {
-  const match = /^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^:])+?)\s*:/.exec(line)
-  if (!match?.[1]) return undefined
-  const rawKey = match[1].trim()
-  if (rawKey.includes('{{')) return undefined
-  if (!rawKey.startsWith('"') && !rawKey.startsWith("'")) return rawKey
-  try {
-    const parsed = YAML.parse(`${rawKey}: null`) as Record<string, unknown> | null
-    return parsed && typeof parsed === 'object' ? Object.keys(parsed)[0] : undefined
-  } catch {
-    return undefined
   }
 }
 

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   readTengriRelease,
+  TENGRI_APPLICATION_TEMPLATE_PATCH,
   TENGRI_GRPC_ENDPOINT,
   updateTengriRelease,
   validateTengriRelease,
@@ -13,6 +14,9 @@ import {
 
 const tengriDigest = `sha256:${'a'.repeat(64)}`
 const nanoagentDigest = `sha256:${'b'.repeat(64)}`
+const indentedTemplatePatch = TENGRI_APPLICATION_TEMPLATE_PATCH.split('\n')
+  .map((line) => `    ${line}`)
+  .join('\n')
 
 function fixture(tengri = ZERO_DIGEST, nanoagent = ZERO_DIGEST, enabled = false, bffEnabled = enabled) {
   const directory = mkdtempSync(join(tmpdir(), 'tengri-release-'))
@@ -71,16 +75,7 @@ images:
         targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
         path: '{{ .path }}'
   templatePatch: |
-    {{- if or $useLovely $hasKustomize }}
-      source:
-      {{- if $useLovely }}
-        plugin:
-          name: lovely
-      {{- end }}
-      {{- if $hasKustomize }}
-        kustomize: {{ toJson .kustomize }}
-      {{- end }}
-    {{- end }}
+${indentedTemplatePatch}
 `,
   )
   writeFileSync(
@@ -511,6 +506,7 @@ spec:
       '        "path": argocd/applications/other',
       "        'repoURL': https://github.com/example/fork.git",
       '        "\\u0070ath": argocd/applications/other',
+      '        ? path\n        : argocd/applications/other',
     ] as const
 
     for (const override of overrides) {
@@ -535,6 +531,29 @@ spec:
       expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
       rmSync(paths.directory, { recursive: true, force: true })
     }
+  })
+
+  it('rejects a templatePatch destination that stops projecting the verified in-cluster server', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        "server: '{{ .destinationServer }}'",
+        "server: 'https://other.example'",
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must preserve the verified destination')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must preserve the verified destination',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
   })
 
   it('rejects template defaults that resolve Tengri to an unverified source', () => {
