@@ -1191,7 +1191,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "$0",
+              "noValue": "NO FILLS",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1484,7 +1484,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_accounting_gross_realized_pnl_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "gross realized",
               "range": false,
@@ -1532,7 +1532,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_accounting_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fees",
               "range": false,
@@ -1580,7 +1580,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "net realized",
               "range": false,
@@ -1970,6 +1970,6 @@ data:
       "timezone": "browser",
       "title": "Bayn Trading Operations",
       "uid": "bayn-cycle-operations",
-      "version": 3,
+      "version": 4,
       "weekStart": ""
     }

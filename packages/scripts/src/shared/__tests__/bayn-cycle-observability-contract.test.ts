@@ -248,7 +248,7 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(3)
+    expect(dashboard.version).toBe(4)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
@@ -317,9 +317,9 @@ describe('Bayn cycle operations alert contract', () => {
         'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_broker_net_exposure_dollars{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_broker_unrealized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_accounting_gross_realized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"})',
-        'max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"})',
+        'max(bayn_accounting_gross_realized_pnl_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_accounting_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
+        'max(bayn_accounting_net_realized_pnl_after_execution_fees_dollars{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (profitability) ((bayn_forward_performance_profitability{job="bayn",namespace="bayn",service="bayn"} == 1) and on(instance) topk(1, bayn_forward_performance_receipt_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max(bayn_unresolved_mutations{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}) * 1000 > 0',

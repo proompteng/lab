@@ -739,6 +739,13 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
     '# TYPE bayn_runtime_ready gauge',
     `bayn_runtime_ready ${runtimeReady ? 1 : 0}`,
+    ...(state.health.checkedAt === null
+      ? []
+      : [
+          '# HELP bayn_runtime_projection_timestamp_seconds Observation time of the runtime projection rendered by this scrape.',
+          '# TYPE bayn_runtime_projection_timestamp_seconds gauge',
+          `bayn_runtime_projection_timestamp_seconds ${prometheusNumber(epochSeconds(state.health.checkedAt))}`,
+        ]),
     '# HELP bayn_cycle_observation_available Whether the bounded PostgreSQL cycle projection is current.',
     '# TYPE bayn_cycle_observation_available gauge',
     `bayn_cycle_observation_available ${cycleObservationAvailable ? 1 : 0}`,
@@ -962,6 +969,8 @@ const renderPrometheusMetricsDataFirst = (
           `bayn_cycle_orders{status="all"} ${executionFunnel.orderCount}`,
           `bayn_cycle_orders{status="open"} ${executionFunnel.openOrderCount}`,
           `bayn_cycle_orders{status="filled"} ${executionFunnel.filledOrderCount}`,
+          `bayn_cycle_orders{status="canceled"} ${executionFunnel.canceledOrderCount}`,
+          `bayn_cycle_orders{status="expired"} ${executionFunnel.expiredOrderCount}`,
           `bayn_cycle_orders{status="rejected"} ${executionFunnel.rejectedOrderCount}`,
           '# HELP bayn_cycle_fills Current or latest terminal cycle broker-fill count by side.',
           '# TYPE bayn_cycle_fills gauge',
@@ -1054,15 +1063,19 @@ const renderPrometheusMetricsDataFirst = (
           ...(['idle', 'exact', 'gap'] as const).map(
             (state) => `bayn_accounting_state{state="${state}"} ${accountingState === state ? 1 : 0}`,
           ),
-          '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
-          '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
-          `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
-          '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
-          '# TYPE bayn_accounting_execution_fees_dollars gauge',
-          `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
-          '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
-          '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
-          `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+          ...(accounting.fillCount === 0
+            ? []
+            : [
+                '# HELP bayn_accounting_gross_realized_pnl_dollars Running gross realized PnL from durable accounting transactions.',
+                '# TYPE bayn_accounting_gross_realized_pnl_dollars gauge',
+                `bayn_accounting_gross_realized_pnl_dollars ${microsToPrometheusDollars(accounting.grossRealizedPnlMicros)}`,
+                '# HELP bayn_accounting_execution_fees_dollars Running broker execution fees from durable accounting transactions.',
+                '# TYPE bayn_accounting_execution_fees_dollars gauge',
+                `bayn_accounting_execution_fees_dollars ${microsToPrometheusDollars(accounting.executionFeesMicros)}`,
+                '# HELP bayn_accounting_net_realized_pnl_after_execution_fees_dollars Running realized PnL after recorded execution fees; terminal all-cost proof is separate.',
+                '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
+                `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
+              ]),
           '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal all-cost performance receipt exists.',
           '# TYPE bayn_forward_performance_receipt_available gauge',
           `bayn_forward_performance_receipt_available ${forwardPerformance === null ? 0 : 1}`,

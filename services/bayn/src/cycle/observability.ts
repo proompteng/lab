@@ -349,6 +349,8 @@ export interface CycleExecutionFunnelObservation {
   readonly orderCount: number
   readonly openOrderCount: number
   readonly filledOrderCount: number
+  readonly canceledOrderCount: number
+  readonly expiredOrderCount: number
   readonly rejectedOrderCount: number
   readonly fillCount: number
   readonly buyFillCount: number

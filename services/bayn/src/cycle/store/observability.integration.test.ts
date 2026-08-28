@@ -818,6 +818,53 @@ const seedOrderLifecycle = (cycleId: string) =>
         `
       }),
     )
+
+    const insertTerminalOrder = (ordinal: '7' | '8', status: 'CANCELED' | 'EXPIRED', observedAt: string) => {
+      const terminalIntentId = ordinal.repeat(64)
+      const terminalClientOrderId = `bayn-observability-${status.toLowerCase()}`
+      const terminalBrokerOrderId = `broker-observability-${status.toLowerCase()}`
+      const terminalSymbol = ordinal === '7' ? 'AAPL' : 'MSFT'
+      return sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`
+            INSERT INTO intents (
+              intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+              decision_hash, policy_hash, account_id, client_order_id,
+              symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+              state, terminal_outcome, state_version, created_at, updated_at
+            ) VALUES (
+              ${terminalIntentId}, 'bayn.paper-intent.v3', ${'f'.repeat(64)}, NULL,
+              'opening-drive-momentum', ${cycleId}, ${'2'.repeat(64)}, ${'3'.repeat(64)},
+              ${accountId}, ${terminalClientOrderId}, ${terminalSymbol}, 'BUY', 'MARKET', 'DAY',
+              1000000, 1000000, 'PLANNED', NULL, 1, ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO broker_events (
+              event_id, schema_version, content_hash, event_kind, broker, account_id,
+              source_event_id, source_sequence, occurred_at, observed_at
+            ) VALUES (
+              ${terminalIntentId}, 'bayn.paper-broker-event.v1', ${terminalIntentId}, 'ORDER', 'ALPACA',
+              ${accountId}, ${`order-${status.toLowerCase()}`}, ${status === 'CANCELED' ? 103 : 104},
+              ${observedAt}, ${observedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO orders (
+              event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+              side, order_type, time_in_force, quantity_micros, filled_quantity_micros, status
+            ) VALUES (
+              ${terminalIntentId}, ${accountId}, 'bayn.paper-order.v1', ${terminalBrokerOrderId},
+              ${terminalClientOrderId}, ${terminalIntentId}, ${terminalSymbol}, 'BUY', 'MARKET', 'DAY', 1000000, 0,
+              ${status}
+            )
+          `
+        }),
+      )
+    }
+
+    yield* insertTerminalOrder('7', 'CANCELED', '2026-04-08T13:32:00.000Z')
+    yield* insertTerminalOrder('8', 'EXPIRED', '2026-04-08T13:33:00.000Z')
   })
 
 describePostgres('PostgreSQL cycle observability projection', () => {
@@ -1017,9 +1064,11 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     )
 
     expect(projection.execution).toMatchObject({
-      orderCount: 1,
+      orderCount: 3,
       filledOrderCount: 1,
-      latestOrderAt: '2026-04-08T13:31:00.000Z',
+      canceledOrderCount: 1,
+      expiredOrderCount: 1,
+      latestOrderAt: '2026-04-08T13:33:00.000Z',
       maximumOrderAcknowledgementLatencyMs: 2_000,
       maximumFillLatencyMs: 2_592_000_000,
     })

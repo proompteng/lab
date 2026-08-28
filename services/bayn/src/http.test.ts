@@ -387,6 +387,8 @@ describe('Bayn HTTP pure decisions', () => {
           orderCount: 2,
           openOrderCount: 0,
           filledOrderCount: 2,
+          canceledOrderCount: 0,
+          expiredOrderCount: 0,
           rejectedOrderCount: 0,
           fillCount: 2,
           buyFillCount: 2,
@@ -442,6 +444,8 @@ describe('Bayn HTTP pure decisions', () => {
     expect(metrics).toContain('bayn_execution_funnel_count{stage="fills"} 2')
     expect(metrics).toContain('bayn_cycle_intents{state="acknowledged"} 2')
     expect(metrics).toContain('bayn_cycle_orders{status="filled"} 2')
+    expect(metrics).toContain('bayn_cycle_orders{status="canceled"} 0')
+    expect(metrics).toContain('bayn_cycle_orders{status="expired"} 0')
     expect(metrics).toContain('bayn_cycle_fills{side="buy"} 2')
     expect(metrics).toContain('bayn_broker_position_count 2')
     expect(metrics).toContain('bayn_broker_gross_exposure_dollars 800.000000')
@@ -498,6 +502,10 @@ describe('Bayn HTTP pure decisions', () => {
     const idleMetrics = renderPrometheusMetrics(idle, config, provenance, 'embedded')
     expect(idleMetrics).toContain('bayn_accounting_state{state="idle"} 1')
     expect(idleMetrics).toContain('bayn_accounting_activity_count{kind="fills"} 0')
+    expect(idleMetrics).toContain('bayn_runtime_projection_timestamp_seconds ')
+    expect(idleMetrics).not.toContain('bayn_accounting_gross_realized_pnl_dollars ')
+    expect(idleMetrics).not.toContain('bayn_accounting_execution_fees_dollars ')
+    expect(idleMetrics).not.toContain('bayn_accounting_net_realized_pnl_after_execution_fees_dollars ')
     expect(idleMetrics).toContain('bayn_forward_performance_receipt_available 0')
     expect(idleMetrics).not.toContain('bayn_forward_performance_net_realized_pnl_after_costs_dollars ')
 
