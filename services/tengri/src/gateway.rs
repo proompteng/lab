@@ -169,6 +169,11 @@ struct PreviewGuestBinding {
     guest: Arc<OnceCell<GuestClient>>,
 }
 
+struct ResolvedPreviewGuest {
+    client: GuestClient,
+    binding: Arc<OnceCell<GuestClient>>,
+}
+
 #[derive(Deserialize)]
 struct TerminalQuery {
     #[serde(flatten)]
@@ -207,8 +212,8 @@ impl GatewayState {
     async fn preview_guest(
         &self,
         session: &PreviewSessionRecord,
-    ) -> Result<GuestClient, crate::guest::GuestError> {
-        let guest = {
+    ) -> Result<ResolvedPreviewGuest, crate::guest::GuestError> {
+        let binding = {
             let mut bindings = self.preview_guests.lock().await;
             bindings.retain(|_, binding| binding.expires_at > SystemTime::now());
             match bindings.get(&session.id) {
@@ -224,16 +229,30 @@ impl GatewayState {
         let client = self.client.clone();
         let namespace = self.namespace.clone();
         let agent_id = session.agent_id.clone();
-        Ok(guest
+        let guest = binding
             .get_or_try_init(|| async move {
                 GuestClient::for_agent(client, &namespace, &agent_id).await
             })
             .await?
-            .clone())
+            .clone();
+        Ok(ResolvedPreviewGuest {
+            client: guest,
+            binding,
+        })
     }
 
-    async fn invalidate_preview_guest(&self, session_id: &str) {
-        self.preview_guests.lock().await.remove(session_id);
+    async fn invalidate_preview_guest(
+        &self,
+        session_id: &str,
+        failed_binding: &Arc<OnceCell<GuestClient>>,
+    ) {
+        let mut bindings = self.preview_guests.lock().await;
+        let remove = bindings
+            .get(session_id)
+            .is_some_and(|binding| Arc::ptr_eq(&binding.guest, failed_binding));
+        if remove {
+            bindings.remove(session_id);
+        }
     }
 }
 
@@ -635,14 +654,14 @@ async fn preview_host_proxy(
         .unwrap_or_default();
     let target = format!(
         "{}/v1/preview/{}{}{}",
-        guest.base_url(),
+        guest.client.base_url(),
         session.port,
         path,
         query,
     );
     if let Some(websocket) = websocket {
         let websocket_target = target.replacen("http://", "ws://", 1);
-        let token = guest.token().to_owned();
+        let token = guest.client.token().to_owned();
         let activity = state.activity.clone();
         let agent_id = session.agent_id.clone();
         let (upstream, selected_protocol) =
@@ -652,7 +671,9 @@ async fn preview_host_proxy(
                 Ok(connection) => connection,
                 Err(error) => {
                     if error.invalidates_guest_binding() {
-                        state.invalidate_preview_guest(&session.id).await;
+                        state
+                            .invalidate_preview_guest(&session.id, &guest.binding)
+                            .await;
                     }
                     return StatusCode::BAD_GATEWAY.into_response();
                 }
@@ -721,7 +742,7 @@ fn preview_launch_location(
 async fn proxy_http(
     state: GatewayState,
     session: PreviewSessionRecord,
-    guest: GuestClient,
+    guest: ResolvedPreviewGuest,
     target: String,
     request: Request<Body>,
 ) -> axum::response::Response {
@@ -740,7 +761,7 @@ async fn proxy_http(
     let mut upstream = state
         .http
         .request(parts.method, target)
-        .bearer_auth(guest.token());
+        .bearer_auth(guest.client.token());
     for (name, value) in &parts.headers {
         if forward_request_header(name) {
             if name == header::COOKIE {
@@ -761,7 +782,9 @@ async fn proxy_http(
     let upstream = match upstream.send().await {
         Ok(response) => response,
         Err(_) => {
-            state.invalidate_preview_guest(&session.id).await;
+            state
+                .invalidate_preview_guest(&session.id, &guest.binding)
+                .await;
             return (
                 StatusCode::BAD_GATEWAY,
                 "preview application is unavailable",
@@ -771,7 +794,9 @@ async fn proxy_http(
     };
     let status = upstream.status();
     if nanoagent_auth_failed(status, upstream.headers()) {
-        state.invalidate_preview_guest(&session.id).await;
+        state
+            .invalidate_preview_guest(&session.id, &guest.binding)
+            .await;
     }
     let headers = upstream.headers().clone();
     let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
@@ -1580,6 +1605,47 @@ mod tests {
         let mut other_port = session.clone();
         other_port.port = 5173;
         assert!(!binding.matches(&other_port));
+    }
+
+    #[tokio::test]
+    async fn stale_preview_failure_does_not_evict_a_replacement_binding() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let state = test_gateway_state(Client::new(service, "tengri"));
+        let session = PreviewSessionRecord {
+            id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
+            token: "session-token".to_owned(),
+            owner_hash: "a".repeat(64),
+            agent_id: "agent-a".to_owned(),
+            port: 3000,
+            initial_path: "/".to_owned(),
+            expires_at: SystemTime::now() + Duration::from_secs(60),
+        };
+        let stale_binding = PreviewGuestBinding::new(&session);
+        let stale_identity = Arc::clone(&stale_binding.guest);
+        let replacement = PreviewGuestBinding::new(&session);
+        let replacement_identity = Arc::clone(&replacement.guest);
+        state
+            .preview_guests
+            .lock()
+            .await
+            .insert(session.id.clone(), replacement);
+
+        state
+            .invalidate_preview_guest(&session.id, &stale_identity)
+            .await;
+        assert!(
+            state
+                .preview_guests
+                .lock()
+                .await
+                .get(&session.id)
+                .is_some_and(|binding| Arc::ptr_eq(&binding.guest, &replacement_identity))
+        );
+
+        state
+            .invalidate_preview_guest(&session.id, &replacement_identity)
+            .await;
+        assert!(!state.preview_guests.lock().await.contains_key(&session.id));
     }
 
     #[test]
