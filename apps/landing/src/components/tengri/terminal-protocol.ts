@@ -18,6 +18,7 @@ export type TerminalControlFrame =
 
 export type TerminalResumeState = {
   agentId: string
+  desktopId: string
   sessionId: string
   reconnectToken: string
   sequence: number
@@ -49,10 +50,14 @@ export function normalizeTerminalSize(columns: number, rows: number): { columns:
   }
 }
 
-export function terminalCreationId(agentId: string, windowId: string): string {
-  const creationId = `tengri-${agentId}-${windowId}`
+export function terminalCreationId(agentId: string, desktopId: string, windowId: string): string {
+  const creationId = `${terminalCreationScope(agentId, desktopId)}${windowId}`
   if (!CREATION_ID.test(creationId)) throw new Error('Terminal creation identity is invalid')
   return creationId
+}
+
+export function terminalCreationScope(agentId: string, desktopId: string): string {
+  return `tengri-${agentId}-${desktopId}-`
 }
 
 export function buildTerminalWebSocketUrl(
@@ -130,7 +135,11 @@ export function parseTerminalControlFrame(value: string): TerminalControlFrame |
   return null
 }
 
-export function parseTerminalResumeState(value: string | null, agentId: string): TerminalResumeState | null {
+export function parseTerminalResumeState(
+  value: string | null,
+  agentId: string,
+  desktopId: string,
+): TerminalResumeState | null {
   if (!value) return null
   let candidate: unknown
   try {
@@ -140,13 +149,57 @@ export function parseTerminalResumeState(value: string | null, agentId: string):
   }
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
   const state = candidate as Record<string, unknown>
-  if (state.agentId !== agentId || typeof state.sessionId !== 'string' || !SESSION_ID.test(state.sessionId)) return null
+  if (
+    state.agentId !== agentId ||
+    state.desktopId !== desktopId ||
+    typeof state.sessionId !== 'string' ||
+    !SESSION_ID.test(state.sessionId)
+  ) {
+    return null
+  }
   if (typeof state.reconnectToken !== 'string' || (state.reconnectToken && !isReconnectToken(state.reconnectToken))) {
     return null
   }
   if (!isUint32(state.sequence)) return null
   return {
     agentId,
+    desktopId,
+    sessionId: state.sessionId,
+    reconnectToken: state.reconnectToken,
+    sequence: state.sequence,
+    cleanupPending: state.cleanupPending === true,
+  }
+}
+
+export function parseLegacyTerminalResumeState(
+  value: string | null,
+  agentId: string,
+  desktopId: string,
+): TerminalResumeState | null {
+  if (!value) return null
+  let candidate: unknown
+  try {
+    candidate = JSON.parse(value)
+  } catch {
+    return null
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+  const state = candidate as Record<string, unknown>
+  if (
+    state.agentId !== agentId ||
+    'desktopId' in state ||
+    typeof state.sessionId !== 'string' ||
+    !SESSION_ID.test(state.sessionId)
+  ) {
+    return null
+  }
+  if (typeof state.reconnectToken !== 'string' || (state.reconnectToken && !isReconnectToken(state.reconnectToken))) {
+    return null
+  }
+  if (!isUint32(state.sequence)) return null
+  return {
+    agentId,
+    desktopId,
     sessionId: state.sessionId,
     reconnectToken: state.reconnectToken,
     sequence: state.sequence,
@@ -192,13 +245,19 @@ export function terminalResumeAttachment(state: TerminalResumeState, attached: b
 export function terminalReconciliationCandidate<Session extends ReconciliationSession>(
   sessions: readonly Session[],
   creationId: string,
+  creationScope: string,
   claimedSessionIds: ReadonlySet<string>,
 ): Session | null {
   const exact = sessions.find(
     (candidate) => candidate.creationId === creationId && !claimedSessionIds.has(candidate.id),
   )
   if (exact) return exact
-  return sessions.find((candidate) => !candidate.attached && !claimedSessionIds.has(candidate.id)) ?? null
+  return (
+    sessions.find(
+      (candidate) =>
+        candidate.creationId.startsWith(creationScope) && !candidate.attached && !claimedSessionIds.has(candidate.id),
+    ) ?? null
+  )
 }
 
 export async function settleTerminalCreation<Session>(
