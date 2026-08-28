@@ -1060,7 +1060,7 @@ fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
 
 fn bounded_approval_decisions(value: &Value) -> Value {
     let Some(decisions) = value.as_array() else {
-        return Value::Array(Vec::new());
+        return Value::Null;
     };
     let mut bounded = Vec::new();
     for decision in decisions.iter().take(16) {
@@ -2159,6 +2159,7 @@ mod tests {
                 {"applyNetworkPolicyAmendment": {"network_policy_amendment": true}}
             ]),
         );
+        assert_eq!(bounded_approval_decisions(&Value::Null), Value::Null);
     }
 
     #[test]
