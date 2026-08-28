@@ -812,17 +812,21 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_cycle_decision_ordered_intent_count Number of canonical ordered intents in the observed decision.',
                 '# TYPE bayn_cycle_decision_ordered_intent_count gauge',
                 `bayn_cycle_decision_ordered_intent_count ${cycleDecision.orderedIntentCount}`,
-                '# HELP bayn_cycle_decision_market_data_records Verified intraday market-data records bound to the observed decision.',
-                '# TYPE bayn_cycle_decision_market_data_records gauge',
-                `bayn_cycle_decision_market_data_records{kind="bars"} ${cycleDecision.barCount}`,
-                `bayn_cycle_decision_market_data_records{kind="quotes"} ${cycleDecision.quoteCount}`,
-                `bayn_cycle_decision_market_data_records{kind="trades"} ${cycleDecision.tradeCount}`,
                 '# HELP bayn_cycle_decision_timestamp_seconds Creation time of the observed immutable decision.',
                 '# TYPE bayn_cycle_decision_timestamp_seconds gauge',
                 `bayn_cycle_decision_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.createdAt))}`,
-                '# HELP bayn_cycle_market_data_observed_timestamp_seconds Observation time of the market-data snapshot bound to the decision.',
-                '# TYPE bayn_cycle_market_data_observed_timestamp_seconds gauge',
-                `bayn_cycle_market_data_observed_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.marketDataObservedAt))}`,
+                ...(cycleDecision.marketDataObservedAt === null
+                  ? []
+                  : [
+                      '# HELP bayn_cycle_decision_market_data_records Verified intraday market-data records bound to the observed decision.',
+                      '# TYPE bayn_cycle_decision_market_data_records gauge',
+                      `bayn_cycle_decision_market_data_records{kind="bars"} ${cycleDecision.barCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="quotes"} ${cycleDecision.quoteCount}`,
+                      `bayn_cycle_decision_market_data_records{kind="trades"} ${cycleDecision.tradeCount}`,
+                      '# HELP bayn_cycle_market_data_observed_timestamp_seconds Observation time of the market-data snapshot bound to the decision.',
+                      '# TYPE bayn_cycle_market_data_observed_timestamp_seconds gauge',
+                      `bayn_cycle_market_data_observed_timestamp_seconds ${prometheusNumber(epochSeconds(cycleDecision.marketDataObservedAt))}`,
+                    ]),
                 ...(cycleDecision.riskBlockReason === null
                   ? []
                   : [

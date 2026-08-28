@@ -540,6 +540,30 @@ describe('Bayn HTTP pure decisions', () => {
     expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_order_timestamp_seconds ')
     expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_fill_timestamp_seconds ')
 
+    const missingMarketDataMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            decision: {
+              ...realized.cycle.execution.decision,
+              marketDataObservedAt: null,
+              barCount: 0,
+              quoteCount: 0,
+              tradeCount: 0,
+            },
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingMarketDataMetrics).not.toContain('bayn_cycle_decision_market_data_records')
+    expect(missingMarketDataMetrics).not.toContain('bayn_cycle_market_data_observed_timestamp_seconds ')
+
     const restrictedMetrics = renderPrometheusMetrics(
       {
         ...realized,
