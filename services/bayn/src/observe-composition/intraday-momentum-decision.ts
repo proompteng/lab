@@ -10,12 +10,7 @@ import type {
   IntradayMomentumTargetPortfolio,
 } from '../strategy/intraday-momentum/model'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
-import {
-  adverseQuotePrices,
-  executionMarketDataBinding,
-  intradayArchiveTopics,
-  maximumBuyQuantities,
-} from './opening-drive-decision'
+import { adverseQuotePrices, executionMarketDataBinding, maximumBuyQuantities } from './opening-drive-decision'
 
 const minuteMs = 60_000
 
@@ -52,7 +47,7 @@ const snapshotQuery = (
   ...(symbols === undefined ? {} : { symbols }),
   feed: protocol.feed,
   delayClass: protocol.delayClass,
-  sourceTopics: intradayArchiveTopics,
+  sourceTopics: protocol.sourceTopics,
   maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
   minimumWatermarkLagMs,
 })
