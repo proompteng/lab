@@ -40,13 +40,16 @@ const targetPlanExecutionTerms = (
   input: TargetPlannerInput,
 ): { readonly executionTerms: TargetPlanExecutionTerms } | Record<never, never> => {
   if (input.schemaVersion !== quoteBoundTargetPlannerInputSchemaVersion) return {}
-  const { executionPurpose, orderType, timeInForce, priceReference } = input.executionTerms
+  const { executionPurpose, orderType, timeInForce, priceReference, snapshotId, snapshotContentHash } =
+    input.executionTerms
   return {
     executionTerms: {
       ...(executionPurpose === undefined ? {} : { executionPurpose }),
       orderType,
       timeInForce,
       priceReference,
+      snapshotId,
+      snapshotContentHash,
     },
   }
 }

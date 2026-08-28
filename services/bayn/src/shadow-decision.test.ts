@@ -1173,6 +1173,91 @@ describe('OBSERVE shadow decision', () => {
     if (Result.isFailure(forged)) expect(String(forged.failure.cause)).toContain('liquidation market data')
   })
 
+  test('binds durable intraday entry evidence to its exact full-universe snapshot', async () => {
+    const input = makeIntradayMomentumInput()
+    const executionMarketData = input.executionMarketData
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      throw new Error('intraday fixture must include archive execution market data v2')
+    }
+    const executionSession = bindExecutionSessionSuccess({
+      executionSessionDate: executionDate,
+      planningBrokerState: {
+        observedAt: brokerObservedAt,
+        contentHash: makeBrokerState([]).stateHash,
+      },
+      calendar: executionMarketData.calendar,
+      executionModel: intradayMomentumExecutionModel,
+    })
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _contentHash, ...material } = document
+    const alternateBinding = currentEntryMarketDataBinding(input.cycle, hash('b'))
+    const mismatchedSnapshot = makeExecutionDecisionDocument({
+      ...material,
+      bindings: { ...material.bindings, executionMarketData: alternateBinding },
+    })
+    expect(Result.isFailure(mismatchedSnapshot)).toBe(true)
+    if (Result.isFailure(mismatchedSnapshot)) {
+      expect(String(mismatchedSnapshot.failure.cause)).toContain('outer decision snapshot identity')
+    }
+
+    const legacyBinding = openingDriveMarketDataBinding(input.cycle)
+    const legacyEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: legacyBinding.snapshotId,
+        snapshotContentHash: legacyBinding.contentHash,
+        executionMarketData: legacyBinding,
+      },
+    })
+    expect(Result.isFailure(legacyEvidence)).toBe(true)
+    if (Result.isFailure(legacyEvidence)) {
+      expect(String(legacyEvidence.failure.cause)).toContain('entry requires execution market-data binding v2')
+    }
+
+    const {
+      contentHash: _bindingContentHash,
+      snapshotId: _bindingSnapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = executionMarketData
+    const subsetMaterial = { ...bindingMaterial, symbols: executionMarketData.symbols.slice(0, 1) }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...subsetMaterial }
+    const subsetContentHash = canonicalHashV1(snapshotMaterial)
+    const subsetBinding = Result.getOrThrow(
+      Schema.decodeUnknownResult(
+        ExecutionMarketDataBindingSchema,
+        strictParseOptions,
+      )({
+        schemaVersion,
+        snapshotSchemaVersion,
+        ...subsetMaterial,
+        contentHash: subsetContentHash,
+        snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash: subsetContentHash }),
+      }),
+    )
+    const subsetEvidence = makeExecutionDecisionDocument({
+      ...material,
+      bindings: {
+        ...material.bindings,
+        snapshotId: subsetBinding.snapshotId,
+        snapshotContentHash: subsetBinding.contentHash,
+        executionMarketData: subsetBinding,
+      },
+    })
+    expect(Result.isFailure(subsetEvidence)).toBe(true)
+    if (Result.isFailure(subsetEvidence)) {
+      expect(String(subsetEvidence.failure.cause)).toContain('complete execution universe')
+    }
+  })
+
   test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
     const input = makeIntradayMomentumInput()
     const accepted = await build(input)
@@ -1237,9 +1322,13 @@ describe('OBSERVE shadow decision', () => {
       targetWeights: compiledDecision.targetWeights,
       referencePrices: { ...closePriceFields, contentHash: canonicalHashV1(closePriceFields) },
       executionTerms: {
-        ...input.plannerInput.executionTerms,
+        orderType: OrderType.Limit as const,
+        timeInForce: TimeInForce.ImmediateOrCancel as const,
+        priceReference: 'verified-adverse-quote-boundary' as const,
+        executionPurpose: 'forced-close' as const,
         snapshotId: closeMarketData.snapshotId,
         snapshotContentHash: closeMarketData.contentHash,
+        maximumBuyQuantityMicros: { AMD: '0', NVDA: '0' },
       },
       submissionCutoffAt: closeSubmitCutoffAt,
     }
@@ -1311,6 +1400,37 @@ describe('OBSERVE shadow decision', () => {
     expect(document.bindings.snapshotId).toBe(entryMarketData.snapshotId)
     expect(document.bindings.executionMarketData?.snapshotId).toBe(closeMarketData.snapshotId)
     expect(document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+
+    const executionDocument = await Effect.runPromise(
+      buildExecutionDecision({
+        ...closeInput,
+        riskInputs: closeInput.riskInputs.map((riskInput) => ({
+          ...riskInput,
+          state: {
+            ...riskInput.state,
+            authority: {
+              ...riskInput.state.authority,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
+            },
+          },
+        })),
+        authorityGenerationHash: hash('6'),
+        executionSession,
+      }),
+    )
+    const { contentHash: _documentContentHash, ...documentMaterial } = executionDocument
+    const replacementCloseBinding = liquidationMarketDataBinding(input.cycle, hash('e'))
+    const mismatchedPersistedClose = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      bindings: { ...documentMaterial.bindings, executionMarketData: replacementCloseBinding },
+    })
+    expect(Result.isFailure(mismatchedPersistedClose)).toBe(true)
+    if (Result.isFailure(mismatchedPersistedClose)) {
+      expect(String(mismatchedPersistedClose.failure.cause)).toContain(
+        'exact market-data snapshot persisted by the target plan',
+      )
+    }
 
     const failure = await Effect.runPromise(
       Effect.flip(

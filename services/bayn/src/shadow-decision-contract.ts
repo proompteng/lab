@@ -445,12 +445,14 @@ const executionMaterialIssues = (
   }
   const usesReconciledPositionMark =
     document.targetPlan.executionTerms?.priceReference === 'reconciled-broker-position-mark'
+  const executionMarketData = document.bindings.executionMarketData
   const reconciledPositionBinding =
-    document.bindings.executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
-      ? document.bindings.executionMarketData
+    executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion
+      ? executionMarketData
       : undefined
-  const usesLiquidationMarketData = document.bindings.executionMarketData?.purpose === 'LIQUIDATION'
-  const isClosePlan = document.targetPlan.executionTerms?.executionPurpose !== undefined
+  const usesLiquidationMarketData = executionMarketData?.purpose === 'LIQUIDATION'
+  const targetExecutionTerms = document.targetPlan.executionTerms
+  const isClosePlan = targetExecutionTerms?.executionPurpose !== undefined
   if (usesLiquidationMarketData !== isClosePlan) {
     issues.push({
       path: ['bindings', 'executionMarketData', 'purpose'],
@@ -462,6 +464,44 @@ const executionMaterialIssues = (
       path: ['bindings', 'executionMarketData'],
       issue: 'reconciled broker-position execution terms require their exact liquidation binding and vice versa',
     })
+  }
+  if (
+    executionMarketData !== undefined &&
+    targetExecutionTerms !== undefined &&
+    (executionMarketData.snapshotId !== targetExecutionTerms.snapshotId ||
+      executionMarketData.contentHash !== targetExecutionTerms.snapshotContentHash)
+  ) {
+    issues.push({
+      path: ['bindings', 'executionMarketData', 'snapshotId'],
+      issue: 'must match the exact market-data snapshot persisted by the target plan',
+    })
+  }
+  if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan) {
+    if (executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
+      issues.push({
+        path: ['bindings', 'executionMarketData', 'schemaVersion'],
+        issue: 'intraday-momentum entry requires execution market-data binding v2',
+      })
+    } else {
+      const bindsCompleteUniverse =
+        executionMarketData.symbols.length === executionMarketData.universe.length &&
+        executionMarketData.symbols.every((symbol, index) => symbol === executionMarketData.universe[index])
+      if (!bindsCompleteUniverse) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'symbols'],
+          issue: 'intraday-momentum entry must bind the complete execution universe',
+        })
+      }
+      if (
+        executionMarketData.snapshotId !== document.bindings.snapshotId ||
+        executionMarketData.contentHash !== document.bindings.snapshotContentHash
+      ) {
+        issues.push({
+          path: ['bindings', 'executionMarketData', 'snapshotId'],
+          issue: 'intraday-momentum entry must match the outer decision snapshot identity and content hash',
+        })
+      }
+    }
   }
   if (reconciledPositionBinding !== undefined) {
     if (

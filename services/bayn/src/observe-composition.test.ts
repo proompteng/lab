@@ -3626,12 +3626,14 @@ describe('OBSERVE runtime composition', () => {
       return { ...changed, outputHash: canonicalHashV1(changed) }
     }
     const forgedBrokerMarkPlan = withExecutionTerms(close.targetPlan, {
+      ...close.targetPlan.executionTerms,
       executionPurpose: 'forced-close',
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
       priceReference: 'reconciled-broker-position-mark',
     })
     const forgedArchivePlan = withExecutionTerms(outOfUniverseClose.targetPlan, {
+      ...outOfUniverseClose.targetPlan.executionTerms,
       executionPurpose: 'fractional-close',
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,

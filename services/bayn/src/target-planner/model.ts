@@ -194,6 +194,11 @@ const ReconciledPositionCloseExecutionIdentityFields = {
   priceReference: Schema.Literal('reconciled-broker-position-mark'),
 } as const
 
+const TargetPlanExecutionSnapshotFields = {
+  snapshotId: Sha256Schema,
+  snapshotContentHash: Sha256Schema,
+} as const
+
 const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
   ...QuoteBoundLimitExecutionIdentityFields,
   snapshotId: Sha256Schema,
@@ -222,9 +227,9 @@ export const QuoteBoundExecutionTermsSchema = Schema.Union([
 ])
 
 export const TargetPlanExecutionTermsSchema = Schema.Union([
-  Schema.Struct(QuoteBoundLimitExecutionIdentityFields),
-  Schema.Struct(FractionalCloseExecutionIdentityFields),
-  Schema.Struct(ReconciledPositionCloseExecutionIdentityFields),
+  Schema.Struct({ ...QuoteBoundLimitExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
+  Schema.Struct({ ...FractionalCloseExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
+  Schema.Struct({ ...ReconciledPositionCloseExecutionIdentityFields, ...TargetPlanExecutionSnapshotFields }),
 ])
 export type TargetPlanExecutionTerms = typeof TargetPlanExecutionTermsSchema.Type
 
