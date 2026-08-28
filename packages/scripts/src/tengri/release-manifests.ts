@@ -114,6 +114,14 @@ function assertTengriApplicationTarget(block: string) {
       )
     }
   }
+  const sourceOverrides = ['repoURL', 'targetRevision'].filter((field) =>
+    new RegExp(`^\\s*${field}:\\s*`, 'm').test(block),
+  )
+  if (sourceOverrides.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet entry must use the platform repository and main revision defaults; remove ${sourceOverrides.join(', ')}`,
+    )
+  }
 }
 
 function parseBffEndpoint(contents: string) {

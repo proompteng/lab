@@ -230,6 +230,33 @@ spec:
     }
   })
 
+  it('rejects Tengri repository and revision overrides without mutating release manifests', () => {
+    const overrides = ['repoURL: https://github.com/example/fork.git', 'targetRevision: unverified-branch'] as const
+
+    for (const override of overrides) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          '                enabled: "false"',
+          `                ${override}\n                enabled: "false"`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must use the platform repository and main revision defaults')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must use the platform repository and main revision defaults',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a base Deployment image that the verified digest selector cannot replace', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
