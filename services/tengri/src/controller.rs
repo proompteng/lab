@@ -136,6 +136,7 @@ async fn reconcile(
             Err(error) => {
                 report_provisioning_failure(
                     &microvms,
+                    &pods,
                     &microvm,
                     "BootstrapSecretRejected",
                     "Bootstrap Secret",
@@ -151,6 +152,7 @@ async fn reconcile(
         Err(error) => {
             report_provisioning_failure(
                 &microvms,
+                &pods,
                 &microvm,
                 "PersistentVolumeClaimRejected",
                 "persistent home claim",
@@ -174,6 +176,7 @@ async fn reconcile(
         Err(error) => {
             report_provisioning_failure(
                 &microvms,
+                &pods,
                 &microvm,
                 "MicroVMPodRejected",
                 "Firecracker Pod",
@@ -431,6 +434,7 @@ fn terminating_status(microvm: &MicroVM, now: DateTime<Utc>) -> MicroVMStatus {
 
 async fn report_provisioning_failure(
     api: &Api<MicroVM>,
+    pods: &Api<Pod>,
     microvm: &MicroVM,
     reason: &str,
     resource: &str,
@@ -439,6 +443,34 @@ async fn report_provisioning_failure(
 ) {
     if !is_terminal_provisioning_error(error) {
         return;
+    }
+
+    if microvm
+        .status
+        .as_ref()
+        .is_some_and(|status| status.phase == MicroVMPhase::Ready && status.guest_ready)
+    {
+        match existing_guest_is_usable(pods, microvm).await {
+            Ok(true) => {
+                warn!(
+                    microvm = %microvm.name_any(),
+                    reason,
+                    error = %error,
+                    "preserving ready agent status after desired resource re-apply was rejected"
+                );
+                return;
+            }
+            Ok(false) => {}
+            Err(lookup_error) => {
+                warn!(
+                    microvm = %microvm.name_any(),
+                    reason,
+                    error = %lookup_error,
+                    "could not verify the existing ready guest; preserving its last known usable status"
+                );
+                return;
+            }
+        }
     }
 
     let message = provisioning_failure_message(resource, error);
@@ -454,6 +486,21 @@ async fn report_provisioning_failure(
             "failed to publish terminal provisioning error"
         );
     }
+}
+
+async fn existing_guest_is_usable(pods: &Api<Pod>, microvm: &MicroVM) -> Result<bool, kube::Error> {
+    let Some(pod_name) = microvm
+        .status
+        .as_ref()
+        .and_then(|status| status.pod_name.as_deref())
+    else {
+        return Ok(false);
+    };
+    Ok(pods
+        .get_opt(pod_name)
+        .await?
+        .as_ref()
+        .is_some_and(pod_is_ready))
 }
 
 fn is_terminal_provisioning_error(error: &kube::Error) -> bool {
@@ -520,14 +567,7 @@ fn derive_status(
     now: DateTime<Utc>,
 ) -> MicroVMStatus {
     let pod_status = pod.status.as_ref();
-    let ready = pod_status
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conditions| {
-            conditions
-                .iter()
-                .find(|condition| condition.type_ == "Ready")
-        })
-        .is_some_and(|condition| condition.status == "True");
+    let ready = pod_is_ready(pod);
     let failed = pod_status
         .and_then(|status| status.container_statuses.as_ref())
         .and_then(|statuses| statuses.iter().find_map(container_failure));
@@ -608,6 +648,18 @@ fn derive_status(
         )],
         observed_generation: microvm.meta().generation.unwrap_or_default(),
     }
+}
+
+fn pod_is_ready(pod: &Pod) -> bool {
+    pod.status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .and_then(|conditions| {
+            conditions
+                .iter()
+                .find(|condition| condition.type_ == "Ready")
+        })
+        .is_some_and(|condition| condition.status == "True")
 }
 
 fn condition(
@@ -696,9 +748,11 @@ fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
 mod tests {
     use super::*;
     use crate::crd::{IDLE_MINUTES, MicroVMArchitecture, MicroVMResources, MicroVMSpec};
+    use http::{Request, Response, StatusCode};
     use k8s_openapi::api::core::v1::{
         ContainerState, ContainerStateWaiting, PodCondition, PodStatus,
     };
+    use kube::client::Body as KubeBody;
 
     fn test_microvm(now: DateTime<Utc>) -> MicroVM {
         MicroVM::new(
@@ -939,6 +993,64 @@ mod tests {
         assert_eq!(status.failure_reason.as_deref(), Some("MicroVMPodRejected"));
         assert_eq!(status.observed_generation, 7);
         assert_eq!(status.conditions[0].reason, "MicroVMPodRejected");
+    }
+
+    #[tokio::test]
+    async fn rejected_reapply_does_not_replace_a_usable_ready_guest_with_failed_status() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.namespace = Some("tengri".to_owned());
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            pod_name: Some("agent".to_owned()),
+            guest_ready: true,
+            ready_at: Some(now.to_rfc3339()),
+            ..MicroVMStatus::default()
+        });
+        let error = kube::Error::Api(
+            kube::core::Status {
+                code: 422,
+                reason: "Invalid".to_owned(),
+                message: "immutable field changed".to_owned(),
+                ..kube::core::Status::default()
+            }
+            .boxed(),
+        );
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let client = Client::new(service, "tengri");
+        let microvms = Api::namespaced(client.clone(), "tengri");
+        let pods = Api::namespaced(client, "tengri");
+
+        let report = tokio::spawn(async move {
+            report_provisioning_failure(
+                &microvms,
+                &pods,
+                &microvm,
+                "MicroVMPodRejected",
+                "Firecracker Pod",
+                &error,
+                now,
+            )
+            .await;
+        });
+        let (request, response) = handle.next_request().await.expect("existing Pod lookup");
+        assert_eq!(request.uri().path(), "/api/v1/namespaces/tengri/pods/agent");
+        response.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(
+                    br#"{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent","namespace":"tengri"},"status":{"conditions":[{"status":"True","type":"Ready"}]}}"#
+                        .to_vec(),
+                ))
+                .expect("ready Pod response"),
+        );
+
+        tokio::time::timeout(Duration::from_millis(100), report)
+            .await
+            .expect("ready guest status must be preserved without a status patch")
+            .expect("provisioning report task");
     }
 
     #[test]
