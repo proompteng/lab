@@ -235,6 +235,14 @@ describe('intraday momentum strategy', () => {
         }),
       ),
     ).toMatchObject({ _tag: 'IntradayMomentumProtocolDecodeError' })
+    expect(
+      error(
+        decodeIntradayMomentumProtocol({
+          ...defaultIntradayMomentumProtocolDocument,
+          maximumDecisionLagMs: 20 * 60_000,
+        }),
+      ),
+    ).toMatchObject({ _tag: 'IntradayMomentumProtocolDecodeError' })
   })
 
   test.each([
@@ -279,6 +287,39 @@ describe('intraday momentum strategy', () => {
         ),
       ),
     ).toMatchObject({ reason: 'snapshot-window' })
+  })
+
+  test('rejects a snapshot observed after its rolling decision window', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    expect(
+      error(
+        decideIntradayMomentum(
+          marketContextAt({
+            rangeEndAt: '2026-08-18T18:00:00.000Z',
+            observedLagMs: protocol.decisionDelaySeconds * 1_000 + protocol.maximumDecisionLagMs + 1,
+            returnBps: qualifyingReturns,
+          }),
+          protocol,
+        ),
+      ),
+    ).toMatchObject({ reason: 'snapshot-window' })
+  })
+
+  test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
+    const protocol = success(decodeDefaultIntradayMomentumProtocol())
+    const decision = success(
+      decideIntradayMomentum(
+        marketContextAt({
+          rangeEndAt: '2026-08-18T18:00:00.000Z',
+          observedLagMs: protocol.decisionDelaySeconds * 1_000 + 29_999,
+          quoteAgeMs: 1_000,
+          returnBps: qualifyingReturns,
+        }),
+        protocol,
+      ),
+    )
+
+    expect(decision.selectedSymbols).toEqual(['AMD', 'AVGO', 'NVDA'])
   })
 
   test.each([

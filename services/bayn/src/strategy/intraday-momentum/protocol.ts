@@ -61,6 +61,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   positionPolicy: Schema.Literal('long-only'),
   lookbackMinutes: IntradayMinuteOffsetSchema,
   decisionDelaySeconds: PositiveIntegerSchema,
+  maximumDecisionLagMs: PositiveIntegerSchema,
   maximumQuoteAgeMs: PositiveIntegerSchema,
   warmupMinutesAfterOpen: IntradayMinuteOffsetSchema,
   entryCutoffMinutesBeforeClose: IntradayMinuteOffsetSchema,
@@ -103,6 +104,12 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
   }
   if (protocol.decisionDelaySeconds * 1_000 > maximumIntradayObservationLagMs) {
     issues.push({ path: ['decisionDelaySeconds'], issue: 'must fit the verified post-window observation lag' })
+  }
+  if (protocol.decisionDelaySeconds * 1_000 + protocol.maximumDecisionLagMs > maximumIntradayObservationLagMs) {
+    issues.push({
+      path: ['maximumDecisionLagMs'],
+      issue: 'must fit the verified post-window observation lag after the decision delay',
+    })
   }
   if (
     protocol.maximumQuoteAgeMs < minimumIntradayQuoteAgeMs ||
@@ -167,6 +174,7 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   positionPolicy: 'long-only',
   lookbackMinutes: 20,
   decisionDelaySeconds: 2,
+  maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 2_000,
   warmupMinutesAfterOpen: 30,
   entryCutoffMinutesBeforeClose: 60,

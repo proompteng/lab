@@ -28,7 +28,7 @@ const micros = 1_000_000
 const weightScale = 1_000_000
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v1' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v2' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -177,15 +177,24 @@ const validateSnapshot = (
   const earliestRangeEnd = sessionOpen + protocol.warmupMinutesAfterOpen * minuteMs
   const entryCutoff = sessionClose - protocol.entryCutoffMinutesBeforeClose * minuteMs
   const earliestDecision = rangeEnd + protocol.decisionDelaySeconds * 1_000
+  const latestDecision = earliestDecision + protocol.maximumDecisionLagMs
   const canonicalSessionInstants = Result.all([
     Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(session.openAt),
     Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(session.closeAt),
   ])
   if (
     Result.isFailure(canonicalSessionInstants) ||
-    ![rangeStart, rangeEnd, observed, sessionOpen, sessionClose, earliestRangeEnd, entryCutoff, earliestDecision].every(
-      Number.isSafeInteger,
-    ) ||
+    ![
+      rangeStart,
+      rangeEnd,
+      observed,
+      sessionOpen,
+      sessionClose,
+      earliestRangeEnd,
+      entryCutoff,
+      earliestDecision,
+      latestDecision,
+    ].every(Number.isSafeInteger) ||
     session.sessionDate !== manifest.sessionDate ||
     boundSession === undefined ||
     session.openAt !== boundSession.openAt ||
@@ -199,6 +208,7 @@ const validateSnapshot = (
     rangeEnd < earliestRangeEnd ||
     rangeEnd > entryCutoff ||
     observed < earliestDecision ||
+    observed > latestDecision ||
     observed >= entryCutoff ||
     observed > sessionClose ||
     !/^[0-9a-f]{64}$/.test(session.calendarHash)
