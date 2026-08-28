@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::try_stream;
 use chrono::{DateTime, Utc};
@@ -8,7 +8,7 @@ use kube::{
     api::{DeleteParams, ListParams, Patch, PatchParams, PostParams},
 };
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -24,7 +24,8 @@ use crate::{
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
     guest::{
-        GuestClient, GuestError, TerminalIdentityRegistry, TerminalSession as GuestTerminalSession,
+        GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
+        TerminalIdentityRegistry,
     },
     metrics,
     tickets::TicketStore,
@@ -570,27 +571,53 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request).await?;
         let request = request.into_inner();
         let guest = self.guest(&principal, &request.agent_id).await?;
-        let creation = if request.creation_id.is_empty() {
-            let _guard = self
-                .terminal_identities
-                .lock_legacy_creation(&request.agent_id)
-                .await;
-            let sessions = guest.list_terminals().await.map_err(map_guest_error)?;
-            let creation_id = compatible_terminal_creation_id("", &sessions, &request.cwd);
-            guest
-                .create_terminal(&creation_id, &request.cwd, request.columns, request.rows)
-                .await
-        } else {
-            guest
-                .create_terminal(
-                    &request.creation_id,
-                    &request.cwd,
-                    request.columns,
-                    request.rows,
-                )
-                .await
+        if request.creation_id.is_empty() {
+            let creation_id = compatible_terminal_creation_id("");
+            let create_guest = guest.clone();
+            let cleanup_guest = guest.clone();
+            let cleanup_agent_id = request.agent_id.clone();
+            let cwd = request.cwd.clone();
+            let columns = request.columns;
+            let rows = request.rows;
+            let pending = acknowledged_terminal_creation(
+                async move {
+                    create_guest
+                        .create_terminal(&creation_id, &cwd, columns, rows)
+                        .await
+                },
+                move |terminal_id| async move {
+                    match cleanup_guest.terminate_terminal(&terminal_id).await {
+                        Ok(()) => {
+                            metrics::global().record_pty_terminated(&cleanup_agent_id, &terminal_id)
+                        }
+                        Err(error) => tracing::warn!(
+                            agent_id = %cleanup_agent_id,
+                            terminal_id,
+                            %error,
+                            "failed to clean up an unacknowledged legacy terminal creation"
+                        ),
+                    }
+                },
+            )
+            .await?;
+            if pending.creation.created {
+                metrics::global()
+                    .record_pty_created(&request.agent_id, &pending.creation.session.id);
+            }
+            return Ok(Response::new(terminal_session(
+                pending.acknowledge().session,
+            )));
         }
-        .map_err(map_guest_error)?;
+
+        let creation = guest
+            .create_terminal(
+                &request.creation_id,
+                &request.cwd,
+                request.columns,
+                request.rows,
+            )
+            .await
+            .map_err(map_guest_error)?;
         if creation.created {
             metrics::global().record_pty_created(&request.agent_id, &creation.session.id);
         }
@@ -1508,24 +1535,63 @@ fn validate_resource_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn compatible_terminal_creation_id(
-    value: &str,
-    sessions: &[GuestTerminalSession],
-    cwd: &str,
-) -> String {
+fn compatible_terminal_creation_id(value: &str) -> String {
     if !value.is_empty() {
         return value.to_owned();
     }
-    sessions
-        .iter()
-        .rev()
-        .find(|session| {
-            !session.attached
-                && session.cwd == cwd
-                && session.creation_id.starts_with("legacy-grpc-")
-        })
-        .map(|session| session.creation_id.clone())
-        .unwrap_or_else(|| format!("legacy-grpc-{}", Uuid::new_v4().simple()))
+    format!("legacy-grpc-{}", Uuid::new_v4().simple())
+}
+
+struct PendingTerminalCreation {
+    creation: GuestTerminalCreation,
+    acknowledgement: oneshot::Sender<()>,
+}
+
+impl PendingTerminalCreation {
+    fn acknowledge(self) -> GuestTerminalCreation {
+        let _ = self.acknowledgement.send(());
+        self.creation
+    }
+}
+
+async fn acknowledged_terminal_creation<C, D, DF>(
+    creation: C,
+    cleanup: D,
+) -> Result<PendingTerminalCreation, Status>
+where
+    C: Future<Output = Result<GuestTerminalCreation, GuestError>> + Send + 'static,
+    D: FnOnce(String) -> DF + Send + 'static,
+    DF: Future<Output = ()> + Send + 'static,
+{
+    let (result_sender, result_receiver) = oneshot::channel();
+    let (acknowledgement, acknowledged) = oneshot::channel();
+    tokio::spawn(async move {
+        match creation.await {
+            Ok(creation) => {
+                let cleanup_id = creation.created.then(|| creation.session.id.clone());
+                let delivered = result_sender.send(Ok(creation)).is_ok();
+                if (!delivered || acknowledged.await.is_err())
+                    && let Some(terminal_id) = cleanup_id
+                {
+                    cleanup(terminal_id).await;
+                }
+            }
+            Err(error) => {
+                let _ = result_sender.send(Err(error));
+            }
+        }
+    });
+
+    match result_receiver.await {
+        Ok(Ok(creation)) => Ok(PendingTerminalCreation {
+            creation,
+            acknowledgement,
+        }),
+        Ok(Err(error)) => Err(map_guest_error(error)),
+        Err(_) => Err(Status::internal(
+            "terminal creation task ended without a result",
+        )),
+    }
 }
 
 fn validate_preview_session_id(value: &str) -> Result<(), Status> {
@@ -2232,42 +2298,88 @@ mod tests {
     }
 
     #[test]
-    fn legacy_terminal_requests_reuse_an_unattached_retry_identity() {
-        let first = compatible_terminal_creation_id("", &[], "/workspace");
-        let orphan = GuestTerminalSession {
-            id: "terminal-orphan".to_owned(),
-            creation_id: first.clone(),
-            cwd: "/workspace".to_owned(),
-            created_at: "2026-08-28T00:00:00Z".to_owned(),
-            last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
-            attached: false,
-        };
-
+    fn legacy_terminal_requests_receive_independent_creation_identities() {
+        let first = compatible_terminal_creation_id("");
+        let second = compatible_terminal_creation_id("");
         assert!((16..=128).contains(&first.len()));
         assert!(
             first
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         );
+        assert_ne!(first, second);
         assert_eq!(
-            compatible_terminal_creation_id("", std::slice::from_ref(&orphan), "/workspace"),
-            first
-        );
-        let attached = GuestTerminalSession {
-            attached: true,
-            ..orphan.clone()
-        };
-        assert_ne!(
-            compatible_terminal_creation_id("", &[attached], "/workspace"),
-            first
-        );
-        assert_ne!(
-            compatible_terminal_creation_id("", &[orphan], "/other"),
-            first
-        );
-        assert_eq!(
-            compatible_terminal_creation_id("tengri-existing-creation", &[], "/workspace"),
+            compatible_terminal_creation_id("tengri-existing-creation"),
             "tengri-existing-creation"
+        );
+    }
+
+    #[tokio::test]
+    async fn unacknowledged_legacy_terminal_creation_is_cleaned_up() {
+        let (created_sender, created_receiver) = oneshot::channel();
+        let (cleanup_sender, cleanup_receiver) = oneshot::channel();
+        let pending = acknowledged_terminal_creation(
+            async move { created_receiver.await.expect("creation result") },
+            move |terminal_id| async move {
+                cleanup_sender.send(terminal_id).expect("cleanup receiver");
+            },
+        );
+        created_sender
+            .send(Ok(GuestTerminalCreation {
+                session: crate::guest::TerminalSession {
+                    id: "terminal-unacknowledged".to_owned(),
+                    creation_id: "legacy-grpc-test".to_owned(),
+                    cwd: "/workspace".to_owned(),
+                    created_at: "2026-08-28T00:00:00Z".to_owned(),
+                    last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
+                    attached: false,
+                },
+                created: true,
+            }))
+            .expect("pending creation receiver");
+
+        drop(pending.await.expect("pending terminal creation"));
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), cleanup_receiver)
+                .await
+                .expect("cleanup timeout")
+                .expect("cleanup result"),
+            "terminal-unacknowledged"
+        );
+    }
+
+    #[tokio::test]
+    async fn acknowledged_legacy_terminal_creation_is_retained() {
+        let (cleanup_sender, mut cleanup_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let pending = acknowledged_terminal_creation(
+            async {
+                Ok(GuestTerminalCreation {
+                    session: crate::guest::TerminalSession {
+                        id: "terminal-acknowledged".to_owned(),
+                        creation_id: "legacy-grpc-test".to_owned(),
+                        cwd: "/workspace".to_owned(),
+                        created_at: "2026-08-28T00:00:00Z".to_owned(),
+                        last_activity_at: "2026-08-28T00:00:00Z".to_owned(),
+                        attached: false,
+                    },
+                    created: true,
+                })
+            },
+            move |terminal_id| async move {
+                cleanup_sender.send(terminal_id).expect("cleanup receiver");
+            },
+        )
+        .await
+        .expect("pending terminal creation");
+
+        assert_eq!(pending.acknowledge().session.id, "terminal-acknowledged");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(50), cleanup_receiver.recv())
+                .await
+                .ok()
+                .flatten(),
+            None
         );
     }
 }
