@@ -410,10 +410,7 @@ describe('intraday momentum strategy', () => {
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
-    const millisecondDecision = success(
-      decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol),
-    )
-    const nanosecondDecision = success(
+    const decision = success(
       decideIntradayMomentum(
         marketContextAt({
           rangeEndAt: '2026-08-18T18:00:00.000Z',
@@ -425,7 +422,7 @@ describe('intraday momentum strategy', () => {
       ),
     )
 
-    expect(nanosecondDecision).toEqual(millisecondDecision)
+    expect(decision.selectedSymbols).toEqual(['AMD', 'AVGO', 'NVDA'])
   })
 
   test.each([
@@ -475,7 +472,10 @@ describe('intraday momentum strategy', () => {
       '.000Z',
       '.000000000Z',
     )
-    const decision = success(
+    const millisecondDecision = success(
+      decideIntradayMomentum(marketContextAt({ rangeEndAt, returnBps: qualifyingReturns }), protocol),
+    )
+    const nanosecondDecision = success(
       decideIntradayMomentum(
         marketContextAt({
           rangeEndAt,
@@ -486,7 +486,10 @@ describe('intraday momentum strategy', () => {
       ),
     )
 
-    expect(decision.selectedSymbols).toEqual(['AMD', 'AVGO', 'NVDA'])
+    const { snapshotId: millisecondSnapshotId, ...millisecondDecisionMaterial } = millisecondDecision
+    const { snapshotId: nanosecondSnapshotId, ...nanosecondDecisionMaterial } = nanosecondDecision
+    expect(nanosecondDecisionMaterial).toEqual(millisecondDecisionMaterial)
+    expect(nanosecondSnapshotId).not.toBe(millisecondSnapshotId)
   })
 
   test('emits schema-valid signals from nanosecond quote and trade timestamps', () => {
