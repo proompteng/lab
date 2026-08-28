@@ -734,7 +734,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max(bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "decision",
               "range": false,
@@ -839,7 +839,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or ((max(bayn_cycle_decision_bound{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) == bool 0) * -1)",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) or ((max(bayn_cycle_unfinished_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})) >= bool 0) * -1)",
               "instant": true,
               "legendFormat": "targets",
               "range": false,
