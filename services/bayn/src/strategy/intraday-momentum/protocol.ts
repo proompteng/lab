@@ -1,8 +1,16 @@
 import { Data, Result, Schema } from 'effect'
 
-import { ExecutionModelV5Schema, type ExecutionModel } from '../../execution-model-contract'
+import {
+  ExecutionModelV5Schema,
+  usEquityRegularSessionDurationMs,
+  type ExecutionModel,
+} from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
-import { maximumIntradayObservationLagMs, maximumIntradayQuoteAgeMs } from '../../market-data/intraday/verification'
+import {
+  maximumIntradayObservationLagMs,
+  maximumIntradayQuoteAgeMs,
+  minimumIntradayQuoteAgeMs,
+} from '../../market-data/intraday/verification'
 import { PositiveIntegerSchema, Sha256Schema, SymbolSchema, strictParseOptions } from '../../schemas'
 import { defaultExecutionModel } from '../execution-model/model'
 
@@ -96,8 +104,19 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
   if (protocol.decisionDelaySeconds * 1_000 > maximumIntradayObservationLagMs) {
     issues.push({ path: ['decisionDelaySeconds'], issue: 'must fit the verified post-window observation lag' })
   }
-  if (protocol.maximumQuoteAgeMs > maximumIntradayQuoteAgeMs) {
-    issues.push({ path: ['maximumQuoteAgeMs'], issue: 'must fit the verified quote and trade freshness window' })
+  if (
+    protocol.maximumQuoteAgeMs < minimumIntradayQuoteAgeMs ||
+    protocol.maximumQuoteAgeMs > maximumIntradayQuoteAgeMs
+  ) {
+    issues.push({ path: ['maximumQuoteAgeMs'], issue: 'must fit the verified quote and trade freshness bounds' })
+  }
+  if (
+    protocol.warmupMinutesAfterOpen * 60_000 +
+      protocol.decisionDelaySeconds * 1_000 +
+      protocol.entryCutoffMinutesBeforeClose * 60_000 >=
+    usEquityRegularSessionDurationMs
+  ) {
+    issues.push({ path: ['decisionDelaySeconds'], issue: 'must leave a non-empty regular-session decision interval' })
   }
   if (
     protocol.entryCutoffMinutesBeforeClose <= protocol.flattenBeforeCloseMinutes ||

@@ -10,7 +10,7 @@ const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
 const SubmissionCutoffLeadMinutes = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
 const IntradayOrderOffsetMs = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 86_400_000 }))
-const US_EQUITY_REGULAR_SESSION_DURATION_MS = 6.5 * 60 * 60 * 1_000
+export const usEquityRegularSessionDurationMs = 6.5 * 60 * 60 * 1_000
 
 const ExecutionModelCommon = {
   assetClass: Schema.Literal('us-equity'),
@@ -156,7 +156,7 @@ const executionModelIssues = (
   }
   if (
     model.schemaVersion === 'bayn.execution-model.v5' &&
-    model.order.warmupAfterOpenMs + model.order.submissionCutoffBeforeCloseMs >= US_EQUITY_REGULAR_SESSION_DURATION_MS
+    model.order.warmupAfterOpenMs + model.order.submissionCutoffBeforeCloseMs >= usEquityRegularSessionDurationMs
   ) {
     issues.push({
       path: ['order'],

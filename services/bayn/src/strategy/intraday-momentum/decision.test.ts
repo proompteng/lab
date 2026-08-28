@@ -209,6 +209,32 @@ describe('intraday momentum strategy', () => {
         }),
       ),
     ).toMatchObject({ _tag: 'IntradayMomentumProtocolDecodeError' })
+    expect(
+      error(
+        decodeIntradayMomentumProtocol({
+          ...defaultIntradayMomentumProtocolDocument,
+          warmupMinutesAfterOpen: 200,
+          decisionDelaySeconds: 1_200,
+          entryCutoffMinutesBeforeClose: 170,
+          executionModel: {
+            ...defaultIntradayMomentumProtocolDocument.executionModel,
+            order: {
+              ...defaultIntradayMomentumProtocolDocument.executionModel.order,
+              warmupAfterOpenMs: 200 * 60_000,
+              submissionCutoffBeforeCloseMs: 170 * 60_000,
+            },
+          },
+        }),
+      ),
+    ).toMatchObject({ _tag: 'IntradayMomentumProtocolDecodeError' })
+    expect(
+      error(
+        decodeIntradayMomentumProtocol({
+          ...defaultIntradayMomentumProtocolDocument,
+          maximumQuoteAgeMs: 999,
+        }),
+      ),
+    ).toMatchObject({ _tag: 'IntradayMomentumProtocolDecodeError' })
   })
 
   test.each([
