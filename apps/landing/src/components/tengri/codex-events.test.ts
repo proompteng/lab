@@ -11,6 +11,7 @@ import {
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
   codexEventShouldRender,
+  codexEventSupersedesRestoredItem,
   codexLoginCompletionError,
   codexLoginCompletionMatches,
   codexReconciledActiveTurnId,
@@ -142,6 +143,23 @@ describe('Codex event replay', () => {
     expect(codexEventContinuesRestoredItem({ ...delta, sequence: 42 }, restored, 42)).toBe(false)
     expect(codexEventContinuesRestoredItem({ ...delta, kind: 'tool-output' }, restored, 42)).toBe(false)
     expect(appendCodexEvent([], delta, restored.text)[0]?.text).toBe('restored prefix plus live delta')
+  })
+
+  test('replaces a stale restored operation with its newer completion event', () => {
+    const restored = { id: event.itemId, kind: 'tool-call', text: 'Web search: Kata Firecracker' } as const
+    const completed = {
+      ...event,
+      sequence: 43,
+      kind: 'tool-output' as const,
+      method: 'item/completed',
+      text: 'Search completed',
+    }
+
+    expect(codexEventContinuesRestoredItem(completed, restored, 42)).toBe(false)
+    expect(codexEventSupersedesRestoredItem(completed, restored, 42)).toBe(true)
+    expect(reconcileCodexEventsWithRestoredHistory([completed], new Map([[restored.id, restored]]), 42)).toEqual([
+      completed,
+    ])
   })
 
   test('rejects stale or cross-thread resume responses', () => {

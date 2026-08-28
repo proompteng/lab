@@ -55,6 +55,8 @@ spec:
               value: ""
             - name: TENGRI_GRPC_TLS
               value: "false"
+            - name: TENGRI_PUBLIC_URL
+              value: https://tengri.proompteng.ai
             - name: TENGRI_BFF_SECRET_DIR
               value: /var/run/secrets/tengri-bff
           startupProbe:

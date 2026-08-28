@@ -37,11 +37,13 @@ export function ReadyDesktop({
   agent,
   connectionWarning = '',
   onChanged,
+  previewGatewayOrigin,
   user,
 }: {
   agent: TengriAgent
   connectionWarning?: string
   onChanged: () => Promise<void>
+  previewGatewayOrigin: string
   user: TengriUser
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -443,7 +445,11 @@ export function ReadyDesktop({
                   request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
-                <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
+                <ChromeApp
+                  active={desktopWindow.id === windowState.activeWindowId}
+                  agentId={agent.id}
+                  previewGatewayOrigin={previewGatewayOrigin}
+                />
               ) : desktopWindow.app === 'code' ? (
                 <CodeEditor
                   agentId={agent.id}

@@ -37,6 +37,7 @@ export type TengriUser = {
 export type TengriDesktopSnapshot = {
   authConfigured: boolean
   controlPlaneConfigured: boolean
+  previewGatewayOrigin: string
   authenticated: boolean
   user: TengriUser | null
   agents: TengriAgent[]

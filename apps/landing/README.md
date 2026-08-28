@@ -37,13 +37,22 @@ receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap 
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 
-1. Set the Better Auth, GitHub OAuth, gRPC endpoint, and HMAC variables from `.env.example`.
+1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
+   The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
+   origin. HTTPS is required except for the exact `http://localhost` development host.
 2. Register `http://localhost:3000/api/auth/callback/github` as the local GitHub callback.
 3. Start the Rust Tengri service locally or point at an isolated development endpoint.
 
 For a zero-downtime HMAC rotation, temporarily set `TENGRI_INTERNAL_HMAC_SECRET` to `new,current`. The BFF emits both
 signatures until the controller has refreshed the same bundle; remove the previous key only after both sides have
 observed it.
+
+Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps and briefly interrupts the web UI and BFF.
+Merge the reviewed manifest, let Argo replace the Pod, then verify
+`kubectl --context galactic-lan -n proompteng rollout status deployment/proompteng --timeout=5m` and confirm an
+authenticated `/api/tengri` snapshot reports the expected `previewGatewayOrigin`. Existing MicroVM Pods and PVCs are
+not touched. Roll back by reverting the configuration commit through a follow-up PR and Argo; do not apply or undo the
+Deployment directly.
 
 ## Validation
 

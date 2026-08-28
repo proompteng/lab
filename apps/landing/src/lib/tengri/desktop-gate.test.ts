@@ -25,6 +25,7 @@ const agent: TengriAgent = {
 const snapshot: TengriDesktopSnapshot = {
   authConfigured: true,
   controlPlaneConfigured: true,
+  previewGatewayOrigin: 'https://tengri.proompteng.ai',
   authenticated: true,
   user: { id: '1', name: 'Greg', email: '', image: null },
   agents: [agent],

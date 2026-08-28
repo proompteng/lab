@@ -36,6 +36,7 @@ import {
   requireTengriIdentity,
   tengriRouteError,
 } from '@/lib/tengri/http'
+import { normalizePreviewGatewayOrigin } from '@/lib/tengri/preview-origin'
 import { tengriActionSchema } from '@/lib/tengri/schemas'
 import type { TengriDesktopSnapshot } from '@/lib/tengri/types'
 
@@ -44,15 +45,17 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
     const authConfigured = isTengriAuthConfigured()
-    const controlPlaneConfigured = isTengriControlPlaneConfigured()
-    if (!authConfigured) return snapshot({ authConfigured, controlPlaneConfigured })
+    const previewGatewayOrigin = normalizePreviewGatewayOrigin(process.env.TENGRI_PUBLIC_URL || '')
+    const controlPlaneConfigured = isTengriControlPlaneConfigured() && Boolean(previewGatewayOrigin)
+    if (!authConfigured) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
     const identity = await getRateLimitedTengriIdentity(request)
-    if (!identity) return snapshot({ authConfigured, controlPlaneConfigured })
+    if (!identity) return snapshot({ authConfigured, controlPlaneConfigured, previewGatewayOrigin })
     const agents = controlPlaneConfigured ? await listAgents(identity.subject) : []
     return Response.json(
       {
         authConfigured,
         controlPlaneConfigured,
+        previewGatewayOrigin,
         authenticated: true,
         user: identity.user,
         agents,
@@ -177,7 +180,7 @@ export async function POST(request: Request) {
   }
 }
 
-function snapshot(input: { authConfigured: boolean; controlPlaneConfigured: boolean }) {
+function snapshot(input: { authConfigured: boolean; controlPlaneConfigured: boolean; previewGatewayOrigin: string }) {
   return Response.json(
     {
       ...input,

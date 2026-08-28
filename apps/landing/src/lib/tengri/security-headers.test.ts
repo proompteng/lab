@@ -15,6 +15,7 @@ describe('Tengri browser security headers', () => {
     expect(productionPolicy).toContain('upgrade-insecure-requests')
     expect(developmentPolicy).toContain("'unsafe-eval'")
     expect(developmentPolicy).toContain('http://127.0.0.1:*')
+    expect(developmentPolicy).toContain('http://*.localhost:*')
     expect(developmentPolicy).not.toContain('upgrade-insecure-requests')
   })
 

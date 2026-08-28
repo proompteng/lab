@@ -37,6 +37,7 @@ describe('Tengri ready desktop', () => {
         agent,
         connectionWarning: 'temporary timeout',
         onChanged: async () => undefined,
+        previewGatewayOrigin: 'https://tengri.proompteng.ai',
         user,
       }),
     )
