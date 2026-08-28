@@ -112,10 +112,13 @@ export function MenuBar({
     ],
   }
   const menuNames = ['tengri', APP_TITLES[activeApp], 'File', 'Edit', 'View', 'Window', 'Help']
+  const visibleMenuNames = () =>
+    menuNames.filter((menu) => (triggerRefs.current.get(menu)?.getClientRects().length ?? 0) > 0)
   const focusMenu = (menu: string) => window.requestAnimationFrame(() => triggerRefs.current.get(menu)?.focus())
   const moveMenu = (currentMenu: string, delta: -1 | 1) => {
-    const current = menuNames.indexOf(currentMenu)
-    const next = menuNames[(current + delta + menuNames.length) % menuNames.length]
+    const availableMenus = visibleMenuNames()
+    const current = availableMenus.indexOf(currentMenu)
+    const next = availableMenus[(current + delta + availableMenus.length) % availableMenus.length]
     if (!next) return
     const isMenuOpen = menuOpen !== null
     onMenuChange(isMenuOpen ? next : null)
@@ -124,13 +127,17 @@ export function MenuBar({
 
   return (
     <header className="absolute inset-x-0 top-0 z-[2000] flex h-[30px] items-center justify-between border-b border-white/10 bg-[rgba(16,20,31,0.5)] px-3 text-[12px] shadow-sm backdrop-blur-2xl">
-      <nav aria-label="Application menu" className="flex h-full items-center gap-0.5" role="menubar">
+      <nav aria-label="Application menu" className="flex h-full min-w-0 items-center gap-0.5" role="menubar">
         {menuNames.map((menu, index) => {
           const key = menu === APP_TITLES[activeApp] ? 'active' : menu
           const entries = menus[menu] ?? []
           const menuId = `tengri-menu-${key.toLowerCase().replaceAll(' ', '-')}`
+          let visibility = ''
+          if (key !== 'tengri' && key !== 'active') {
+            visibility = menu === 'File' || menu === 'Edit' ? 'hidden sm:block' : 'hidden md:block'
+          }
           return (
-            <div className="relative h-full" key={key}>
+            <div className={`relative h-full ${visibility}`} key={key}>
               <button
                 ref={(element) => {
                   if (element) triggerRefs.current.set(menu, element)
@@ -156,7 +163,9 @@ export function MenuBar({
                     moveMenu(menu, event.key === 'ArrowLeft' ? -1 : 1)
                   } else if (event.key === 'Home' || event.key === 'End') {
                     event.preventDefault()
-                    focusMenu(event.key === 'Home' ? menuNames[0]! : menuNames.at(-1)!)
+                    const availableMenus = visibleMenuNames()
+                    const target = event.key === 'Home' ? availableMenus[0] : availableMenus.at(-1)
+                    if (target) focusMenu(target)
                   } else if (event.key === 'Escape') {
                     event.preventDefault()
                     onMenuChange(null)
@@ -170,7 +179,11 @@ export function MenuBar({
                 tabIndex={index === 0 ? 0 : -1}
                 type="button"
               >
-                {menu === 'tengri' ? <TengriMark /> : menu}
+                {menu === 'tengri' ? (
+                  <TengriMark />
+                ) : (
+                  <span className={key === 'active' ? 'max-w-24 truncate' : undefined}>{menu}</span>
+                )}
               </button>
               {menuOpen === menu ? (
                 <MenuPopover
@@ -186,8 +199,8 @@ export function MenuBar({
           )
         })}
       </nav>
-      <div className="flex min-w-0 items-center gap-3 text-white/72">
-        <span className="hidden items-center gap-1.5 sm:flex">
+      <div aria-label="Desktop status" className="flex min-w-0 shrink-0 items-center gap-2 text-white/72 sm:gap-3">
+        <span className="hidden items-center gap-1.5 lg:flex">
           <span
             aria-hidden="true"
             className={`h-1.5 w-1.5 rounded-full ${connectionWarning ? 'bg-amber-300' : 'bg-emerald-400'}`}
@@ -198,7 +211,7 @@ export function MenuBar({
           <Wifi aria-hidden="true" className="h-3.5 w-3.5" />
           <span className="sr-only">{connectionWarning ? 'Connection degraded' : 'Connected'}</span>
         </span>
-        <span className="hidden max-w-32 truncate md:inline">{userName || 'GitHub user'}</span>
+        <span className="hidden max-w-32 truncate xl:inline">{userName || 'GitHub user'}</span>
         <time className="tabular-nums" dateTime={clock?.toISOString()}>
           {clock
             ? new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(clock)

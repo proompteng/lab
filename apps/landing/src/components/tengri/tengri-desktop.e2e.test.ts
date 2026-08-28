@@ -529,6 +529,26 @@ test('persists real Finder changes into Code and exposes a localhost preview fro
   await external.close()
 })
 
+test('keeps the application menu and status controls separate on narrow viewports', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockTengri(page)
+  await page.goto('/')
+
+  const applicationMenu = page.getByRole('menubar', { name: 'Application menu' })
+  const desktopStatus = page.getByLabel('Desktop status')
+  await expect(applicationMenu.getByRole('menuitem', { name: 'Tengri menu' })).toBeVisible()
+  await expect(applicationMenu.getByRole('menuitem', { name: 'Chrome', exact: true })).toBeVisible()
+  await expect(applicationMenu.getByRole('menuitem', { name: 'File', exact: true, includeHidden: true })).toBeHidden()
+  await expect(applicationMenu.getByRole('menuitem', { name: 'Help', exact: true, includeHidden: true })).toBeHidden()
+  await expect(desktopStatus).toBeVisible()
+
+  const menuBounds = await applicationMenu.boundingBox()
+  const statusBounds = await desktopStatus.boundingBox()
+  expect(menuBounds).not.toBeNull()
+  expect(statusBounds).not.toBeNull()
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(statusBounds!.x)
+})
+
 test('sends a real agent turn and executes sleep, resume, and confirmed deletion', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
