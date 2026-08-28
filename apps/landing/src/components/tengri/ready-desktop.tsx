@@ -2,7 +2,16 @@
 
 import { FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, SquareTerminal, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useReducer, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 
 import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import type { TengriAgent, TengriUser } from '@/lib/tengri/types'
@@ -18,7 +27,13 @@ import {
   windowReducer,
 } from '@/lib/tengri/window-manager'
 import { ChromeApp } from './chrome-app'
-import { runTengriAction } from './client'
+import {
+  beginTengriLifecycleTransition,
+  getTengriGuestOperationSnapshot,
+  hasActiveTengriGuestOperations,
+  runTengriAction,
+  subscribeTengriGuestOperations,
+} from './client'
 import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
@@ -33,6 +48,8 @@ import { TerminalApp } from './terminal-app'
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
 type CommittedTransition = 'delete' | 'sign-out' | 'sleep'
+
+const getServerGuestOperationSnapshot = () => false
 
 export function ReadyDesktop({
   agent,
@@ -59,14 +76,24 @@ export function ReadyDesktop({
   const [finderRequest, setFinderRequest] = useState<TargetedFinderOpenRequest | null>(null)
   const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
   const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
-  const [guestOperationActive, setGuestOperationActive] = useState(false)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
+  const lifecycleTransitionReleaseRef = useRef<(() => void) | null>(null)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
-  const guestOperationIdsRef = useRef(new Set<string>())
   const reducedMotion = useReducedMotion()
+
+  const subscribeGuestOperations = useCallback(
+    (listener: () => void) => subscribeTengriGuestOperations(agent.id, listener),
+    [agent.id],
+  )
+  const getGuestOperationSnapshot = useCallback(() => getTengriGuestOperationSnapshot(agent.id), [agent.id])
+  const guestOperationActive = useSyncExternalStore(
+    subscribeGuestOperations,
+    getGuestOperationSnapshot,
+    getServerGuestOperationSnapshot,
+  )
 
   const viewport = useCallback((): Bounds => {
     const rect = stageRef.current?.getBoundingClientRect()
@@ -115,12 +142,6 @@ export function ReadyDesktop({
     }
   }, [])
 
-  const handleGuestOperationChange = useCallback((instanceId: string, active: boolean) => {
-    if (active) guestOperationIdsRef.current.add(instanceId)
-    else guestOperationIdsRef.current.delete(instanceId)
-    setGuestOperationActive(guestOperationIdsRef.current.size > 0)
-  }, [])
-
   useLayoutEffect(() => {
     const measuredViewport = viewport()
     dispatch({
@@ -129,6 +150,14 @@ export function ReadyDesktop({
       viewport: measuredViewport,
     })
   }, [viewport])
+
+  useEffect(
+    () => () => {
+      lifecycleTransitionReleaseRef.current?.()
+      lifecycleTransitionReleaseRef.current = null
+    },
+    [agent.id],
+  )
 
   const closeWindow = useCallback(
     (desktopWindow: Pick<DesktopWindow, 'app' | 'id'>) => {
@@ -325,7 +354,8 @@ export function ReadyDesktop({
   }, [appendDesktopWindow, windowState.activeApp, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
-    if (guestOperationIdsRef.current.size > 0) {
+    if (lifecycleTransitionReleaseRef.current) return
+    if (hasActiveTengriGuestOperations(agent.id)) {
       setError('Wait for the current guest request to finish before changing the agent lifecycle.')
       return
     }
@@ -333,6 +363,8 @@ export function ReadyDesktop({
       setError('Save or close every edited Code tab before changing the agent lifecycle.')
       return
     }
+    const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
+    lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
     setBusyAction(action === 'delete-agent' ? 'delete' : 'sleep')
     setError('')
     let committed = false
@@ -356,12 +388,19 @@ export function ReadyDesktop({
             : 'The agent lifecycle request failed',
       )
     } finally {
+      if (!committed) {
+        releaseLifecycleTransition()
+        if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
+          lifecycleTransitionReleaseRef.current = null
+        }
+      }
       setBusyAction(null)
     }
   }
 
   async function signOut() {
-    if (guestOperationIdsRef.current.size > 0) {
+    if (lifecycleTransitionReleaseRef.current) return
+    if (hasActiveTengriGuestOperations(agent.id)) {
       setError('Wait for the current guest request to finish before signing out.')
       return
     }
@@ -369,16 +408,26 @@ export function ReadyDesktop({
       setError('Save or close every edited Code tab before signing out.')
       return
     }
+    const releaseLifecycleTransition = beginTengriLifecycleTransition(agent.id)
+    lifecycleTransitionReleaseRef.current = releaseLifecycleTransition
     setBusyAction('sign-out')
     setError('')
+    let committed = false
     try {
       const result = await tengriAuthClient.signOut()
       if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
+      committed = true
       setCommittedTransition('sign-out')
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Tengri could not sign out')
     } finally {
+      if (!committed) {
+        releaseLifecycleTransition()
+        if (lifecycleTransitionReleaseRef.current === releaseLifecycleTransition) {
+          lifecycleTransitionReleaseRef.current = null
+        }
+      }
       setBusyAction(null)
     }
   }
@@ -496,7 +545,6 @@ export function ReadyDesktop({
                     setError('')
                     setConfirmOpen(true)
                   }}
-                  onGuestOperationChange={handleGuestOperationChange}
                   onSignOut={() => void signOut()}
                   onSleep={() => void mutate('sleep-agent')}
                   user={user}
