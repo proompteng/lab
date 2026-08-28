@@ -36,9 +36,9 @@ sequence-numbered output replay window for reconnects. The bootstrap credential 
 resize, signals, disconnects, idle expiry, and Nanoagent shutdown clean up the complete process group. Cleanup
 observes the Linux session leader through a pidfd and leaves the exited leader unreaped until cleanup completes. That
 keeps the original numeric session ID allocated while Nanoagent includes descendants that sanitize their environment
-and rescans before delayed escalation. Every signal revalidates the target's session and process start time, so cleanup
-cannot target a replacement terminal. Non-Linux development hosts retain process-group cleanup when Linux process
-identity metadata is unavailable.
+and rescans before delayed escalation. Every Linux descendant is pinned with its own pidfd before its session and start
+time are revalidated, and the signal is sent through that descriptor so PID reuse cannot retarget cleanup. Non-Linux
+development hosts retain process-group cleanup when Linux process identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
 ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence

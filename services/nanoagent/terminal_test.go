@@ -705,9 +705,11 @@ func TestTerminalCleanupSignalsEveryProcessInTheSession(t *testing.T) {
 		t.Fatalf("originalProcessSession() error = %v", err)
 	}
 	var signaled []int
-	err = signalProcessIdentities(procRoot, processes, syscall.SIGTERM, func(pid int, _ syscall.Signal) error {
-		signaled = append(signaled, pid)
-		return nil
+	err = signalProcessIdentities(processes, syscall.SIGTERM, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(pid int, _ syscall.Signal) error {
+			signaled = append(signaled, pid)
+			return nil
+		})
 	})
 	if err != nil {
 		t.Fatalf("signalProcessIdentities() error = %v", err)
@@ -782,9 +784,11 @@ func TestSignalProcessIdentitiesSkipsReusedProcesses(t *testing.T) {
 	writeProcEnvironmentFixture(t, procRoot, 700, "replacement-session")
 	writeProcEnvironmentFixture(t, procRoot, 701, "replacement-session")
 	var signaled []int
-	err = signalProcessIdentities(procRoot, processes, syscall.SIGKILL, func(processID int, _ syscall.Signal) error {
-		signaled = append(signaled, processID)
-		return nil
+	err = signalProcessIdentities(processes, syscall.SIGKILL, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcessIdentity(procRoot, identity, signal, func(processID int, _ syscall.Signal) error {
+			signaled = append(signaled, processID)
+			return nil
+		})
 	})
 	if err != nil {
 		t.Fatalf("signalProcessIdentities() error = %v", err)
@@ -829,9 +833,11 @@ func TestDelayedTerminalCleanupSkipsReusedProcessIDs(t *testing.T) {
 	manager := &terminalManager{
 		sessions: make(map[string]*terminalSession),
 		procRoot: procRoot,
-		killProcess: func(processID int, signal syscall.Signal) error {
-			signals <- signalEvent{processID: processID, signal: signal}
-			return nil
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
 		},
 		cleanupDelay: 25 * time.Millisecond,
 	}
@@ -882,9 +888,11 @@ func TestDelayedTerminalCleanupRescansForNewSessionMembers(t *testing.T) {
 	manager := &terminalManager{
 		sessions: make(map[string]*terminalSession),
 		procRoot: procRoot,
-		killProcess: func(processID int, signal syscall.Signal) error {
-			signals <- signalEvent{processID: processID, signal: signal}
-			return nil
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
 		},
 		cleanupDelay: 25 * time.Millisecond,
 	}
@@ -941,9 +949,11 @@ func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
 	manager := &terminalManager{
 		sessions: make(map[string]*terminalSession),
 		procRoot: procRoot,
-		killProcess: func(processID int, signal syscall.Signal) error {
-			signals <- signalEvent{processID: processID, signal: signal}
-			return nil
+		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
+			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				signals <- signalEvent{processID: processID, signal: signal}
+				return nil
+			})
 		},
 		cleanupDelay: time.Millisecond,
 	}

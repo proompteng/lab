@@ -200,9 +200,10 @@ type terminalManager struct {
 	stopOnce  sync.Once
 	closed    bool
 
-	procRoot     string
-	killProcess  func(int, syscall.Signal) error
-	cleanupDelay time.Duration
+	procRoot      string
+	killProcess   func(int, syscall.Signal) error
+	signalProcess func(string, processIdentity, syscall.Signal) error
+	cleanupDelay  time.Duration
 }
 
 func newTerminalManager(workspace workspace, shell string, home string) *terminalManager {
@@ -212,14 +213,15 @@ func newTerminalManager(workspace workspace, shell string, home string) *termina
 		home = workspace.root
 	}
 	manager := &terminalManager{
-		workspace:    workspace,
-		shell:        shell,
-		home:         home,
-		sessions:     make(map[string]*terminalSession),
-		stop:         make(chan struct{}),
-		procRoot:     "/proc",
-		killProcess:  syscall.Kill,
-		cleanupDelay: terminalCleanupDelay,
+		workspace:     workspace,
+		shell:         shell,
+		home:          home,
+		sessions:      make(map[string]*terminalSession),
+		stop:          make(chan struct{}),
+		procRoot:      "/proc",
+		killProcess:   syscall.Kill,
+		signalProcess: signalPinnedProcessIdentity,
+		cleanupDelay:  terminalCleanupDelay,
 	}
 	go manager.reapIdle()
 	return manager
@@ -429,9 +431,9 @@ func (manager *terminalManager) startProcessSessionCleanup(session *terminalSess
 	if procRoot == "" {
 		procRoot = "/proc"
 	}
-	killProcess := manager.killProcess
-	if killProcess == nil {
-		killProcess = syscall.Kill
+	signalProcess := manager.signalProcess
+	if signalProcess == nil {
+		signalProcess = signalPinnedProcessIdentity
 	}
 	processes, err := originalProcessSession(
 		procRoot,
@@ -444,7 +446,9 @@ func (manager *terminalManager) startProcessSessionCleanup(session *terminalSess
 		finish()
 		return
 	}
-	_ = signalProcessIdentities(procRoot, processes, syscall.SIGTERM, killProcess)
+	_ = signalProcessIdentities(processes, syscall.SIGTERM, func(identity processIdentity, signal syscall.Signal) error {
+		return signalProcess(procRoot, identity, signal)
+	})
 
 	delay := manager.cleanupDelay
 	if delay <= 0 {
@@ -462,7 +466,9 @@ func (manager *terminalManager) startProcessSessionCleanup(session *terminalSess
 			processes,
 		)
 		if err == nil {
-			_ = signalProcessIdentities(procRoot, remaining, syscall.SIGKILL, killProcess)
+			_ = signalProcessIdentities(remaining, syscall.SIGKILL, func(identity processIdentity, signal syscall.Signal) error {
+				return signalProcess(procRoot, identity, signal)
+			})
 		}
 		finish()
 	}()
@@ -987,17 +993,16 @@ func parseProcIdentity(contents []byte) (int, uint64, error) {
 }
 
 func signalProcessIdentities(
-	procRoot string,
 	identities []processIdentity,
 	signal syscall.Signal,
-	kill func(int, syscall.Signal) error,
+	signalProcess func(processIdentity, syscall.Signal) error,
 ) error {
 	var firstError error
 	for _, identity := range identities {
 		if identity.processID == identity.sessionID {
 			continue
 		}
-		if err := signalProcessIdentity(procRoot, identity, signal, kill); err != nil && firstError == nil {
+		if err := signalProcess(identity, signal); err != nil && firstError == nil {
 			firstError = err
 		}
 	}
@@ -1005,7 +1010,7 @@ func signalProcessIdentities(
 		if identity.processID != identity.sessionID {
 			continue
 		}
-		if err := signalProcessIdentity(procRoot, identity, signal, kill); err != nil && firstError == nil {
+		if err := signalProcess(identity, signal); err != nil && firstError == nil {
 			firstError = err
 		}
 	}

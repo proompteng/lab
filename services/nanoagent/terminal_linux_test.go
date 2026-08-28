@@ -7,9 +7,46 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestSignalPinnedProcessIdentityValidatesIdentityBeforeSignaling(t *testing.T) {
+	sleepPath, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("locate sleep: %v", err)
+	}
+	command := exec.Command(sleepPath, "30")
+	if err := command.Start(); err != nil {
+		t.Fatalf("start process fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = command.Process.Kill() })
+
+	identity, err := readProcessIdentity("/proc", command.Process.Pid)
+	if err != nil {
+		t.Fatalf("read process identity: %v", err)
+	}
+	replacement := identity
+	replacement.startTime++
+	if err := signalPinnedProcessIdentity("/proc", replacement, syscall.SIGTERM); err != nil {
+		t.Fatalf("reject mismatched process identity: %v", err)
+	}
+	if err := command.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("mismatched identity signaled process: %v", err)
+	}
+
+	if err := signalPinnedProcessIdentity("/proc", identity, syscall.SIGTERM); err != nil {
+		t.Fatalf("signal pinned process identity: %v", err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	select {
+	case <-waited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("pinned process did not receive signal")
+	}
+}
 
 func TestTerminalManagerCleansEnvironmentSanitizedDescendantAfterLeaderExit(t *testing.T) {
 	envPath, err := exec.LookPath("env")

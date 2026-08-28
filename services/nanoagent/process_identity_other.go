@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"os"
+	"syscall"
 )
 
 func pinProcessIdentity(_ int) (*os.File, error) {
@@ -15,4 +16,8 @@ func pinProcessIdentity(_ int) (*os.File, error) {
 
 func waitForPinnedProcessExit(_ *os.File) error {
 	return errors.New("pidfd process waiting is unavailable")
+}
+
+func signalPinnedProcessIdentity(procRoot string, identity processIdentity, signal syscall.Signal) error {
+	return signalProcessIdentity(procRoot, identity, signal, syscall.Kill)
 }

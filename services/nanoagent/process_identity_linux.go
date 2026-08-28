@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -44,4 +45,31 @@ func waitForPinnedProcessExit(process *os.File) error {
 			return fmt.Errorf("poll pidfd: events %#x", events)
 		}
 	}
+}
+
+func signalPinnedProcessIdentity(procRoot string, identity processIdentity, signal syscall.Signal) error {
+	process, err := pinProcessIdentity(identity.processID)
+	if errors.Is(err, unix.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("pin process %d before signaling: %w", identity.processID, err)
+	}
+	defer process.Close()
+
+	current, err := readProcessIdentity(procRoot, identity.processID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("validate pinned process %d: %w", identity.processID, err)
+	}
+	if current.sessionID != identity.sessionID || current.startTime != identity.startTime {
+		return nil
+	}
+	if err := unix.PidfdSendSignal(int(process.Fd()), unix.Signal(signal), nil, 0); err != nil &&
+		!errors.Is(err, unix.ESRCH) {
+		return fmt.Errorf("signal pinned process %d: %w", identity.processID, err)
+	}
+	return nil
 }
