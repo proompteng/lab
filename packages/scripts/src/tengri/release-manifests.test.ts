@@ -210,6 +210,26 @@ spec:
     rmSync(paths.directory, { recursive: true, force: true })
   })
 
+  it('rejects a Tengri ApplicationSet entry that targets a different application', () => {
+    const driftedTargets = [
+      ['path: argocd/applications/tengri', 'path: argocd/applications/other'],
+      ['namespace: tengri', 'namespace: other'],
+      ['automation: auto', 'automation: manual'],
+    ] as const
+
+    for (const [expected, drifted] of driftedTargets) {
+      const paths = fixture()
+      writeFileSync(paths.applicationSetPath, readFileSync(paths.applicationSetPath, 'utf8').replace(expected, drifted))
+
+      expect(() => validateTengriRelease(paths)).toThrow('Tengri ApplicationSet entry must target')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'Tengri ApplicationSet entry must target',
+      )
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain(drifted)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a base Deployment image that the verified digest selector cannot replace', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')

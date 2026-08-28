@@ -15,6 +15,11 @@ const defaultKustomizationPath = 'argocd/applications/tengri/kustomization.yaml'
 const defaultApplicationSetPath = 'argocd/applicationsets/platform.yaml'
 const defaultBffDeploymentPath = 'argocd/applications/proompteng/deployment.yaml'
 const defaultTengriDeploymentPath = 'argocd/applications/tengri/deployment.yaml'
+const tengriApplicationTarget = {
+  path: 'argocd/applications/tengri',
+  namespace: 'tengri',
+  automation: 'auto',
+} as const
 
 export type TengriRelease = {
   tengriDigest: string
@@ -89,11 +94,26 @@ function findTengriApplicationBlock(contents: string) {
   const nextEntry = /^\s*- name: [a-z0-9-]+\s*$/m.exec(contents.slice(afterStart))
   const end = nextEntry ? afterStart + nextEntry.index : contents.length
   const block = contents.slice(start, end)
+  assertTengriApplicationTarget(block)
   const enabledMatches = [...block.matchAll(/^\s*enabled:\s*"(true|false)"\s*$/gm)]
   if (enabledMatches.length !== 1) {
     throw new Error(`Tengri ApplicationSet entry must contain one enabled flag, found ${enabledMatches.length}`)
   }
   return { start, end, block, enabled: enabledMatches[0][1] === 'true' }
+}
+
+function assertTengriApplicationTarget(block: string) {
+  for (const [field, expected] of Object.entries(tengriApplicationTarget)) {
+    const matches = [
+      ...block.matchAll(new RegExp(`^\\s*${field}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s#]+))\\s*(?:#.*)?$`, 'gm')),
+    ]
+    const actual = matches.length === 1 ? (matches[0][1] ?? matches[0][2] ?? matches[0][3]) : undefined
+    if (actual !== expected) {
+      throw new Error(
+        `Tengri ApplicationSet entry must target path=${tengriApplicationTarget.path}, namespace=${tengriApplicationTarget.namespace}, automation=${tengriApplicationTarget.automation}; got ${field}=${actual ?? 'missing or duplicated'}`,
+      )
+    }
+  }
 }
 
 function parseBffEndpoint(contents: string) {
