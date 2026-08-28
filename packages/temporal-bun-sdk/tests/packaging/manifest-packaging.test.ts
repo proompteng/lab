@@ -137,10 +137,11 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(packageJson.files ?? []).not.toContain('dist/native')
   })
 
-  test('does not depend on Temporal Node worker or native build tooling', async () => {
+  test('does not depend on retired packages or Temporal Node native tooling', async () => {
     const packageJson = await loadPackageJson()
     const dependencies = Object.assign({}, packageJson.dependencies, packageJson.devDependencies)
     const forbiddenDependencies = [
+      '@effect/schema',
       '@temporalio/worker',
       '@temporalio/core-bridge',
       '@temporalio/client',
