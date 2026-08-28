@@ -56,11 +56,24 @@ images:
               - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "${enabled}"
+                ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: tengri-auth-nonces
+                    jsonPointers:
+                      - /data
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: cdi
                 enabled: "true"
             selector:
@@ -284,6 +297,67 @@ spec:
     }
   })
 
+  it('rejects Tengri render-time overrides without mutating release manifests', () => {
+    const overrides = [
+      'renderWithLovely: false',
+      `kustomize:
+                  images:
+                    - registry.ide-newton.ts.net/lab/tengri@sha256:${'c'.repeat(64)}`,
+    ] as const
+
+    for (const override of overrides) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          '                enabled: "false"',
+          `                ${override}\n                enabled: "false"`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('must not override verified rendering')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'must not override verified rendering',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects broader Tengri ignore rules without mutating release manifests', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '                      - /data\n                managedNamespaceMetadata:',
+        `                      - /data
+                  - group: apps
+                    kind: Deployment
+                    name: tengri
+                    jsonPointers:
+                      - /spec/template/spec/containers/0/image
+                managedNamespaceMetadata:`,
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must keep ignoreDifferences limited')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must keep ignoreDifferences limited',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
   it('rejects repository and revision overrides hidden in a YAML merge key', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
@@ -312,14 +386,11 @@ spec:
     writeFileSync(
       paths.applicationSetPath,
       readFileSync(paths.applicationSetPath, 'utf8').replace(
-        '                enabled: "false"',
-        `                ignoreDifferences:
-                  - group: ""
-                    kind: ConfigMap
-                    name: tengri
+        '                      - /data\n                managedNamespaceMetadata:',
+        `                      - /data
                 repoURL: https://github.com/example/fork.git
                 targetRevision: unverified
-                enabled: "false"`,
+                managedNamespaceMetadata:`,
       ),
     )
     const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
@@ -474,11 +545,24 @@ spec:
     const tengriEntry = `              - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "false"
+                ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: tengri-auth-nonces
+                    jsonPointers:
+                      - /data
                 managedNamespaceMetadata:
                   labels:
                     pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 `
     writeFileSync(
       paths.applicationSetPath,

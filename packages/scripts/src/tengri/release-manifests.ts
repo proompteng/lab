@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import YAML, { isMap, isSeq } from 'yaml'
 
@@ -19,6 +20,28 @@ const tengriApplicationTarget = {
   path: 'argocd/applications/tengri',
   namespace: 'tengri',
   automation: 'auto',
+} as const
+const tengriApplicationAnnotations = {
+  'argocd.argoproj.io/sync-wave': '2',
+} as const
+const tengriIgnoreDifferences = [
+  {
+    group: '',
+    kind: 'ConfigMap',
+    name: 'tengri-auth-nonces',
+    jsonPointers: ['/data'],
+  },
+] as const
+const tengriManagedNamespaceMetadata = {
+  labels: {
+    'pod-security.kubernetes.io/enforce': 'restricted',
+    'pod-security.kubernetes.io/audit': 'restricted',
+    'pod-security.kubernetes.io/warn': 'restricted',
+    'external-secrets.proompteng.ai/enabled': 'true',
+  },
+  annotations: {
+    'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+  },
 } as const
 const expectedRepository = 'https://github.com/proompteng/lab.git'
 const expectedRevision = 'main'
@@ -354,6 +377,37 @@ function assertTengriApplicationTarget(application: Record<string, unknown>) {
     throw new Error(
       `Tengri ApplicationSet entry must use the platform repository and main revision defaults; remove ${sourceOverrides.join(', ')}`,
     )
+  }
+
+  const renderingOverrides = ['renderWithLovely', 'kustomize'].filter((field) => Object.hasOwn(application, field))
+  if (renderingOverrides.length > 0) {
+    throw new Error(
+      `Tengri ApplicationSet entry must not override verified rendering; remove ${renderingOverrides.join(', ')}`,
+    )
+  }
+
+  const enabled = application.enabled
+  if (enabled !== 'true' && enabled !== 'false') {
+    throw new Error('Tengri ApplicationSet entry must contain one quoted true or false enabled flag')
+  }
+  if (!isDeepStrictEqual(application.ignoreDifferences, tengriIgnoreDifferences)) {
+    throw new Error(
+      'Tengri ApplicationSet entry must keep ignoreDifferences limited to the tengri-auth-nonces ConfigMap data',
+    )
+  }
+
+  const expected = {
+    name: 'tengri',
+    ...tengriApplicationTarget,
+    annotations: tengriApplicationAnnotations,
+    enabled,
+    ignoreDifferences: tengriIgnoreDifferences,
+    managedNamespaceMetadata: tengriManagedNamespaceMetadata,
+  }
+  if (!isDeepStrictEqual(application, expected)) {
+    const unexpectedFields = Object.keys(application).filter((field) => !Object.hasOwn(expected, field))
+    const suffix = unexpectedFields.length > 0 ? `; remove ${unexpectedFields.join(', ')}` : ''
+    throw new Error(`Tengri ApplicationSet entry must match the verified release configuration${suffix}`)
   }
 }
 
