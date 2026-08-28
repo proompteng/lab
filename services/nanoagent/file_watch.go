@@ -29,6 +29,9 @@ type fileEvent struct {
 	Path         string     `json:"path"`
 	PreviousPath string     `json:"previousPath,omitempty"`
 	Entry        *fileEntry `json:"entry,omitempty"`
+
+	routingPath         string
+	routingPreviousPath string
 }
 
 type fileSubscription struct {
@@ -476,6 +479,8 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 	expected, found := files.expectedRenames[display]
 	if found && expected.generation == generation {
 		delete(files.expectedRenames, display)
+		event.routingPath = expected.rawDestination
+		event.routingPreviousPath = expected.rawSourcePath
 		files.rememberCompletedRenameLocked(completedFileRename{
 			generation:          generation,
 			source:              display,
@@ -770,10 +775,16 @@ func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 	if event.Kind == "reset" {
 		return event.Path == "/" || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
 	}
-	if prefix == "/" || pathWithin(prefix, event.Path) {
+	if pathMatchesWatchPrefix(prefix, event.Path) || pathMatchesWatchPrefix(prefix, event.routingPath) {
 		return true
 	}
-	return event.Kind == "renamed" && event.PreviousPath != "" && pathWithin(prefix, event.PreviousPath)
+	return event.Kind == "renamed" &&
+		(pathMatchesWatchPrefix(prefix, event.PreviousPath) ||
+			pathMatchesWatchPrefix(prefix, event.routingPreviousPath))
+}
+
+func pathMatchesWatchPrefix(prefix string, path string) bool {
+	return path != "" && (prefix == "/" || pathWithin(prefix, path))
 }
 
 func parseBoundedInt(value string, minimum, maximum int) (int, error) {
