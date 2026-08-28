@@ -291,7 +291,7 @@ describe('Bayn cycle operations alert contract', () => {
     expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
     for (const title of ['Gross realized P&L', 'Recorded costs', 'Net realized P&L']) {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
-      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO FILLS')
+      expect(panel?.fieldConfig?.defaults?.noValue).toBe('NO ACCOUNTED FILLS')
     }
     for (const title of ['Targets', 'Intents', 'Orders', 'Fills']) {
       const panel = dashboard.panels.find((candidate) => candidate.title === title)
