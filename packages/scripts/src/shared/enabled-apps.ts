@@ -45,6 +45,7 @@ const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
 const labImageRegistry = 'registry.ide-newton.ts.net'
 const sha256HexPattern = /^[0-9a-f]{64}$/
 const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
+const zeroSha256Hex = '0'.repeat(64)
 
 const earlyNixImageApps = new Set([
   'agents',
@@ -354,11 +355,16 @@ const hasCompleteWorkflowImageOwnership = (
   entry: EnabledAppInventoryEntry,
   contract: ReleaseWorkflowImageContract,
 ): boolean => {
-  const repositories = new Set(entry.repoImages.map(imageRepository))
   const workflowPaths = new Set(entry.workflowPaths)
   return (
-    contract.repositories.every((repository) => repositories.has(repository)) &&
-    contract.workflowPaths.every((path) => workflowPaths.has(path))
+    contract.repositories.every((repository) => {
+      const referencePrefix = `${repository}@sha256:`
+      return entry.repoImages.some((reference) => {
+        if (!reference.startsWith(referencePrefix)) return false
+        const digest = reference.slice(referencePrefix.length)
+        return sha256HexPattern.test(digest) && digest !== zeroSha256Hex
+      })
+    }) && contract.workflowPaths.every((path) => workflowPaths.has(path))
   )
 }
 

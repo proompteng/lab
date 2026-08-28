@@ -190,6 +190,19 @@ describe('enabled app inventory', () => {
         }).class,
       ).toBe('deferred')
     }
+    for (const validReference of tengri.repoImages) {
+      const repository = validReference.split('@')[0]
+      for (const invalidReference of [
+        `${repository}:latest`,
+        `${repository}@sha256:bad`,
+        `${repository}@sha256:${'0'.repeat(64)}`,
+      ]) {
+        const repoImages = tengri.repoImages.map((reference) =>
+          reference === validReference ? invalidReference : reference,
+        )
+        expect(classifyEnabledApp({ ...tengri, repoImages }).class).toBe('deferred')
+      }
+    }
     const expectIncompleteOwnership = (entry: EnabledAppInventoryEntry) => {
       expect(() =>
         assertEnabledAppBuildPolicy({
@@ -200,6 +213,11 @@ describe('enabled app inventory', () => {
       ).toThrow('incomplete release ownership')
     }
     expectIncompleteOwnership({ ...tengri, class: 'workflow-image', repoImages: [tengri.repoImages[0]] })
+    expectIncompleteOwnership({
+      ...tengri,
+      class: 'workflow-image',
+      repoImages: [tengri.repoImages[0], 'registry.ide-newton.ts.net/lab/tengri@sha256:' + '0'.repeat(64)],
+    })
     expectIncompleteOwnership({ ...tengri, class: 'workflow-image', workflowPaths: [tengri.workflowPaths[0]] })
     expectIncompleteOwnership({ ...tengri, class: 'workflow-image', nixImageAttr: 'tengri-image' })
   })
