@@ -93,6 +93,7 @@ import {
 } from './opening-drive-decision'
 import {
   compileIntradayMomentumDecision,
+  IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumCloseQuery,
   intradayMomentumEntryDisposition,
   intradayMomentumEntryQuery,
@@ -808,12 +809,18 @@ const compileObserveStrategyDecision = <R>(
         ),
       ).pipe(
         Effect.mapError((cause) =>
-          operationalError({
-            component: 'market-data',
-            operation: 'current-decision',
-            message: cause.message,
-            cause,
-          }),
+          cause instanceof IntradayMomentumEntryAwaitingSnapshot
+            ? new ObserveDecisionAwaitingSignal({
+                message: cause.message,
+                observedAt: facts.evaluatedAt,
+                submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+              })
+            : operationalError({
+                component: 'market-data',
+                operation: 'current-decision',
+                message: cause.message,
+                cause,
+              }),
         ),
       )
       const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)

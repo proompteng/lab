@@ -842,6 +842,39 @@ describe('OBSERVE shadow decision', () => {
     if (Result.isFailure(result)) expect(String(result.failure)).toContain('canonically ordered')
   })
 
+  test('rejects a liquidation binding whose held-symbol subset is not canonically ordered', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      symbols: ['NVDA', 'AMD'],
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('symbols')
+  })
+
   test('binds opening-drive decisions to the immutable cycle execution calendar', async () => {
     const input = makeOpeningDriveInput()
     const accepted = await build(input)

@@ -20,6 +20,11 @@ export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('In
   readonly cause?: unknown
 }> {}
 
+export class IntradayMomentumEntryAwaitingSnapshot extends Data.TaggedError('IntradayMomentumEntryAwaitingSnapshot')<{
+  readonly message: string
+  readonly availableAt: string
+}> {}
+
 const failure = (
   operation: IntradayMomentumRuntimeDecisionFailure['operation'],
   message: string,
@@ -57,13 +62,18 @@ export const intradayMomentumEntryQuery = (
   protocol: IntradayMomentumProtocol,
   calendar: MarketCalendarObservation,
   observedAt: string,
-): Result.Result<IntradaySnapshotQuery, IntradayMomentumRuntimeDecisionFailure> => {
+): Result.Result<
+  IntradaySnapshotQuery,
+  IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
+> => {
   const observedEpoch = Date.parse(observedAt)
   const decisionDelayMs = protocol.decisionDelaySeconds * 1_000
   const rangeEndEpoch = Math.floor((observedEpoch - decisionDelayMs) / minuteMs) * minuteMs
   const rangeStartEpoch = rangeEndEpoch - protocol.lookbackMinutes * minuteMs
   const rangeStartAt = utcInstantFromEpochMillis(rangeStartEpoch)
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
+  const firstEligibleRangeEndEpoch = Math.ceil(Date.parse(cycle.window.submissionOpenAt) / minuteMs) * minuteMs
+  const availableAt = utcInstantFromEpochMillis(firstEligibleRangeEndEpoch + decisionDelayMs)
   if (
     cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' ||
     cycle.identity.strategyName !== 'intraday-momentum' ||
@@ -71,11 +81,18 @@ export const intradayMomentumEntryQuery = (
     observedAt < cycle.window.submissionOpenAt ||
     observedAt >= cycle.window.submissionCutoffAt ||
     rangeStartAt < cycle.window.executionOpenAt ||
-    rangeEndAt < cycle.window.submissionOpenAt ||
     rangeEndAt > cycle.window.submissionCutoffAt ||
     observedEpoch < rangeEndEpoch + decisionDelayMs
   ) {
     return Result.fail(failure('entry-query', 'cycle does not admit a complete rolling intraday snapshot at this time'))
+  }
+  if (rangeEndAt < cycle.window.submissionOpenAt) {
+    return Result.fail(
+      new IntradayMomentumEntryAwaitingSnapshot({
+        message: 'full-session intraday entry is waiting for its first decision-delay-complete snapshot',
+        availableAt,
+      }),
+    )
   }
   return Result.succeed(snapshotQuery(cycle, protocol, calendar, rangeStartAt, rangeEndAt, observedAt, decisionDelayMs))
 }

@@ -109,8 +109,12 @@ const marketDataBindingIssues = (
     issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for liquidation' })
   }
   const orderedUniverse = universe?.toSorted(compareCanonicalText)
+  const orderedSymbols = binding.symbols.toSorted(compareCanonicalText)
   if (universe !== undefined && universe.some((symbol, index) => symbol !== orderedUniverse?.[index])) {
     issues.push({ path: ['universe'], issue: 'must be canonically ordered' })
+  }
+  if (binding.symbols.some((symbol, index) => symbol !== orderedSymbols[index])) {
+    issues.push({ path: ['symbols'], issue: 'must be canonically ordered' })
   }
   if (
     universe !== undefined &&

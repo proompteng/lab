@@ -19,6 +19,7 @@ import {
 } from '../strategy/intraday-momentum/protocol'
 import {
   intradayMomentumCloseQuery,
+  IntradayMomentumEntryAwaitingSnapshot,
   intradayMomentumEntryDisposition,
   intradayMomentumEntryQuery,
 } from './intraday-momentum-decision'
@@ -148,6 +149,25 @@ describe('intraday-momentum runtime decision boundary', () => {
       failure(intradayMomentumEntryQuery(cycle, protocol, calendar, cycle.window.submissionCutoffAt)),
     ).toMatchObject({
       operation: 'entry-query',
+    })
+  })
+
+  test('classifies the first decision-delay interval as retryable snapshot waiting', () => {
+    const cycle = makeActiveCycle()
+    const calendar = calendarFor(cycle)
+    const availableAt = new Date(
+      Date.parse(cycle.window.submissionOpenAt) + protocol.decisionDelaySeconds * 1_000,
+    ).toISOString()
+
+    expect(failure(intradayMomentumEntryQuery(cycle, protocol, calendar, cycle.window.submissionOpenAt))).toEqual(
+      new IntradayMomentumEntryAwaitingSnapshot({
+        message: 'full-session intraday entry is waiting for its first decision-delay-complete snapshot',
+        availableAt,
+      }),
+    )
+    expect(success(intradayMomentumEntryQuery(cycle, protocol, calendar, availableAt))).toMatchObject({
+      rangeEndAt: cycle.window.submissionOpenAt,
+      observedAt: availableAt,
     })
   })
 
