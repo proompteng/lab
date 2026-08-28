@@ -19,6 +19,7 @@ targets:
     paths:
       - apps/landing/**
       - packages/backend/**
+      - packages/design/**
 
   app:
     kind: validation
