@@ -191,6 +191,9 @@ function findTengriApplicationBlock(contents: string) {
   if (document.errors.length > 0) {
     throw new Error(`Platform ApplicationSet is not valid YAML: ${document.errors[0].message}`)
   }
+  if (document.get('apiVersion') !== 'argoproj.io/v1alpha1' || document.get('kind') !== 'ApplicationSet') {
+    throw new Error('Platform application manifest must be an argoproj.io/v1alpha1 ApplicationSet')
+  }
 
   const goTemplateOptions = document.getIn(['spec', 'goTemplateOptions'], true)
   if (
