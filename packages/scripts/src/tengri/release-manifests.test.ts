@@ -63,6 +63,17 @@ images:
       source:
         repoURL: '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
         targetRevision: '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
+  templatePatch: |
+    {{- if or $useLovely $hasKustomize }}
+      source:
+      {{- if $useLovely }}
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if $hasKustomize }}
+        kustomize: {{ toJson .kustomize }}
+      {{- end }}
+    {{- end }}
 `,
   )
   writeFileSync(
@@ -344,6 +355,67 @@ spec:
       expect(() => validateTengriRelease(paths)).toThrow('matrix inputs must not override the release source')
       expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
         'matrix inputs must not override the release source',
+      )
+      expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+      expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+      expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+      rmSync(paths.directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a Tengri entry moved into the matrix cluster generator', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    const tengriEntry = `              - name: tengri
+                path: argocd/applications/tengri
+                namespace: tengri
+                automation: auto
+                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+`
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8')
+        .replace(tengriEntry, '')
+        .replace('                suffix: ""', `                suffix: ""\n${tengriEntry}`),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('must be in the application generator')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'must be in the application generator',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects repository and revision overrides from templatePatch', () => {
+    const overrides = [
+      '        repoURL: https://github.com/example/fork.git',
+      '        targetRevision: unverified',
+    ] as const
+
+    for (const override of overrides) {
+      const paths = fixture()
+      const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+      const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+      writeFileSync(
+        paths.applicationSetPath,
+        readFileSync(paths.applicationSetPath, 'utf8').replace(
+          '    {{- if or $useLovely $hasKustomize }}\n      source:\n',
+          `    {{- if or $useLovely $hasKustomize }}\n      source:\n${override}\n`,
+        ),
+      )
+      const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+      expect(() => validateTengriRelease(paths)).toThrow('plugin and kustomize-only source patch')
+      expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+        'plugin and kustomize-only source patch',
       )
       expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
       expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)

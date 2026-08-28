@@ -25,6 +25,16 @@ const expectedRevision = 'main'
 const expectedRepositoryTemplate =
   '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
 const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
+const expectedTemplatePatchSourceBlock = `{{- if or $useLovely $hasKustomize }}
+  source:
+  {{- if $useLovely }}
+    plugin:
+      name: lovely
+  {{- end }}
+  {{- if $hasKustomize }}
+    kustomize: {{ toJson .kustomize }}
+  {{- end }}
+{{- end }}`
 
 export type TengriRelease = {
   tengriDigest: string
@@ -99,19 +109,33 @@ function findTengriApplicationBlock(contents: string) {
   if (!isSeq(generators)) {
     throw new Error('Platform ApplicationSet must contain the expected matrix generators')
   }
-
-  const matches = generators.items.flatMap((generator, generatorIndex) => {
-    if (!isMap(generator)) return []
-    const elements = generator.getIn(['list', 'elements'], true)
-    if (!isSeq(elements)) return []
-    return elements.items.flatMap((entry) =>
-      isMap(entry) && entry.get('name') === 'tengri' ? [{ entry, generatorIndex }] : [],
-    )
-  })
-  if (matches.length !== 1) {
-    throw new Error(`Platform ApplicationSet must contain exactly one Tengri entry, found ${matches.length}`)
+  if (generators.items.length !== 2) {
+    throw new Error('Platform ApplicationSet matrix must contain one cluster generator and one application generator')
   }
-  const { entry, generatorIndex: tengriGeneratorIndex } = matches[0]
+
+  const clusterGenerator = generators.items[0]
+  const applicationGenerator = generators.items[1]
+  if (!isMap(clusterGenerator) || !isMap(applicationGenerator)) {
+    throw new Error('Platform ApplicationSet matrix generators must be list generators')
+  }
+  const clusterElements = clusterGenerator.getIn(['list', 'elements'], true)
+  const applicationElements = applicationGenerator.getIn(['list', 'elements'], true)
+  if (!isSeq(clusterElements) || !isSeq(applicationElements)) {
+    throw new Error('Platform ApplicationSet matrix must contain cluster and application element lists')
+  }
+
+  if (clusterElements.items.some((entry) => isMap(entry) && entry.get('name') === 'tengri')) {
+    throw new Error('Platform ApplicationSet Tengri entry must be in the application generator')
+  }
+  const matches = applicationElements.items.flatMap((entry) =>
+    isMap(entry) && entry.get('name') === 'tengri' ? [entry] : [],
+  )
+  if (matches.length !== 1) {
+    throw new Error(
+      `Platform ApplicationSet application generator must contain exactly one Tengri entry, found ${matches.length}`,
+    )
+  }
+  const entry = matches[0]
   const application = entry.toJSON() as Record<string, unknown>
   assertTengriApplicationTarget(application)
 
@@ -125,18 +149,13 @@ function findTengriApplicationBlock(contents: string) {
     )
   }
 
-  for (const [generatorIndex, generator] of generators.items.entries()) {
-    if (generatorIndex === tengriGeneratorIndex || !isMap(generator)) continue
-    const elements = generator.getIn(['list', 'elements'], true)
-    if (!isSeq(elements)) continue
-    for (const matrixInput of elements.items) {
-      if (!isMap(matrixInput)) continue
-      const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
-      if (sourceOverrides.length > 0) {
-        throw new Error(
-          `Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`,
-        )
-      }
+  assertSafeTemplatePatch(document.getIn(['spec', 'templatePatch']))
+
+  for (const matrixInput of clusterElements.items) {
+    if (!isMap(matrixInput)) continue
+    const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
+    if (sourceOverrides.length > 0) {
+      throw new Error(`Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`)
     }
   }
 
@@ -153,6 +172,23 @@ function findTengriApplicationBlock(contents: string) {
     enabled: enabled === 'true',
     enabledStart: enabledNode.range[0],
     enabledEnd: enabledNode.range[1],
+  }
+}
+
+function assertSafeTemplatePatch(templatePatch: unknown) {
+  if (typeof templatePatch !== 'string') {
+    throw new Error('Platform ApplicationSet must contain the expected templatePatch')
+  }
+  const sourceBlocks = templatePatch.match(/^\s*source:\s*$/gm) ?? []
+  const sourceOverrides = ['repoURL', 'targetRevision'].filter((field) => templatePatch.includes(field))
+  if (
+    sourceBlocks.length !== 1 ||
+    !templatePatch.includes(expectedTemplatePatchSourceBlock) ||
+    sourceOverrides.length > 0
+  ) {
+    throw new Error(
+      'Tengri ApplicationSet templatePatch must preserve the verified plugin and kustomize-only source patch',
+    )
   }
 }
 
