@@ -1,6 +1,6 @@
 'use client'
 
-import { FileSearch, Monitor, Play, Search } from 'lucide-react'
+import { FileSearch, Folder, Monitor, Play, Search } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -12,18 +12,20 @@ import { useModalFocus } from './modal-focus'
 
 type SpotlightResult =
   | { id: string; kind: 'app'; label: string; detail: string; app: TengriApp }
-  | { id: string; kind: 'file'; label: string; detail: string; path: string }
+  | { id: string; kind: 'file'; label: string; detail: string; directory: boolean; path: string }
   | { id: string; kind: 'action'; label: string; detail: string; run: () => void }
 
 export function Spotlight({
   agentId,
   onClose,
   onOpenApp,
+  onOpenDirectory,
   onOpenFile,
 }: {
   agentId: string
   onClose: () => void
   onOpenApp: (app: TengriApp) => void
+  onOpenDirectory: (path: string) => void
   onOpenFile: (path: string) => void
 }) {
   const modalFocus = useModalFocus<HTMLElement>()
@@ -113,6 +115,7 @@ export function Spotlight({
       kind: 'file' as const,
       label: file.name,
       detail: file.path,
+      directory: file.directory,
       path: file.path,
     }))
     const recentPosition = new Map(recentIds.map((id, index) => [id, index]))
@@ -133,6 +136,7 @@ export function Spotlight({
       // Spotlight recents are optional; launching the selected result must still succeed.
     }
     if (result.kind === 'app') onOpenApp(result.app)
+    else if (result.kind === 'file' && result.directory) onOpenDirectory(result.path)
     else if (result.kind === 'file') onOpenFile(result.path)
     else result.run()
     onClose()
@@ -222,6 +226,8 @@ export function Spotlight({
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/10">
                   {result.kind === 'app' ? (
                     <Monitor aria-hidden="true" className="h-4 w-4" />
+                  ) : result.kind === 'file' && result.directory ? (
+                    <Folder aria-hidden="true" className="h-4 w-4" />
                   ) : result.kind === 'file' ? (
                     <FileSearch aria-hidden="true" className="h-4 w-4" />
                   ) : (

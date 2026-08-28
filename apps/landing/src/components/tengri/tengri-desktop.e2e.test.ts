@@ -50,6 +50,16 @@ const workspaceEntries = [
   },
 ]
 
+const sourceEntries = [
+  {
+    name: 'main.ts',
+    path: '/workspace/src/main.ts',
+    directory: false,
+    size: 128,
+    modifiedAt: '2026-08-26T12:05:00.000Z',
+  },
+]
+
 type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
@@ -59,7 +69,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let agent = options.agent === undefined ? readyAgent : options.agent
   const authenticated = options.authenticated ?? true
   const actions: Record<string, unknown>[] = []
-  let files = [...rootEntries, ...workspaceEntries]
+  let files = [...rootEntries, ...workspaceEntries, ...sourceEntries]
   const contents = new Map<string, string>([
     ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
     ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
@@ -346,6 +356,16 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await page.locator('button[aria-label="Close Quick Look"]').click()
   await expect(page.locator('button[aria-label="Close Quick Look"]')).toHaveCount(0)
 
+  await page.keyboard.press('Meta+Space')
+  await spotlight.getByRole('combobox').fill('src')
+  await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
+  await page.keyboard.press('Enter')
+  await expect(finder.getByRole('button', { name: /main\.ts/ })).toBeVisible()
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/workspace/src'))
+    .toBe(true)
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src')).toBe(false)
+
   const finderFrame = page.locator('section[aria-label="Finder window"]')
   await page.getByRole('button', { name: 'Minimize Finder' }).click()
   await expect(finderFrame).toHaveAttribute('aria-hidden', 'true')
@@ -487,6 +507,9 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await settings.getByRole('button', { name: 'Delete Agent' }).click()
   const deleteDialog = page.getByRole('alertdialog', { name: /Delete “Tengri”/ })
   await expect(deleteDialog).toContainText('persistent workspace')
+  await page.keyboard.press('Meta+Space')
+  await expect(page.getByRole('dialog', { name: 'Spotlight' })).toHaveCount(0)
+  await expect(deleteDialog).toBeVisible()
   await deleteDialog.getByRole('button', { name: 'Delete Agent' }).click()
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
 })

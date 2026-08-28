@@ -22,7 +22,7 @@ import { CodeEditor } from './code-editor'
 import { type CodeOpenRequest, updateDirtyCodeWindows } from './code-editor-model'
 import { ConfirmationDialog } from './confirmation-dialog'
 import { DesktopWindowFrame } from './desktop-window'
-import { FinderApp } from './finder-app'
+import { FinderApp, type FinderOpenRequest } from './finder-app'
 import { MenuBar } from './menu-bar'
 import { SettingsApp } from './settings-app'
 import { commitDesktopLifecycleAction, selectSleepRequestError } from './settings-model'
@@ -30,6 +30,7 @@ import { Spotlight } from './spotlight'
 import { TerminalApp } from './terminal-app'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
+type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
 
 export function ReadyDesktop({
   agent,
@@ -51,11 +52,13 @@ export function ReadyDesktop({
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
+  const [finderRequest, setFinderRequest] = useState<TargetedFinderOpenRequest | null>(null)
   const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
   const [sleepRequested, setSleepRequested] = useState(false)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const codeRequestIdRef = useRef(0)
+  const finderRequestIdRef = useRef(0)
   const reducedMotion = useReducedMotion()
 
   const viewport = useCallback((): Bounds => {
@@ -145,7 +148,8 @@ export function ReadyDesktop({
     if (command && event.code === 'Space') {
       event.preventDefault()
       setMenuOpen(null)
-      setSpotlightOpen((open) => !open)
+      if (spotlightOpen) setSpotlightOpen(false)
+      else if (!document.querySelector('[data-tengri-modal="true"]')) setSpotlightOpen(true)
       return
     }
     if (event.key === 'Escape' && spotlightOpen) {
@@ -153,7 +157,7 @@ export function ReadyDesktop({
       setSpotlightOpen(false)
       return
     }
-    if (document.querySelector('[data-tengri-modal="true"][aria-modal="true"]')) return
+    if (document.querySelector('[data-tengri-modal="true"]')) return
     if (!command || event.defaultPrevented || isEditableTarget(event.target)) return
     if (event.key === 'Tab') {
       event.preventDefault()
@@ -209,9 +213,14 @@ export function ReadyDesktop({
     dispatch({ type: 'open', app: 'chrome', title: APP_TITLES.chrome, viewport: viewport() })
   }, [viewport])
 
-  const openFinder = useCallback(() => {
-    dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
-  }, [viewport])
+  const openFinder = useCallback(
+    (path?: string) => {
+      const targetWindowId = windowIdForOpen(windowState, 'finder')
+      dispatch({ type: 'open', app: 'finder', title: APP_TITLES.finder, viewport: viewport() })
+      if (path) setFinderRequest({ path, requestId: ++finderRequestIdRef.current, targetWindowId })
+    },
+    [viewport, windowState],
+  )
 
   const openCode = useCallback(
     (path?: string) => {
@@ -373,6 +382,7 @@ export function ReadyDesktop({
                   active={desktopWindow.id === windowState.activeWindowId}
                   agentId={agent.id}
                   onOpenFile={openCode}
+                  request={finderRequest?.targetWindowId === desktopWindow.id ? finderRequest : null}
                 />
               ) : desktopWindow.app === 'chrome' ? (
                 <ChromeApp active={desktopWindow.id === windowState.activeWindowId} agentId={agent.id} />
@@ -412,7 +422,7 @@ export function ReadyDesktop({
                 type="button"
                 aria-label="Open Finder"
                 className="group relative flex flex-col items-center outline-none"
-                onClick={openFinder}
+                onClick={() => openFinder()}
                 whileHover={reducedMotion ? undefined : dockHoverAnimation}
                 whileTap={reducedMotion ? undefined : dockTapAnimation}
                 transition={dockTransition}
@@ -492,6 +502,7 @@ export function ReadyDesktop({
             agentId={agent.id}
             onClose={() => setSpotlightOpen(false)}
             onOpenApp={openApp}
+            onOpenDirectory={openFinder}
             onOpenFile={(path) => openCode(path)}
           />
         ) : null}

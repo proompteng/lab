@@ -23,6 +23,8 @@ on:
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - '.github/workflows/pull-request.yml'
+      - '.github/workflows/scripts-ci.yml'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'

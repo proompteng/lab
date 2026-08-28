@@ -49,6 +49,7 @@ import {
 } from './finder-model'
 
 type FinderView = 'grid' | 'list'
+export type FinderOpenRequest = { path: string; requestId: number }
 type QuickLookState = {
   entry: TengriFileEntry
   content: string
@@ -63,10 +64,12 @@ export function FinderApp({
   active,
   agentId,
   onOpenFile,
+  request,
 }: {
   active: boolean
   agentId: string
   onOpenFile?: (path: string) => void
+  request?: FinderOpenRequest | null
 }) {
   const [path, setPath] = useState(FINDER_WORKSPACE_PATH)
   const [pathDraft, setPathDraft] = useState(FINDER_WORKSPACE_PATH)
@@ -115,6 +118,7 @@ export function FinderApp({
   const loadSequence = useRef(0)
   const latestLoad = useRef<(quiet?: boolean) => Promise<void>>(async () => {})
   const quickLookAbort = useRef<AbortController | null>(null)
+  const consumedRequestId = useRef<number | null>(null)
   const selectionAnchor = useRef<string | null>(null)
   const dragRef = useRef<{
     pointerId: number
@@ -246,6 +250,12 @@ export function FinderApp({
     },
     [historyIndex, path, resetCreateFolder, resetRename],
   )
+
+  useEffect(() => {
+    if (!request || consumedRequestId.current === request.requestId) return
+    consumedRequestId.current = request.requestId
+    navigate(request.path)
+  }, [navigate, request])
 
   const navigateHistory = useCallback(
     (index: number) => {
