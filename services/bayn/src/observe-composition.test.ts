@@ -92,6 +92,7 @@ import {
   countOpenPositions,
   decideExecutionCycleCloseDocument,
   decideReconciledExecutionCycleCompletion,
+  decideReconciledExecutionCycleTerminalization,
   decidePendingMutationObservation,
   decideExecutionCycleCompletion,
   decideExecutionIntentTerminalDisposition,
@@ -1748,9 +1749,15 @@ describe('OBSERVE runtime composition', () => {
 
   test('uses the persisted reconciliation time when completing an already-flat cycle', () => {
     const reconciliationCompletedAt = '2020-05-01T12:45:04.000Z'
+    const flatReconciliation = reconciliationResultAt(reconciliationCompletedAt)
 
-    expect(decideReconciledExecutionCycleCompletion(reconciliationResultAt(reconciliationCompletedAt))).toEqual({
+    expect(decideReconciledExecutionCycleCompletion(flatReconciliation)).toEqual({
       _tag: 'Complete',
+      observedAt: reconciliationCompletedAt,
+    })
+    expect(decideReconciledExecutionCycleTerminalization(flatReconciliation, true)).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
       observedAt: reconciliationCompletedAt,
     })
   })

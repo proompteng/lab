@@ -69,6 +69,7 @@ export type {
 
 export {
   decideReconciledExecutionCycleCompletion,
+  decideReconciledExecutionCycleTerminalization,
   decideExecutionCycleCloseDocument,
   executionMutationSubmissionAllowed,
   isExecutionCycleReconciledFlat,

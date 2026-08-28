@@ -246,6 +246,43 @@ export const decideReconciledExecutionCycleCompletion = (
     ? { _tag: 'Complete', observedAt: facts.report.reconciliation.reconciledAt }
     : undefined
 
+export const decideReconciledExecutionCycleTerminalization = (
+  facts: ReconciliationPassResult,
+  entryHasUnsuccessfulIntent: boolean,
+):
+  | { readonly _tag: 'Complete'; readonly observedAt: string }
+  | { readonly _tag: 'Block'; readonly reason: CycleTerminalReason.Risk; readonly observedAt: string }
+  | undefined => {
+  const completion = decideReconciledExecutionCycleCompletion(facts)
+  if (completion === undefined || !entryHasUnsuccessfulIntent) return completion
+  return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: completion.observedAt }
+}
+
+const entryExecutionCycleHasUnsuccessfulIntent = (
+  document: ExecutionDecisionDocument,
+): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
+  Effect.gen(function* () {
+    const store = yield* IntentStore
+    const records = yield* Effect.forEach(
+      document.orderedIntentIds,
+      (intentId) =>
+        store
+          .read(intentId)
+          .pipe(
+            Effect.mapError((cause) =>
+              mutationRunnerError({ message: 'entry execution intent read failed', cause, failure: 'store' }),
+            ),
+          ),
+      { concurrency: 1 },
+    )
+    return records.some(
+      (record) =>
+        Option.isSome(record) &&
+        record.value.intent.state === IntentState.Terminal &&
+        record.value.intent.terminalOutcome !== TerminalOutcome.Filled,
+    )
+  })
+
 type ExecutionCycleClosureResult =
   | { readonly _tag: 'Close'; readonly document: ExecutionDecisionDocument }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
@@ -279,7 +316,13 @@ const ensureExecutionCycleClosure = (
         Effect.mapError((cause) => mutationRunnerError({ message: 'execution close reconciliation failed', cause })),
       )
       const completion = decideReconciledExecutionCycleCompletion(closeReconciliation)
-      if (completion !== undefined) return completion
+      if (completion !== undefined) {
+        const terminalization = decideReconciledExecutionCycleTerminalization(
+          closeReconciliation,
+          yield* entryExecutionCycleHasUnsuccessfulIntent(entryDocument),
+        )
+        if (terminalization !== undefined) return terminalization
+      }
       const reconciledAt = closeReconciliation.report.reconciliation.reconciledAt
       const document = yield* buildClosingExecutionCycleDecision({
         input,
@@ -367,31 +410,6 @@ const ensureExecutionCycleClosure = (
       ),
     )
     return { _tag: 'Close', document: stored.document }
-  })
-
-const entryExecutionCycleHasUnsuccessfulIntent = (
-  document: ExecutionDecisionDocument,
-): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
-  Effect.gen(function* () {
-    const store = yield* IntentStore
-    const records = yield* Effect.forEach(
-      document.orderedIntentIds,
-      (intentId) =>
-        store
-          .read(intentId)
-          .pipe(
-            Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'entry execution intent read failed', cause, failure: 'store' }),
-            ),
-          ),
-      { concurrency: 1 },
-    )
-    return records.some(
-      (record) =>
-        Option.isSome(record) &&
-        record.value.intent.state === IntentState.Terminal &&
-        record.value.intent.terminalOutcome !== TerminalOutcome.Filled,
-    )
   })
 
 export const mutationDecisionInput = (
