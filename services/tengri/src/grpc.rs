@@ -22,7 +22,7 @@ use crate::{
         IDLE_MINUTES, LIFETIME_HOURS, MicroVM, MicroVMArchitecture, MicroVMDesiredState,
         MicroVMPhase, MicroVMResources, MicroVMSpec,
     },
-    guest::{GuestClient, GuestError},
+    guest::{GuestClient, GuestError, TerminalIdentityRegistry},
     metrics,
     tickets::TicketStore,
 };
@@ -63,6 +63,7 @@ pub struct ControlPlane {
     tickets: TicketStore,
     activity: ActivityTracker,
     create_lock: Arc<Mutex<()>>,
+    terminal_identities: TerminalIdentityRegistry,
 }
 
 pub struct ControlPlaneConfig {
@@ -95,6 +96,7 @@ impl ControlPlane {
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             activity,
             create_lock: Arc::new(Mutex::new(())),
+            terminal_identities: TerminalIdentityRegistry::default(),
         })
     }
 
@@ -193,9 +195,14 @@ impl ControlPlane {
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
         self.wake_agent(principal, id).await?;
-        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
-            .await
-            .map_err(map_guest_error)
+        GuestClient::for_agent_with_terminal_identities(
+            self.client.clone(),
+            &self.namespace,
+            id,
+            self.terminal_identities.clone(),
+        )
+        .await
+        .map_err(map_guest_error)
     }
 }
 
