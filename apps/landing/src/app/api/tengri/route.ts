@@ -141,7 +141,7 @@ export async function POST(request: Request) {
         result = await issueTerminalTicket(identity.subject, action.agentId, action.terminalId)
         break
       case 'codex-account':
-        result = await getCodexAccount(identity.subject, action.agentId)
+        result = await getCodexAccount(identity.subject, action.agentId, request.signal)
         break
       case 'codex-login':
         result = await startCodexLogin(identity.subject, action.agentId)

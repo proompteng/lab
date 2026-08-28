@@ -62,6 +62,8 @@ type MockOptions = {
   authenticated?: boolean
   agent?: typeof readyAgent | null
   extraFiles?: typeof workspaceEntries
+  failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
+  holdCodexAccount?: boolean
   holdReplayResume?: boolean
   resumeThreadDelayMs?: number
   resumeThreadRawJson?: string
@@ -76,11 +78,15 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let resumeThreadResponses = 0
   let releaseHeldResume = () => {}
   let markHeldResumeStarted = () => {}
+  let releaseHeldCodexAccount = () => {}
   const heldResume = new Promise<void>((resolve) => {
     releaseHeldResume = resolve
   })
   const heldResumeStarted = new Promise<void>((resolve) => {
     markHeldResumeStarted = resolve
+  })
+  const heldCodexAccount = new Promise<void>((resolve) => {
+    releaseHeldCodexAccount = resolve
   })
   let files = [...workspaceEntries, ...sourceEntries, ...(options.extraFiles ?? [])]
   let terminalSessions: Record<string, unknown>[] = []
@@ -170,6 +176,17 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   await page.route('**/api/tengri', async (route) => {
     const request = route.request()
     if (request.method() === 'GET') {
+      if (
+        options.failSnapshotAfterAction &&
+        actions.some((action) => action.action === options.failSnapshotAfterAction)
+      ) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Tengri control plane is temporarily unavailable' }),
+        })
+        return
+      }
       const previewGatewayOrigin = 'http://localhost:8080'
       await route.fulfill({
         contentType: 'application/json',
@@ -268,6 +285,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-account':
+        if (options.holdCodexAccount) await heldCodexAccount
         result = { authenticated: true, email: 'ada@example.test', plan: 'pro' }
         break
       case 'create-thread':
@@ -340,6 +358,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     actions,
     getAgent: () => agent,
     getResumeThreadResponseCount: () => resumeThreadResponses,
+    releaseHeldCodexAccount,
     releaseHeldResume,
     waitForHeldResume: () => heldResumeStarted,
   }
@@ -715,6 +734,42 @@ test('sends a real agent turn and executes sleep, resume, and confirmed deletion
   await expect(deleteDialog).toBeVisible()
   await deleteDialog.getByRole('button', { name: 'Delete Agent' }).click()
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
+})
+
+test('blocks lifecycle changes while Settings has a guest request in flight', async ({ page }) => {
+  const mock = await mockTengri(page, { holdCodexAccount: true })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  const lifecycleButtons = settings.getByRole('button').filter({ hasText: /Sleep Agent|Sign Out|Delete Agent/ })
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-account').length).toBeGreaterThan(1)
+  await expect(lifecycleButtons).toHaveCount(3)
+  for (const button of await lifecycleButtons.all()) await expect(button).toBeDisabled()
+  expect(mock.actions.some((action) => action.action === 'sleep-agent')).toBe(false)
+
+  mock.releaseHeldCodexAccount()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('keeps a committed delete transition gated when snapshot refresh fails', async ({ page }) => {
+  await mockTengri(page, { failSnapshotAfterAction: 'delete-agent' })
+  await page.goto('/')
+
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await page.getByRole('region', { name: 'Settings window' }).getByRole('button', { name: 'Delete Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Tengri”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+
+  await expect(page.getByRole('heading', { name: 'Deleting Tengri' })).toBeVisible()
+  await expect(page.getByText('Waiting for controller state')).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toHaveCount(0)
 })
 
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {

@@ -21,7 +21,9 @@ export function SettingsApp({
   busyAction,
   error,
   instanceId,
+  lifecycleDisabled,
   onDelete,
+  onGuestOperationChange,
   onSignOut,
   onSleep,
   user,
@@ -31,12 +33,15 @@ export function SettingsApp({
   busyAction: BusyAction
   error: string
   instanceId: string
+  lifecycleDisabled: boolean
   onDelete: () => void
+  onGuestOperationChange: (instanceId: string, active: boolean) => void
   onSignOut: () => void
   onSleep: () => void
   user: TengriUser
 }) {
   const [accountState, setAccountState] = useState<AccountState>({ agentId: agent.id, status: 'loading' })
+  const [accountRefreshing, setAccountRefreshing] = useState(false)
   const [now, setNow] = useState<number | null>(null)
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
@@ -52,6 +57,8 @@ export function SettingsApp({
     const controller = new AbortController()
     const generation = ++refreshGenerationRef.current
     refreshAbortRef.current = controller
+    setAccountRefreshing(true)
+    onGuestOperationChange(instanceId, true)
     try {
       const account = await runTengriAction<TengriCodexAccount>(
         { action: 'codex-account', agentId: agent.id },
@@ -67,15 +74,26 @@ export function SettingsApp({
         status: 'error',
       })
     } finally {
-      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
+      if (refreshAbortRef.current === controller) {
+        refreshAbortRef.current = null
+        setAccountRefreshing(false)
+        onGuestOperationChange(instanceId, false)
+      }
     }
-  }, [agent.id])
+  }, [agent.id, instanceId, onGuestOperationChange])
 
   useEffect(() => {
     setAccountState({ agentId: agent.id, status: 'loading' })
     if (active) void refreshAccount()
-    return () => refreshAbortRef.current?.abort()
-  }, [active, agent.id, refreshAccount])
+    return () => {
+      const controller = refreshAbortRef.current
+      controller?.abort()
+      if (controller && refreshAbortRef.current === controller) {
+        refreshAbortRef.current = null
+        onGuestOperationChange(instanceId, false)
+      }
+    }
+  }, [active, agent.id, instanceId, onGuestOperationChange, refreshAccount])
 
   useEffect(() => {
     if (!active) return
@@ -103,6 +121,7 @@ export function SettingsApp({
           ? currentAccountState.account.email || currentAccountState.account.plan || 'Connected'
           : 'Not connected'
   const busy = busyAction !== null
+  const lifecycleBlocked = busy || accountRefreshing || lifecycleDisabled
   const hydrated = now !== null
   const agentHeadingId = `${instanceId}-settings-agent-heading`
   const lifecycleHeadingId = `${instanceId}-settings-lifecycle-heading`
@@ -169,13 +188,34 @@ export function SettingsApp({
             Unprivileged guest · no cluster credential · private workspace
           </h2>
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={busy} className={secondaryButton} onClick={onSleep}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={secondaryButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onSleep()
+              }}
+            >
               <Moon aria-hidden="true" className="h-4 w-4" /> Sleep Agent
             </button>
-            <button type="button" disabled={busy} className={secondaryButton} onClick={onSignOut}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={secondaryButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onSignOut()
+              }}
+            >
               <LogOut aria-hidden="true" className="h-4 w-4" /> Sign Out
             </button>
-            <button type="button" disabled={busy} className={dangerButton} onClick={onDelete}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={dangerButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onDelete()
+              }}
+            >
               <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete Agent
             </button>
           </div>

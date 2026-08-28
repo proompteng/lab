@@ -220,8 +220,12 @@ export async function issueTerminalTicket(
   }
 }
 
-export async function getCodexAccount(subject: string, agentId: string): Promise<TengriCodexAccount> {
-  const response = await unary<RawRecord>('getCodexAccount', { agentId }, subject, 130_000)
+export async function getCodexAccount(
+  subject: string,
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<TengriCodexAccount> {
+  const response = await unary<RawRecord>('getCodexAccount', { agentId }, subject, 130_000, signal)
   return {
     authenticated: Boolean(response.authenticated),
     email: stringValue(response.email),
