@@ -1,6 +1,6 @@
 'use client'
 
-import { FileCode2, Folder, LoaderCircle, Moon, Settings, SquareTerminal } from 'lucide-react'
+import { FileCode2, Folder, LoaderCircle, LogOut, Moon, Settings, SquareTerminal, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useReducer, useRef, useState } from 'react'
 
@@ -32,6 +32,7 @@ import { TerminalApp } from './terminal-app'
 
 type TargetedCodeOpenRequest = CodeOpenRequest & { targetWindowId: string }
 type TargetedFinderOpenRequest = FinderOpenRequest & { targetWindowId: string }
+type CommittedTransition = 'delete' | 'sign-out' | 'sleep'
 
 export function ReadyDesktop({
   agent,
@@ -57,12 +58,14 @@ export function ReadyDesktop({
   const [codeRequest, setCodeRequest] = useState<TargetedCodeOpenRequest | null>(null)
   const [finderRequest, setFinderRequest] = useState<TargetedFinderOpenRequest | null>(null)
   const [dirtyCodeWindows, setDirtyCodeWindows] = useState<Set<string>>(() => new Set())
-  const [sleepRequested, setSleepRequested] = useState(false)
+  const [committedTransition, setCommittedTransition] = useState<CommittedTransition | null>(null)
+  const [guestOperationActive, setGuestOperationActive] = useState(false)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const codeRequestIdRef = useRef(0)
   const finderRequestIdRef = useRef(0)
   const terminalCloseHandlersRef = useRef(new Map<string, () => void>())
+  const guestOperationIdsRef = useRef(new Set<string>())
   const reducedMotion = useReducedMotion()
 
   const viewport = useCallback((): Bounds => {
@@ -110,6 +113,12 @@ export function ReadyDesktop({
         terminalCloseHandlersRef.current.delete(windowId)
       }
     }
+  }, [])
+
+  const handleGuestOperationChange = useCallback((instanceId: string, active: boolean) => {
+    if (active) guestOperationIdsRef.current.add(instanceId)
+    else guestOperationIdsRef.current.delete(instanceId)
+    setGuestOperationActive(guestOperationIdsRef.current.size > 0)
   }, [])
 
   useLayoutEffect(() => {
@@ -165,14 +174,14 @@ export function ReadyDesktop({
   }, [viewport])
 
   useEffect(() => {
-    if (!sleepRequested) return
+    if (!committedTransition) return
     let stopped = false
     let timer = 0
     const refreshUntilObserved = async () => {
       try {
         await onChanged()
       } catch {
-        if (!stopped) setError('Sleep was accepted, but the latest controller state is temporarily unavailable.')
+        if (!stopped) setError('The request was accepted, but the latest controller state is temporarily unavailable.')
       } finally {
         if (!stopped) timer = window.setTimeout(() => void refreshUntilObserved(), 1_000)
       }
@@ -182,7 +191,7 @@ export function ReadyDesktop({
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [onChanged, sleepRequested])
+  }, [committedTransition, onChanged])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -316,6 +325,10 @@ export function ReadyDesktop({
   }, [appendDesktopWindow, windowState.activeApp, windowState.activeWindowId, windowState.windows])
 
   async function mutate(action: 'delete-agent' | 'sleep-agent') {
+    if (guestOperationIdsRef.current.size > 0) {
+      setError('Wait for the current guest request to finish before changing the agent lifecycle.')
+      return
+    }
     if (dirtyCodeWindows.size > 0) {
       setError('Save or close every edited Code tab before changing the agent lifecycle.')
       return
@@ -329,8 +342,8 @@ export function ReadyDesktop({
         request: () => runTengriAction<TengriAgent | null>({ action, agentId: agent.id }),
         onCommitted: (committedAction) => {
           committed = true
-          if (committedAction === 'sleep-agent') setSleepRequested(true)
-          else setConfirmOpen(false)
+          setCommittedTransition(committedAction === 'sleep-agent' ? 'sleep' : 'delete')
+          if (committedAction === 'delete-agent') setConfirmOpen(false)
         },
       })
       if (action === 'delete-agent') await onChanged()
@@ -348,6 +361,10 @@ export function ReadyDesktop({
   }
 
   async function signOut() {
+    if (guestOperationIdsRef.current.size > 0) {
+      setError('Wait for the current guest request to finish before signing out.')
+      return
+    }
     if (dirtyCodeWindows.size > 0) {
       setError('Save or close every edited Code tab before signing out.')
       return
@@ -357,6 +374,7 @@ export function ReadyDesktop({
     try {
       const result = await tengriAuthClient.signOut()
       if (result.error) throw new Error(result.error.message || 'Tengri could not sign out')
+      setCommittedTransition('sign-out')
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Tengri could not sign out')
@@ -373,9 +391,13 @@ export function ReadyDesktop({
   const activeWindow = windowState.windows.find((candidate) => candidate.id === windowState.activeWindowId)
   const activeApp = activeWindow?.app ?? windowState.activeApp
 
-  if (sleepRequested) {
+  if (committedTransition) {
     return (
-      <SleepRequestScreen agentName={agent.displayName} error={selectSleepRequestError(error, connectionWarning)} />
+      <LifecycleTransitionScreen
+        agentName={agent.displayName}
+        error={selectSleepRequestError(error, connectionWarning)}
+        transition={committedTransition}
+      />
     )
   }
 
@@ -469,10 +491,12 @@ export function ReadyDesktop({
                   busyAction={busyAction}
                   error={error}
                   instanceId={desktopWindow.id}
+                  lifecycleDisabled={guestOperationActive}
                   onDelete={() => {
                     setError('')
                     setConfirmOpen(true)
                   }}
+                  onGuestOperationChange={handleGuestOperationChange}
                   onSignOut={() => void signOut()}
                   onSleep={() => void mutate('sleep-agent')}
                   user={user}
@@ -590,7 +614,29 @@ export function ReadyDesktop({
   )
 }
 
-function SleepRequestScreen({ agentName, error }: { agentName: string; error: string }) {
+function LifecycleTransitionScreen({
+  agentName,
+  error,
+  transition,
+}: {
+  agentName: string
+  error: string
+  transition: CommittedTransition
+}) {
+  const Icon = transition === 'sleep' ? Moon : transition === 'delete' ? Trash2 : LogOut
+  const title =
+    transition === 'sleep'
+      ? `Putting ${agentName} to sleep`
+      : transition === 'delete'
+        ? `Deleting ${agentName}`
+        : 'Signing out'
+  const detail =
+    transition === 'sleep'
+      ? 'Guest applications are disconnected while the controller removes the microVM Pod. Your workspace is retained.'
+      : transition === 'delete'
+        ? 'Tengri is removing the microVM and its persistent workspace. This desktop will close when deletion is confirmed.'
+        : 'Tengri is closing this authenticated desktop session.'
+
   return (
     <main className="font-inter relative grid h-[100dvh] min-h-[520px] w-screen place-items-center overflow-hidden bg-[#050914] px-5 text-white">
       <DesktopWallpaper />
@@ -605,12 +651,10 @@ function SleepRequestScreen({ agentName, error }: { agentName: string; error: st
         className="relative z-10 w-full max-w-md rounded-[24px] border border-white/16 bg-[rgba(25,29,42,0.72)] p-8 text-center shadow-2xl backdrop-blur-3xl"
       >
         <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/12 bg-white/7">
-          <Moon aria-hidden="true" className="h-6 w-6 text-sky-200" />
+          <Icon aria-hidden="true" className="h-6 w-6 text-sky-200" />
         </span>
-        <h1 className="mt-5 text-xl font-semibold tracking-[-0.02em]">Putting {agentName} to sleep</h1>
-        <p className="mt-2 text-sm leading-6 text-white/52">
-          Guest applications are disconnected while the controller removes the microVM Pod. Your workspace is retained.
-        </p>
+        <h1 className="mt-5 text-xl font-semibold tracking-[-0.02em]">{title}</h1>
+        <p className="mt-2 text-sm leading-6 text-white/52">{detail}</p>
         <p role="status" className="mt-5 inline-flex items-center gap-2 text-xs text-white/62">
           <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" /> Waiting for controller state
         </p>

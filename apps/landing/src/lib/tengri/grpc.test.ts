@@ -33,6 +33,8 @@ let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
+let codexAccountRequestStarted: (() => void) | null = null
+let codexAccountRequestCancelled: (() => void) | null = null
 
 beforeAll(async () => {
   server = new grpc.Server()
@@ -89,6 +91,24 @@ beforeAll(async () => {
         lastActivityAt: '2026-08-27T00:00:00Z',
         attached: false,
       })
+    },
+    getCodexAccount(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      if (call.request.agentId === 'codex-account-cancel') {
+        codexAccountRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'test request was not cancelled'), null),
+          5_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          codexAccountRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, { authenticated: true, email: 'ada@example.test', plan: 'pro' })
     },
     readFile(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -240,6 +260,28 @@ describe('Tengri gRPC BFF transport', () => {
     ])
     terminalRequestStarted = null
     terminalRequestCancelled = null
+  })
+
+  test('cancels Codex account gRPC when the browser request aborts', async () => {
+    const { getCodexAccount } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      codexAccountRequestStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      codexAccountRequestCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = getCodexAccount('github:42', 'codex-account-cancel', controller.signal)
+
+    await started
+    controller.abort()
+    expect(await rejection(pending)).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+    await Promise.race([
+      cancelled,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('gRPC call was not cancelled')), 1_000)),
+    ])
+    codexAccountRequestStarted = null
+    codexAccountRequestCancelled = null
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
