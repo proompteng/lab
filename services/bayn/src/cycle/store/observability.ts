@@ -97,10 +97,11 @@ const CycleExecutionFunnelObservationRowSchema = Schema.Struct({
   latestFillAt: Schema.NullOr(UtcInstantSchema),
   maximumOrderAcknowledgementLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
   maximumFillLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
-  positionCount: NonNegativeIntegerSchema,
-  grossExposureMicros: SignedMicrosSchema,
-  netExposureMicros: SignedMicrosSchema,
-  unrealizedPnlMicros: SignedMicrosSchema,
+  positionSnapshotObservedAt: Schema.NullOr(UtcInstantSchema),
+  positionCount: Schema.NullOr(NonNegativeIntegerSchema),
+  grossExposureMicros: NullableSignedMicros,
+  netExposureMicros: NullableSignedMicros,
+  unrealizedPnlMicros: NullableSignedMicros,
   accountObservedAt: Schema.NullOr(UtcInstantSchema),
   cashMicros: NullableSignedMicros,
   equityMicros: NullableSignedMicros,
@@ -785,10 +786,30 @@ const makeCycleObservability = Effect.gen(function* () {
                 SELECT round(max(extract(epoch FROM (observed_at - intent_created_at))) * 1000)::bigint
                 FROM cycle_fills
               ),
-              'positionCount', (SELECT count(*)::integer FROM current_positions WHERE quantity_micros <> 0),
-              'grossExposureMicros', coalesce((SELECT sum(abs(market_value_micros)) FROM current_positions), 0)::text,
-              'netExposureMicros', coalesce((SELECT sum(market_value_micros) FROM current_positions), 0)::text,
-              'unrealizedPnlMicros', coalesce((SELECT sum(unrealized_pnl_micros) FROM current_positions), 0)::text,
+              'positionSnapshotObservedAt', (
+                SELECT to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                FROM latest_position_snapshot
+              ),
+              'positionCount', CASE
+                WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
+                THEN (SELECT count(*)::integer FROM current_positions WHERE quantity_micros <> 0)
+                ELSE NULL
+              END,
+              'grossExposureMicros', CASE
+                WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
+                THEN coalesce((SELECT sum(abs(market_value_micros)) FROM current_positions), 0)::text
+                ELSE NULL
+              END,
+              'netExposureMicros', CASE
+                WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
+                THEN coalesce((SELECT sum(market_value_micros) FROM current_positions), 0)::text
+                ELSE NULL
+              END,
+              'unrealizedPnlMicros', CASE
+                WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
+                THEN coalesce((SELECT sum(unrealized_pnl_micros) FROM current_positions), 0)::text
+                ELSE NULL
+              END,
               'accountObservedAt', (
                 SELECT to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                 FROM latest_account_snapshot

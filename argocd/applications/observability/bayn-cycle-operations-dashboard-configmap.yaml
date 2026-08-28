@@ -827,7 +827,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"})",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"targets\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "targets",
               "range": false,
@@ -874,7 +874,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"intents\"})",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"intents\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "intents",
               "range": false,
@@ -921,7 +921,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"orders\"})",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"orders\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "orders",
               "range": false,
@@ -968,7 +968,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"fills\"})",
+              "expr": "max(bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\",stage=\"fills\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "fills",
               "range": false,
@@ -1016,7 +1016,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": true,
               "legendFormat": "{{stage}}",
               "range": false,
@@ -1144,7 +1144,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 0,
-              "noValue": "0"
+              "noValue": "NO POSITION SNAPSHOT"
             },
             "overrides": []
           },
@@ -1191,7 +1191,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "NO FILLS",
+              "noValue": "NO POSITION SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1239,7 +1239,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "$0",
+              "noValue": "NO POSITION SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1335,7 +1335,7 @@ data:
           "fieldConfig": {
             "defaults": {
               "decimals": 2,
-              "noValue": "$0",
+              "noValue": "NO POSITION SNAPSHOT",
               "unit": "currencyUSD"
             },
             "overrides": []
@@ -1725,7 +1725,7 @@ data:
           },
           "targets": [
             {
-              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"})",
+              "expr": "max by (stage) (bayn_execution_funnel_count{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job=\"bayn\",namespace=\"bayn\",service=\"bayn\"}))",
               "instant": false,
               "legendFormat": "{{stage}}",
               "range": true,

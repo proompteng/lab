@@ -992,18 +992,29 @@ const renderPrometheusMetricsDataFirst = (
           '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
           '# TYPE bayn_cycle_fill_latency_seconds gauge',
           `bayn_cycle_fill_latency_seconds ${prometheusNumber((executionFunnel.maximumFillLatencyMs ?? 0) / 1_000)}`,
-          '# HELP bayn_broker_position_count Open positions in the latest complete broker position snapshot.',
-          '# TYPE bayn_broker_position_count gauge',
-          `bayn_broker_position_count ${executionFunnel.positionCount}`,
-          '# HELP bayn_broker_gross_exposure_dollars Gross market exposure in the latest complete broker position snapshot.',
-          '# TYPE bayn_broker_gross_exposure_dollars gauge',
-          `bayn_broker_gross_exposure_dollars ${microsToPrometheusDollars(executionFunnel.grossExposureMicros)}`,
-          '# HELP bayn_broker_net_exposure_dollars Net market exposure in the latest complete broker position snapshot.',
-          '# TYPE bayn_broker_net_exposure_dollars gauge',
-          `bayn_broker_net_exposure_dollars ${microsToPrometheusDollars(executionFunnel.netExposureMicros)}`,
-          '# HELP bayn_broker_unrealized_pnl_dollars Unrealized PnL in the latest complete broker position snapshot.',
-          '# TYPE bayn_broker_unrealized_pnl_dollars gauge',
-          `bayn_broker_unrealized_pnl_dollars ${microsToPrometheusDollars(executionFunnel.unrealizedPnlMicros)}`,
+          ...(executionFunnel.positionSnapshotObservedAt === null ||
+          executionFunnel.positionCount === null ||
+          executionFunnel.grossExposureMicros === null ||
+          executionFunnel.netExposureMicros === null ||
+          executionFunnel.unrealizedPnlMicros === null
+            ? []
+            : [
+                '# HELP bayn_broker_position_snapshot_observed_timestamp_seconds Observation time of the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_snapshot_observed_timestamp_seconds gauge',
+                `bayn_broker_position_snapshot_observed_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.positionSnapshotObservedAt))}`,
+                '# HELP bayn_broker_position_count Open positions in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_position_count gauge',
+                `bayn_broker_position_count ${executionFunnel.positionCount}`,
+                '# HELP bayn_broker_gross_exposure_dollars Gross market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_gross_exposure_dollars gauge',
+                `bayn_broker_gross_exposure_dollars ${microsToPrometheusDollars(executionFunnel.grossExposureMicros)}`,
+                '# HELP bayn_broker_net_exposure_dollars Net market exposure in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_net_exposure_dollars gauge',
+                `bayn_broker_net_exposure_dollars ${microsToPrometheusDollars(executionFunnel.netExposureMicros)}`,
+                '# HELP bayn_broker_unrealized_pnl_dollars Unrealized PnL in the latest complete broker position snapshot.',
+                '# TYPE bayn_broker_unrealized_pnl_dollars gauge',
+                `bayn_broker_unrealized_pnl_dollars ${microsToPrometheusDollars(executionFunnel.unrealizedPnlMicros)}`,
+              ]),
           ...(executionFunnel.cashMicros === null ||
           executionFunnel.equityMicros === null ||
           executionFunnel.buyingPowerMicros === null

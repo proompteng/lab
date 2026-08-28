@@ -904,6 +904,15 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         const sql = yield* PgClient.PgClient
         yield* seedSafetyState()
         const empty = yield* observability.read(qualificationRunId, accountId)
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES (
+            ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'1'.repeat(64)},
+            '2026-03-06T21:00:01.000Z', 0, ${'2'.repeat(64)}
+          )
+        `
+        const emptyWithPositionSnapshot = yield* observability.read(qualificationRunId, accountId)
         yield* store.acquire(draft, '2026-03-06T21:01:00.000Z')
 
         const current = yield* observability.read(qualificationRunId, accountId)
@@ -927,7 +936,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
             (SELECT count(*)::integer FROM mutation_events) AS mutations,
             (SELECT count(*)::integer FROM reconciliations) AS reconciliations
         `
-        return { blocked, blockedReplay, counts, current, empty }
+        return { blocked, blockedReplay, counts, current, empty, emptyWithPositionSnapshot }
       }),
     )
 
@@ -954,12 +963,20 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         intentCount: 0,
         orderCount: 0,
         fillCount: 0,
-        positionCount: 0,
-        grossExposureMicros: '0',
-        netExposureMicros: '0',
-        unrealizedPnlMicros: '0',
+        positionSnapshotObservedAt: null,
+        positionCount: null,
+        grossExposureMicros: null,
+        netExposureMicros: null,
+        unrealizedPnlMicros: null,
         accountObservedAt: null,
       },
+    })
+    expect(result.emptyWithPositionSnapshot.execution).toMatchObject({
+      positionSnapshotObservedAt: '2026-03-06T21:00:01.000Z',
+      positionCount: 0,
+      grossExposureMicros: '0',
+      netExposureMicros: '0',
+      unrealizedPnlMicros: '0',
     })
     expect(result.current).toMatchObject({
       current: {

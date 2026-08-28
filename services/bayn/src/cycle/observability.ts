@@ -360,10 +360,12 @@ export interface CycleExecutionFunnelObservation {
   readonly latestFillAt: string | null
   readonly maximumOrderAcknowledgementLatencyMs: number | null
   readonly maximumFillLatencyMs: number | null
-  readonly positionCount: number
-  readonly grossExposureMicros: string
-  readonly netExposureMicros: string
-  readonly unrealizedPnlMicros: string
+  /** Null means no complete broker position snapshot has been observed. */
+  readonly positionSnapshotObservedAt: string | null
+  readonly positionCount: number | null
+  readonly grossExposureMicros: string | null
+  readonly netExposureMicros: string | null
+  readonly unrealizedPnlMicros: string | null
   readonly accountObservedAt: string | null
   readonly cashMicros: string | null
   readonly equityMicros: string | null

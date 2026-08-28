@@ -311,7 +311,7 @@ describe('Bayn cycle operations alert contract', () => {
         'max(bayn_cycle_snapshot_bound{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"})',
         'max by (status, reason) (bayn_cycle_target_plan_info{job="bayn",namespace="bayn",service="bayn"})',
-        'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"})',
+        'max by (stage) (bayn_execution_funnel_count{job="bayn",namespace="bayn",service="bayn"} and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}))',
         'max by (kind) (bayn_cycle_decision_market_data_records{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_broker_position_count{job="bayn",namespace="bayn",service="bayn"})',
         'max(bayn_broker_gross_exposure_dollars{job="bayn",namespace="bayn",service="bayn"})',
@@ -332,6 +332,18 @@ describe('Bayn cycle operations alert contract', () => {
       ]),
     )
     expect(dashboard.panels.find(({ title }) => title === 'Opportunity → fill')?.type).toBe('bargauge')
+    expect(
+      dashboardExpressions
+        .filter((expression) => expression.includes('bayn_execution_funnel_count'))
+        .every((expression) =>
+          expression.includes('and on(instance) topk(1, bayn_runtime_projection_timestamp_seconds'),
+        ),
+    ).toBe(true)
+    for (const title of ['Open positions', 'Gross exposure', 'Net exposure', 'Unrealized P&L']) {
+      expect(dashboard.panels.find((panel) => panel.title === title)?.fieldConfig?.defaults?.noValue).toBe(
+        'NO POSITION SNAPSHOT',
+      )
+    }
     expect(dashboardExpressions.join('\n')).not.toContain('bayn_intents{')
     const statPanels = dashboard.panels.filter(({ type }) => type === 'stat')
     expect(statPanels).toHaveLength(29)
