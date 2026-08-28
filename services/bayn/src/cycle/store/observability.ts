@@ -524,11 +524,23 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY events.observed_at DESC, events.source_sequence DESC, snapshot.event_id DESC
             LIMIT 1
           ),
-          latest_position_snapshot AS (
-            SELECT snapshot.*
+          latest_position_snapshot_time AS (
+            SELECT max(snapshot.observed_at) AS observed_at
             FROM position_snapshots AS snapshot
             WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
-            ORDER BY snapshot.observed_at DESC, snapshot.ingestion_sequence DESC, snapshot.snapshot_id DESC
+          ),
+          latest_position_snapshot_candidates AS (
+            SELECT snapshot.*
+            FROM position_snapshots AS snapshot
+            JOIN latest_position_snapshot_time AS latest ON latest.observed_at = snapshot.observed_at
+            WHERE snapshot.account_id = (SELECT account_id FROM selected_account)
+          ),
+          latest_position_snapshot AS (
+            SELECT snapshot.*
+            FROM latest_position_snapshot_candidates AS snapshot
+            WHERE snapshot.ingestion_order_trusted
+              OR (SELECT count(*) FROM latest_position_snapshot_candidates) = 1
+            ORDER BY snapshot.ingestion_order_trusted DESC, snapshot.ingestion_sequence DESC
             LIMIT 1
           ),
           current_positions AS (

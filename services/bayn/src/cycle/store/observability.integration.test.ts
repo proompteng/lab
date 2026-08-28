@@ -30,6 +30,7 @@ import type { IsoDate } from '../../types'
 import { defaultOpeningDriveProtocolHash, openingDriveExecutionModel } from '../../strategy/opening-drive'
 import { CycleObservability, CycleObservabilityLive } from './observability'
 import { CycleStore, CycleStoreLive } from '.'
+import positionSnapshotIngestionOrder from '../../../migrations/0051_position_snapshot_ingestion_order'
 
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
@@ -1172,6 +1173,81 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       grossExposureMicros: '0',
       netExposureMicros: '0',
       unrealizedPnlMicros: '0',
+    })
+  })
+
+  test('marks only post-upgrade position-snapshot ordering as trusted', async () => {
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              CREATE TEMPORARY TABLE position_snapshots (
+                snapshot_id text PRIMARY KEY,
+                observed_at timestamptz NOT NULL
+              ) ON COMMIT DROP
+            `
+            yield* sql`
+              INSERT INTO position_snapshots (snapshot_id, observed_at)
+              VALUES ('legacy-a', '2026-03-06T21:00:01.000Z'), ('legacy-b', '2026-03-06T21:00:01.000Z')
+            `
+            yield* positionSnapshotIngestionOrder
+            yield* sql`
+              INSERT INTO position_snapshots (snapshot_id, observed_at)
+              VALUES ('current', '2026-03-06T21:00:01.000Z')
+            `
+            return yield* sql<{
+              snapshot_id: string
+              ingestion_sequence: string
+              ingestion_order_trusted: boolean
+            }>`
+              SELECT snapshot_id, ingestion_sequence::text, ingestion_order_trusted
+              FROM position_snapshots
+              ORDER BY ingestion_sequence
+            `
+          }),
+        )
+      }),
+    )
+
+    expect(rows).toEqual([
+      { snapshot_id: 'legacy-a', ingestion_sequence: '1', ingestion_order_trusted: false },
+      { snapshot_id: 'legacy-b', ingestion_sequence: '2', ingestion_order_trusted: false },
+      { snapshot_id: 'current', ingestion_sequence: '3', ingestion_order_trusted: true },
+    ])
+  })
+
+  test('rejects ambiguous historical position-snapshot timestamp ties', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash,
+            ingestion_order_trusted
+          ) VALUES
+            (
+              ${'f'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'3'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 1, ${'4'.repeat(64)}, false
+            ),
+            (
+              ${'0'.repeat(64)}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${'5'.repeat(64)},
+              '2026-03-06T21:00:01.000Z', 0, ${'6'.repeat(64)}, false
+            )
+        `
+        return yield* observability.read(qualificationRunId, accountId)
+      }),
+    )
+
+    expect(projection.execution).toMatchObject({
+      positionSnapshotObservedAt: null,
+      positionCount: null,
+      grossExposureMicros: null,
+      netExposureMicros: null,
+      unrealizedPnlMicros: null,
     })
   })
 
