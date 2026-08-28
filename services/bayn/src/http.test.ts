@@ -519,6 +519,27 @@ describe('Bayn HTTP pure decisions', () => {
     expect(missingLatencyMetrics).not.toContain('bayn_cycle_order_acknowledgement_latency_seconds ')
     expect(missingLatencyMetrics).not.toContain('bayn_cycle_fill_latency_seconds ')
 
+    const missingExecutionTimestampMetrics = renderPrometheusMetrics(
+      {
+        ...realized,
+        cycle: {
+          ...realized.cycle,
+          execution: {
+            ...realized.cycle.execution,
+            latestIntentAt: null,
+            latestOrderAt: null,
+            latestFillAt: null,
+          },
+        },
+      },
+      config,
+      provenance,
+      'embedded',
+    )
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_intent_timestamp_seconds ')
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_order_timestamp_seconds ')
+    expect(missingExecutionTimestampMetrics).not.toContain('bayn_cycle_latest_fill_timestamp_seconds ')
+
     const restrictedMetrics = renderPrometheusMetrics(
       {
         ...realized,

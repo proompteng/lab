@@ -977,15 +977,27 @@ const renderPrometheusMetricsDataFirst = (
           `bayn_cycle_fills{side="all"} ${executionFunnel.fillCount}`,
           `bayn_cycle_fills{side="buy"} ${executionFunnel.buyFillCount}`,
           `bayn_cycle_fills{side="sell"} ${executionFunnel.sellFillCount}`,
-          '# HELP bayn_cycle_latest_intent_timestamp_seconds Latest current-cycle intent creation time.',
-          '# TYPE bayn_cycle_latest_intent_timestamp_seconds gauge',
-          `bayn_cycle_latest_intent_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestIntentAt))}`,
-          '# HELP bayn_cycle_latest_order_timestamp_seconds Latest current-cycle broker-order observation time.',
-          '# TYPE bayn_cycle_latest_order_timestamp_seconds gauge',
-          `bayn_cycle_latest_order_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestOrderAt))}`,
-          '# HELP bayn_cycle_latest_fill_timestamp_seconds Latest current-cycle broker-fill observation time.',
-          '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
-          `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
+          ...(executionFunnel.latestIntentAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_intent_timestamp_seconds Latest current-cycle intent creation time.',
+                '# TYPE bayn_cycle_latest_intent_timestamp_seconds gauge',
+                `bayn_cycle_latest_intent_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestIntentAt))}`,
+              ]),
+          ...(executionFunnel.latestOrderAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_order_timestamp_seconds Latest current-cycle broker-order observation time.',
+                '# TYPE bayn_cycle_latest_order_timestamp_seconds gauge',
+                `bayn_cycle_latest_order_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestOrderAt))}`,
+              ]),
+          ...(executionFunnel.latestFillAt === null
+            ? []
+            : [
+                '# HELP bayn_cycle_latest_fill_timestamp_seconds Latest current-cycle broker-fill observation time.',
+                '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
+                `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
+              ]),
           ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
             ? []
             : [
