@@ -59,7 +59,7 @@ func TestFileSearchStopsWhenRequestIsCanceled(t *testing.T) {
 	}
 }
 
-func TestFileSearchSkipsRuntimeCachesAtTheWorkspaceRoot(t *testing.T) {
+func TestFileSearchSkipsHiddenRuntimeCachesAndPreservesVisibleDirectories(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
 	for _, path := range []string{
@@ -91,7 +91,7 @@ func TestFileSearchSkipsRuntimeCachesAtTheWorkspaceRoot(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode search response: %v", err)
 	}
-	if len(result.Entries) != 2 || result.Entries[0].Path != "/src/go/needle-nested-go.txt" || result.Entries[1].Path != "/src/needle-project.txt" {
+	if len(result.Entries) != 3 || result.Entries[0].Path != "/go/needle-go.txt" || result.Entries[1].Path != "/src/go/needle-nested-go.txt" || result.Entries[2].Path != "/src/needle-project.txt" {
 		t.Fatalf("search entries = %#v", result.Entries)
 	}
 }

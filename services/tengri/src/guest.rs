@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::Duration,
 };
 
@@ -60,7 +60,7 @@ pub struct GuestClient {
 #[derive(Clone, Default)]
 pub struct TerminalIdentityRegistry {
     state: Arc<Mutex<TerminalIdentityState>>,
-    legacy_creation_lock: Arc<AsyncMutex<()>>,
+    legacy_creation_locks: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
 }
 
 #[derive(Default)]
@@ -80,8 +80,22 @@ struct PendingLegacyCreation {
 }
 
 impl TerminalIdentityRegistry {
-    async fn lock_legacy_creation(&self) -> OwnedMutexGuard<()> {
-        Arc::clone(&self.legacy_creation_lock).lock_owned().await
+    async fn lock_legacy_creation(&self, agent_id: &str) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self
+                .legacy_creation_locks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(agent_id).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(AsyncMutex::new(()));
+                locks.insert(agent_id.to_owned(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
     }
 
     fn begin_legacy_creation(
@@ -497,8 +511,20 @@ impl GuestClient {
         columns: u32,
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
-        let _legacy_creation_guard = self.terminal_identities.lock_legacy_creation().await;
+        let _legacy_creation_guard = self
+            .terminal_identities
+            .lock_legacy_creation(&self.agent_id)
+            .await;
         let existing = self.list_terminals().await?;
+        if let Some(session) = existing
+            .iter()
+            .find(|session| session.creation_id == creation_id)
+        {
+            return Ok(TerminalCreation {
+                session: session.clone(),
+                created: false,
+            });
+        }
         self.terminal_identities
             .begin_legacy_creation(&self.agent_id, creation_id, cwd, &existing);
 
@@ -923,8 +949,10 @@ mod tests {
     #[tokio::test]
     async fn legacy_terminal_creation_reconciles_after_its_response_is_lost() {
         let created = Arc::new(AtomicBool::new(false));
+        let legacy_posts = Arc::new(AtomicUsize::new(0));
         let creation_state = Arc::clone(&created);
         let list_state = Arc::clone(&created);
+        let post_attempts = Arc::clone(&legacy_posts);
         let creation_started = Arc::new(Notify::new());
         let handler_started = Arc::clone(&creation_started);
         let hold_response = Arc::new(Notify::new());
@@ -946,6 +974,7 @@ mod tests {
                 let created = Arc::clone(&creation_state);
                 let creation_started = Arc::clone(&handler_started);
                 let hold_response = Arc::clone(&handler_hold);
+                let legacy_posts = Arc::clone(&post_attempts);
                 async move {
                     if body.get("creationId").is_some() {
                         return (
@@ -955,6 +984,7 @@ mod tests {
                             })),
                         );
                     }
+                    legacy_posts.fetch_add(1, Ordering::SeqCst);
                     created.store(true, Ordering::SeqCst);
                     creation_started.notify_one();
                     hold_response.notified().await;
@@ -997,7 +1027,36 @@ mod tests {
             .expect("legacy terminal can be reconciled after cancellation");
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].creation_id, "terminal-creation-lost");
+        let replayed = client
+            .create_terminal("terminal-creation-lost", "/workspace", 120, 32)
+            .await
+            .expect("legacy terminal retry reconciles instead of creating another PTY");
+        assert!(!replayed.created);
+        assert_eq!(replayed.session.id, sessions[0].id);
+        assert_eq!(legacy_posts.load(Ordering::SeqCst), 1);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_terminal_creation_locks_are_scoped_per_agent() {
+        let registry = TerminalIdentityRegistry::default();
+        let first_agent = registry.lock_legacy_creation("agent-a").await;
+
+        let other_agent = tokio::time::timeout(
+            Duration::from_millis(100),
+            registry.lock_legacy_creation("agent-b"),
+        )
+        .await
+        .expect("an unrelated agent is not blocked by a legacy create");
+        let same_agent = tokio::time::timeout(
+            Duration::from_millis(25),
+            registry.lock_legacy_creation("agent-a"),
+        )
+        .await;
+        assert!(same_agent.is_err(), "the same agent must remain serialized");
+
+        drop(other_agent);
+        drop(first_agent);
     }
 
     #[test]

@@ -63,7 +63,6 @@ var workspaceSearchExcludedRootNames = map[string]struct{}{
 	".cache": {},
 	".cargo": {},
 	".local": {},
-	"go":     {},
 }
 
 func (server *apiServer) handleListFiles(writer http.ResponseWriter, request *http.Request) {
