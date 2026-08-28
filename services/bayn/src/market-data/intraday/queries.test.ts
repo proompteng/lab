@@ -106,6 +106,26 @@ describe('intraday archive queries', () => {
     expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`)
   })
 
+  test('filters close evidence to requested positions while retaining archive-universe lineage', () => {
+    const queries = makeIntradayMarketDataQueries(makeSqlRecorder())
+    const closeRequest = {
+      ...request,
+      universe: ['AMD', 'NVDA'],
+      symbols: ['AMD'],
+    }
+
+    for (const query of [
+      queries.captureIntradayArchiveWatermarks(closeRequest),
+      queries.loadIntradayBars(closeRequest),
+      queries.loadIntradayQuotes(closeRequest),
+      queries.loadIntradayTrades(closeRequest),
+    ]) {
+      expect(String(query)).toContain(`universe_symbol_hash = "${request.universeSymbolHash}"`)
+      expect(String(query)).toContain('has(["AMD"], symbol)')
+      expect(String(query)).not.toContain('has(["AMD","NVDA"], symbol)')
+    }
+  })
+
   test('continues bounded pages strictly after the last canonical source identity', () => {
     const queries = makeIntradayMarketDataQueries(makeSqlRecorder())
     const cursor = {

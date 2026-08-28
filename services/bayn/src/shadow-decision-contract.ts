@@ -2,7 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
-import { canonicalHashV1Result } from './hash'
+import { canonicalHashV1Result, sha256 } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import {
   legacyCycleDecisionSchemaVersion,
@@ -59,6 +59,7 @@ const ExecutionMarketDataBindingBase = Schema.Struct({
   observedAt: UtcInstantSchema,
   universeId: StrictNonEmptyStringSchema,
   universeSymbolHash: Sha256Schema,
+  universe: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
   delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
@@ -101,6 +102,14 @@ const marketDataBindingIssues = (
   const topics = Object.values(binding.sourceTopics)
   if (new Set(topics).size !== topics.length) {
     issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
+  }
+  const universe = binding.universe
+  if (
+    universe !== undefined &&
+    (sha256(universe.join(',')) !== binding.universeSymbolHash ||
+      binding.symbols.some((symbol) => !universe.includes(symbol)))
+  ) {
+    issues.push({ path: ['symbols'], issue: 'must be a subset of the canonical bound universe' })
   }
   const watermarks = binding.archiveWatermarks
   const lineage = binding.lineage

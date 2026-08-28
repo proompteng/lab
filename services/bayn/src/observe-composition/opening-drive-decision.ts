@@ -146,6 +146,7 @@ export const executionMarketDataBinding = (
       observedAt: snapshot.manifest.observedAt,
       universeId: snapshot.manifest.universeId,
       universeSymbolHash: snapshot.manifest.universeSymbolHash,
+      ...(snapshot.manifest.universe === undefined ? {} : { universe: snapshot.manifest.universe }),
       symbols: snapshot.manifest.symbols,
       feed: snapshot.manifest.feed,
       delayClass: snapshot.manifest.delayClass,
@@ -213,7 +214,7 @@ export const openingDriveEntryDisposition = (
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
 
-const adverseQuotePrices = (
+export const adverseQuotePrices = (
   snapshot: IntradayMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, OpeningDriveRuntimeDecisionFailure> => {
@@ -258,7 +259,7 @@ export const adverseClosingQuotePrices = (
   return adverseQuotePrices(snapshot, symbols)
 }
 
-export const requireFreshOpeningDrivePositionQuotes = (
+export const requireFreshIntradayPositionQuotes = (
   snapshot: IntradayMarketSnapshot,
   positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
 ): Result.Result<void, OpeningDriveRuntimeDecisionFailure> => {
@@ -281,7 +282,9 @@ export const requireFreshOpeningDrivePositionQuotes = (
   return Result.succeed(undefined)
 }
 
-const maximumBuyQuantities = (
+export const requireFreshOpeningDrivePositionQuotes = requireFreshIntradayPositionQuotes
+
+export const maximumBuyQuantities = (
   snapshot: IntradayMarketSnapshot,
   targetWeights: Readonly<Record<string, number>>,
 ): Result.Result<Readonly<Record<string, string>>, OpeningDriveRuntimeDecisionFailure> => {

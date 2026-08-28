@@ -145,6 +145,31 @@ describe('immutable intraday market snapshot', () => {
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
   })
 
+  test('verifies a liquidation subset without requiring sparse unheld symbols', () => {
+    const rows = makeRows()
+    const liquidationRequest = { ...request, symbols: ['AMD'] }
+    const liquidationRows = {
+      archiveWatermarks: rows.archiveWatermarks,
+      bars: rows.bars.filter((row) => row.symbol === 'AMD'),
+      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
+      trades: rows.trades.filter((row) => row.symbol === 'AMD'),
+    }
+    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
+
+    expect(snapshot.manifest).toMatchObject({
+      universe: request.universe,
+      universeSymbolHash: request.universeSymbolHash,
+      symbols: ['AMD'],
+      barCount: 5,
+      quoteCount: 1,
+      tradeCount: 1,
+    })
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    expect(error(verifyIntradaySnapshotRequest({ ...liquidationRequest, symbols: ['AAPL'] }))).toMatchObject({
+      reason: 'request',
+    })
+  })
+
   test('publishes detached immutable archive watermarks', () => {
     const rows = makeRows()
     const mutableWatermarks = request.archiveWatermarks.map((watermark) => ({ ...watermark }))

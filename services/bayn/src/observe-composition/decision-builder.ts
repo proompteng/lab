@@ -24,14 +24,14 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { IntradaySnapshotFailure, MarketData, type MarketDataService } from '../market-data'
+import { IntradaySnapshotFailure, MarketData, type IntradaySnapshotQuery, type MarketDataService } from '../market-data'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
 import { Authority, OrderType, TimeInForce, type AuthorityState } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
-import type { CycleExecutionModel } from '../execution-model-contract'
+import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import {
   legacyCloseDecisionSessionsSchemaVersion,
   legacyRiskPolicySchemaVersion,
@@ -67,11 +67,14 @@ import {
 } from '../target-planner'
 import {
   decodeOpeningDriveProtocol,
+  decodeIntradayMomentumProtocol,
+  makeIntradayMomentumDefinition,
   makeOpeningDriveDefinition,
   strategyApplication,
   strategyDefinition,
   type CompiledStrategyDecision,
   type OpeningDriveStrategyDefinition,
+  type IntradayMomentumStrategyDefinition,
   type StrategyRuntime,
 } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
@@ -86,8 +89,14 @@ import {
   openingDriveCloseQuery,
   openingDriveEntryDisposition,
   openingDriveEntryQuery,
-  requireFreshOpeningDrivePositionQuotes,
+  requireFreshIntradayPositionQuotes,
 } from './opening-drive-decision'
+import {
+  compileIntradayMomentumDecision,
+  intradayMomentumCloseQuery,
+  intradayMomentumEntryDisposition,
+  intradayMomentumEntryQuery,
+} from './intraday-momentum-decision'
 import { Pipeable } from '../pipeable'
 import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
 
@@ -114,19 +123,14 @@ const loadExecutionRiskPolicyDataFirst = (
   executionModel: CycleExecutionModel,
 ) =>
   decodePolicy({
-    schemaVersion:
-      executionModel.schemaVersion === 'bayn.execution-model.v4'
-        ? executionRiskPolicySchemaVersion
-        : legacyRiskPolicySchemaVersion,
+    schemaVersion: isQuoteBoundExecutionModel(executionModel)
+      ? executionRiskPolicySchemaVersion
+      : legacyRiskPolicySchemaVersion,
     accountId,
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
-    allowedOrderTypes: [
-      executionModel.schemaVersion === 'bayn.execution-model.v4' ? OrderType.Limit : OrderType.Market,
-    ],
-    allowedTimeInForce: [
-      executionModel.schemaVersion === 'bayn.execution-model.v4' ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
-    ],
+    allowedOrderTypes: [isQuoteBoundExecutionModel(executionModel) ? OrderType.Limit : OrderType.Market],
+    allowedTimeInForce: [isQuoteBoundExecutionModel(executionModel) ? TimeInForce.ImmediateOrCancel : TimeInForce.Day],
     maxOpenOrders: allowedSymbols.length,
     ...observeRiskLimits,
   })
@@ -685,6 +689,31 @@ const openingDriveDefinition = (
   )
 }
 
+const intradayMomentumDefinition = (
+  strategy: StrategyRuntime,
+): Result.Result<IntradayMomentumStrategyDefinition, OperationalError> => {
+  const definition = strategyDefinition(strategy)
+  if (definition.name !== 'intraday-momentum' || definition.holdingPeriod !== 'INTRADAY') {
+    return Result.fail(
+      operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: `strategy ${definition.name} is not the full-session intraday strategy`,
+      }),
+    )
+  }
+  return Result.mapError(
+    Result.map(decodeIntradayMomentumProtocol(definition.parameters), makeIntradayMomentumDefinition),
+    (cause) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'intraday-momentum runtime parameters are invalid',
+        cause,
+      }),
+  )
+}
+
 const unwrapStrategyApplicationFailure = (cause: unknown): unknown => {
   if (
     typeof cause === 'object' &&
@@ -729,9 +758,8 @@ const compileObserveStrategyDecision = <R>(
       )
       const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)
       const compiled = yield* Effect.fromResult(
-        Result.flatMap(
-          requireFreshOpeningDrivePositionQuotes(snapshot, facts.reconciliation.brokerState.positions),
-          () => compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
+        Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
+          compileOpeningDriveDecision(openingDefinition, input.cycle, snapshot),
         ),
       ).pipe(
         Effect.mapError((cause) =>
@@ -753,6 +781,66 @@ const compileObserveStrategyDecision = <R>(
       ) {
         return yield* new ObserveDecisionAwaitingSignal({
           message: 'opening-drive entry remains armed while a qualifying signal can still arrive',
+          observedAt: facts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        })
+      }
+      return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
+    })
+  }
+  if (definition.name === 'intraday-momentum') {
+    return Effect.gen(function* () {
+      const intradayMarketData = input.intradayMarketData
+      if (intradayMarketData === undefined) {
+        return yield* operationalError({
+          component: 'market-data',
+          operation: 'current-decision',
+          message: 'intraday-momentum runtime has no injected intraday archive reader',
+        })
+      }
+      const intradayDefinition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy))
+      const query = yield* Effect.fromResult(
+        intradayMomentumEntryQuery(
+          input.cycle,
+          intradayDefinition.parameters,
+          executionSession.calendar,
+          facts.evaluatedAt,
+        ),
+      ).pipe(
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'market-data',
+            operation: 'current-decision',
+            message: cause.message,
+            cause,
+          }),
+        ),
+      )
+      const snapshot = yield* loadIntradaySnapshot(intradayMarketData, query)
+      const compiled = yield* Effect.fromResult(
+        Result.flatMap(requireFreshIntradayPositionQuotes(snapshot, facts.reconciliation.brokerState.positions), () =>
+          compileIntradayMomentumDecision(intradayDefinition, input.cycle, snapshot),
+        ),
+      ).pipe(
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'strategy',
+            operation: 'current-decision',
+            message: cause.message,
+            cause,
+          }),
+        ),
+      )
+      if (
+        input.decisionFinalizationHeadroomMs !== undefined &&
+        intradayMomentumEntryDisposition(
+          compiled.decision,
+          input.cycle.window.submissionCutoffAt,
+          input.decisionFinalizationHeadroomMs,
+        ) === 'AWAIT_SIGNAL'
+      ) {
+        return yield* new ObserveDecisionAwaitingSignal({
+          message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
           observedAt: facts.evaluatedAt,
           submissionCutoffAt: input.cycle.window.submissionCutoffAt,
         })
@@ -829,7 +917,7 @@ export const prepareObservePlanner = <R>(
               submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
               observedAt: facts.evaluatedAt,
             }
-            if (input.executionModel.schemaVersion === 'bayn.execution-model.v4') {
+            if (isQuoteBoundExecutionModel(input.executionModel)) {
               if (
                 compiled.executionMarketData === undefined ||
                 compiled.bidPriceMicros === undefined ||
@@ -1045,7 +1133,7 @@ function buildCycleDecision<R>(
                 referencePriceMicros: compiled.priceMicros,
               }),
               (allocationCapitalMicros) =>
-                input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+                isQuoteBoundExecutionModel(input.executionModel)
                   ? constrainExecutionTargetAllocationCapitalMicros({
                       allocationCapitalMicros,
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
@@ -1063,7 +1151,7 @@ function buildCycleDecision<R>(
               ),
             ),
           )
-        : input.executionModel.schemaVersion === 'bayn.execution-model.v4'
+        : isQuoteBoundExecutionModel(input.executionModel)
           ? BigInt(facts.reconciliation.brokerState.account.equityMicros)
           : undefined
     const plannerPreparation = yield* Effect.fromResult(
@@ -1177,7 +1265,7 @@ export const makeClosingDecisionPlan = (
   symbols: readonly string[],
 ): Result.Result<RuntimeStrategyDecision, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
-  if (identity.strategyName === 'opening-drive-momentum') {
+  if (identity.strategyName === 'opening-drive-momentum' || identity.strategyName === 'intraday-momentum') {
     return Result.succeed({
       schemaVersion: 'bayn.execution-flat-target.v1',
       strategyName: identity.strategyName,
@@ -1337,47 +1425,73 @@ export const buildClosingExecutionCycleDecision = (
     const executionSession = yield* Effect.fromResult(recoverExecutionSession(preparation, cycle, entryDocument)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
-    const symbols = [
+    const legacyCloseSymbols = [
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),
     ]
+    const liquidationSymbols = [
+      ...new Set(
+        reconciliation.brokerState.positions
+          .filter((position) => BigInt(position.quantityMicros) !== 0n)
+          .map((position) => position.symbol),
+      ),
+    ].sort()
+    const symbols =
+      preparation.executionModel.schemaVersion === 'bayn.execution-model.v5' ? liquidationSymbols : legacyCloseSymbols
     const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const closeDecisionHash = yield* Effect.fromResult(
       hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const closeExecutionMarketData =
-      preparation.executionModel.schemaVersion === 'bayn.execution-model.v4'
-        ? yield* Effect.gen(function* () {
-            if (input.intradayMarketData === undefined) {
-              return yield* mutationRunnerError({
-                message: 'opening-drive close has no injected intraday archive reader',
-                failure: 'operational',
-              })
-            }
+    const closeExecutionMarketData = isQuoteBoundExecutionModel(preparation.executionModel)
+      ? yield* Effect.gen(function* () {
+          if (input.intradayMarketData === undefined) {
+            return yield* mutationRunnerError({
+              message: 'intraday close has no injected intraday archive reader',
+              failure: 'operational',
+            })
+          }
+          let query: IntradaySnapshotQuery
+          if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
+            const definition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+            query = yield* Effect.fromResult(
+              intradayMomentumCloseQuery(
+                cycle,
+                definition.parameters,
+                executionSession.calendar,
+                evaluatedAt,
+                liquidationSymbols,
+              ),
+            ).pipe(
+              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+            )
+          } else {
             const definition = yield* Effect.fromResult(openingDriveDefinition(input.strategy)).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
-            const query = yield* Effect.fromResult(
+            query = yield* Effect.fromResult(
               openingDriveCloseQuery(cycle, definition.parameters, executionSession.calendar, evaluatedAt),
             ).pipe(
               Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
             )
-            const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
-              Effect.mapError((cause) =>
-                mutationRunnerError({ message: 'execution close market-data read failed', cause }),
-              ),
-            )
-            const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
-              Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-            )
-            return { binding, ...quotePrices }
-          })
-        : undefined
+          }
+          const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
+            Effect.mapError((cause) =>
+              mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+            ),
+          )
+          const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+          )
+          const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
+            Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+          )
+          return { binding, ...quotePrices }
+        })
+      : undefined
     const policyHash = yield* Effect.fromResult(
       hashObserveMaterial('risk-policy-hash', 'execution close risk policy is not canonicalizable', policy),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1408,7 +1522,7 @@ export const buildClosingExecutionCycleDecision = (
     }
     let plannerInput: TargetPlannerInput
     let prices: TargetPlannerInput['referencePrices']
-    if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v4') {
+    if (isQuoteBoundExecutionModel(preparation.executionModel)) {
       if (closeExecutionMarketData === undefined) {
         return yield* mutationRunnerError({
           message: 'quote-bound execution close has no verified intraday market-data binding',

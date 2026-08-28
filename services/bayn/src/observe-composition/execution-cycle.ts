@@ -27,7 +27,8 @@ import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { TargetPlanStatus } from '../target-planner'
-import { decodeOpeningDriveProtocol, strategyDefinition } from '../strategy'
+import { decodeIntradayMomentumProtocol, decodeOpeningDriveProtocol, strategyDefinition } from '../strategy'
+import { isQuoteBoundExecutionModel } from '../execution-model-contract'
 import {
   countOpenPositions,
   mutationIntentReconciliationDelayMs,
@@ -490,22 +491,44 @@ const executeBoundExecutionCycle = (
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    const sessionCloseLeads =
-      preparation.executionModel.schemaVersion === 'bayn.execution-model.v4'
-        ? yield* Effect.fromResult(decodeOpeningDriveProtocol(strategyDefinition(input.strategy).parameters)).pipe(
-            Effect.mapError((cause) =>
-              mutationRunnerError({
-                message: 'opening-drive close window protocol is invalid',
-                cause,
-                failure: 'contract',
-              }),
-            ),
-            Effect.map((protocol) => ({
-              sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
-              sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
-            })),
-          )
-        : undefined
+    let sessionCloseLeads:
+      | { readonly sessionCloseStartLeadMs: number; readonly sessionCloseSubmitLeadMs: number }
+      | undefined
+    if (isQuoteBoundExecutionModel(preparation.executionModel)) {
+      if (preparation.executionModel.schemaVersion === 'bayn.execution-model.v5') {
+        const protocol = yield* Effect.fromResult(
+          decodeIntradayMomentumProtocol(strategyDefinition(input.strategy).parameters),
+        ).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({
+              message: 'intraday close window protocol is invalid',
+              cause,
+              failure: 'contract',
+            }),
+          ),
+        )
+        sessionCloseLeads = {
+          sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
+          sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
+        }
+      } else {
+        const protocol = yield* Effect.fromResult(
+          decodeOpeningDriveProtocol(strategyDefinition(input.strategy).parameters),
+        ).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({
+              message: 'intraday close window protocol is invalid',
+              cause,
+              failure: 'contract',
+            }),
+          ),
+        )
+        sessionCloseLeads = {
+          sessionCloseStartLeadMs: protocol.flattenBeforeCloseMinutes * 60_000,
+          sessionCloseSubmitLeadMs: protocol.hardFlatBeforeCloseMinutes * 60_000,
+        }
+      }
+    }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
         ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),

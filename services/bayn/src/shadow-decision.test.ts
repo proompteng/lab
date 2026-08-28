@@ -49,6 +49,8 @@ import {
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
 import { FlatExecutionTargetSchema, runtimeDecisionMatchesStrategy } from './strategy/runtime-decision'
+import type { IntradayMomentumTargetPortfolio } from './strategy/intraday-momentum/model'
+import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 import type { OpeningDriveTargetPortfolio } from './strategy/opening-drive/model'
 import { openingDriveExecutionModel } from './strategy/opening-drive/protocol'
 import {
@@ -179,6 +181,42 @@ const makeOpeningDriveCycle = (): AutonomousCycle => {
   const identity = makeCycleIdentitySuccess({
     schemaVersion: 'bayn.autonomous-cycle-identity.v3',
     strategyName: 'opening-drive-momentum',
+    qualificationRunId: hash('1'),
+    strategyProtocolHash: hash('4'),
+    accountId,
+    executionSessionDate: executionDate,
+    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.executionCalendarSource,
+    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionPolicy,
+  })
+  const window = resultValue(makeIntradayCycleWindow(executionCalendar, executionPolicy))
+  const draft = makeCycleDraftSuccess(identity, window)
+  return decodeCycle({
+    ...draft,
+    state: CycleState.Active,
+    bindings: {},
+    stateVersion: 3,
+    createdAt: '2026-07-22T11:45:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  })
+}
+
+const makeIntradayMomentumCycle = (): AutonomousCycle => {
+  const executionPolicy = resultValue(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
+    throw new Error('intraday-momentum fixture requires a rolling intraday execution policy')
+  }
+  const executionCalendar = makeExecutionCalendarObservationSuccess({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    source: 'alpaca-v2-calendar',
+    date: executionDate,
+    openAt: '2026-07-22T13:30:00.000Z',
+    closeAt: '2026-07-22T20:00:00.000Z',
+  })
+  const identity = makeCycleIdentitySuccess({
+    schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+    strategyName: 'intraday-momentum',
     qualificationRunId: hash('1'),
     strategyProtocolHash: hash('4'),
     accountId,
@@ -534,6 +572,35 @@ const openingDriveDecision = (calendarHash: string, boundSnapshotId: string): Op
   })),
 })
 
+const intradayMomentumDecision = (calendarHash: string, boundSnapshotId: string): IntradayMomentumTargetPortfolio => ({
+  schemaVersion: 'bayn.intraday-momentum.target.v1',
+  strategy: 'intraday-momentum',
+  sessionDate: executionDate,
+  snapshotId: boundSnapshotId,
+  observedAt: '2026-07-22T16:00:02.000Z',
+  calendarHash,
+  selectedSymbols: [],
+  targetWeights: { AMD: 0, NVDA: 0 },
+  signals: ['AMD', 'NVDA'].map((symbol) => ({
+    symbol,
+    referencePriceMicros: '100000000',
+    rangeHighPriceMicros: '101000000',
+    rangeLowPriceMicros: '99000000',
+    bidPriceMicros: '100000000',
+    askPriceMicros: '100100000',
+    quoteObservedAt: '2026-07-22T16:00:01.000Z',
+    confirmationTradePriceMicros: '100000000',
+    confirmationTradeObservedAt: '2026-07-22T16:00:01.000Z',
+    lookbackReturnBps: 0,
+    breakoutBps: -100,
+    rangeLocationPpm: 500_000,
+    spreadBps: 10,
+    eligible: false,
+    rejectionReasons: ['lookback-return'] as const,
+    rank: null,
+  })),
+})
+
 const openingDriveMarketDataBinding = (
   cycle: AutonomousCycle,
   barsContentHash: string = hash('8'),
@@ -673,6 +740,35 @@ const makeOpeningDriveInput = (
   }
 }
 
+const makeIntradayMomentumInput = (calendarHash?: string): OpeningDriveShadowDecisionInput => {
+  const cycle = makeIntradayMomentumCycle()
+  const base = makeOpeningDriveInput(undefined, cycle)
+  const executionMarketData = base.executionMarketData
+  if (executionMarketData === undefined) throw new Error('intraday fixture must include execution market data')
+  const compiledDecision = intradayMomentumDecision(
+    calendarHash ?? cycle.window.executionCalendarHash,
+    executionMarketData.snapshotId,
+  )
+  const plannerInput: QuoteBoundTargetPlannerInput = {
+    ...base.plannerInput,
+    strategyName: 'intraday-momentum',
+    decisionHash: canonicalHashV1(compiledDecision),
+    targetWeights: compiledDecision.targetWeights,
+    precision: {
+      quantityIncrementMicros: '1000000',
+      priceIncrementMicros: intradayMomentumExecutionModel.precision.priceIncrementMicros,
+      minimumBuyNotionalMicros: intradayMomentumExecutionModel.precision.minimumBuyNotionalMicros,
+    },
+    observedAt: compiledDecision.observedAt,
+  }
+  return {
+    ...base,
+    compiledDecision,
+    plannerInput,
+    targetPlan: planTargetsSuccess(plannerInput),
+  }
+}
+
 const build = (input: ObserveShadowDecisionInput): Promise<ObserveShadowDecisionDocument> =>
   Effect.runPromise(buildObserveShadowDecision(input))
 
@@ -697,7 +793,21 @@ describe('OBSERVE shadow decision', () => {
     const failure = await Effect.runPromise(Effect.flip(buildObserveShadowDecision(makeOpeningDriveInput(hash('f')))))
     expect(failure).toMatchObject({
       failure: 'binding',
-      message: 'opening-drive decision calendar must match the immutable cycle execution calendar',
+      message: 'intraday decision calendar must match the immutable cycle execution calendar',
+    })
+  })
+
+  test('binds full-session intraday decisions to the exact rolling snapshot and cycle calendar', async () => {
+    const input = makeIntradayMomentumInput()
+    const accepted = await build(input)
+
+    expect(accepted.bindings.executionMarketData?.snapshotId).toBe(input.executionMarketData?.snapshotId)
+    const failure = await Effect.runPromise(
+      Effect.flip(buildObserveShadowDecision(makeIntradayMomentumInput(hash('f')))),
+    )
+    expect(failure).toMatchObject({
+      failure: 'binding',
+      message: 'intraday decision calendar must match the immutable cycle execution calendar',
     })
   })
 

@@ -190,6 +190,13 @@ export type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
 export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
 export type CycleExecutionModel = typeof CycleExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
+export type QuoteBoundExecutionModel = Extract<
+  CycleExecutionModel,
+  { readonly schemaVersion: 'bayn.execution-model.v4' | 'bayn.execution-model.v5' }
+>
 
 export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
   model.schemaVersion === 'bayn.execution-model.v2' || model.schemaVersion === 'bayn.execution-model.v3'
+
+export const isQuoteBoundExecutionModel = (model: CycleExecutionModel): model is QuoteBoundExecutionModel =>
+  model.schemaVersion === 'bayn.execution-model.v4' || model.schemaVersion === 'bayn.execution-model.v5'

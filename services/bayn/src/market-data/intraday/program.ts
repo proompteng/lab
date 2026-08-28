@@ -6,6 +6,7 @@ import { marketDataOperationError } from '../errors'
 import {
   IntradayMarketData,
   IntradaySnapshotFailure,
+  intradaySnapshotSymbols,
   type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketDataService,
   type IntradayMarketSnapshot,
@@ -187,18 +188,18 @@ export const makeIntradayMarketData: Effect.Effect<
             bars: loadIntradayArchivePages(
               (after) => loadIntradayBars(verified, after),
               decodeIntradayBarRows,
-              verified.universe.length *
+              intradaySnapshotSymbols(verified).length *
                 ((Date.parse(verified.rangeEndAt) - Date.parse(verified.rangeStartAt)) / 60_000),
             ),
             quotes: loadIntradayArchivePages(
               (after) => loadIntradayQuotes(verified, after),
               decodeIntradayQuoteRows,
-              verified.universe.length,
+              intradaySnapshotSymbols(verified).length,
             ),
             trades: loadIntradayArchivePages(
               (after) => loadIntradayTrades(verified, after),
               decodeIntradayTradeRows,
-              verified.universe.length,
+              intradaySnapshotSymbols(verified).length,
             ),
           },
           { concurrency: 4 },

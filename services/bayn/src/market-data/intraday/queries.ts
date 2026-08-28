@@ -1,6 +1,6 @@
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
 
-import type { IntradaySnapshotQuery, IntradaySnapshotRequest } from './model'
+import { intradaySnapshotSymbols, type IntradaySnapshotQuery, type IntradaySnapshotRequest } from './model'
 
 export const intradayArchivePageSize = 100_000
 
@@ -13,6 +13,7 @@ export interface IntradayArchivePageCursor {
 }
 
 export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseClient) => {
+  const symbols = (request: IntradaySnapshotQuery) => sql.param('Array(String)', intradaySnapshotSymbols(request))
   const bounds = (request: IntradaySnapshotQuery) => ({
     start: sql.param('String', request.rangeStartAt),
     end: sql.param('String', request.rangeEndAt),
@@ -57,7 +58,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
-        AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND has(${symbols(request)}, symbol)
         AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
         AND event_ts < parseDateTime64BestEffort(${time.end}, 3, 'UTC')
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 3, 'UTC')
@@ -68,7 +69,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
-        AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND has(${symbols(request)}, symbol)
         AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
         AND event_ts <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
@@ -79,7 +80,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
         AND feed = ${sql.param('String', request.feed)}
         AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
-        AND has(${sql.param('Array(String)', request.universe)}, symbol)
+        AND has(${symbols(request)}, symbol)
         AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
         AND event_ts <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
         AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
@@ -123,7 +124,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
           AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
           AND feed = ${sql.param('String', request.feed)}
           AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
-          AND has(${sql.param('Array(String)', request.universe)}, symbol)
+          AND has(${symbols(request)}, symbol)
           AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
           AND event_ts < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
           AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
@@ -186,7 +187,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
               AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
               AND feed = ${sql.param('String', request.feed)}
               AND source_topic = ${sql.param('String', request.sourceTopics.quotes)}
-              AND has(${sql.param('Array(String)', request.universe)}, symbol)
+              AND has(${symbols(request)}, symbol)
               AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
               AND event_ts <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
               AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
@@ -249,7 +250,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
               AND universe_symbol_hash = ${sql.param('String', request.universeSymbolHash)}
               AND feed = ${sql.param('String', request.feed)}
               AND source_topic = ${sql.param('String', request.sourceTopics.trades)}
-              AND has(${sql.param('Array(String)', request.universe)}, symbol)
+              AND has(${symbols(request)}, symbol)
               AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
               AND event_ts <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
               AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')

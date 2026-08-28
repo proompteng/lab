@@ -51,6 +51,27 @@ export {
   type OpeningDriveStrategyDefinition,
   type OpeningDriveTargetPortfolio,
 } from './strategy/opening-drive'
+export {
+  decideIntradayMomentum,
+  decodeDefaultIntradayMomentumProtocol,
+  decodeIntradayMomentumProtocol,
+  defaultIntradayMomentumProtocolDocument,
+  hashIntradayMomentumProtocol,
+  intradayMomentumBehaviorHash,
+  intradayMomentumExecutionModel,
+  IntradayMomentumFailure,
+  IntradayMomentumProtocolDecodeError,
+  IntradayMomentumProtocolSchema,
+  makeIntradayMomentumDefinition,
+  type IntradayMomentumFailureReason,
+  type IntradayMomentumMarketContext,
+  type IntradayMomentumProtocol,
+  type IntradayMomentumRejectionReason,
+  type IntradayMomentumSessionBinding,
+  type IntradayMomentumSignal,
+  type IntradayMomentumStrategyDefinition,
+  type IntradayMomentumTargetPortfolio,
+} from './strategy/intraday-momentum'
 
 /** The application root composes exactly one reviewed strategy implementation. */
 export const activeStrategyName = 'opening-drive-momentum' as const

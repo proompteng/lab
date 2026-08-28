@@ -15,7 +15,10 @@ export interface IntradaySnapshotQuery {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Full source-universe membership bound by universeSymbolHash. */
   readonly universe: readonly string[]
+  /** Canonical subset required by this snapshot. Omission means the full universe. */
+  readonly symbols?: readonly string[]
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
   readonly sourceTopics: {
@@ -95,6 +98,8 @@ export interface IntradaySnapshotManifest {
   readonly observedAt: string
   readonly universeId: string
   readonly universeSymbolHash: string
+  /** Added for subset snapshots; omitted only by legacy v1 material. */
+  readonly universe?: readonly string[]
   readonly symbols: readonly string[]
   readonly feed: IntradayFeed
   readonly delayClass: IntradayDelayClass
@@ -173,3 +178,6 @@ export class IntradaySnapshotFailure extends Data.TaggedError('IntradaySnapshotF
   readonly facts?: Readonly<Record<string, unknown>>
   readonly cause?: unknown
 }> {}
+
+export const intradaySnapshotSymbols = (query: IntradaySnapshotQuery): readonly string[] =>
+  query.symbols ?? query.universe

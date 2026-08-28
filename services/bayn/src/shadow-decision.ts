@@ -305,9 +305,12 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.opening-drive.target.v1'
+  const intradayEntry =
+    decision.schemaVersion === 'bayn.opening-drive.target.v1' ||
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v1'
   const intradayClose =
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'opening-drive-momentum'
+    decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+    (decision.strategyName === 'opening-drive-momentum' || decision.strategyName === 'intraday-momentum')
   const intradayDecision = intradayEntry || intradayClose
   const executionMarketData = input.executionMarketData
   const executionCalendarSession = executionMarketData?.calendar.sessions.find(
@@ -322,9 +325,7 @@ const validateBindings = (
           ...executionCalendarSession,
         })
   if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
-    return Result.fail(
-      error('binding', 'opening-drive decision calendar must match the immutable cycle execution calendar'),
-    )
+    return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
   }
   if (
     intradayDecision !== (executionMarketData !== undefined) ||
@@ -333,8 +334,7 @@ const validateBindings = (
       (executionCalendar === undefined ||
         Result.isFailure(executionCalendar) ||
         executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
-    (decision.schemaVersion === 'bayn.opening-drive.target.v1' &&
-      executionMarketData?.snapshotId !== decision.snapshotId)
+    (intradayEntry && executionMarketData?.snapshotId !== decision.snapshotId)
   ) {
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }

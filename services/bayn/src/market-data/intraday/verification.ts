@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './model'
-import { IntradaySnapshotFailure } from './model'
+import { IntradaySnapshotFailure, intradaySnapshotSymbols } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
   decodeIntradayArchiveWatermarkRows,
@@ -251,6 +251,19 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   if (request.universeSymbolHash !== sha256(request.universe.join(','))) {
     return Result.fail(failure('request', 'intraday universe hash does not match its canonical symbols'))
   }
+  const requestedSymbols = intradaySnapshotSymbols(request)
+  const canonicalSymbols = [...new Set(requestedSymbols)].sort()
+  if (
+    canonicalSymbols.length === 0 ||
+    canonicalSymbols.length > canonicalUniverse.length ||
+    canonicalSymbols.length !== requestedSymbols.length ||
+    canonicalSymbols.some((symbol, index) => symbol !== requestedSymbols[index]) ||
+    requestedSymbols.some((symbol) => !canonicalUniverse.includes(symbol))
+  ) {
+    return Result.fail(
+      failure('request', 'intraday snapshot symbols must be a non-empty canonical subset of the bound universe'),
+    )
+  }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {
     return Result.fail(failure('request', 'intraday universe ID must be non-empty and canonical'))
   }
@@ -283,6 +296,7 @@ export const verifyIntradaySnapshotQuery = (
       ...verified,
       calendar: freezeCalendar(verified.calendar),
       universe: Object.freeze([...verified.universe]),
+      ...(verified.symbols === undefined ? {} : { symbols: Object.freeze([...verified.symbols]) }),
       sourceTopics: Object.freeze({ ...verified.sourceTopics }),
     }),
   )
@@ -377,6 +391,7 @@ export const verifyIntradaySnapshotRequest = (
       ...request,
       calendar: freezeCalendar(request.calendar),
       universe: Object.freeze([...request.universe]),
+      ...(request.symbols === undefined ? {} : { symbols: Object.freeze([...request.symbols]) }),
       sourceTopics: Object.freeze({ ...request.sourceTopics }),
       archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
     })
@@ -500,7 +515,7 @@ const validateIdentity = (
   eventWindowEndAt: string,
   inclusiveEnd: boolean,
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  const symbols = new Set(request.universe)
+  const symbols = new Set(intradaySnapshotSymbols(request))
   const watermarkByPartition = new Map(
     request.archiveWatermarks.map((watermark) => [
       `${watermark.sourceTopic}\u0000${watermark.sourcePartition}`,
@@ -577,7 +592,8 @@ const validateBarCoverage = (
   const rangeEndNanos = intradayInstantNanos(request.rangeEndAt)
   const minuteNanos = millisecondsAsNanos(minuteMs)
   const rangeMinutes = (epoch(request.rangeEndAt) - rangeStart) / minuteMs
-  const maximumCount = request.universe.length * rangeMinutes
+  const requestedSymbols = intradaySnapshotSymbols(request)
+  const maximumCount = requestedSymbols.length * rangeMinutes
   const observed = new Map<string, number>()
   for (const bar of bars) {
     const availabilityDelay = intradayAgeNanos(bar.ingestedAt, bar.eventAt)
@@ -621,7 +637,7 @@ const validateBarCoverage = (
     )
   }
   const completionEventAt = rangeEndNanos - minuteNanos
-  for (const symbol of request.universe) {
+  for (const symbol of requestedSymbols) {
     if (!observed.has(`${symbol}\u0000${completionEventAt}`)) {
       return Result.fail(
         failure('not-ready', 'intraday snapshot lacks a per-symbol range-completion bar', {
@@ -708,7 +724,7 @@ const latestQuotes = (
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs)
   // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
   // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
-  for (const symbol of request.universe) {
+  for (const symbol of intradaySnapshotSymbols(request)) {
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
     if (quote === undefined || intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
@@ -835,7 +851,8 @@ export const verifyIntradaySnapshot = (
       observedAt: verifiedRequest.observedAt,
       universeId: verifiedRequest.universeId,
       universeSymbolHash: verifiedRequest.universeSymbolHash,
-      symbols: Object.freeze([...verifiedRequest.universe]),
+      ...(verifiedRequest.symbols === undefined ? {} : { universe: Object.freeze([...verifiedRequest.universe]) }),
+      symbols: Object.freeze([...intradaySnapshotSymbols(verifiedRequest)]),
       feed: verifiedRequest.feed,
       delayClass: verifiedRequest.delayClass,
       sourceTopics: Object.freeze({ ...verifiedRequest.sourceTopics }),
@@ -981,7 +998,8 @@ export const reverifyIntradayMarketSnapshot = (
       observedAt: manifest.observedAt,
       universeId: manifest.universeId,
       universeSymbolHash: manifest.universeSymbolHash,
-      universe: manifest.symbols,
+      universe: manifest.universe ?? manifest.symbols,
+      ...(manifest.universe === undefined ? {} : { symbols: manifest.symbols }),
       feed: manifest.feed,
       delayClass: manifest.delayClass,
       sourceTopics: manifest.sourceTopics,
