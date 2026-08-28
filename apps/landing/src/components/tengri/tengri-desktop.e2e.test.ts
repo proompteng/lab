@@ -560,6 +560,14 @@ test('supports desktop window shortcuts, independent windows, drag, and eight-ed
   await page.mouse.up()
   await expect.poll(async () => (await frontmost.boundingBox())?.x).toBeGreaterThan(beforeDrag!.x + 50)
 
+  const frameBounds = await frontmost.boundingBox()
+  const eastHandleBounds = await frontmost.locator('.cursor-e-resize').boundingBox()
+  expect(frameBounds).not.toBeNull()
+  expect(eastHandleBounds).not.toBeNull()
+  const frameRight = frameBounds!.x + frameBounds!.width
+  expect(eastHandleBounds!.x).toBeGreaterThanOrEqual(frameRight - 2)
+  expect(eastHandleBounds!.x + eastHandleBounds!.width).toBeGreaterThan(frameRight)
+
   const resizeCases = [
     ['n', { x: 0, y: 20 }, { x: 0, y: 20, width: 0, height: -20 }],
     ['s', { x: 0, y: -20 }, { x: 0, y: 0, width: 0, height: -20 }],
