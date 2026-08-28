@@ -1,6 +1,6 @@
 import { Data, Schema } from 'effect'
 
-import type { IntradayMarketSnapshot } from '../../market-data'
+import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
