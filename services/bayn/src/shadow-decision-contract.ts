@@ -1,5 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
+import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
 import { intentIdForPlan, executionIntentIdForDecodedPlan } from './execution/intents/domain'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
@@ -503,6 +504,18 @@ const executionMaterialIssues = (
       }
     }
   }
+  const targetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol)
+  if (usesLiquidationMarketData && executionMarketData !== undefined) {
+    const bindsTargetSymbols =
+      executionMarketData.symbols.length === targetSymbols.length &&
+      executionMarketData.symbols.every((symbol, index) => symbol === targetSymbols[index])
+    if (!bindsTargetSymbols) {
+      issues.push({
+        path: ['bindings', 'executionMarketData', 'symbols'],
+        issue: 'liquidation market-data symbols must exactly match the ordered close targets',
+      })
+    }
+  }
   if (reconciledPositionBinding !== undefined) {
     if (
       reconciledPositionBinding.reconciliationId !== document.bindings.reconciliationId ||
@@ -514,22 +527,22 @@ const executionMaterialIssues = (
       })
     }
     const targets = document.targetPlan.targets
-    const targetSymbols = targets.map(({ symbol }) => symbol)
-    const bindsTargetSymbols =
-      reconciledPositionBinding.symbols.length === targetSymbols.length &&
-      reconciledPositionBinding.symbols.every((symbol, index) => symbol === targetSymbols[index])
     const bindsTargetPositions =
       reconciledPositionBinding.positions.length === targets.length &&
       reconciledPositionBinding.positions.every((position, index) => {
         const target = targets[index]
+        const normalizedMarketPrice = quantizeAlpacaLimitPriceMicros(
+          BigInt(position.marketPriceMicros),
+          BigInt(position.quantityMicros) < 0n ? 'UP' : 'DOWN',
+        ).toString()
         return (
           target !== undefined &&
           position.symbol === target.symbol &&
           position.quantityMicros === target.currentQuantityMicros &&
-          position.marketPriceMicros === target.referencePriceMicros
+          normalizedMarketPrice === target.referencePriceMicros
         )
       })
-    if (!bindsTargetSymbols || !bindsTargetPositions) {
+    if (!bindsTargetPositions) {
       issues.push({
         path: ['bindings', 'executionMarketData', 'positions'],
         issue: 'must match the exact ordered symbols, quantities, and reference marks in the target plan',

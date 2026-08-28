@@ -1432,6 +1432,33 @@ describe('OBSERVE shadow decision', () => {
       )
     }
 
+    const subsetCloseBinding = liquidationMarketDataBinding(input.cycle, hash('d'), ['AMD'])
+    const closeExecutionTerms = documentMaterial.targetPlan.executionTerms
+    if (closeExecutionTerms === undefined) throw new Error('close fixture must persist execution terms')
+    const { outputHash: _targetPlanOutputHash, ...targetPlanMaterial } = documentMaterial.targetPlan
+    const mismatchedTargetPlanMaterial = {
+      ...targetPlanMaterial,
+      executionTerms: {
+        ...closeExecutionTerms,
+        snapshotId: subsetCloseBinding.snapshotId,
+        snapshotContentHash: subsetCloseBinding.contentHash,
+      },
+    }
+    const mismatchedPersistedSymbols = makeExecutionDecisionDocument({
+      ...documentMaterial,
+      bindings: { ...documentMaterial.bindings, executionMarketData: subsetCloseBinding },
+      targetPlan: {
+        ...mismatchedTargetPlanMaterial,
+        outputHash: canonicalHashV1(mismatchedTargetPlanMaterial),
+      },
+    })
+    expect(Result.isFailure(mismatchedPersistedSymbols)).toBe(true)
+    if (Result.isFailure(mismatchedPersistedSymbols)) {
+      expect(String(mismatchedPersistedSymbols.failure.cause)).toContain(
+        'liquidation market-data symbols must exactly match the ordered close targets',
+      )
+    }
+
     const failure = await Effect.runPromise(
       Effect.flip(
         buildObserveShadowDecision({

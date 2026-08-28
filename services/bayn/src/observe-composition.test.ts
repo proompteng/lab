@@ -3440,6 +3440,8 @@ describe('OBSERVE runtime composition', () => {
     const outOfUniversePosition: Position = {
       ...openPosition,
       symbol: 'TSLA',
+      marketPriceMicros: '100005000',
+      marketValueMicros: '50002500',
     }
     const unusedArchive: IntradayMarketDataService = {
       captureVersion: () => Effect.die('out-of-universe liquidation must not query the strategy archive'),
@@ -3568,7 +3570,7 @@ describe('OBSERVE runtime composition', () => {
             {
               symbol: 'TSLA',
               quantityMicros: '500000',
-              marketPriceMicros: '100000000',
+              marketPriceMicros: '100005000',
               observedAt: closeObservedAt,
             },
           ],
@@ -3576,6 +3578,7 @@ describe('OBSERVE runtime composition', () => {
       },
       targetPlan: {
         status: TargetPlanStatus.Planned,
+        targets: [{ symbol: 'TSLA', referencePriceMicros: '100000000' }],
         intentTargets: [
           {
             symbol: 'TSLA',
