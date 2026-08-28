@@ -116,6 +116,9 @@ const marketDataBindingIssues = (
     issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
   }
   const universe = binding.universe
+  if (binding.schemaVersion === 'bayn.execution-market-data-binding.v1' && binding.purpose === 'LIQUIDATION') {
+    issues.push({ path: ['purpose'], issue: 'liquidation evidence requires execution market-data binding v2' })
+  }
   if (binding.purpose === 'LIQUIDATION' && universe === undefined) {
     issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for liquidation' })
   }

@@ -820,6 +820,41 @@ describe('OBSERVE shadow decision', () => {
     if (Result.isFailure(result)) expect(String(result.failure)).toContain('universe')
   })
 
+  test('rejects liquidation evidence encoded with the legacy v1 binding', () => {
+    const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
+    const {
+      contentHash: _contentHash,
+      snapshotId: _snapshotId,
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...bindingMaterial
+    } = binding
+    const universe = [...binding.symbols]
+    const liquidationMaterial = {
+      ...bindingMaterial,
+      universe,
+      universeSymbolHash: sha256(universe.join(',')),
+      purpose: 'LIQUIDATION' as const,
+      barCount: 0,
+      tradeCount: 0,
+    }
+    const snapshotMaterial = { schemaVersion: snapshotSchemaVersion, ...liquidationMaterial }
+    const contentHash = canonicalHashV1(snapshotMaterial)
+    const result = Schema.decodeUnknownResult(
+      ExecutionMarketDataBindingSchema,
+      strictParseOptions,
+    )({
+      schemaVersion,
+      snapshotSchemaVersion,
+      ...liquidationMaterial,
+      contentHash,
+      snapshotId: canonicalHashV1({ ...snapshotMaterial, contentHash }),
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure)).toContain('binding v2')
+  })
+
   test('rejects a liquidation binding whose source universe is not canonically ordered', () => {
     const binding = openingDriveMarketDataBinding(makeOpeningDriveCycle())
     const {
