@@ -166,7 +166,10 @@ describe('enabled app inventory', () => {
       class: 'deferred',
       enabled: true,
       hasHelmChart: false,
-      repoImages: ['registry.ide-newton.ts.net/lab/tengri@sha256:' + 'a'.repeat(64)],
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/nanoagent@sha256:' + 'b'.repeat(64),
+        'registry.ide-newton.ts.net/lab/tengri@sha256:' + 'a'.repeat(64),
+      ],
       workflowPaths: ['.github/workflows/tengri-images.yml', '.github/workflows/tengri-release.yml'],
     } satisfies EnabledAppInventoryEntry
 
@@ -174,14 +177,31 @@ describe('enabled app inventory', () => {
       class: 'workflow-image',
       deferredReason: expect.stringContaining('built, signed, and promoted together'),
     })
-    expect(classifyEnabledApp({ ...tengri, workflowPaths: [] }).class).toBe('deferred')
-    expect(() =>
-      assertEnabledAppBuildPolicy({
-        entries: [{ ...classifyEnabledApp(tengri), nixImageAttr: 'tengri-image' }],
-        applicationSetEntryCount: 1,
-        directApplicationCount: 0,
-      }),
-    ).toThrow('incomplete release ownership')
+    for (const repository of tengri.repoImages) {
+      expect(
+        classifyEnabledApp({ ...tengri, repoImages: tengri.repoImages.filter((value) => value !== repository) }).class,
+      ).toBe('deferred')
+    }
+    for (const workflowPath of tengri.workflowPaths) {
+      expect(
+        classifyEnabledApp({
+          ...tengri,
+          workflowPaths: tengri.workflowPaths.filter((value) => value !== workflowPath),
+        }).class,
+      ).toBe('deferred')
+    }
+    const expectIncompleteOwnership = (entry: EnabledAppInventoryEntry) => {
+      expect(() =>
+        assertEnabledAppBuildPolicy({
+          entries: [entry],
+          applicationSetEntryCount: 1,
+          directApplicationCount: 0,
+        }),
+      ).toThrow('incomplete release ownership')
+    }
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', repoImages: [tengri.repoImages[0]] })
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', workflowPaths: [tengri.workflowPaths[0]] })
+    expectIncompleteOwnership({ ...tengri, class: 'workflow-image', nixImageAttr: 'tengri-image' })
   })
 
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
