@@ -44,6 +44,7 @@ images:
               elements:
               - cluster: in-cluster
                 suffix: ""
+                destinationServer: https://kubernetes.default.svc
           - list:
               elements:
               - name: kata
@@ -58,6 +59,11 @@ images:
                     pod-security.kubernetes.io/enforce: restricted
               - name: cdi
                 enabled: "true"
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
   template:
     spec:
       source:
@@ -364,6 +370,50 @@ spec:
     }
   })
 
+  it('rejects a matrix cluster input that targets another destination', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        'destinationServer: https://kubernetes.default.svc',
+        'destinationServer: https://other.example',
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('cluster input must target')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow('cluster input must target')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
+  it('rejects an application selector that excludes the enabled Tengri entry', () => {
+    const paths = fixture()
+    const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
+    const beforeBffDeployment = readFileSync(paths.bffDeploymentPath, 'utf8')
+    writeFileSync(
+      paths.applicationSetPath,
+      readFileSync(paths.applicationSetPath, 'utf8').replace(
+        '            selector:\n              matchExpressions:',
+        '            selector:\n              matchLabels:\n                name: other\n              matchExpressions:',
+      ),
+    )
+    const driftedApplicationSet = readFileSync(paths.applicationSetPath, 'utf8')
+
+    expect(() => validateTengriRelease(paths)).toThrow('selector must include the enabled Tengri entry')
+    expect(() => updateTengriRelease({ tengriDigest, nanoagentDigest }, paths)).toThrow(
+      'selector must include the enabled Tengri entry',
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toBe(beforeKustomization)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toBe(driftedApplicationSet)
+    expect(readFileSync(paths.bffDeploymentPath, 'utf8')).toBe(beforeBffDeployment)
+    rmSync(paths.directory, { recursive: true, force: true })
+  })
+
   it('rejects a Tengri entry moved into the matrix cluster generator', () => {
     const paths = fixture()
     const beforeKustomization = readFileSync(paths.kustomizationPath, 'utf8')
@@ -400,6 +450,9 @@ spec:
       '        repoURL: https://github.com/example/fork.git',
       '        targetRevision: unverified',
       '        path: argocd/applications/other',
+      '        "path": argocd/applications/other',
+      "        'repoURL': https://github.com/example/fork.git",
+      '        "\\u0070ath": argocd/applications/other',
     ] as const
 
     for (const override of overrides) {

@@ -22,6 +22,7 @@ const tengriApplicationTarget = {
 } as const
 const expectedRepository = 'https://github.com/proompteng/lab.git'
 const expectedRevision = 'main'
+const expectedDestinationServer = 'https://kubernetes.default.svc'
 const expectedRepositoryTemplate =
   '{{ if hasKey . "repoURL" }}{{ .repoURL }}{{ else }}https://github.com/proompteng/lab.git{{ end }}'
 const expectedRevisionTemplate = '{{ if hasKey . "targetRevision" }}{{ .targetRevision }}{{ else }}main{{ end }}'
@@ -139,6 +140,9 @@ function findTengriApplicationBlock(contents: string) {
   const entry = matches[0]
   const application = entry.toJSON() as Record<string, unknown>
   assertTengriApplicationTarget(application)
+  const selectorNode = applicationGenerator.get('selector', true)
+  const selector = selectorNode === undefined ? undefined : isMap(selectorNode) ? selectorNode.toJSON() : null
+  assertSelectorAdmitsTengri(selector, application)
 
   const repository = document.getIn(['spec', 'template', 'spec', 'source', 'repoURL'])
   const revision = document.getIn(['spec', 'template', 'spec', 'source', 'targetRevision'])
@@ -156,12 +160,22 @@ function findTengriApplicationBlock(contents: string) {
 
   assertSafeTemplatePatch(document.getIn(['spec', 'templatePatch']))
 
-  for (const matrixInput of clusterElements.items) {
-    if (!isMap(matrixInput)) continue
-    const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
-    if (sourceOverrides.length > 0) {
-      throw new Error(`Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`)
-    }
+  if (clusterElements.items.length !== 1) {
+    throw new Error('Tengri ApplicationSet must target exactly one in-cluster destination')
+  }
+  const matrixInput = clusterElements.items[0]
+  if (
+    !isMap(matrixInput) ||
+    matrixInput.get('cluster') !== 'in-cluster' ||
+    matrixInput.get('suffix') !== '' ||
+    matrixInput.get('destinationServer') !== expectedDestinationServer ||
+    matrixInput.has('destinationName')
+  ) {
+    throw new Error(`Tengri ApplicationSet cluster input must target ${expectedDestinationServer}`)
+  }
+  const sourceOverrides = ['repoURL', 'targetRevision', '<<'].filter((field) => matrixInput.has(field))
+  if (sourceOverrides.length > 0) {
+    throw new Error(`Tengri matrix inputs must not override the release source; remove ${sourceOverrides.join(', ')}`)
   }
 
   const enabledNode = entry.get('enabled', true)
@@ -185,9 +199,8 @@ function assertSafeTemplatePatch(templatePatch: unknown) {
     throw new Error('Platform ApplicationSet must contain the expected templatePatch')
   }
   const sourceBlocks = templatePatch.match(/^\s*source:\s*$/gm) ?? []
-  const sourceOverrides = ['repoURL', 'targetRevision', 'path'].filter((field) =>
-    new RegExp(`^\\s*${field}\\s*:`, 'm').test(templatePatch),
-  )
+  const patchKeys = templatePatch.split('\n').flatMap((line) => yamlMappingKey(line) ?? [])
+  const sourceOverrides = ['repoURL', 'targetRevision', 'path'].filter((field) => patchKeys.includes(field))
   if (
     sourceBlocks.length !== 1 ||
     !templatePatch.includes(expectedTemplatePatchSourceBlock) ||
@@ -197,6 +210,77 @@ function assertSafeTemplatePatch(templatePatch: unknown) {
       'Tengri ApplicationSet templatePatch must preserve the verified plugin and kustomize-only source patch',
     )
   }
+}
+
+function yamlMappingKey(line: string): string | undefined {
+  const match = /^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^:])+?)\s*:/.exec(line)
+  if (!match?.[1]) return undefined
+  const rawKey = match[1].trim()
+  if (rawKey.includes('{{')) return undefined
+  if (!rawKey.startsWith('"') && !rawKey.startsWith("'")) return rawKey
+  try {
+    const parsed = YAML.parse(`${rawKey}: null`) as Record<string, unknown> | null
+    return parsed && typeof parsed === 'object' ? Object.keys(parsed)[0] : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function assertSelectorAdmitsTengri(selector: unknown, application: Record<string, unknown>) {
+  if (selector === undefined) return
+  if (!isPlainRecord(selector)) {
+    throw new Error('Tengri ApplicationSet application selector must be a label selector')
+  }
+
+  const candidate = { ...application, enabled: 'true' }
+  if (selector.matchLabels !== undefined) {
+    if (!isPlainRecord(selector.matchLabels)) {
+      throw new Error('Tengri ApplicationSet application selector matchLabels must be a mapping')
+    }
+    for (const [key, value] of Object.entries(selector.matchLabels)) {
+      if (typeof value !== 'string' || candidate[key] !== value) {
+        throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
+      }
+    }
+  }
+
+  if (selector.matchExpressions !== undefined) {
+    if (!Array.isArray(selector.matchExpressions)) {
+      throw new Error('Tengri ApplicationSet application selector matchExpressions must be a sequence')
+    }
+    for (const expression of selector.matchExpressions) {
+      if (!isPlainRecord(expression) || typeof expression.key !== 'string' || typeof expression.operator !== 'string') {
+        throw new Error('Tengri ApplicationSet application selector contains an invalid expression')
+      }
+      const present = Object.hasOwn(candidate, expression.key)
+      const value = candidate[expression.key]
+      const values = expression.values
+      let admits: boolean
+      switch (expression.operator) {
+        case 'In':
+          admits = Array.isArray(values) && present && values.includes(value)
+          break
+        case 'NotIn':
+          admits = Array.isArray(values) && (!present || !values.includes(value))
+          break
+        case 'Exists':
+          admits = values === undefined && present
+          break
+        case 'DoesNotExist':
+          admits = values === undefined && !present
+          break
+        default:
+          throw new Error(`Tengri ApplicationSet application selector uses unsupported operator ${expression.operator}`)
+      }
+      if (!admits) {
+        throw new Error('Tengri ApplicationSet application selector must include the enabled Tengri entry')
+      }
+    }
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function assertTengriApplicationTarget(application: Record<string, unknown>) {
