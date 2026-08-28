@@ -156,7 +156,15 @@ describe('Tengri release workflows', () => {
   it('refreshes release manifests and revalidates main immediately before creating the promotion PR', () => {
     const release = YAML.parse(readFileSync(releasePath, 'utf8')) as {
       jobs?: {
-        promote?: { steps?: Array<{ name?: string; run?: string; uses?: string; with?: { 'add-paths'?: string } }> }
+        promote?: {
+          steps?: Array<{
+            id?: string
+            name?: string
+            run?: string
+            uses?: string
+            with?: { 'add-paths'?: string; body?: string }
+          }>
+        }
       }
     }
     const steps = release.jobs?.promote?.steps ?? []
@@ -177,8 +185,38 @@ describe('Tengri release workflows', () => {
     expect(steps[revalidateIndex]?.run).toContain('argocd/applications/tengri/kustomization.yaml')
     expect(steps[revalidateIndex]?.run).toContain('argocd/applicationsets/platform.yaml')
     expect(steps[revalidateIndex]?.run).toContain('argocd/applications/proompteng/deployment.yaml')
+    expect(steps[revalidateIndex]?.id).toBe('final-release')
+    expect(steps[revalidateIndex]?.run).toContain("echo \"was_enabled=$(jq -r '.enabled'")
     expect(steps[revalidateIndex]?.run).toContain('bun packages/scripts/src/tengri/update-release.ts')
     expect(steps[revalidateIndex]?.run).toContain('bun packages/scripts/src/tengri/validate-release.ts')
     expect(steps[createIndex]?.with?.['add-paths']).toContain('argocd/applications/proompteng/deployment.yaml')
+    expect(steps[createIndex]?.with?.body).toContain('steps.final-release.outputs.was_enabled')
+    expect(steps[createIndex]?.with?.body).toContain('singleton `Recreate` rollout')
+    expect(steps[createIndex]?.with?.body).toContain('kubectl --context galactic-lan')
+    expect(steps[createIndex]?.with?.body).toContain('Roll back by reverting this promotion commit')
+    expect(steps[createIndex]?.with?.body).not.toContain('The application remains absent')
+  })
+
+  it('closes an older promotion when a newer image build does not succeed', () => {
+    const releaseSource = readFileSync(releasePath, 'utf8')
+    const release = YAML.parse(releaseSource) as {
+      jobs?: {
+        'invalidate-stale-promotion'?: {
+          if?: string
+          permissions?: { 'pull-requests'?: string }
+          steps?: Array<{ name?: string; run?: string }>
+        }
+      }
+    }
+    const invalidation = release.jobs?.['invalidate-stale-promotion']
+    const closeStep = invalidation?.steps?.find((step) => step.name?.includes('failed newer build'))
+
+    expect(invalidation?.if).toContain("github.event.workflow_run.conclusion != 'success'")
+    expect(invalidation?.permissions?.['pull-requests']).toBe('write')
+    expect(closeStep?.run).toContain('--head codex/tengri-release')
+    expect(closeStep?.run).toContain('capture("- Source: `(?<sha>[0-9a-f]{40})`")')
+    expect(closeStep?.run).toContain('compare/${promoted_source}...${FAILED_SHA}')
+    expect(closeStep?.run).toContain('[[ "$comparison" != ahead ]]')
+    expect(closeStep?.run).toContain('gh pr close "$pr_number"')
   })
 })

@@ -17,6 +17,54 @@ permissions:
   contents: read
 
 jobs:
+  invalidate-stale-promotion:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion != 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      }}
+    runs-on: arc-arm64
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Close a promotion superseded by a failed newer build
+        env:
+          FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          promotion="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --head codex/tengri-release \
+            --json number,body \
+            --limit 1)"
+          pr_number="$(jq -r '.[0].number // empty' <<<"$promotion")"
+          if [[ -z "$pr_number" ]]; then
+            exit 0
+          fi
+
+          promoted_source="$(jq -r \
+            '.[0].body // "" | (try capture("- Source: `(?<sha>[0-9a-f]{40})`").sha catch "")' \
+            <<<"$promotion")"
+          if [[ -z "$promoted_source" || "$promoted_source" == "$FAILED_SHA" ]]; then
+            exit 0
+          fi
+
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${promoted_source}...${FAILED_SHA}" \
+            --jq .status)"
+          if [[ "$comparison" != ahead ]]; then
+            exit 0
+          fi
+
+          gh pr close "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --comment "Closing this promotion because the newer Tengri image build at ${FAILED_SHA} did not succeed. A successful build from that revision or a descendant must publish and verify a replacement promotion."
+
   promote:
     if: >-
       ${{
@@ -147,6 +195,7 @@ jobs:
           bun packages/scripts/src/tengri/validate-release.ts
 
       - name: Revalidate current main before opening promotion
+        id: final-release
         run: |
           set -euo pipefail
           git fetch origin main
@@ -168,6 +217,8 @@ jobs:
             argocd/applications/tengri/kustomization.yaml \
             argocd/applicationsets/platform.yaml \
             argocd/applications/proompteng/deployment.yaml
+          current_release="$(bun packages/scripts/src/tengri/validate-release.ts)"
+          echo "was_enabled=$(jq -r '.enabled' <<<"$current_release")" >> "$GITHUB_OUTPUT"
           bun packages/scripts/src/tengri/update-release.ts \
             --tengri-digest '${{ steps.release.outputs.tengri_digest }}' \
             --nanoagent-digest '${{ steps.release.outputs.nanoagent_digest }}'
@@ -212,9 +263,17 @@ jobs:
 
             N/A
 
+            ## Infrastructure Impact
+
+            - Current state before promotion: Tengri enabled = `${{ steps.final-release.outputs.was_enabled }}`.
+            - Initial activation creates the Tengri control plane through Argo CD.
+            - A repeat promotion updates both immutable digests and triggers the singleton `Recreate` rollout, briefly interrupting gRPC, event, PTY, and preview connections. Existing MicroVM Pods and PVCs remain untouched.
+            - Verify with Argo CD and `kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m`, then exercise one authenticated read-only control-plane request.
+            - Roll back by reverting this promotion commit so Argo CD restores the previous signed digests; do not use `kubectl rollout undo` or a direct apply.
+
             ## Breaking Changes
 
-            None. The application remains absent until this promotion is merged and Argo reconciles it.
+            No API, Talos, RuntimeClass, or node changes. Repeat promotions deliberately perform the `Recreate` rollout described above.
 
             ## Checklist
 
