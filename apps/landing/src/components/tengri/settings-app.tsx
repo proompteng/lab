@@ -21,7 +21,9 @@ export function SettingsApp({
   busyAction,
   error,
   instanceId,
+  lifecycleDisabled,
   onDelete,
+  onGuestOperationChange,
   onSignOut,
   onSleep,
   user,
@@ -31,15 +33,19 @@ export function SettingsApp({
   busyAction: BusyAction
   error: string
   instanceId: string
+  lifecycleDisabled: boolean
   onDelete: () => void
+  onGuestOperationChange: (instanceId: string, active: boolean) => void
   onSignOut: () => void
   onSleep: () => void
   user: TengriUser
 }) {
   const [accountState, setAccountState] = useState<AccountState>({ agentId: agent.id, status: 'loading' })
+  const [accountRefreshing, setAccountRefreshing] = useState(false)
   const [now, setNow] = useState<number | null>(null)
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
+  const lifecycleBusy = busyAction !== null
 
   useEffect(() => {
     setNow(Date.now())
@@ -47,11 +53,25 @@ export function SettingsApp({
     return () => window.clearInterval(timer)
   }, [])
 
+  const cancelAccountRefresh = useCallback(() => {
+    const controller = refreshAbortRef.current
+    if (!controller) return
+    controller.abort()
+    if (refreshAbortRef.current !== controller) return
+    refreshAbortRef.current = null
+    refreshGenerationRef.current += 1
+    setAccountRefreshing(false)
+    onGuestOperationChange(instanceId, false)
+  }, [instanceId, onGuestOperationChange])
+
   const refreshAccount = useCallback(async () => {
+    if (lifecycleBusy) return
     refreshAbortRef.current?.abort()
     const controller = new AbortController()
     const generation = ++refreshGenerationRef.current
     refreshAbortRef.current = controller
+    setAccountRefreshing(true)
+    onGuestOperationChange(instanceId, true)
     try {
       const account = await runTengriAction<TengriCodexAccount>(
         { action: 'codex-account', agentId: agent.id },
@@ -67,18 +87,25 @@ export function SettingsApp({
         status: 'error',
       })
     } finally {
-      if (refreshAbortRef.current === controller) refreshAbortRef.current = null
+      if (refreshAbortRef.current === controller) {
+        refreshAbortRef.current = null
+        setAccountRefreshing(false)
+        onGuestOperationChange(instanceId, false)
+      }
     }
-  }, [agent.id])
+  }, [agent.id, instanceId, lifecycleBusy, onGuestOperationChange])
 
   useEffect(() => {
     setAccountState({ agentId: agent.id, status: 'loading' })
-    if (active) void refreshAccount()
-    return () => refreshAbortRef.current?.abort()
-  }, [active, agent.id, refreshAccount])
+  }, [agent.id])
 
   useEffect(() => {
-    if (!active) return
+    if (active && !lifecycleBusy) void refreshAccount()
+    return cancelAccountRefresh
+  }, [active, cancelAccountRefresh, lifecycleBusy, refreshAccount])
+
+  useEffect(() => {
+    if (!active || lifecycleBusy) return
     const refreshIfVisible = () => {
       if (shouldRefreshCodexAccount({ active, documentVisible: document.visibilityState === 'visible' })) {
         void refreshAccount()
@@ -90,7 +117,7 @@ export function SettingsApp({
       window.removeEventListener('focus', refreshIfVisible)
       document.removeEventListener('visibilitychange', refreshIfVisible)
     }
-  }, [active, refreshAccount])
+  }, [active, lifecycleBusy, refreshAccount])
 
   const currentAccountState: AccountState =
     accountState.agentId === agent.id ? accountState : { agentId: agent.id, status: 'loading' }
@@ -102,7 +129,8 @@ export function SettingsApp({
         : currentAccountState.account.authenticated
           ? currentAccountState.account.email || currentAccountState.account.plan || 'Connected'
           : 'Not connected'
-  const busy = busyAction !== null
+  const busy = lifecycleBusy
+  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled
   const hydrated = now !== null
   const agentHeadingId = `${instanceId}-settings-agent-heading`
   const lifecycleHeadingId = `${instanceId}-settings-lifecycle-heading`
@@ -169,13 +197,34 @@ export function SettingsApp({
             Unprivileged guest · no cluster credential · private workspace
           </h2>
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={busy} className={secondaryButton} onClick={onSleep}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={secondaryButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onSleep()
+              }}
+            >
               <Moon aria-hidden="true" className="h-4 w-4" /> Sleep Agent
             </button>
-            <button type="button" disabled={busy} className={secondaryButton} onClick={onSignOut}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={secondaryButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onSignOut()
+              }}
+            >
               <LogOut aria-hidden="true" className="h-4 w-4" /> Sign Out
             </button>
-            <button type="button" disabled={busy} className={dangerButton} onClick={onDelete}>
+            <button
+              type="button"
+              disabled={lifecycleBlocked}
+              className={dangerButton}
+              onClick={() => {
+                if (!refreshAbortRef.current && !lifecycleDisabled) onDelete()
+              }}
+            >
               <Trash2 aria-hidden="true" className="h-4 w-4" /> Delete Agent
             </button>
           </div>
